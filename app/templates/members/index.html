@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Members | RenewalDesk{% endblock %}
+{% block page_title %}Members{% endblock %}
+{% block page_actions %}
+<a class="btn btn-primary" href="{{ url_for('members.create') }}"><i class="bi bi-person-plus"></i> Add member</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-6"><input class="form-control" name="q" value="{{ search }}" placeholder="Search by name or phone"></div>
+        <div class="col-md-3">
+            <select class="form-select" name="status">
+                <option value="">All statuses</option>
+                {% for option in ['active','expired','paused'] %}
+                <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3"><button class="btn btn-outline-primary w-100"><i class="bi bi-search"></i> Search</button></div>
+    </form>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Name</th><th>Phone</th><th>Plan</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for member in pagination.items %}
+            <tr>
+                <td><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
+                <td>{{ member.phone }}</td>
+                <td>{{ member.plan.name if member.plan else 'No plan' }}</td>
+                <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
+                <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('members.edit', member_id=member.id) }}"><i class="bi bi-pencil"></i></a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-secondary">No members found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% include "partials/pagination.html" %}
+</div>
+{% endblock %}

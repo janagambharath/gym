@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Create Gym | RenewalDesk{% endblock %}
+{% block auth_content %}
+<div class="auth-card auth-card-wide">
+    <div class="brand auth-brand"><span class="brand-mark">R</span><span>RenewalDesk</span></div>
+    <h1 class="auth-title">Create gym account</h1>
+    <form method="post" novalidate>
+        {{ form.hidden_tag() }}
+        {% include "partials/form_errors.html" %}
+        <div class="row g-3">
+            <div class="col-md-6">
+                {{ form.gym_name.label(class="form-label") }}
+                {{ form.gym_name(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.owner_name.label(class="form-label") }}
+                {{ form.owner_name(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.email.label(class="form-label") }}
+                {{ form.email(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.phone.label(class="form-label") }}
+                {{ form.phone(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.password.label(class="form-label") }}
+                {{ form.password(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.confirm_password.label(class="form-label") }}
+                {{ form.confirm_password(class="form-control") }}
+            </div>
+        </div>
+        <div class="d-flex justify-content-between align-items-center mt-4">
+            <a href="{{ url_for('auth.login') }}">Back to sign in</a>
+            {{ form.submit(class="btn btn-primary") }}
+        </div>
+    </form>
+</div>
+{% endblock %}

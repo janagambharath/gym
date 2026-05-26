@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Settings | RenewalDesk{% endblock %}
+{% block page_title %}Gym Settings{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-primary" href="{{ url_for('gym.template_form') }}"><i class="bi bi-chat-left-text"></i> New template</a>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="panel">
+            <h2>Payment QR</h2>
+            <form method="post" enctype="multipart/form-data" novalidate>
+                {{ form.hidden_tag() }}
+                {% include "partials/form_errors.html" %}
+                <div class="mb-3">{{ form.payment_label.label(class="form-label") }}{{ form.payment_label(class="form-control") }}</div>
+                <div class="mb-3">{{ form.upi_id.label(class="form-label") }}{{ form.upi_id(class="form-control") }}</div>
+                <div class="mb-3">{{ form.qr_public_url.label(class="form-label") }}{{ form.qr_public_url(class="form-control") }}</div>
+                <div class="mb-3">{{ form.qr_image.label(class="form-label") }}{{ form.qr_image(class="form-control") }}</div>
+                <div class="mb-3">{{ form.instructions.label(class="form-label") }}{{ form.instructions(class="form-control", rows="4") }}</div>
+                <div class="form-check mb-3">{{ form.is_active(class="form-check-input") }}{{ form.is_active.label(class="form-check-label") }}</div>
+                {{ form.submit(class="btn btn-primary") }}
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-3">
+        <div class="panel h-100">
+            <h2>Current QR</h2>
+            {% if qr_settings.qr_public_url %}
+            <img class="qr-preview" src="{{ qr_settings.qr_public_url }}" alt="Payment QR">
+            {% elif qr_settings.qr_image_path %}
+            <img class="qr-preview" src="{{ url_for('uploaded_file', filename=qr_settings.qr_image_path) }}" alt="Payment QR">
+            {% else %}
+            <div class="empty-state">No QR uploaded.</div>
+            {% endif %}
+            <div class="small text-secondary mt-3">{{ qr_settings.payment_label or current_user.gym.name }}</div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Reminder templates</h2>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for template in templates %}
+                <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('gym.template_form', template_id=template.id) }}">
+                    <span>{{ template.name }}</span>
+                    <span class="badge bg-light text-dark">{{ template.days_before }} days</span>
+                </a>
+                {% else %}
+                <div class="list-group-item text-secondary">No templates yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

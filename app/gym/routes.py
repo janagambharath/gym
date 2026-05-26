@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
+
+from app.extensions import db
+from app.forms import MembershipPlanForm, NotificationTemplateForm, QRSettingsForm
+from app.models import Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
+from app.services.analytics_service import gym_dashboard_stats
+from app.services.audit_service import audit
+from app.services.storage_service import save_gym_qr
+from app.utils.decorators import active_gym_required, roles_required
+
+
+gym_bp = Blueprint("gym", __name__, url_prefix="/app")
+
+
+@gym_bp.route("/dashboard")
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def dashboard():
+    gym_id = current_user.gym_id
+    stats = gym_dashboard_stats(gym_id)
+    expiring_members = (
+        Member.query.filter_by(gym_id=gym_id)
+        .order_by(Member.membership_end.asc())
+        .limit(8)
+        .all()
+    )
+    recent_payments = (
+        PaymentVerification.query.filter_by(gym_id=gym_id)
+        .order_by(PaymentVerification.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    return render_template(
+        "dashboard/index.html",
+        stats=stats,
+        expiring_members=expiring_members,
+        recent_payments=recent_payments,
+    )
+
+
+@gym_bp.route("/settings", methods=["GET", "POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def settings():
+    gym_id = current_user.gym_id
+    qr_settings = QRSettings.query.filter_by(gym_id=gym_id).first()
+    if not qr_settings:
+        qr_settings = QRSettings(gym_id=gym_id, payment_label=current_user.gym.name)
+        db.session.add(qr_settings)
+        db.session.flush()
+
+    form = QRSettingsForm(obj=qr_settings)
+    if form.validate_on_submit():
+        qr_settings.payment_label = form.payment_label.data
+        qr_settings.upi_id = form.upi_id.data
+        qr_settings.qr_public_url = form.qr_public_url.data
+        qr_settings.instructions = form.instructions.data
+        qr_settings.is_active = form.is_active.data
+        if form.qr_image.data:
+            try:
+                qr_settings.qr_image_path = save_gym_qr(form.qr_image.data, gym_id)
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("gym.settings"))
+        audit(action="update_qr_settings", resource_type="qr_settings", resource_id=qr_settings.id)
+        db.session.commit()
+        flash("Payment QR settings saved.", "success")
+        return redirect(url_for("gym.settings"))
+
+    templates = (
+        NotificationTemplate.query.filter_by(gym_id=gym_id)
+        .order_by(NotificationTemplate.days_before.asc())
+        .all()
+    )
+    return render_template("gym/settings.html", form=form, qr_settings=qr_settings, templates=templates)
+
+
+@gym_bp.route("/templates/new", methods=["GET", "POST"])
+@gym_bp.route("/templates/<int:template_id>/edit", methods=["GET", "POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def template_form(template_id: int | None = None):
+    template = None
+    if template_id:
+        template = NotificationTemplate.query.filter_by(
+            id=template_id, gym_id=current_user.gym_id
+        ).first_or_404()
+    form = NotificationTemplateForm(obj=template)
+    if template is None and request.method == "GET":
+        form.is_active.data = True
+    if form.validate_on_submit():
+        if template is None:
+            template = NotificationTemplate(gym_id=current_user.gym_id)
+            db.session.add(template)
+        template.name = form.name.data
+        template.days_before = form.days_before.data
+        template.message_body = form.message_body.data
+        template.is_active = form.is_active.data
+        db.session.flush()
+        audit(
+            action="save_notification_template",
+            resource_type="notification_template",
+            resource_id=template.id,
+        )
+        db.session.commit()
+        flash("Reminder template saved.", "success")
+        return redirect(url_for("gym.settings"))
+    return render_template("gym/template_form.html", form=form, template=template)
+
+
+@gym_bp.route("/plans", methods=["GET", "POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def plans():
+    form = MembershipPlanForm()
+    if form.validate_on_submit():
+        plan = MembershipPlan(
+            gym_id=current_user.gym_id,
+            name=form.name.data.strip(),
+            duration_days=int(form.duration_days.data),
+            price=form.price.data,
+        )
+        db.session.add(plan)
+        try:
+            db.session.flush()
+            audit(action="create_plan", resource_type="membership_plan", resource_id=plan.id)
+            db.session.commit()
+            flash("Membership plan created.", "success")
+            return redirect(url_for("gym.plans"))
+        except IntegrityError:
+            db.session.rollback()
+            flash("A plan with this name already exists.", "danger")
+    plans_list = (
+        MembershipPlan.query.filter_by(gym_id=current_user.gym_id)
+        .order_by(MembershipPlan.is_active.desc(), MembershipPlan.name.asc())
+        .all()
+    )
+    return render_template("gym/plans.html", form=form, plans=plans_list)
+
+
+@gym_bp.post("/plans/<int:plan_id>/toggle")
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def toggle_plan(plan_id: int):
+    plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=current_user.gym_id).first_or_404()
+    plan.is_active = not plan.is_active
+    audit(action="toggle_plan", resource_type="membership_plan", resource_id=plan.id)
+    db.session.commit()
+    flash("Plan status updated.", "success")
+    return redirect(url_for("gym.plans"))

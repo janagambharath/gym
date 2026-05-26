@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}RenewalDesk{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/app.css') }}" rel="stylesheet">
+</head>
+<body>
+{% if current_user.is_authenticated %}
+<div class="app-shell">
+    <aside class="sidebar">
+        <a class="brand" href="{{ url_for('admin.dashboard' if current_user.is_super_admin else 'gym.dashboard') }}">
+            <span class="brand-mark">R</span>
+            <span>RenewalDesk</span>
+        </a>
+        <nav class="nav flex-column gap-1">
+            {% if current_user.is_super_admin %}
+            <a class="nav-link" href="{{ url_for('admin.dashboard') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
+            <a class="nav-link" href="{{ url_for('admin.gyms') }}"><i class="bi bi-buildings"></i> Gyms</a>
+            {% else %}
+            <a class="nav-link" href="{{ url_for('gym.dashboard') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
+            <a class="nav-link" href="{{ url_for('members.index') }}"><i class="bi bi-people"></i> Members</a>
+            <a class="nav-link" href="{{ url_for('payments.index') }}"><i class="bi bi-receipt"></i> Payments</a>
+            <a class="nav-link" href="{{ url_for('reminders.index') }}"><i class="bi bi-whatsapp"></i> Reminders</a>
+            {% if current_user.role == 'gym_owner' %}
+            <a class="nav-link" href="{{ url_for('gym.plans') }}"><i class="bi bi-calendar2-check"></i> Plans</a>
+            <a class="nav-link" href="{{ url_for('gym.settings') }}"><i class="bi bi-gear"></i> Settings</a>
+            {% endif %}
+            {% endif %}
+        </nav>
+        <div class="sidebar-footer">
+            <div class="small text-secondary">{{ current_user.full_name }}</div>
+            <div class="tiny text-secondary">{{ current_user.role.replace('_', ' ').title() }}</div>
+            <a class="btn btn-sm btn-outline-light w-100 mt-3" href="{{ url_for('auth.logout') }}">
+                <i class="bi bi-box-arrow-right"></i> Sign out
+            </a>
+        </div>
+    </aside>
+    <main class="main">
+        <header class="topbar">
+            <div>
+                <div class="text-secondary small">
+                    {% if current_user.is_super_admin %}Platform{% else %}{{ current_user.gym.name }}{% endif %}
+                </div>
+                <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+            </div>
+            <div class="topbar-actions">
+                {% block page_actions %}{% endblock %}
+            </div>
+        </header>
+        <section class="content">
+            {% include "partials/flash.html" %}
+            {% block content %}{% endblock %}
+        </section>
+    </main>
+</div>
+{% else %}
+<main class="auth-layout">
+    {% include "partials/flash.html" %}
+    {% block auth_content %}{% endblock %}
+</main>
+{% endif %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

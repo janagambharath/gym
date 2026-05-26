@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | RenewalDesk{% endblock %}
+{% block page_title %}Gym Dashboard{% endblock %}
+{% block page_actions %}
+<a class="btn btn-primary" href="{{ url_for('members.create') }}"><i class="bi bi-person-plus"></i> Add member</a>
+{% endblock %}
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card"><span>Active members</span><strong>{{ stats.total_active }}</strong></div>
+    <div class="stat-card accent-warn"><span>Expiring soon</span><strong>{{ stats.expiring_soon }}</strong></div>
+    <div class="stat-card accent-danger"><span>Expired</span><strong>{{ stats.expired }}</strong></div>
+    <div class="stat-card accent-success"><span>Verified revenue</span><strong>₹{{ stats.collected }}</strong></div>
+</div>
+<div class="row g-4 mt-1">
+    <div class="col-lg-7">
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Upcoming renewals</h2>
+                <a href="{{ url_for('members.index') }}">View all</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Member</th><th>Phone</th><th>Expiry</th><th>Status</th></tr></thead>
+                    <tbody>
+                    {% for member in expiring_members %}
+                    <tr>
+                        <td><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
+                        <td>{{ member.phone }}</td>
+                        <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
+                        <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-secondary">No members yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Recent payments</h2>
+                <a href="{{ url_for('payments.index') }}">View all</a>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for payment in recent_payments %}
+                <a class="list-group-item list-group-item-action d-flex justify-content-between" href="{{ url_for('members.detail', member_id=payment.member_id) }}">
+                    <span>{{ payment.member.full_name }}</span>
+                    <span class="fw-semibold">₹{{ payment.amount }} · {{ payment.status }}</span>
+                </a>
+                {% else %}
+                <div class="list-group-item text-secondary">No payments recorded.</div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="panel mt-4">
+            <div class="panel-header"><h2>Reminder health</h2></div>
+            <div class="d-flex gap-3">
+                <div><div class="metric">{{ stats.sent_reminders }}</div><div class="text-secondary small">Sent</div></div>
+                <div><div class="metric">{{ stats.failed_reminders }}</div><div class="text-secondary small">Failed</div></div>
+                <div><div class="metric">{{ stats.pending_payments }}</div><div class="text-secondary small">Pending payments</div></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

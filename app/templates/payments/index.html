@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Payments | RenewalDesk{% endblock %}
+{% block page_title %}Payments{% endblock %}
+{% block page_actions %}
+<a class="btn btn-primary" href="{{ url_for('payments.create') }}"><i class="bi bi-plus-circle"></i> Record payment</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-4">
+            <select class="form-select" name="status">
+                <option value="">All statuses</option>
+                {% for option in ['pending','verified','rejected'] %}
+                <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filter</button></div>
+    </form>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Member</th><th>Amount</th><th>Paid on</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for payment in pagination.items %}
+            <tr>
+                <td><a href="{{ url_for('members.detail', member_id=payment.member_id) }}">{{ payment.member.full_name }}</a></td>
+                <td>₹{{ payment.amount }}</td>
+                <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '—' }}</td>
+                <td><span class="badge status-{{ payment.status }}">{{ payment.status }}</span></td>
+                <td class="text-end">
+                    {% if payment.status == 'pending' %}
+                    <form class="d-inline" method="post" action="{{ url_for('payments.verify', payment_id=payment.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-success"><i class="bi bi-check2"></i></button>
+                    </form>
+                    <form class="d-inline" method="post" action="{{ url_for('payments.reject', payment_id=payment.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-secondary">No payments found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% include "partials/pagination.html" %}
+</div>
+{% endblock %}

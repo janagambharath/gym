@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Gyms | RenewalDesk{% endblock %}
+{% block page_title %}Gyms{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-4">
+            <select class="form-select" name="status">
+                <option value="">All statuses</option>
+                {% for option in ['active','suspended'] %}
+                <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filter</button></div>
+    </form>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Subscription</th><th></th></tr></thead>
+            <tbody>
+            {% for gym in pagination.items %}
+            <tr>
+                <td><a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}">{{ gym.name }}</a></td>
+                <td>{{ gym.email or '—' }}</td>
+                <td><span class="badge status-{{ gym.status }}">{{ gym.status }}</span></td>
+                <td>{{ gym.subscription_status }}</td>
+                <td class="text-end">
+                    <form method="post" action="{{ url_for('admin.toggle_gym', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-power"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-secondary">No gyms found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% include "partials/pagination.html" %}
+</div>
+{% endblock %}

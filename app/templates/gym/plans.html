@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Plans | RenewalDesk{% endblock %}
+{% block page_title %}Membership Plans{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="panel">
+            <h2>New plan</h2>
+            <form method="post" novalidate>
+                {{ form.hidden_tag() }}
+                {% include "partials/form_errors.html" %}
+                <div class="mb-3">{{ form.name.label(class="form-label") }}{{ form.name(class="form-control") }}</div>
+                <div class="mb-3">{{ form.duration_days.label(class="form-label") }}{{ form.duration_days(class="form-control") }}</div>
+                <div class="mb-3">{{ form.price.label(class="form-label") }}{{ form.price(class="form-control") }}</div>
+                {{ form.submit(class="btn btn-primary w-100") }}
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="panel">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Name</th><th>Duration</th><th>Price</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                    {% for plan in plans %}
+                    <tr>
+                        <td>{{ plan.name }}</td>
+                        <td>{{ plan.duration_days }} days</td>
+                        <td>₹{{ plan.price }}</td>
+                        <td><span class="badge {{ 'bg-success' if plan.is_active else 'bg-secondary' }}">{{ 'Active' if plan.is_active else 'Inactive' }}</span></td>
+                        <td class="text-end">
+                            <form method="post" action="{{ url_for('gym.toggle_plan', plan_id=plan.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-power"></i></button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-secondary">No plans yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

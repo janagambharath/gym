@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Reminders | RenewalDesk{% endblock %}
+{% block page_title %}WhatsApp Reminders{% endblock %}
+{% block page_actions %}
+<form method="post" action="{{ url_for('reminders.run_now') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-primary"><i class="bi bi-send"></i> Run scan</button>
+</form>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-4">
+            <select class="form-select" name="status">
+                <option value="">All statuses</option>
+                {% for option in ['pending','sent','failed','skipped'] %}
+                <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filter</button></div>
+    </form>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Member</th><th>Stage</th><th>Cycle expiry</th><th>Status</th><th>Attempts</th><th></th></tr></thead>
+            <tbody>
+            {% for log in pagination.items %}
+            <tr>
+                <td>{{ log.member.full_name }}</td>
+                <td>{{ log.reminder_stage.replace('_', ' ') }}</td>
+                <td>{{ log.cycle_end_date.strftime('%d %b %Y') }}</td>
+                <td><span class="badge status-{{ log.status }}">{{ log.status }}</span></td>
+                <td>{{ log.attempts }}</td>
+                <td class="text-end">
+                    {% if log.status != 'sent' %}
+                    <form method="post" action="{{ url_for('reminders.resend', reminder_id=log.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-clockwise"></i></button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-secondary">No reminders logged.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% include "partials/pagination.html" %}
+</div>
+{% endblock %}

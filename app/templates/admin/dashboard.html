@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Admin | RenewalDesk{% endblock %}
+{% block page_title %}Platform Dashboard{% endblock %}
+{% block page_actions %}
+<a class="btn btn-primary" href="{{ url_for('admin.gyms') }}"><i class="bi bi-buildings"></i> Manage gyms</a>
+{% endblock %}
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card"><span>Total gyms</span><strong>{{ stats.gyms }}</strong></div>
+    <div class="stat-card accent-success"><span>Active gyms</span><strong>{{ stats.active_gyms }}</strong></div>
+    <div class="stat-card accent-warn"><span>Total members</span><strong>{{ stats.members }}</strong></div>
+    <div class="stat-card accent-danger"><span>Verified revenue</span><strong>₹{{ stats.revenue_verified }}</strong></div>
+</div>
+<div class="row g-4 mt-1">
+    <div class="col-lg-7">
+        <div class="panel">
+            <div class="panel-header"><h2>Recent gyms</h2></div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Gym</th><th>Email</th><th>Status</th><th>Created</th></tr></thead>
+                    <tbody>
+                    {% for gym in recent_gyms %}
+                    <tr>
+                        <td><a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}">{{ gym.name }}</a></td>
+                        <td>{{ gym.email or '—' }}</td>
+                        <td><span class="badge status-{{ gym.status }}">{{ gym.status }}</span></td>
+                        <td>{{ gym.created_at.strftime('%d %b %Y') }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-secondary">No gyms yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="panel">
+            <div class="panel-header"><h2>Failed reminders</h2></div>
+            <div class="list-group list-group-flush">
+                {% for log in failed_reminders %}
+                <div class="list-group-item">
+                    <div class="fw-semibold">{{ log.member.full_name }}</div>
+                    <div class="small text-secondary">{{ log.error_message or 'Provider error' }}</div>
+                </div>
+                {% else %}
+                <div class="list-group-item text-secondary">No failed reminders.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

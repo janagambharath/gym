@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ gym.name }} | RenewalDesk{% endblock %}
+{% block page_title %}{{ gym.name }}{% endblock %}
+{% block page_actions %}
+<form method="post" action="{{ url_for('admin.toggle_gym', gym_id=gym.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-outline-primary"><i class="bi bi-power"></i> Toggle status</button>
+</form>
+{% endblock %}
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card"><span>Users</span><strong>{{ stats.users }}</strong></div>
+    <div class="stat-card"><span>Members</span><strong>{{ stats.members }}</strong></div>
+    <div class="stat-card accent-warn"><span>Pending payments</span><strong>{{ stats.pending_payments }}</strong></div>
+    <div class="stat-card accent-success"><span>Sent reminders</span><strong>{{ stats.sent_reminders }}</strong></div>
+</div>
+<div class="panel mt-4">
+    <div class="panel-header"><h2>Users</h2><span class="badge status-{{ gym.status }}">{{ gym.status }}</span></div>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th></tr></thead>
+            <tbody>
+            {% for user in users %}
+            <tr><td>{{ user.full_name }}</td><td>{{ user.email }}</td><td>{{ user.role }}</td><td>{{ 'Yes' if user.is_active else 'No' }}</td></tr>
+            {% else %}
+            <tr><td colspan="4" class="text-secondary">No users.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

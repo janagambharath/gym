@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ member.full_name }} | RenewalDesk{% endblock %}
+{% block page_title %}{{ member.full_name }}{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-primary" href="{{ url_for('payments.create', member_id=member.id) }}"><i class="bi bi-receipt"></i> Record payment</a>
+<a class="btn btn-primary" href="{{ url_for('members.edit', member_id=member.id) }}"><i class="bi bi-pencil"></i> Edit</a>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="panel">
+            <h2>Profile</h2>
+            <dl class="detail-list">
+                <dt>Phone</dt><dd>{{ member.phone }}</dd>
+                <dt>Email</dt><dd>{{ member.email or '—' }}</dd>
+                <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan' }}</dd>
+                <dt>Membership</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to {{ member.membership_end.strftime('%d %b %Y') }}</dd>
+                <dt>Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status }}</span></dd>
+            </dl>
+            {% if current_user.role == 'gym_owner' %}
+            <form method="post" action="{{ url_for('members.delete', member_id=member.id) }}" onsubmit="return confirm('Delete this member?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="panel mb-4">
+            <div class="panel-header"><h2>Payment history</h2></div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Date</th><th>Amount</th><th>Status</th><th>Reference</th></tr></thead>
+                    <tbody>
+                    {% for payment in payments %}
+                    <tr><td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '—' }}</td><td>₹{{ payment.amount }}</td><td>{{ payment.status }}</td><td>{{ payment.reference or '—' }}</td></tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-secondary">No payments yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-header"><h2>Renewal history</h2></div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Previous expiry</th><th>New cycle</th><th>Amount</th></tr></thead>
+                    <tbody>
+                    {% for renewal in renewals %}
+                    <tr><td>{{ renewal.previous_end.strftime('%d %b %Y') }}</td><td>{{ renewal.new_start.strftime('%d %b %Y') }} to {{ renewal.new_end.strftime('%d %b %Y') }}</td><td>₹{{ renewal.amount }}</td></tr>
+                    {% else %}
+                    <tr><td colspan="3" class="text-secondary">No renewals yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

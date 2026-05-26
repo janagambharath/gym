@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block page_title %}Not found{% endblock %}
+{% block content %}<div class="panel empty-state">The page was not found.</div>{% endblock %}
+{% block auth_content %}<div class="auth-card"><h1 class="auth-title">Not found</h1><a href="{{ url_for('auth.login') }}">Sign in</a></div>{% endblock %}
