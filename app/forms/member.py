@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from flask_wtf import FlaskForm
 from wtforms import DateField, DecimalField, SelectField, StringField, SubmitField, TextAreaField
-from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
+from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional, ValidationError
 
 
 class MembershipPlanForm(FlaskForm):
@@ -33,3 +33,7 @@ class MemberForm(FlaskForm):
     )
     notes = TextAreaField("Notes", validators=[Optional(), Length(max=2000)])
     submit = SubmitField("Save member")
+
+    def validate_membership_end(self, field) -> None:
+        if field.data and self.membership_start.data and field.data < self.membership_start.data:
+            raise ValidationError("End date must be on or after start date.")

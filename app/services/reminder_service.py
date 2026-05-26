@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as tz
+import zoneinfo
 
-import requests as http_requests
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -13,6 +13,15 @@ from app.services.whatsapp_service import WhatsAppService
 from app.utils.helpers import phone_to_whatsapp, signed_upload_url
 
 
+def today_for_gym(gym_timezone: str) -> date:
+    """Return the current calendar date in the gym's local timezone."""
+    try:
+        zone = zoneinfo.ZoneInfo(gym_timezone)
+    except Exception:
+        zone = zoneinfo.ZoneInfo("Asia/Kolkata")
+    return datetime.now(tz=zone).date()
+
+
 def stage_for_days(days_before: int) -> str:
     if days_before > 0:
         return f"{days_before}_days_before_expiry"
@@ -21,14 +30,19 @@ def stage_for_days(days_before: int) -> str:
     return "overdue"
 
 
-def due_members_for_gym(gym_id: int, days_before: int) -> list[Member]:
-    target_date = date.today() + timedelta(days=days_before)
+def due_members_for_gym(
+    gym_id: int,
+    days_before: int,
+    gym_timezone: str = "Asia/Kolkata",
+) -> list[Member]:
+    target_date = today_for_gym(gym_timezone) + timedelta(days=days_before)
     already_renewed = select(RenewalHistory.member_id).where(
         RenewalHistory.gym_id == gym_id,
         RenewalHistory.previous_end == target_date,
     )
     return (
         Member.query.filter_by(gym_id=gym_id, status="active")
+        .filter(Member.deleted_at.is_(None))
         .filter(Member.membership_end == target_date)
         .filter(~Member.id.in_(already_renewed))
         .all()
@@ -79,7 +93,13 @@ def ensure_default_template(gym_id: int) -> NotificationTemplate:
     return template
 
 
-def create_or_get_log(member: Member, template: NotificationTemplate, days_before: int) -> ReminderLog:
+def create_or_get_log(
+    member: Member,
+    template: NotificationTemplate,
+    days_before: int,
+    *,
+    scheduled_for: date | None = None,
+) -> ReminderLog:
     stage = stage_for_days(days_before)
     log = ReminderLog.query.filter_by(
         gym_id=member.gym_id,
@@ -97,7 +117,7 @@ def create_or_get_log(member: Member, template: NotificationTemplate, days_befor
         template_id=template.id,
         reminder_stage=stage,
         cycle_end_date=member.membership_end,
-        scheduled_for=date.today(),
+        scheduled_for=scheduled_for or today_for_gym("Asia/Kolkata"),
         phone_snapshot=phone_to_whatsapp(member.phone),
         status="pending",
     )
@@ -131,15 +151,6 @@ def _resolve_qr_url(gym_id: int) -> str | None:
             candidate = signed_upload_url(qr.qr_image_path)
 
     if not candidate:
-        return None
-    if "localhost" in candidate or "127.0.0.1" in candidate:
-        return None
-
-    try:
-        response = http_requests.head(candidate, timeout=5, allow_redirects=True)
-        if response.status_code >= 400:
-            return None
-    except Exception:
         return None
     return candidate
 
@@ -182,21 +193,51 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
     return log
 
 
-def run_due_reminders_for_gym(gym_id: int, days_before_values: list[int]) -> dict:
+def run_due_reminders_for_gym(
+    gym_id: int,
+    days_before_values: list[int],
+    gym_timezone: str = "Asia/Kolkata",
+) -> dict:
     counts = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
-    try:
-        for days_before in days_before_values:
+    import logging
+
+    logger = logging.getLogger(__name__)
+    local_today = today_for_gym(gym_timezone)
+
+    for days_before in days_before_values:
+        try:
             template = template_for(gym_id, days_before) or ensure_default_template(gym_id)
-            for member in due_members_for_gym(gym_id, days_before):
-                log = create_or_get_log(member, template, days_before)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.exception(
+                "Failed to resolve template for gym %s days_before %s",
+                gym_id,
+                days_before,
+            )
+            continue
+
+        members = due_members_for_gym(gym_id, days_before, gym_timezone)
+        for member in members:
+            member_id = member.id
+            try:
+                log = create_or_get_log(
+                    member,
+                    template,
+                    days_before,
+                    scheduled_for=local_today,
+                )
                 if log.status == "sent":
                     counts["skipped"] += 1
+                    db.session.commit()
                     continue
                 send_reminder(log)
                 counts["queued"] += 1
                 counts[log.status] = counts.get(log.status, 0) + 1
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        raise
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                logger.exception("Failed reminder for member %s in gym %s", member_id, gym_id)
+                counts["failed"] += 1
+
     return counts

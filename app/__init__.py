@@ -6,6 +6,7 @@ from pathlib import Path
 
 from datetime import datetime
 
+import sentry_sdk
 from flask import (
     Flask,
     abort,
@@ -18,16 +19,29 @@ from flask import (
 )
 from flask_login import current_user, login_required
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from sentry_sdk.integrations.flask import FlaskIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sqlalchemy import text
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app.config import config_by_name
 from app.extensions import csrf, db, limiter, login_manager, migrate, scheduler
 
 
 def create_app(config_name: str | None = None) -> Flask:
+    sentry_dsn = os.getenv("SENTRY_DSN")
+    if sentry_dsn:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            integrations=[FlaskIntegration(), SqlalchemyIntegration()],
+            traces_sample_rate=0.05,
+            send_default_pii=False,
+        )
+
     app = Flask(__name__, instance_relative_config=True)
     selected_config = config_name or os.getenv("FLASK_ENV", "default")
     app.config.from_object(config_by_name[selected_config])
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     _normalize_database_url(app)
     _validate_config(app, selected_config)
@@ -63,6 +77,12 @@ def _normalize_database_url(app: Flask) -> None:
 
 
 def _validate_config(app: Flask, selected_config: str) -> None:
+    if selected_config in {"development", "default"} and not app.debug:
+        app.logger.warning(
+            "Running with DevelopmentConfig but app.debug is False. "
+            "Set FLASK_ENV=production for production deployments."
+        )
+
     if selected_config != "production":
         return
     secret_key = app.config.get("SECRET_KEY", "")
@@ -70,6 +90,12 @@ def _validate_config(app: Flask, selected_config: str) -> None:
         raise RuntimeError(
             "SECRET_KEY is not set or too weak. Generate one with: "
             "python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    redis_url = os.getenv("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        raise RuntimeError(
+            "REDIS_URL must be set to a real Redis instance in production. "
+            "In-memory rate limiting does not work across multiple workers."
         )
 
 
@@ -155,6 +181,17 @@ def _register_security_headers(app: Flask) -> None:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
+            "img-src 'self' data: https: blob:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self';"
+        )
         if not app.debug:
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
@@ -247,6 +284,14 @@ def _register_cli(app: Flask) -> None:
 
     @app.cli.command("seed-demo")
     def seed_demo() -> None:
+        flask_env = os.getenv("FLASK_ENV", "development")
+        if flask_env == "production" and not os.getenv("DEMO_OWNER_PASSWORD"):
+            print(
+                "ERROR: Set DEMO_OWNER_PASSWORD before running seed-demo in production. "
+                "Refusing to create account with default password."
+            )
+            return
+
         from datetime import date, timedelta
 
         from app.models import Member, MembershipPlan, NotificationTemplate, QRSettings
@@ -326,32 +371,38 @@ def _register_cli(app: Flask) -> None:
 
     @app.cli.command("run-reminders")
     def run_reminders() -> None:
+        import json
         from datetime import date
 
         from app.models import Member
         from app.services.reminder_service import run_due_reminders_for_gym
 
         today = date.today()
-        expired_ids = (
-            Member.query.filter(Member.membership_end < today, Member.status == "active")
-            .with_entities(Member.id)
-            .all()
-        )
-        if expired_ids:
-            Member.query.filter(Member.id.in_([row.id for row in expired_ids])).update(
-                {"status": "expired"}, synchronize_session=False
-            )
-            db.session.commit()
-            print(f"Auto-expired {len(expired_ids)} members")
+        expired_count = Member.query.filter(
+            Member.membership_end < today,
+            Member.status == "active",
+            Member.deleted_at.is_(None),
+        ).update({"status": "expired"}, synchronize_session=False)
+        db.session.commit()
+        if expired_count:
+            app.logger.info(json.dumps({"event": "auto_expired", "count": expired_count}))
 
         active_gyms = Gym.query.filter_by(status="active").all()
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
         for gym in active_gyms:
-            result = run_due_reminders_for_gym(gym.id, app.config["REMINDER_DAYS_BEFORE"])
+            result = run_due_reminders_for_gym(
+                gym.id,
+                app.config["REMINDER_DAYS_BEFORE"],
+                gym.timezone or "Asia/Kolkata",
+            )
             for key, value in result.items():
                 totals[key] = totals.get(key, 0) + value
-            print(f"{gym.name}: {result}")
-        print(f"Totals: {totals}")
+            app.logger.info(
+                json.dumps(
+                    {"event": "gym_reminders", "gym_id": gym.id, "gym": gym.name, **result}
+                )
+            )
+        app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
 
 
 def _start_scheduler(app: Flask) -> None:

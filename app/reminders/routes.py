@@ -39,7 +39,9 @@ def index():
 @roles_required("gym_owner", "staff")
 def run_now():
     result = run_due_reminders_for_gym(
-        current_user.gym_id, current_app.config["REMINDER_DAYS_BEFORE"]
+        current_user.gym_id,
+        current_app.config["REMINDER_DAYS_BEFORE"],
+        current_user.gym.timezone or "Asia/Kolkata",
     )
     audit(action="run_reminders_now", resource_type="reminder_log", metadata=result)
     db.session.commit()

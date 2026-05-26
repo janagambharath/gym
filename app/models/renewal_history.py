@@ -10,7 +10,10 @@ from app.models.mixins import TenantMixin, TimestampMixin
 
 class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "renewal_history"
-    __table_args__ = (Index("ix_renewals_gym_member", "gym_id", "member_id"),)
+    __table_args__ = (
+        Index("ix_renewals_gym_member", "gym_id", "member_id"),
+        Index("ix_renewals_gym_prev_end", "gym_id", "previous_end"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     member_id = db.Column(

@@ -31,7 +31,7 @@ def gym_dashboard_stats(gym_id: int) -> dict:
                 )
             ).label("expired"),
         )
-        .filter(Member.gym_id == gym_id)
+        .filter(Member.gym_id == gym_id, Member.deleted_at.is_(None))
         .one()
     )
 

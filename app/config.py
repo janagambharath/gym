@@ -20,7 +20,7 @@ def _engine_options(database_url: str, *, pool_size: int = 5, max_overflow: int 
         "pool_size": pool_size,
         "max_overflow": max_overflow,
         "pool_timeout": 30,
-        "pool_recycle": 1800,
+        "pool_recycle": 300,
         "pool_pre_ping": True,
     }
 

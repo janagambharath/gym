@@ -68,6 +68,8 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
 def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None:
     if payment.status == "verified":
         raise ValueError("Cannot reject an already verified payment.")
+    if payment.status == "rejected":
+        raise ValueError("Payment is already rejected.")
     payment.status = "rejected"
     payment.verified_by_id = verified_by_id
     payment.verified_at = utcnow()

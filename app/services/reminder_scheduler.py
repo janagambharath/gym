@@ -52,7 +52,9 @@ def _scheduled_reminder_job(app: Flask) -> None:
         for gym in active_gyms:
             try:
                 result = run_due_reminders_for_gym(
-                    gym.id, app.config["REMINDER_DAYS_BEFORE"]
+                    gym.id,
+                    app.config["REMINDER_DAYS_BEFORE"],
+                    gym.timezone or "Asia/Kolkata",
                 )
                 app.logger.info("Reminder scan for gym %s: %s", gym.id, result)
             except Exception:

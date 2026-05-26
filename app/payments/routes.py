@@ -22,6 +22,7 @@ def _payment_form(payment: PaymentVerification | None = None) -> PaymentVerifica
     form = PaymentVerificationForm(obj=payment)
     members = (
         Member.query.filter_by(gym_id=current_user.gym_id)
+        .filter(Member.deleted_at.is_(None))
         .order_by(Member.full_name.asc())
         .all()
     )
@@ -61,13 +62,21 @@ def create():
         form.paid_on.data = date.today()
         form.status.data = "pending"
         if member_id:
-            member = Member.query.filter_by(id=member_id, gym_id=current_user.gym_id).first()
+            member = (
+                Member.query.filter_by(id=member_id, gym_id=current_user.gym_id)
+                .filter(Member.deleted_at.is_(None))
+                .first()
+            )
             if member:
                 form.member_id.data = member.id
                 form.amount.data = member.plan.price if member.plan else 0
                 form.renewal_days.data = member.plan.duration_days if member.plan else 30
     if form.validate_on_submit():
-        member = Member.query.filter_by(id=form.member_id.data, gym_id=current_user.gym_id).first_or_404()
+        member = (
+            Member.query.filter_by(id=form.member_id.data, gym_id=current_user.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first_or_404()
+        )
         renewal_days = int(form.renewal_days.data)
         if not 1 <= renewal_days <= 730:
             flash("Renewal days must be between 1 and 730.", "danger")
@@ -80,6 +89,7 @@ def create():
             method=form.method.data,
             reference=form.reference.data,
             status="pending",
+            renewal_days=renewal_days,
             notes=form.notes.data,
         )
         db.session.add(payment)
@@ -101,7 +111,7 @@ def verify(payment_id: int):
     if payment.status == "verified":
         flash("Payment is already verified.", "info")
         return redirect(url_for("payments.index"))
-    renewal_days = payment.member.plan.duration_days if payment.member.plan else 30
+    renewal_days = payment.renewal_days or (payment.member.plan.duration_days if payment.member.plan else 30)
     try:
         verify_payment(payment, verified_by_id=current_user.id, renewal_days=renewal_days)
         audit(action="verify_payment", resource_type="payment_verification", resource_id=payment.id)

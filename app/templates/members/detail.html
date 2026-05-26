@@ -12,15 +12,17 @@
             <h2>Profile</h2>
             <dl class="detail-list">
                 <dt>Phone</dt><dd>{{ member.phone }}</dd>
-                <dt>Email</dt><dd>{{ member.email or '—' }}</dd>
+                <dt>Email</dt><dd>{{ member.email or '&mdash;'|safe }}</dd>
                 <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan' }}</dd>
                 <dt>Membership</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to {{ member.membership_end.strftime('%d %b %Y') }}</dd>
                 <dt>Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status }}</span></dd>
             </dl>
             {% if current_user.role == 'gym_owner' %}
-            <form method="post" action="{{ url_for('members.delete', member_id=member.id) }}" onsubmit="return confirm('Delete this member?')">
+            <form method="post" action="{{ url_for('members.delete', member_id=member.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete</button>
+                <button class="btn btn-outline-danger w-100" data-confirm="Remove this member?">
+                    <i class="bi bi-trash"></i> Delete
+                </button>
             </form>
             {% endif %}
         </div>
@@ -33,7 +35,12 @@
                     <thead><tr><th>Date</th><th>Amount</th><th>Status</th><th>Reference</th></tr></thead>
                     <tbody>
                     {% for payment in payments %}
-                    <tr><td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '—' }}</td><td>₹{{ payment.amount }}</td><td>{{ payment.status }}</td><td>{{ payment.reference or '—' }}</td></tr>
+                    <tr>
+                        <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '&mdash;'|safe }}</td>
+                        <td>&#8377;{{ payment.amount }}</td>
+                        <td>{{ payment.status }}</td>
+                        <td>{{ payment.reference or '&mdash;'|safe }}</td>
+                    </tr>
                     {% else %}
                     <tr><td colspan="4" class="text-secondary">No payments yet.</td></tr>
                     {% endfor %}
@@ -48,7 +55,11 @@
                     <thead><tr><th>Previous expiry</th><th>New cycle</th><th>Amount</th></tr></thead>
                     <tbody>
                     {% for renewal in renewals %}
-                    <tr><td>{{ renewal.previous_end.strftime('%d %b %Y') }}</td><td>{{ renewal.new_start.strftime('%d %b %Y') }} to {{ renewal.new_end.strftime('%d %b %Y') }}</td><td>₹{{ renewal.amount }}</td></tr>
+                    <tr>
+                        <td>{{ renewal.previous_end.strftime('%d %b %Y') }}</td>
+                        <td>{{ renewal.new_start.strftime('%d %b %Y') }} to {{ renewal.new_end.strftime('%d %b %Y') }}</td>
+                        <td>&#8377;{{ renewal.amount }}</td>
+                    </tr>
                     {% else %}
                     <tr><td colspan="3" class="text-secondary">No renewals yet.</td></tr>
                     {% endfor %}

@@ -39,7 +39,7 @@ def index():
     page = request.args.get("page", 1, type=int)
     status = request.args.get("status", "")
     search = request.args.get("q", "").strip()
-    query = Member.query.filter_by(gym_id=current_user.gym_id)
+    query = Member.query.filter_by(gym_id=current_user.gym_id).filter(Member.deleted_at.is_(None))
     if status:
         query = query.filter(Member.status == status)
     if search:
@@ -115,11 +115,14 @@ def edit(member_id: int):
 @active_gym_required
 @roles_required("gym_owner")
 def delete(member_id: int):
+    from app.models.mixins import utcnow
+
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
-    audit(action="delete_member", resource_type="member", resource_id=member.id)
-    db.session.delete(member)
+    member.deleted_at = utcnow()
+    member.status = "deleted"
+    audit(action="soft_delete_member", resource_type="member", resource_id=member.id)
     db.session.commit()
-    flash("Member deleted.", "success")
+    flash("Member removed.", "success")
     return redirect(url_for("members.index"))
 
 

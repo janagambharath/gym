@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import string
-
+from jinja2 import Undefined
+from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import Index
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin
+
+
+_JINJA_ENV = SandboxedEnvironment(undefined=Undefined, autoescape=False)
 
 
 class NotificationTemplate(TenantMixin, TimestampMixin, db.Model):
@@ -25,18 +28,13 @@ class NotificationTemplate(TenantMixin, TimestampMixin, db.Model):
     reminder_logs = db.relationship("ReminderLog", back_populates="template")
 
     def render(self, *, gym_name: str, member_name: str, expiry_date: str) -> str:
-        values = {
-            "gym_name": gym_name.replace("$", ""),
-            "member_name": member_name.replace("$", ""),
-            "expiry_date": expiry_date.replace("$", ""),
+        context = {
+            "gym_name": gym_name,
+            "member_name": member_name,
+            "expiry_date": expiry_date,
         }
-        normalized = (
-            self.message_body.replace("{{ gym_name }}", "${gym_name}")
-            .replace("{{ member_name }}", "${member_name}")
-            .replace("{{ expiry_date }}", "${expiry_date}")
-        )
         try:
-            return string.Template(normalized).safe_substitute(values)
+            return _JINJA_ENV.from_string(self.message_body).render(**context)
         except Exception:
             return (
                 self.message_body.replace("{{ gym_name }}", gym_name)

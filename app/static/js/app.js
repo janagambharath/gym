@@ -25,4 +25,24 @@ document.addEventListener("DOMContentLoaded", () => {
       instance.close();
     }, 5000);
   });
+
+  document.querySelectorAll("[data-confirm]").forEach((control) => {
+    control.addEventListener("click", (event) => {
+      const message = control.getAttribute("data-confirm");
+      if (message && !window.confirm(message)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+  });
+
+  const scanForm = document.getElementById("scan-form");
+  scanForm?.addEventListener("submit", () => {
+    document.querySelector(".scan-idle")?.classList.add("d-none");
+    document.querySelector(".scan-loading")?.classList.remove("d-none");
+    const scanButton = document.getElementById("scan-btn");
+    if (scanButton) {
+      scanButton.disabled = true;
+    }
+  });
 });

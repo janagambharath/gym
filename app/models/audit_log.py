@@ -3,10 +3,10 @@ from __future__ import annotations
 from sqlalchemy import Index
 
 from app.extensions import db
-from app.models.mixins import TimestampMixin
+from app.models.mixins import utcnow
 
 
-class AuditLog(TimestampMixin, db.Model):
+class AuditLog(db.Model):
     __tablename__ = "audit_logs"
     __table_args__ = (
         Index("ix_audit_gym_created", "gym_id", "created_at"),
@@ -14,6 +14,7 @@ class AuditLog(TimestampMixin, db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     gym_id = db.Column(
         db.Integer, db.ForeignKey("gyms.id", ondelete="CASCADE"), nullable=True, index=True
     )

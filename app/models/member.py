@@ -46,6 +46,7 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     membership_start = db.Column(db.Date, nullable=False, default=date.today)
     membership_end = db.Column(db.Date, nullable=False)
     status = db.Column(db.String(32), nullable=False, default="active", index=True)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
     external_ref = db.Column(db.String(120), nullable=True)
 
@@ -68,6 +69,10 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     @property
     def is_expired(self) -> bool:
         return self.membership_end < date.today()
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
 
     def refresh_status(self) -> None:
         self.status = "expired" if self.is_expired else "active"

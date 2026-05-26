@@ -53,11 +53,4 @@
     </div>
     {% include "partials/pagination.html" %}
 </div>
-<script>
-document.getElementById("scan-form")?.addEventListener("submit", function () {
-    document.querySelector(".scan-idle")?.classList.add("d-none");
-    document.querySelector(".scan-loading")?.classList.remove("d-none");
-    document.getElementById("scan-btn").disabled = true;
-});
-</script>
 {% endblock %}

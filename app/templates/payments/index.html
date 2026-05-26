@@ -24,18 +24,24 @@
             {% for payment in pagination.items %}
             <tr>
                 <td><a href="{{ url_for('members.detail', member_id=payment.member_id) }}">{{ payment.member.full_name }}</a></td>
-                <td>₹{{ payment.amount }}</td>
-                <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '—' }}</td>
+                <td>&#8377;{{ payment.amount }}</td>
+                <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '&mdash;'|safe }}</td>
                 <td><span class="badge status-{{ payment.status }}">{{ payment.status }}</span></td>
                 <td class="text-end">
                     {% if payment.status == 'pending' %}
                     <form class="d-inline" method="post" action="{{ url_for('payments.verify', payment_id=payment.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-success"><i class="bi bi-check2"></i></button>
+                        <button
+                            class="btn btn-sm btn-success"
+                            data-confirm="Verify this payment and extend membership?"
+                        ><i class="bi bi-check2"></i></button>
                     </form>
                     <form class="d-inline" method="post" action="{{ url_for('payments.reject', payment_id=payment.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
+                        <button
+                            class="btn btn-sm btn-outline-danger"
+                            data-confirm="Reject this payment? This cannot be undone."
+                        ><i class="bi bi-x"></i></button>
                     </form>
                     {% endif %}
                 </td>

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 from flask_login import UserMixin
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -16,10 +18,12 @@ class User(UserMixin, TimestampMixin, db.Model):
     )
     email = db.Column(db.String(255), nullable=False, unique=True, index=True)
     full_name = db.Column(db.String(160), nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
+    password_hash = db.Column(db.Text, nullable=False)
     role = db.Column(db.String(32), nullable=False, default="staff", index=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    failed_login_count = db.Column(db.Integer, nullable=False, default=0)
+    locked_until = db.Column(db.DateTime(timezone=True), nullable=True)
 
     gym = db.relationship("Gym", back_populates="users")
 
@@ -31,6 +35,25 @@ class User(UserMixin, TimestampMixin, db.Model):
 
     def mark_login(self) -> None:
         self.last_login_at = utcnow()
+
+    def is_locked(self) -> bool:
+        if self.locked_until is None:
+            return False
+        locked_until = self.locked_until
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        return utcnow() < locked_until
+
+    def record_failed_login(self) -> None:
+        self.failed_login_count = (self.failed_login_count or 0) + 1
+        if self.failed_login_count >= 10:
+            from datetime import timedelta
+
+            self.locked_until = utcnow() + timedelta(minutes=15)
+
+    def reset_failed_logins(self) -> None:
+        self.failed_login_count = 0
+        self.locked_until = None
 
     def can_manage_gym(self, gym_id: int) -> bool:
         return self.role == "super_admin" or self.gym_id == gym_id

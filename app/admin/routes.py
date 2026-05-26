@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import login_required
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import Gym, Member, PaymentVerification, ReminderLog, User
@@ -20,7 +21,7 @@ def dashboard():
     stats = {
         "gyms": Gym.query.count(),
         "active_gyms": Gym.query.filter_by(status="active").count(),
-        "members": Member.query.count(),
+        "members": Member.query.filter(Member.deleted_at.is_(None)).count(),
         "sent_reminders": ReminderLog.query.filter_by(status="sent").count(),
         "revenue_verified": PaymentVerification.query.with_entities(
             func.coalesce(func.sum(PaymentVerification.amount), 0)
@@ -31,6 +32,7 @@ def dashboard():
     recent_gyms = Gym.query.order_by(Gym.created_at.desc()).limit(8).all()
     failed_reminders = (
         ReminderLog.query.filter_by(status="failed")
+        .options(joinedload(ReminderLog.member))
         .order_by(ReminderLog.created_at.desc())
         .limit(8)
         .all()
@@ -77,7 +79,7 @@ def gym_detail(gym_id: int):
     gym = Gym.query.get_or_404(gym_id)
     stats = {
         "users": User.query.filter_by(gym_id=gym.id).count(),
-        "members": Member.query.filter_by(gym_id=gym.id).count(),
+        "members": Member.query.filter_by(gym_id=gym.id).filter(Member.deleted_at.is_(None)).count(),
         "pending_payments": PaymentVerification.query.filter_by(gym_id=gym.id, status="pending").count(),
         "sent_reminders": ReminderLog.query.filter_by(gym_id=gym.id, status="sent").count(),
     }

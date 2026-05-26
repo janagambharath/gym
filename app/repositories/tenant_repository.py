@@ -11,10 +11,16 @@ class TenantRepository:
         self.gym_id = gym_id
 
     def query(self):
-        return self.model.query.filter_by(gym_id=self.gym_id)
+        query = self.model.query.filter_by(gym_id=self.gym_id)
+        if hasattr(self.model, "deleted_at"):
+            query = query.filter(self.model.deleted_at.is_(None))
+        return query
 
-    def get_or_404(self, object_id: int):
-        item = self.query().filter_by(id=object_id).first()
+    def get_or_404(self, object_id: int, load_options=None):
+        query = self.query().filter_by(id=object_id)
+        if load_options:
+            query = query.options(*load_options)
+        item = query.first()
         if item is None:
             abort(404)
         return item

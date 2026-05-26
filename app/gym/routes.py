@@ -31,6 +31,7 @@ def dashboard():
         Member.query.filter(
             Member.gym_id == gym_id,
             Member.status == "active",
+            Member.deleted_at.is_(None),
             Member.membership_end >= date.today(),
             Member.membership_end <= date.today() + timedelta(days=14),
         )

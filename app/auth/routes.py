@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from urllib.parse import urljoin, urlparse
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import IntegrityError
+from werkzeug.security import check_password_hash
 
 from app.extensions import db, limiter
 from app.forms import LoginForm, RegisterGymForm
@@ -14,6 +15,12 @@ from app.utils.helpers import slugify
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+_DUMMY_HASH = (
+    "scrypt:32768:8:1$GQmmIBLE1bn1DV52"
+    "$05eaf8274eb21937778541fcca673d6168266f7a21e8bfe7575777468dc7d164"
+    "9fb81317f11fde3958d2d31d21667182acdc5266d74d33eedc2b7bbdfbd9db23"
+)
 
 
 def _is_safe_redirect(url: str | None) -> bool:
@@ -33,7 +40,23 @@ def login():
     form = LoginForm()
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data.lower().strip()).first()
-        if not user or not user.check_password(form.password.data):
+        if user and user.is_locked():
+            flash(
+                "Account is temporarily locked due to too many failed attempts. "
+                "Try again in 15 minutes.",
+                "danger",
+            )
+            return render_template("auth/login.html", form=form)
+
+        password_ok = (
+            user.check_password(form.password.data)
+            if user
+            else check_password_hash(_DUMMY_HASH, form.password.data)
+        )
+        if not user or not password_ok:
+            if user:
+                user.record_failed_login()
+                db.session.commit()
             flash("Invalid email or password.", "danger")
             return render_template("auth/login.html", form=form)
         if not user.is_active:
@@ -44,6 +67,8 @@ def login():
             return render_template("auth/login.html", form=form)
 
         login_user(user, remember=form.remember.data)
+        session.permanent = True
+        user.reset_failed_logins()
         user.mark_login()
         audit(action="login", resource_type="user", resource_id=user.id, gym_id=user.gym_id)
         db.session.commit()
