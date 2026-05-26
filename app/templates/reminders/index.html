@@ -2,9 +2,14 @@
 {% block title %}Reminders | RenewalDesk{% endblock %}
 {% block page_title %}WhatsApp Reminders{% endblock %}
 {% block page_actions %}
-<form method="post" action="{{ url_for('reminders.run_now') }}">
+<form method="post" action="{{ url_for('reminders.run_now') }}" id="scan-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-primary"><i class="bi bi-send"></i> Run scan</button>
+    <button class="btn btn-primary" id="scan-btn" type="submit">
+        <span class="scan-idle"><i class="bi bi-send"></i> Run scan</span>
+        <span class="scan-loading d-none">
+            <span class="spinner-border spinner-border-sm me-1"></span> Scanning...
+        </span>
+    </button>
 </form>
 {% endblock %}
 {% block content %}
@@ -48,4 +53,11 @@
     </div>
     {% include "partials/pagination.html" %}
 </div>
+<script>
+document.getElementById("scan-form")?.addEventListener("submit", function () {
+    document.querySelector(".scan-idle")?.classList.add("d-none");
+    document.querySelector(".scan-loading")?.classList.remove("d-none");
+    document.getElementById("scan-btn").disabled = true;
+});
+</script>
 {% endblock %}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import ReminderLog
@@ -24,8 +25,10 @@ def index():
     query = ReminderLog.query.filter_by(gym_id=current_user.gym_id)
     if status:
         query = query.filter_by(status=status)
-    pagination = query.order_by(ReminderLog.created_at.desc()).paginate(
-        page=page, per_page=20, error_out=False
+    pagination = (
+        query.options(joinedload(ReminderLog.member))
+        .order_by(ReminderLog.created_at.desc())
+        .paginate(page=page, per_page=20, error_out=False)
     )
     return render_template("reminders/index.html", pagination=pagination, status=status)
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import string
+
 from sqlalchemy import Index
 
 from app.extensions import db
@@ -23,8 +25,21 @@ class NotificationTemplate(TenantMixin, TimestampMixin, db.Model):
     reminder_logs = db.relationship("ReminderLog", back_populates="template")
 
     def render(self, *, gym_name: str, member_name: str, expiry_date: str) -> str:
-        return (
-            self.message_body.replace("{{ gym_name }}", gym_name)
-            .replace("{{ member_name }}", member_name)
-            .replace("{{ expiry_date }}", expiry_date)
+        values = {
+            "gym_name": gym_name.replace("$", ""),
+            "member_name": member_name.replace("$", ""),
+            "expiry_date": expiry_date.replace("$", ""),
+        }
+        normalized = (
+            self.message_body.replace("{{ gym_name }}", "${gym_name}")
+            .replace("{{ member_name }}", "${member_name}")
+            .replace("{{ expiry_date }}", "${expiry_date}")
         )
+        try:
+            return string.Template(normalized).safe_substitute(values)
+        except Exception:
+            return (
+                self.message_body.replace("{{ gym_name }}", gym_name)
+                .replace("{{ member_name }}", member_name)
+                .replace("{{ expiry_date }}", expiry_date)
+            )

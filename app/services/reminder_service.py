@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import requests as http_requests
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Gym, Member, NotificationTemplate, QRSettings, ReminderLog
+from app.models import Gym, Member, NotificationTemplate, QRSettings, ReminderLog, RenewalHistory
 from app.models.mixins import utcnow
 from app.services.whatsapp_service import WhatsAppService
-from app.utils.helpers import phone_to_whatsapp, public_upload_url
+from app.utils.helpers import phone_to_whatsapp, signed_upload_url
 
 
 def stage_for_days(days_before: int) -> str:
@@ -21,9 +23,14 @@ def stage_for_days(days_before: int) -> str:
 
 def due_members_for_gym(gym_id: int, days_before: int) -> list[Member]:
     target_date = date.today() + timedelta(days=days_before)
+    already_renewed = select(RenewalHistory.member_id).where(
+        RenewalHistory.gym_id == gym_id,
+        RenewalHistory.previous_end == target_date,
+    )
     return (
         Member.query.filter_by(gym_id=gym_id, status="active")
         .filter(Member.membership_end == target_date)
+        .filter(~Member.id.in_(already_renewed))
         .all()
     )
 
@@ -97,7 +104,7 @@ def create_or_get_log(member: Member, template: NotificationTemplate, days_befor
     db.session.add(log)
     try:
         db.session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.session.rollback()
         log = ReminderLog.query.filter_by(
             gym_id=member.gym_id,
@@ -106,7 +113,35 @@ def create_or_get_log(member: Member, template: NotificationTemplate, days_befor
             reminder_stage=stage,
             channel="whatsapp",
         ).first()
+        if log is None:
+            raise exc
     return log
+
+
+def _resolve_qr_url(gym_id: int) -> str | None:
+    qr = QRSettings.query.filter_by(gym_id=gym_id, is_active=True).first()
+    if not qr:
+        return None
+
+    candidate = qr.qr_public_url or None
+    if not candidate and qr.qr_image_path:
+        if qr.qr_image_path.startswith(("http://", "https://")):
+            candidate = qr.qr_image_path
+        else:
+            candidate = signed_upload_url(qr.qr_image_path)
+
+    if not candidate:
+        return None
+    if "localhost" in candidate or "127.0.0.1" in candidate:
+        return None
+
+    try:
+        response = http_requests.head(candidate, timeout=5, allow_redirects=True)
+        if response.status_code >= 400:
+            return None
+    except Exception:
+        return None
+    return candidate
 
 
 def send_reminder(log: ReminderLog) -> ReminderLog:
@@ -114,7 +149,7 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
         return log
 
     member = log.member
-    gym = Gym.query.get(member.gym_id)
+    gym = db.session.get(Gym, member.gym_id)
     template = log.template or ensure_default_template(member.gym_id)
     message = template.render(
         gym_name=gym.name,
@@ -122,11 +157,7 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
         expiry_date=member.membership_end.strftime("%d %b %Y"),
     )
 
-    qr = QRSettings.query.filter_by(gym_id=member.gym_id, is_active=True).first()
-    qr_url = qr.qr_public_url if qr and qr.qr_public_url else None
-    if not qr_url and qr and qr.qr_image_path:
-        qr_url = public_upload_url(qr.qr_image_path)
-
+    qr_url = _resolve_qr_url(member.gym_id)
     whatsapp = WhatsAppService()
     log.attempts += 1
     log.message_snapshot = message
@@ -136,7 +167,9 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
         else:
             result = whatsapp.send_text(to=log.phone_snapshot, body=message)
     except Exception as exc:
-        result = type("Result", (), {"ok": False, "error": str(exc), "provider_message_id": None})()
+        result = type(
+            "Result", (), {"ok": False, "error": str(exc)[:200], "provider_message_id": None}
+        )()
 
     if result.ok:
         log.status = "sent"
@@ -145,21 +178,25 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
         log.error_message = None
     else:
         log.status = "failed"
-        log.error_message = result.error
+        log.error_message = (result.error or "Unknown error")[:500]
     return log
 
 
 def run_due_reminders_for_gym(gym_id: int, days_before_values: list[int]) -> dict:
     counts = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
-    for days_before in days_before_values:
-        template = template_for(gym_id, days_before) or ensure_default_template(gym_id)
-        for member in due_members_for_gym(gym_id, days_before):
-            log = create_or_get_log(member, template, days_before)
-            if log.status == "sent":
-                counts["skipped"] += 1
-                continue
-            send_reminder(log)
-            counts["queued"] += 1
-            counts[log.status] = counts.get(log.status, 0) + 1
-    db.session.commit()
+    try:
+        for days_before in days_before_values:
+            template = template_for(gym_id, days_before) or ensure_default_template(gym_id)
+            for member in due_members_for_gym(gym_id, days_before):
+                log = create_or_get_log(member, template, days_before)
+                if log.status == "sent":
+                    counts["skipped"] += 1
+                    continue
+                send_reminder(log)
+                counts["queued"] += 1
+                counts[log.status] = counts.get(log.status, 0) + 1
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
     return counts

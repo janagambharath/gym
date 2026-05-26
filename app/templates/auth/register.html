@@ -2,8 +2,8 @@
 {% block title %}Create Gym | RenewalDesk{% endblock %}
 {% block auth_content %}
 <div class="auth-card auth-card-wide">
-    <div class="brand auth-brand"><span class="brand-mark">R</span><span>RenewalDesk</span></div>
-    <h1 class="auth-title">Create gym account</h1>
+    <h1 class="auth-card-title">Create gym account</h1>
+    <p class="auth-card-sub">Set up a tenant-safe workspace for your gym.</p>
     <form method="post" novalidate>
         {{ form.hidden_tag() }}
         {% include "partials/form_errors.html" %}

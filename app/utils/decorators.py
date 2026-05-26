@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import wraps
 
 from flask import abort, flash, redirect, url_for
-from flask_login import current_user
+from flask_login import current_user, logout_user
 
 
 def roles_required(*roles: str):
@@ -30,7 +30,8 @@ def active_gym_required(view):
             return view(*args, **kwargs)
         if current_user.gym is None or not current_user.gym.is_operational():
             flash("This gym account is not active. Contact platform support.", "warning")
-            return redirect(url_for("auth.logout"))
+            logout_user()
+            return redirect(url_for("auth.login"))
         return view(*args, **kwargs)
 
     return wrapped

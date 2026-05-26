@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.forms import MembershipPlanForm, NotificationTemplateForm, QRSettingsForm
 from app.models import Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
+from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
 from app.services.storage_service import save_gym_qr
@@ -24,13 +28,20 @@ def dashboard():
     gym_id = current_user.gym_id
     stats = gym_dashboard_stats(gym_id)
     expiring_members = (
-        Member.query.filter_by(gym_id=gym_id)
+        Member.query.filter(
+            Member.gym_id == gym_id,
+            Member.status == "active",
+            Member.membership_end >= date.today(),
+            Member.membership_end <= date.today() + timedelta(days=14),
+        )
+        .options(joinedload(Member.plan))
         .order_by(Member.membership_end.asc())
-        .limit(8)
+        .limit(10)
         .all()
     )
     recent_payments = (
         PaymentVerification.query.filter_by(gym_id=gym_id)
+        .options(joinedload(PaymentVerification.member))
         .order_by(PaymentVerification.created_at.desc())
         .limit(8)
         .all()
@@ -151,7 +162,7 @@ def plans():
 @active_gym_required
 @roles_required("gym_owner")
 def toggle_plan(plan_id: int):
-    plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=current_user.gym_id).first_or_404()
+    plan = TenantRepository(MembershipPlan, current_user.gym_id).get_or_404(plan_id)
     plan.is_active = not plan.is_active
     audit(action="toggle_plan", resource_type="membership_plan", resource_id=plan.id)
     db.session.commit()

@@ -18,7 +18,7 @@ class PaymentVerificationForm(FlaskForm):
     status = SelectField(
         "Status",
         choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
-        validators=[DataRequired()],
+        validators=[Optional()],
     )
     renewal_days = DecimalField(
         "Renewal days", places=0, validators=[DataRequired(), NumberRange(min=1)]

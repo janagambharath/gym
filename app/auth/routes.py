@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from urllib.parse import urljoin, urlparse
+
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import IntegrityError
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.forms import LoginForm, RegisterGymForm
 from app.models import Gym, MembershipPlan, NotificationTemplate, QRSettings, User
 from app.services.audit_service import audit
@@ -14,7 +16,16 @@ from app.utils.helpers import slugify
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 
 
+def _is_safe_redirect(url: str | None) -> bool:
+    if not url:
+        return False
+    ref = urlparse(urljoin(request.host_url, url))
+    host = urlparse(request.host_url)
+    return ref.scheme in {"http", "https"} and ref.netloc == host.netloc
+
+
 @auth_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute; 60 per hour")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("admin.dashboard" if current_user.is_super_admin else "gym.dashboard"))
@@ -38,12 +49,15 @@ def login():
         db.session.commit()
 
         next_url = request.args.get("next")
+        if not _is_safe_redirect(next_url):
+            next_url = None
         return redirect(next_url or url_for("admin.dashboard" if user.is_super_admin else "gym.dashboard"))
 
     return render_template("auth/login.html", form=form)
 
 
 @auth_bp.route("/register", methods=["GET", "POST"])
+@limiter.limit("5 per hour")
 def register():
     if current_user.is_authenticated:
         return redirect(url_for("gym.dashboard"))
@@ -102,7 +116,7 @@ def register():
     return render_template("auth/register.html", form=form)
 
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
     audit(action="logout", resource_type="user", resource_id=current_user.id, gym_id=current_user.gym_id)

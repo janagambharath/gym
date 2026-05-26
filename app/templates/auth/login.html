@@ -2,8 +2,8 @@
 {% block title %}Sign in | RenewalDesk{% endblock %}
 {% block auth_content %}
 <div class="auth-card">
-    <div class="brand auth-brand"><span class="brand-mark">R</span><span>RenewalDesk</span></div>
-    <h1 class="auth-title">Sign in</h1>
+    <h1 class="auth-card-title">Sign in</h1>
+    <p class="auth-card-sub">Access your gym renewal workspace.</p>
     <form method="post" novalidate>
         {{ form.hidden_tag() }}
         {% include "partials/form_errors.html" %}
@@ -20,7 +20,7 @@
                 {{ form.remember(class="form-check-input") }}
                 {{ form.remember.label(class="form-check-label") }}
             </div>
-            <a href="{{ url_for('auth.register') }}" class="small">Create gym</a>
+            <a href="{{ url_for('auth.register') }}" class="small text-muted">Create gym</a>
         </div>
         {{ form.submit(class="btn btn-primary w-100") }}
     </form>

@@ -48,4 +48,4 @@ class User(UserMixin, TimestampMixin, db.Model):
 def load_user(user_id: str) -> User | None:
     if not user_id.isdigit():
         return None
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))

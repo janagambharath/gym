@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import requests
@@ -46,7 +47,7 @@ class WhatsAppService:
         }
         return self._post(payload)
 
-    def _post(self, payload: dict) -> WhatsAppResult:
+    def _post(self, payload: dict, *, retries: int = 3) -> WhatsAppResult:
         if not self.phone_number_id or not self.access_token:
             return WhatsAppResult(ok=False, error="WhatsApp credentials are missing")
 
@@ -54,16 +55,54 @@ class WhatsAppService:
             f"https://graph.facebook.com/{self.api_version}/"
             f"{self.phone_number_id}/messages"
         )
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {self.access_token}"},
-            timeout=20,
-        )
-        if response.status_code >= 400:
-            return WhatsAppResult(ok=False, error=response.text[:1000])
-        data = response.json()
-        message_id = None
-        if data.get("messages"):
-            message_id = data["messages"][0].get("id")
-        return WhatsAppResult(ok=True, provider_message_id=message_id)
+        last_error = "Unknown error"
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self.access_token}"},
+                    timeout=20,
+                )
+            except requests.Timeout:
+                last_error = "Request timed out"
+                time.sleep(2 ** attempt)
+                continue
+            except requests.ConnectionError:
+                last_error = "Connection error"
+                time.sleep(2 ** attempt)
+                continue
+
+            if response.status_code == 429:
+                wait = int(response.headers.get("Retry-After", 2 ** attempt))
+                current_app.logger.warning("WhatsApp rate limited, waiting %ds", wait)
+                time.sleep(min(wait, 30))
+                last_error = "Rate limited"
+                continue
+
+            if response.status_code >= 500:
+                last_error = f"HTTP {response.status_code}"
+                time.sleep(2 ** attempt)
+                continue
+
+            if response.status_code >= 400:
+                safe_error = f"HTTP {response.status_code}"
+                try:
+                    error_data = response.json()
+                    safe_error = error_data.get("error", {}).get("message", safe_error)[:200]
+                except Exception:
+                    pass
+                current_app.logger.warning(
+                    "WhatsApp API error %s for phone_number_id %s",
+                    response.status_code,
+                    self.phone_number_id,
+                )
+                return WhatsAppResult(ok=False, error=safe_error)
+
+            data = response.json()
+            message_id = None
+            if data.get("messages"):
+                message_id = data["messages"][0].get("id")
+            return WhatsAppResult(ok=True, provider_message_id=message_id)
+
+        return WhatsAppResult(ok=False, error=f"Failed after {retries} attempts: {last_error}")

@@ -5,6 +5,7 @@ from datetime import date
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.forms import MemberForm
@@ -44,8 +45,10 @@ def index():
     if search:
         like = f"%{search}%"
         query = query.filter(or_(Member.full_name.ilike(like), Member.phone.ilike(like)))
-    pagination = query.order_by(Member.membership_end.asc()).paginate(
-        page=page, per_page=20, error_out=False
+    pagination = (
+        query.options(joinedload(Member.plan))
+        .order_by(Member.membership_end.asc())
+        .paginate(page=page, per_page=20, error_out=False)
     )
     return render_template("members/index.html", pagination=pagination, status=status, search=search)
 

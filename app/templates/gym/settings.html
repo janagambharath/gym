@@ -27,6 +27,8 @@
             <h2>Current QR</h2>
             {% if qr_settings.qr_public_url %}
             <img class="qr-preview" src="{{ qr_settings.qr_public_url }}" alt="Payment QR">
+            {% elif qr_settings.qr_image_path and qr_settings.qr_image_path.startswith('http') %}
+            <img class="qr-preview" src="{{ qr_settings.qr_image_path }}" alt="Payment QR">
             {% elif qr_settings.qr_image_path %}
             <img class="qr-preview" src="{{ url_for('uploaded_file', filename=qr_settings.qr_image_path) }}" alt="Payment QR">
             {% else %}

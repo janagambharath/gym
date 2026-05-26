@@ -27,6 +27,7 @@ Set `DATABASE_URL` in `.env`. For quick local development you can omit it and th
 
 ```bash
 flask --app app:create_app db upgrade
+set DEFAULT_ADMIN_PASSWORD=ChangeMe123!
 flask --app app:create_app create-admin
 flask --app app:create_app seed-demo
 flask --app app:create_app run
@@ -44,7 +45,7 @@ Demo tenant after `seed-demo`:
 - Owner: `owner@example.com`
 - Password: `ChangeMe123!`
 
-Super admin after `create-admin`:
+Super admin after `create-admin` with the example password above:
 
 - Admin: `admin@example.com`
 - Password: `ChangeMe123!`
@@ -61,11 +62,13 @@ flask --app app:create_app db upgrade
 flask --app app:create_app create-admin
 ```
 
-For one web process, APScheduler can run inside the Flask app with `ENABLE_SCHEDULER=true`. If you scale to multiple web workers or replicas, set `ENABLE_SCHEDULER=false` for web and run exactly one scheduler/cron process using:
+For production, keep `ENABLE_SCHEDULER=false` on web workers and run reminders from exactly one Railway cron/worker process:
 
 ```bash
 flask --app app:create_app run-reminders
 ```
+
+In development, `DevelopmentConfig` enables the in-process scheduler by default. If you run multiple local app processes, set `ENABLE_SCHEDULER=false`.
 
 ## WhatsApp
 
@@ -76,7 +79,7 @@ Set:
 - `WHATSAPP_ACCESS_TOKEN`
 - `PUBLIC_BASE_URL`
 
-Each gym can upload a QR image or provide a public QR URL. Reminder messages attach the QR image when a reachable URL is available.
+Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL.
 
 ## Tenant safety
 

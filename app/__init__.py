@@ -6,11 +6,22 @@ from pathlib import Path
 
 from datetime import datetime
 
-from flask import Flask, redirect, render_template, request, send_from_directory, url_for
-from flask_login import current_user
+from flask import (
+    Flask,
+    abort,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
+from flask_login import current_user, login_required
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from sqlalchemy import text
 
 from app.config import config_by_name
-from app.extensions import csrf, db, login_manager, migrate, scheduler
+from app.extensions import csrf, db, limiter, login_manager, migrate, scheduler
 
 
 def create_app(config_name: str | None = None) -> Flask:
@@ -19,11 +30,14 @@ def create_app(config_name: str | None = None) -> Flask:
     app.config.from_object(config_by_name[selected_config])
 
     _normalize_database_url(app)
+    _validate_config(app, selected_config)
     _ensure_runtime_dirs(app)
     _configure_logging(app)
     _init_extensions(app)
     _register_blueprints(app)
     _register_error_handlers(app)
+    _register_security_headers(app)
+    _register_health_check(app)
     _register_upload_route(app)
     _register_template_helpers(app)
     _register_cli(app)
@@ -48,12 +62,45 @@ def _normalize_database_url(app: Flask) -> None:
         )
 
 
+def _validate_config(app: Flask, selected_config: str) -> None:
+    if selected_config != "production":
+        return
+    secret_key = app.config.get("SECRET_KEY", "")
+    if not secret_key or secret_key == "dev-only-change-me" or len(secret_key) < 32:
+        raise RuntimeError(
+            "SECRET_KEY is not set or too weak. Generate one with: "
+            "python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
+
 def _ensure_runtime_dirs(app: Flask) -> None:
     Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 
 
 def _configure_logging(app: Flask) -> None:
+    if not app.debug and not app.testing:
+        import json
+
+        class JsonFormatter(logging.Formatter):
+            def format(self, record: logging.LogRecord) -> str:
+                payload = {
+                    "time": self.formatTime(record),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "message": record.getMessage(),
+                }
+                if record.exc_info:
+                    payload["exception"] = self.formatException(record.exc_info)
+                return json.dumps(payload)
+
+        handler = logging.StreamHandler()
+        handler.setFormatter(JsonFormatter())
+        root_logger = logging.getLogger()
+        root_logger.setLevel(app.config["LOG_LEVEL"])
+        root_logger.handlers = [handler]
+        return
+
     logging.basicConfig(
         level=app.config["LOG_LEVEL"],
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
@@ -64,6 +111,7 @@ def _init_extensions(app: Flask) -> None:
     db.init_app(app)
     migrate.init_app(app, db)
     csrf.init_app(app)
+    limiter.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
     login_manager.login_message_category = "warning"
@@ -100,9 +148,63 @@ def _register_error_handlers(app: Flask) -> None:
         return render_template("errors/500.html"), 500
 
 
+def _register_security_headers(app: Flask) -> None:
+    @app.after_request
+    def set_security_headers(response):
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+        if not app.debug:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        return response
+
+
+def _register_health_check(app: Flask) -> None:
+    @app.route("/health")
+    def health():
+        try:
+            db.session.execute(text("SELECT 1"))
+            return jsonify({"status": "ok", "db": "ok"}), 200
+        except Exception as exc:
+            app.logger.exception("Health check DB failure")
+            return jsonify({"status": "error", "db": str(exc)}), 503
+
+
 def _register_upload_route(app: Flask) -> None:
     @app.route("/uploads/<path:filename>")
+    @login_required
     def uploaded_file(filename: str):
+        parts = filename.replace("\\", "/").split("/")
+        if parts and parts[0] == "gym_qr" and len(parts) >= 2:
+            try:
+                file_gym_id = int(parts[1])
+            except ValueError:
+                abort(403)
+            if not current_user.is_super_admin and current_user.gym_id != file_gym_id:
+                abort(403)
+        elif not current_user.is_super_admin:
+            abort(403)
+        return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+    @app.route("/media/qr/<token>")
+    def signed_qr_file(token: str):
+        serializer = URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="qr-media")
+        try:
+            payload = serializer.loads(token, max_age=24 * 60 * 60)
+        except (BadSignature, SignatureExpired):
+            abort(403)
+
+        filename = str(payload.get("path", "")).replace("\\", "/")
+        parts = filename.split("/")
+        if len(parts) < 3 or parts[0] != "gym_qr":
+            abort(403)
+        try:
+            int(parts[1])
+        except ValueError:
+            abort(403)
         return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
@@ -122,8 +224,11 @@ def _register_cli(app: Flask) -> None:
 
     @app.cli.command("create-admin")
     def create_admin() -> None:
-        email = app.config["DEFAULT_ADMIN_EMAIL"]
-        password = app.config["DEFAULT_ADMIN_PASSWORD"]
+        email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com")
+        password = os.getenv("DEFAULT_ADMIN_PASSWORD")
+        if not password:
+            print("ERROR: Set DEFAULT_ADMIN_PASSWORD before running create-admin.")
+            return
         user = User.query.filter_by(email=email).first()
         if user:
             print(f"Admin already exists: {email}")
@@ -154,13 +259,14 @@ def _register_cli(app: Flask) -> None:
 
         owner = User.query.filter_by(email="owner@example.com").first()
         if not owner:
+            owner_password = os.getenv("DEMO_OWNER_PASSWORD", "ChangeMe123!")
             owner = User(
                 gym_id=gym.id,
                 email="owner@example.com",
                 full_name="Demo Owner",
                 role="gym_owner",
             )
-            owner.set_password("ChangeMe123!")
+            owner.set_password(owner_password)
             db.session.add(owner)
 
         plan = MembershipPlan.query.filter_by(gym_id=gym.id, name="Monthly").first()
@@ -220,7 +326,23 @@ def _register_cli(app: Flask) -> None:
 
     @app.cli.command("run-reminders")
     def run_reminders() -> None:
+        from datetime import date
+
+        from app.models import Member
         from app.services.reminder_service import run_due_reminders_for_gym
+
+        today = date.today()
+        expired_ids = (
+            Member.query.filter(Member.membership_end < today, Member.status == "active")
+            .with_entities(Member.id)
+            .all()
+        )
+        if expired_ids:
+            Member.query.filter(Member.id.in_([row.id for row in expired_ids])).update(
+                {"status": "expired"}, synchronize_session=False
+            )
+            db.session.commit()
+            print(f"Auto-expired {len(expired_ids)} members")
 
         active_gyms = Gym.query.filter_by(status="active").all()
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
