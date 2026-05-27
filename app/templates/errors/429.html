@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block page_title %}Too many requests{% endblock %}
+{% block content %}
+<div class="panel empty-state">Too many attempts. Please wait a few minutes and try again.</div>
+{% endblock %}
+{% block auth_content %}
+<div class="auth-card">
+    <h1 class="auth-title">Too many requests</h1>
+    <p class="auth-card-sub">Please wait a few minutes and try again.</p>
+    <a href="{{ url_for('auth.login') }}">Back to sign in</a>
+</div>
+{% endblock %}

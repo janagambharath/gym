@@ -83,7 +83,7 @@ def login():
 
 
 @auth_bp.route("/register", methods=["GET", "POST"])
-@limiter.limit("5 per hour")
+@limiter.limit("30 per hour")
 def register():
     if current_user.is_authenticated:
         return redirect(url_for("gym.dashboard"))

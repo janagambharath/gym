@@ -197,6 +197,10 @@ def _register_error_handlers(app: Flask) -> None:
     def not_found(error):
         return render_template("errors/404.html"), 404
 
+    @app.errorhandler(429)
+    def too_many_requests(error):
+        return render_template("errors/429.html"), 429
+
     @app.errorhandler(500)
     def server_error(error):
         app.logger.exception("Unhandled server error: %s", error)
