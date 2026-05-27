@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
@@ -13,8 +13,9 @@ from app.models import Member, MembershipPlan, NotificationTemplate, PaymentVeri
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
-from app.services.storage_service import save_gym_qr
+from app.services.storage_service import delete_local_upload, save_gym_qr
 from app.utils.decorators import active_gym_required, roles_required
+from app.utils.helpers import normalize_public_media_url
 
 
 gym_bp = Blueprint("gym", __name__, url_prefix="/app")
@@ -90,7 +91,44 @@ def settings():
         .order_by(NotificationTemplate.days_before.asc())
         .all()
     )
-    return render_template("gym/settings.html", form=form, qr_settings=qr_settings, templates=templates)
+    current_qr_url = None
+    if qr_settings.qr_public_url:
+        current_qr_url = normalize_public_media_url(qr_settings.qr_public_url)
+    elif qr_settings.qr_image_path and qr_settings.qr_image_path.startswith("http"):
+        current_qr_url = normalize_public_media_url(qr_settings.qr_image_path)
+    elif qr_settings.qr_image_path:
+        current_qr_url = url_for("uploaded_file", filename=qr_settings.qr_image_path)
+    return render_template(
+        "gym/settings.html",
+        form=form,
+        qr_settings=qr_settings,
+        templates=templates,
+        current_qr_url=current_qr_url,
+    )
+
+
+@gym_bp.post("/settings/qr/remove")
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def remove_qr():
+    qr_settings = QRSettings.query.filter_by(gym_id=current_user.gym_id).first_or_404()
+    old_path = qr_settings.qr_image_path
+    if old_path and not old_path.startswith(("http://", "https://")):
+        try:
+            delete_local_upload(old_path)
+        except Exception:
+            current_app.logger.exception(
+                "Could not remove local QR upload for gym %s",
+                current_user.gym_id,
+            )
+    qr_settings.qr_public_url = None
+    qr_settings.qr_image_path = None
+    qr_settings.is_active = False
+    audit(action="remove_qr_settings", resource_type="qr_settings", resource_id=qr_settings.id)
+    db.session.commit()
+    flash("Payment QR removed.", "success")
+    return redirect(url_for("gym.settings"))
 
 
 @gym_bp.route("/templates/new", methods=["GET", "POST"])

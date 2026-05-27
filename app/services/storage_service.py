@@ -55,6 +55,17 @@ def save_gym_qr(file: FileStorage, gym_id: int) -> str:
     return _save_to_local(file, gym_id, extension)
 
 
+def delete_local_upload(relative_path: str | None) -> None:
+    if not relative_path:
+        return
+    upload_root = Path(current_app.config["UPLOAD_FOLDER"]).resolve()
+    target = (upload_root / relative_path).resolve()
+    if upload_root != target and upload_root not in target.parents:
+        raise ValueError("Refusing to delete a file outside the upload folder.")
+    if target.exists() and target.is_file():
+        target.unlink()
+
+
 def _save_to_local(file: FileStorage, gym_id: int, extension: str) -> str:
     relative_dir = Path("gym_qr") / str(gym_id)
     absolute_dir = Path(current_app.config["UPLOAD_FOLDER"]) / relative_dir

@@ -25,12 +25,14 @@
     <div class="col-lg-3">
         <div class="panel h-100">
             <h2>Current QR</h2>
-            {% if qr_settings.qr_public_url %}
-            <img class="qr-preview" src="{{ qr_settings.qr_public_url }}" alt="Payment QR">
-            {% elif qr_settings.qr_image_path and qr_settings.qr_image_path.startswith('http') %}
-            <img class="qr-preview" src="{{ qr_settings.qr_image_path }}" alt="Payment QR">
-            {% elif qr_settings.qr_image_path %}
-            <img class="qr-preview" src="{{ url_for('uploaded_file', filename=qr_settings.qr_image_path) }}" alt="Payment QR">
+            {% if current_qr_url %}
+            <img class="qr-preview" src="{{ current_qr_url }}" alt="Payment QR">
+            <form method="post" action="{{ url_for('gym.remove_qr') }}" class="mt-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger btn-sm" type="submit">
+                    <i class="bi bi-trash"></i> Remove QR
+                </button>
+            </form>
             {% else %}
             <div class="empty-state">No QR uploaded.</div>
             {% endif %}
