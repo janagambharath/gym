@@ -234,7 +234,9 @@ def _register_health_check(app: Flask) -> None:
     def health():
         try:
             db.session.execute(text("SELECT 1"))
-            return jsonify({"status": "ok", "db": "ok"}), 200
+            db.session.execute(text("SELECT trial_ends_at, max_members FROM gyms LIMIT 1"))
+            db.session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            return jsonify({"status": "ok", "db": "ok", "schema": "ok"}), 200
         except Exception as exc:
             app.logger.exception("Health check DB failure")
             return jsonify({"status": "error", "db": str(exc)}), 503
