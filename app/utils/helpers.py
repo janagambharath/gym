@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date
+from urllib.parse import parse_qs, urlparse
 
 from flask import current_app
 from itsdangerous import URLSafeTimedSerializer
@@ -26,6 +27,27 @@ def phone_to_whatsapp(phone: str) -> str:
     if not E164_RE.match(cleaned):
         raise ValueError(f"Phone number '{phone}' is not a valid E.164 number.")
     return cleaned[1:]
+
+
+def normalize_public_media_url(value: str | None) -> str:
+    """Return a fetchable media URL for common sharing-page links."""
+    url = (value or "").strip()
+    if not url:
+        return ""
+
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if host in {"drive.google.com", "www.drive.google.com"}:
+        file_id = ""
+        match = re.search(r"/file/d/([^/]+)", parsed.path)
+        if match:
+            file_id = match.group(1)
+        else:
+            file_id = (parse_qs(parsed.query).get("id") or [""])[0]
+        if file_id:
+            return f"https://drive.google.com/uc?export=download&id={file_id}"
+
+    return url
 
 
 def pagination_window(page: int, pages: int, radius: int = 2) -> range:

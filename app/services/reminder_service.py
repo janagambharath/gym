@@ -20,7 +20,7 @@ from app.models import (
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
-from app.utils.helpers import phone_to_whatsapp, signed_upload_url
+from app.utils.helpers import normalize_public_media_url, phone_to_whatsapp, signed_upload_url
 
 
 MAX_REMINDER_ATTEMPTS = 5
@@ -190,7 +190,7 @@ def resolve_qr_url(gym_id: int) -> str | None:
     if not qr:
         return None
 
-    candidate = qr.qr_public_url or None
+    candidate = normalize_public_media_url(qr.qr_public_url) or None
     if not candidate and qr.qr_image_path:
         if qr.qr_image_path.startswith(("http://", "https://")):
             candidate = qr.qr_image_path
