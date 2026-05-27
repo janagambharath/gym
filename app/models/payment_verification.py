@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import Index
+from sqlalchemy import CheckConstraint, Index
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin
@@ -13,6 +13,14 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     __table_args__ = (
         Index("ix_payments_gym_status", "gym_id", "status"),
         Index("ix_payments_gym_member", "gym_id", "member_id"),
+        CheckConstraint(
+            "status IN ('pending', 'verified', 'rejected')",
+            name="ck_payments_status",
+        ),
+        CheckConstraint(
+            "renewal_days BETWEEN 1 AND 730",
+            name="ck_payments_renewal_days",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

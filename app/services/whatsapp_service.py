@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass
 
 import requests
 from flask import current_app
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+
+def _build_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(total=0, backoff_factor=0, status_forcelist=[])
+    adapter = HTTPAdapter(pool_connections=2, pool_maxsize=10, max_retries=retry)
+    session.mount("https://", adapter)
+    return session
+
+
+_SESSION = _build_session()
 
 
 @dataclass
@@ -38,14 +52,91 @@ class WhatsAppService:
         if not self.enabled:
             current_app.logger.info("WhatsApp disabled; simulated image message to %s", to)
             return WhatsAppResult(ok=True, provider_message_id="simulated-image")
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": to.replace("+", ""),
-            "type": "image",
-            "image": {"link": image_url, "caption": caption},
-        }
+
+        media_id = self._upload_media(image_url)
+        if media_id:
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": to.replace("+", ""),
+                "type": "image",
+                "image": {"id": media_id, "caption": caption},
+            }
+        else:
+            current_app.logger.warning("Falling back to WhatsApp image link for %s", to)
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": to.replace("+", ""),
+                "type": "image",
+                "image": {"link": image_url, "caption": caption},
+            }
         return self._post(payload)
+
+    def _upload_media(self, image_url: str) -> str | None:
+        url_hash = hashlib.sha256(image_url.encode()).hexdigest()[:16]
+        cache_key = f"wa_media_id:{url_hash}"
+
+        try:
+            import redis as _redis
+
+            redis_client = _redis.from_url(current_app.config["REDIS_URL"], socket_connect_timeout=2)
+            cached = redis_client.get(cache_key)
+            if cached:
+                return cached.decode() if isinstance(cached, bytes) else cached
+        except Exception:
+            redis_client = None
+
+        try:
+            image_response = _SESSION.get(image_url, timeout=15)
+            image_response.raise_for_status()
+            content_type = image_response.headers.get("Content-Type", "image/png")
+            upload_url = (
+                f"https://graph.facebook.com/{self.api_version}/"
+                f"{self.phone_number_id}/media"
+            )
+            response = _SESSION.post(
+                upload_url,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                data={"messaging_product": "whatsapp"},
+                files={"file": ("qr.png", image_response.content, content_type)},
+                timeout=30,
+            )
+            if response.status_code in (401, 403):
+                self._handle_auth_failure(response.status_code)
+            if response.status_code != 200:
+                current_app.logger.warning(
+                    "WhatsApp media upload failed status=%s", response.status_code
+                )
+                return None
+            media_id = response.json().get("id")
+            if media_id and redis_client:
+                try:
+                    redis_client.setex(cache_key, 23 * 3600, media_id)
+                except Exception:
+                    current_app.logger.exception("Could not cache WhatsApp media id")
+            return media_id
+        except Exception as exc:
+            current_app.logger.warning("WhatsApp media upload failed: %s", exc)
+            return None
+
+    def _handle_auth_failure(self, status_code: int) -> None:
+        if status_code not in (401, 403):
+            return
+        try:
+            import sentry_sdk
+
+            sentry_sdk.capture_message(
+                "WhatsApp access token rejected; rotate immediately",
+                level="error",
+            )
+        except Exception:
+            pass
+        current_app.logger.error(
+            "WHATSAPP_TOKEN_INVALID phone_number_id=%s status=%s",
+            self.phone_number_id,
+            status_code,
+        )
 
     def _post(self, payload: dict, *, retries: int = 3) -> WhatsAppResult:
         if not self.phone_number_id or not self.access_token:
@@ -58,7 +149,7 @@ class WhatsAppService:
         last_error = "Unknown error"
         for attempt in range(1, retries + 1):
             try:
-                response = requests.post(
+                response = _SESSION.post(
                     url,
                     json=payload,
                     headers={"Authorization": f"Bearer {self.access_token}"},
@@ -66,15 +157,15 @@ class WhatsAppService:
                 )
             except requests.Timeout:
                 last_error = "Request timed out"
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             except requests.ConnectionError:
                 last_error = "Connection error"
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
 
             if response.status_code == 429:
-                wait = int(response.headers.get("Retry-After", 2 ** attempt))
+                wait = int(response.headers.get("Retry-After", 2**attempt))
                 current_app.logger.warning("WhatsApp rate limited, waiting %ds", wait)
                 time.sleep(min(wait, 30))
                 last_error = "Rate limited"
@@ -82,10 +173,11 @@ class WhatsAppService:
 
             if response.status_code >= 500:
                 last_error = f"HTTP {response.status_code}"
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
 
             if response.status_code >= 400:
+                self._handle_auth_failure(response.status_code)
                 safe_error = f"HTTP {response.status_code}"
                 try:
                     error_data = response.json()

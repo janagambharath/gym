@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from jinja2 import Undefined
 from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import Index
@@ -9,6 +11,7 @@ from app.models.mixins import TenantMixin, TimestampMixin
 
 
 _JINJA_ENV = SandboxedEnvironment(undefined=Undefined, autoescape=False)
+_logger = logging.getLogger(__name__)
 
 
 class NotificationTemplate(TenantMixin, TimestampMixin, db.Model):
@@ -35,9 +38,20 @@ class NotificationTemplate(TenantMixin, TimestampMixin, db.Model):
         }
         try:
             return _JINJA_ENV.from_string(self.message_body).render(**context)
-        except Exception:
+        except Exception as exc:
+            _logger.error(
+                "Template %s (gym %s) failed to render: %s",
+                self.id,
+                self.gym_id,
+                exc,
+            )
+            try:
+                import sentry_sdk
+
+                sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
             return (
-                self.message_body.replace("{{ gym_name }}", gym_name)
-                .replace("{{ member_name }}", member_name)
-                .replace("{{ expiry_date }}", expiry_date)
+                f"Hi {member_name}, your {gym_name} membership expires on "
+                f"{expiry_date}. Please renew to keep access active."
             )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin
@@ -32,6 +32,10 @@ class Member(TenantMixin, TimestampMixin, db.Model):
         Index("ix_members_gym_status", "gym_id", "status"),
         Index("ix_members_gym_expiry", "gym_id", "membership_end"),
         Index("ix_members_gym_phone", "gym_id", "phone"),
+        CheckConstraint(
+            "status IN ('active', 'expired', 'paused', 'deleted')",
+            name="ck_members_status",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

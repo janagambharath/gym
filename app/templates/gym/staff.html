@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Staff | RenewalDesk{% endblock %}
+{% block page_title %}Staff{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="panel">
+            <h2>Invite staff</h2>
+            <form method="post" action="{{ url_for('staff.invite') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-3">
+                    <label class="form-label" for="email">Email</label>
+                    <input class="form-control" id="email" name="email" type="email" required>
+                </div>
+                <button class="btn btn-primary" type="submit">Create invite</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="panel">
+            <div class="panel-header"><h2>Team</h2></div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td>{{ user.full_name }}</td>
+                        <td>{{ user.email }}</td>
+                        <td>{{ user.role.replace('_', ' ').title() }}</td>
+                        <td><span class="badge {{ 'bg-success' if user.is_active else 'bg-secondary' }}">{{ 'Active' if user.is_active else 'Inactive' }}</span></td>
+                        <td class="text-end">
+                            {% if user.id != current_user.id %}
+                            <form method="post" action="{{ url_for('staff.toggle_staff', user_id=user.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-secondary" type="submit">
+                                    {{ 'Deactivate' if user.is_active else 'Activate' }}
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-secondary">No staff yet.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.extensions import db
 from app.models import Member, PaymentVerification, RenewalHistory
 from app.models.mixins import utcnow
+from app.services.analytics_service import invalidate_dashboard_cache
 
 
 def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal_days: int) -> RenewalHistory:
@@ -62,6 +63,7 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         notes=locked_payment.notes,
     )
     db.session.add(renewal)
+    invalidate_dashboard_cache(locked_payment.gym_id)
     return renewal
 
 
@@ -73,3 +75,4 @@ def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None
     payment.status = "rejected"
     payment.verified_by_id = verified_by_id
     payment.verified_at = utcnow()
+    invalidate_dashboard_cache(payment.gym_id)

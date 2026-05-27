@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import logging
 import os
-import tempfile
-from pathlib import Path
 
 from flask import Flask
 
@@ -11,26 +10,52 @@ from app.models import Gym
 from app.services.reminder_service import run_due_reminders_for_gym
 
 
-def configure_scheduler(app: Flask) -> None:
-    lock_path = Path(
-        os.getenv(
-            "SCHEDULER_LOCK_PATH",
-            str(Path(tempfile.gettempdir()) / "renewaldesk_scheduler.lock"),
-        )
-    )
+_logger = logging.getLogger(__name__)
+_LOCK_KEY = "renewaldesk:scheduler_lock"
+
+
+def _lock_ttl(app: Flask) -> int:
+    return max((app.config["REMINDER_JOB_MINUTES"] * 60 * 2), 300)
+
+
+def _acquire_redis_lock(redis_url: str, ttl: int) -> bool:
     try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.open("x").close()
-    except FileExistsError:
-        app.logger.info("Scheduler lock exists; skipping scheduler in this worker.")
-        return
-    except OSError:
-        app.logger.exception("Could not create scheduler lock at %s", lock_path)
-        return
+        import redis as _redis
+
+        r = _redis.from_url(redis_url, socket_connect_timeout=2)
+        return bool(r.set(_LOCK_KEY, os.getpid(), nx=True, ex=ttl))
+    except Exception as exc:
+        _logger.warning("Could not acquire Redis scheduler lock: %s", exc)
+        return False
+
+
+def _refresh_redis_lock(redis_url: str, ttl: int) -> None:
+    try:
+        import redis as _redis
+
+        r = _redis.from_url(redis_url, socket_connect_timeout=2)
+        r.expire(_LOCK_KEY, ttl)
+    except Exception:
+        _logger.exception("Could not refresh Redis scheduler lock")
+
+
+def configure_scheduler(app: Flask) -> bool:
+    redis_url = app.config.get("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        _logger.warning(
+            "REDIS_URL not set; scheduler lock unavailable. Keep ENABLE_SCHEDULER=false "
+            "on web workers and run reminders from a single cron service."
+        )
+        return False
+
+    ttl = _lock_ttl(app)
+    if not _acquire_redis_lock(redis_url, ttl):
+        _logger.info("Scheduler lock held by another worker; skipping scheduler start.")
+        return False
 
     job_id = "membership-renewal-reminders"
     if scheduler.get_job(job_id):
-        return
+        return True
 
     scheduler.add_job(
         id=job_id,
@@ -43,10 +68,16 @@ def configure_scheduler(app: Flask) -> None:
         misfire_grace_time=300,
         replace_existing=True,
     )
+    _logger.info("Scheduler configured with Redis lock on pid=%s", os.getpid())
+    return True
 
 
 def _scheduled_reminder_job(app: Flask) -> None:
     with app.app_context():
+        redis_url = app.config.get("REDIS_URL", "memory://")
+        if redis_url != "memory://":
+            _refresh_redis_lock(redis_url, _lock_ttl(app))
+
         app.logger.info("Running scheduled reminder scan")
         active_gyms = Gym.query.filter_by(status="active").all()
         for gym in active_gyms:

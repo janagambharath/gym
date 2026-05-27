@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin
@@ -19,6 +19,12 @@ class ReminderLog(TenantMixin, TimestampMixin, db.Model):
         ),
         Index("ix_reminders_gym_status", "gym_id", "status"),
         Index("ix_reminders_gym_scheduled", "gym_id", "scheduled_for"),
+        Index("ix_reminders_member_cycle", "member_id", "cycle_end_date"),
+        Index("ix_reminders_provider_message", "provider_message_id"),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'failed', 'skipped')",
+            name="ck_reminders_status",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)

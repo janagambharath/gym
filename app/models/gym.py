@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import date
+
+from sqlalchemy import CheckConstraint
+
 from app.extensions import db
 from app.models.mixins import TimestampMixin
 
 
 class Gym(TimestampMixin, db.Model):
     __tablename__ = "gyms"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended')", name="ck_gyms_status"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False)
@@ -17,6 +24,8 @@ class Gym(TimestampMixin, db.Model):
     subscription_status = db.Column(
         db.String(32), nullable=False, default="trial", index=True
     )
+    trial_ends_at = db.Column(db.Date, nullable=True)
+    max_members = db.Column(db.Integer, nullable=True)
     address = db.Column(db.Text, nullable=True)
 
     users = db.relationship("User", back_populates="gym", cascade="all, delete-orphan")
@@ -29,4 +38,13 @@ class Gym(TimestampMixin, db.Model):
     )
 
     def is_operational(self) -> bool:
-        return self.status == "active"
+        if self.status != "active":
+            return False
+        if self.subscription_status == "trial" and self.trial_ends_at:
+            return date.today() <= self.trial_ends_at
+        return True
+
+    def members_at_limit(self, current_count: int) -> bool:
+        if self.max_members is None:
+            return False
+        return current_count >= self.max_members

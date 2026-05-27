@@ -29,4 +29,17 @@
         </table>
     </div>
 </div>
+<div class="panel mt-4">
+    <div class="panel-header"><h2>Offboarding</h2></div>
+    <form method="post" action="{{ url_for('admin.delete_gym', gym_id=gym.id) }}" class="row g-3 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-8">
+            <label class="form-label" for="confirm">Type {{ gym.slug }} to suspend and soft-delete members</label>
+            <input class="form-control" id="confirm" name="confirm">
+        </div>
+        <div class="col-md-4">
+            <button class="btn btn-outline-danger w-100" type="submit">Offboard gym</button>
+        </div>
+    </form>
+</div>
 {% endblock %}

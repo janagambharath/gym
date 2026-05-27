@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import re
+
 from flask_wtf import FlaskForm
 from wtforms import DateField, DecimalField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional, ValidationError
+
+
+E164_RE = re.compile(r"^\+\d{7,15}$")
 
 
 class MembershipPlanForm(FlaskForm):
@@ -16,7 +21,7 @@ class MembershipPlanForm(FlaskForm):
 
 class MemberForm(FlaskForm):
     full_name = StringField("Full name", validators=[DataRequired(), Length(max=160)])
-    phone = StringField("WhatsApp phone", validators=[DataRequired(), Length(max=40)])
+    phone = StringField("WhatsApp phone (+country number)", validators=[DataRequired(), Length(max=40)])
     email = StringField("Email", validators=[Optional(), Email(), Length(max=255)])
     gender = SelectField(
         "Gender",
@@ -37,3 +42,11 @@ class MemberForm(FlaskForm):
     def validate_membership_end(self, field) -> None:
         if field.data and self.membership_start.data and field.data < self.membership_start.data:
             raise ValidationError("End date must be on or after start date.")
+
+    def validate_phone(self, field) -> None:
+        cleaned = re.sub(r"\s", "", (field.data or "").strip())
+        if not E164_RE.match(cleaned):
+            raise ValidationError(
+                "Enter phone in E.164 format, e.g. +919876543210 or +447700900123."
+            )
+        field.data = cleaned

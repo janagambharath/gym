@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -11,6 +11,7 @@ from app.forms import PaymentVerificationForm
 from app.models import Member, PaymentVerification
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
+from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.payment_service import reject_payment, verify_payment
 from app.utils.decorators import active_gym_required, roles_required
 
@@ -60,7 +61,6 @@ def create():
     member_id = request.args.get("member_id", type=int)
     if request.method == "GET":
         form.paid_on.data = date.today()
-        form.status.data = "pending"
         if member_id:
             member = (
                 Member.query.filter_by(id=member_id, gym_id=current_user.gym_id)
@@ -95,6 +95,7 @@ def create():
         db.session.add(payment)
         db.session.flush()
         audit(action="create_payment", resource_type="payment_verification", resource_id=payment.id)
+        invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
         flash("Payment saved.", "success")
         return redirect(url_for("payments.index"))
@@ -112,9 +113,25 @@ def verify(payment_id: int):
         flash("Payment is already verified.", "info")
         return redirect(url_for("payments.index"))
     renewal_days = payment.renewal_days or (payment.member.plan.duration_days if payment.member.plan else 30)
+    future_threshold = date.today() + timedelta(days=60)
+    if payment.member.membership_end > future_threshold:
+        flash(
+            f"Warning: {payment.member.full_name}'s current membership ends on "
+            f"{payment.member.membership_end.strftime('%d %b %Y')}; the new renewal "
+            "period will be stacked after that date.",
+            "warning",
+        )
     try:
         verify_payment(payment, verified_by_id=current_user.id, renewal_days=renewal_days)
-        audit(action="verify_payment", resource_type="payment_verification", resource_id=payment.id)
+        audit(
+            action="verify_payment",
+            resource_type="payment_verification",
+            resource_id=payment.id,
+            metadata={
+                "new_end": str(payment.member.membership_end),
+                "renewal_days": renewal_days,
+            },
+        )
         db.session.commit()
         flash("Payment verified and membership extended.", "success")
     except ValueError as exc:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
+from sqlalchemy import delete
 from flask import has_request_context, request
 from flask_login import current_user
 
@@ -25,8 +28,7 @@ def audit(
             resolved_actor_id = current_user.id
         if resolved_gym_id is None and current_user.is_authenticated:
             resolved_gym_id = current_user.gym_id
-        forwarded_for = request.headers.get("X-Forwarded-For", "")
-        ip_address = forwarded_for.split(",")[0].strip() if forwarded_for else request.remote_addr
+        ip_address = request.remote_addr
 
     db.session.add(
         AuditLog(
@@ -39,3 +41,10 @@ def audit(
             ip_address=ip_address,
         )
     )
+
+
+def purge_old_audit_logs(retention_days: int = 90) -> int:
+    cutoff = date.today() - timedelta(days=retention_days)
+    result = db.session.execute(delete(AuditLog).where(AuditLog.created_at < cutoff))
+    db.session.commit()
+    return result.rowcount or 0

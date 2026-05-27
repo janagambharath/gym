@@ -18,6 +18,7 @@ csrf = CSRFProtect()
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=[],
+    default_limits=["200 per minute", "2000 per hour"],
     storage_uri=os.getenv("REDIS_URL", "memory://"),
+    storage_options={"socket_connect_timeout": 2},
 )

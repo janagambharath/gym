@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from urllib.parse import urljoin, urlparse
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
@@ -102,6 +103,7 @@ def register():
             email=form.email.data.lower().strip(),
             phone=form.phone.data.strip(),
             status="active",
+            trial_ends_at=date.today() + timedelta(days=14),
         )
         db.session.add(gym)
         db.session.flush()

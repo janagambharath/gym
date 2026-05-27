@@ -31,12 +31,17 @@ from app.extensions import csrf, db, limiter, login_manager, migrate, scheduler
 def create_app(config_name: str | None = None) -> Flask:
     sentry_dsn = os.getenv("SENTRY_DSN")
     if sentry_dsn:
-        sentry_sdk.init(
-            dsn=sentry_dsn,
-            integrations=[FlaskIntegration(), SqlalchemyIntegration()],
-            traces_sample_rate=0.05,
-            send_default_pii=False,
-        )
+        try:
+            sentry_sdk.init(
+                dsn=sentry_dsn,
+                integrations=[FlaskIntegration(), SqlalchemyIntegration()],
+                traces_sample_rate=0.05,
+                send_default_pii=False,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Sentry initialisation failed (non-fatal): %s", exc
+            )
 
     app = Flask(__name__, instance_relative_config=True)
     selected_config = config_name or os.getenv("FLASK_ENV", "default")
@@ -44,6 +49,7 @@ def create_app(config_name: str | None = None) -> Flask:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     _normalize_database_url(app)
+    _configure_engine_options(app, selected_config)
     _validate_config(app, selected_config)
     _ensure_runtime_dirs(app)
     _configure_logging(app)
@@ -76,6 +82,22 @@ def _normalize_database_url(app: Flask) -> None:
         )
 
 
+def _configure_engine_options(app: Flask, selected_config: str) -> None:
+    database_url = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if database_url.startswith("sqlite"):
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {}
+        return
+
+    is_production = selected_config == "production"
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_size": 10 if is_production else 5,
+        "max_overflow": 20 if is_production else 10,
+        "pool_timeout": 30,
+        "pool_recycle": 300,
+        "pool_pre_ping": True,
+    }
+
+
 def _validate_config(app: Flask, selected_config: str) -> None:
     if selected_config in {"development", "default"} and not app.debug:
         app.logger.warning(
@@ -85,13 +107,16 @@ def _validate_config(app: Flask, selected_config: str) -> None:
 
     if selected_config != "production":
         return
+    database_url = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if not database_url or database_url.startswith("sqlite"):
+        raise RuntimeError("DATABASE_URL must be set to PostgreSQL in production.")
     secret_key = app.config.get("SECRET_KEY", "")
     if not secret_key or secret_key == "dev-only-change-me" or len(secret_key) < 32:
         raise RuntimeError(
             "SECRET_KEY is not set or too weak. Generate one with: "
             "python -c \"import secrets; print(secrets.token_hex(32))\""
         )
-    redis_url = os.getenv("REDIS_URL", "memory://")
+    redis_url = app.config.get("REDIS_URL", "memory://")
     if redis_url == "memory://":
         raise RuntimeError(
             "REDIS_URL must be set to a real Redis instance in production. "
@@ -147,15 +172,19 @@ def _register_blueprints(app: Flask) -> None:
     from app.admin.routes import admin_bp
     from app.auth.routes import auth_bp
     from app.gym.routes import gym_bp
+    from app.gym.staff_routes import staff_bp
     from app.members.routes import members_bp
     from app.payments.routes import payments_bp
     from app.reminders.routes import reminders_bp
+    from app.webhooks.whatsapp import webhooks_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(gym_bp)
+    app.register_blueprint(staff_bp)
     app.register_blueprint(members_bp)
     app.register_blueprint(payments_bp)
     app.register_blueprint(reminders_bp)
+    app.register_blueprint(webhooks_bp)
     app.register_blueprint(admin_bp)
 
 
@@ -201,6 +230,7 @@ def _register_security_headers(app: Flask) -> None:
 
 def _register_health_check(app: Flask) -> None:
     @app.route("/health")
+    @limiter.exempt
     def health():
         try:
             db.session.execute(text("SELECT 1"))
@@ -372,24 +402,45 @@ def _register_cli(app: Flask) -> None:
     @app.cli.command("run-reminders")
     def run_reminders() -> None:
         import json
-        from datetime import date
 
         from app.models import Member
-        from app.services.reminder_service import run_due_reminders_for_gym
-
-        today = date.today()
-        expired_count = Member.query.filter(
-            Member.membership_end < today,
-            Member.status == "active",
-            Member.deleted_at.is_(None),
-        ).update({"status": "expired"}, synchronize_session=False)
-        db.session.commit()
-        if expired_count:
-            app.logger.info(json.dumps({"event": "auto_expired", "count": expired_count}))
+        from app.services.audit_service import audit
+        from app.services.analytics_service import invalidate_dashboard_cache
+        from app.services.reminder_service import run_due_reminders_for_gym, today_for_gym
 
         active_gyms = Gym.query.filter_by(status="active").all()
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
         for gym in active_gyms:
+            local_today = today_for_gym(gym.timezone or "Asia/Kolkata")
+            expired_members = (
+                Member.query.filter(
+                    Member.gym_id == gym.id,
+                    Member.membership_end < local_today,
+                    Member.status == "active",
+                    Member.deleted_at.is_(None),
+                )
+                .with_for_update()
+                .order_by(Member.id.asc())
+                .all()
+            )
+            for member in expired_members:
+                member.status = "expired"
+                audit(
+                    action="auto_expired",
+                    resource_type="member",
+                    resource_id=member.id,
+                    gym_id=gym.id,
+                    metadata={"membership_end": str(member.membership_end)},
+                )
+            if expired_members:
+                invalidate_dashboard_cache(gym.id)
+                db.session.commit()
+                app.logger.info(
+                    json.dumps(
+                        {"event": "auto_expired", "gym_id": gym.id, "count": len(expired_members)}
+                    )
+                )
+
             result = run_due_reminders_for_gym(
                 gym.id,
                 app.config["REMINDER_DAYS_BEFORE"],
@@ -404,6 +455,13 @@ def _register_cli(app: Flask) -> None:
             )
         app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
 
+    @app.cli.command("purge-audit-logs")
+    def purge_audit_logs() -> None:
+        from app.services.audit_service import purge_old_audit_logs
+
+        count = purge_old_audit_logs(retention_days=90)
+        print(f"Purged {count} audit log entries older than 90 days.")
+
 
 def _start_scheduler(app: Flask) -> None:
     if not app.config["ENABLE_SCHEDULER"]:
@@ -411,6 +469,6 @@ def _start_scheduler(app: Flask) -> None:
 
     from app.services.reminder_scheduler import configure_scheduler
 
-    configure_scheduler(app)
-    if not scheduler.running:
+    configured = configure_scheduler(app)
+    if configured and not scheduler.running:
         scheduler.start()

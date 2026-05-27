@@ -12,6 +12,7 @@ from app.forms import MemberForm
 from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
+from app.services.analytics_service import invalidate_dashboard_cache
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -58,6 +59,21 @@ def index():
 @active_gym_required
 @roles_required("gym_owner", "staff")
 def create():
+    gym = current_user.gym
+    if gym.max_members is not None:
+        current_count = (
+            Member.query.filter_by(gym_id=gym.id)
+            .filter(Member.deleted_at.is_(None))
+            .count()
+        )
+        if gym.members_at_limit(current_count):
+            flash(
+                f"You have reached the {gym.max_members}-member limit on your current plan. "
+                "Upgrade to add more members.",
+                "warning",
+            )
+            return redirect(url_for("members.index"))
+
     form = _member_form()
     if request.method == "GET":
         form.membership_start.data = date.today()
@@ -69,6 +85,7 @@ def create():
         db.session.add(member)
         db.session.flush()
         audit(action="create_member", resource_type="member", resource_id=member.id)
+        invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
         flash("Member added.", "success")
         return redirect(url_for("members.detail", member_id=member.id))
@@ -104,6 +121,7 @@ def edit(member_id: int):
     if form.validate_on_submit():
         _apply_member_form(member, form)
         audit(action="update_member", resource_type="member", resource_id=member.id)
+        invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
         flash("Member updated.", "success")
         return redirect(url_for("members.detail", member_id=member.id))
@@ -121,6 +139,7 @@ def delete(member_id: int):
     member.deleted_at = utcnow()
     member.status = "deleted"
     audit(action="soft_delete_member", resource_type="member", resource_id=member.id)
+    invalidate_dashboard_cache(current_user.gym_id)
     db.session.commit()
     flash("Member removed.", "success")
     return redirect(url_for("members.index"))

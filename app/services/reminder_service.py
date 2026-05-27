@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone as tz
+import logging
 import zoneinfo
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Gym, Member, NotificationTemplate, QRSettings, ReminderLog, RenewalHistory
+from app.models import (
+    Gym,
+    Member,
+    NotificationTemplate,
+    PaymentVerification,
+    QRSettings,
+    ReminderLog,
+    RenewalHistory,
+)
 from app.models.mixins import utcnow
-from app.services.whatsapp_service import WhatsAppService
+from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 from app.utils.helpers import phone_to_whatsapp, signed_upload_url
+
+
+MAX_REMINDER_ATTEMPTS = 5
+_logger = logging.getLogger(__name__)
 
 
 def today_for_gym(gym_timezone: str) -> date:
@@ -30,23 +44,55 @@ def stage_for_days(days_before: int) -> str:
     return "overdue"
 
 
-def due_members_for_gym(
-    gym_id: int,
-    days_before: int,
-    gym_timezone: str = "Asia/Kolkata",
-) -> list[Member]:
+def _due_members_query(gym_id: int, days_before: int, gym_timezone: str):
     target_date = today_for_gym(gym_timezone) + timedelta(days=days_before)
     already_renewed = select(RenewalHistory.member_id).where(
         RenewalHistory.gym_id == gym_id,
         RenewalHistory.previous_end == target_date,
+    )
+    recent_payment_cutoff = datetime.now(tz=tz.utc) - timedelta(days=7)
+    already_paid = select(PaymentVerification.member_id).where(
+        PaymentVerification.gym_id == gym_id,
+        PaymentVerification.status == "verified",
+        PaymentVerification.created_at >= recent_payment_cutoff,
     )
     return (
         Member.query.filter_by(gym_id=gym_id, status="active")
         .filter(Member.deleted_at.is_(None))
         .filter(Member.membership_end == target_date)
         .filter(~Member.id.in_(already_renewed))
-        .all()
+        .filter(~Member.id.in_(already_paid))
     )
+
+
+def due_members_for_gym(
+    gym_id: int,
+    days_before: int,
+    gym_timezone: str = "Asia/Kolkata",
+) -> list[Member]:
+    return _due_members_query(gym_id, days_before, gym_timezone).order_by(Member.id.asc()).all()
+
+
+def due_members_for_gym_batched(
+    gym_id: int,
+    days_before: int,
+    gym_timezone: str = "Asia/Kolkata",
+    batch_size: int = 100,
+):
+    last_id = 0
+    while True:
+        batch = (
+            _due_members_query(gym_id, days_before, gym_timezone)
+            .filter(Member.id > last_id)
+            .order_by(Member.id.asc())
+            .limit(batch_size)
+            .all()
+        )
+        if not batch:
+            break
+        for member in batch:
+            last_id = member.id
+            yield member
 
 
 def template_for(gym_id: int, days_before: int) -> NotificationTemplate | None:
@@ -99,6 +145,7 @@ def create_or_get_log(
     days_before: int,
     *,
     scheduled_for: date | None = None,
+    gym_timezone: str = "Asia/Kolkata",
 ) -> ReminderLog:
     stage = stage_for_days(days_before)
     log = ReminderLog.query.filter_by(
@@ -117,7 +164,7 @@ def create_or_get_log(
         template_id=template.id,
         reminder_stage=stage,
         cycle_end_date=member.membership_end,
-        scheduled_for=scheduled_for or today_for_gym("Asia/Kolkata"),
+        scheduled_for=scheduled_for or today_for_gym(gym_timezone),
         phone_snapshot=phone_to_whatsapp(member.phone),
         status="pending",
     )
@@ -158,6 +205,11 @@ def _resolve_qr_url(gym_id: int) -> str | None:
 def send_reminder(log: ReminderLog) -> ReminderLog:
     if log.status == "sent":
         return log
+    if log.attempts >= MAX_REMINDER_ATTEMPTS:
+        raise ValueError(
+            f"Reminder {log.id} has reached the maximum of "
+            f"{MAX_REMINDER_ATTEMPTS} attempts."
+        )
 
     member = log.member
     gym = db.session.get(Gym, member.gym_id)
@@ -178,9 +230,7 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
         else:
             result = whatsapp.send_text(to=log.phone_snapshot, body=message)
     except Exception as exc:
-        result = type(
-            "Result", (), {"ok": False, "error": str(exc)[:200], "provider_message_id": None}
-        )()
+        result = WhatsAppResult(ok=False, error=str(exc)[:200], provider_message_id=None)
 
     if result.ok:
         log.status = "sent"
@@ -190,6 +240,7 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
     else:
         log.status = "failed"
         log.error_message = (result.error or "Unknown error")[:500]
+    invalidate_dashboard_cache(log.gym_id)
     return log
 
 
@@ -199,9 +250,6 @@ def run_due_reminders_for_gym(
     gym_timezone: str = "Asia/Kolkata",
 ) -> dict:
     counts = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
-    import logging
-
-    logger = logging.getLogger(__name__)
     local_today = today_for_gym(gym_timezone)
 
     for days_before in days_before_values:
@@ -210,15 +258,14 @@ def run_due_reminders_for_gym(
             db.session.commit()
         except Exception:
             db.session.rollback()
-            logger.exception(
+            _logger.exception(
                 "Failed to resolve template for gym %s days_before %s",
                 gym_id,
                 days_before,
             )
             continue
 
-        members = due_members_for_gym(gym_id, days_before, gym_timezone)
-        for member in members:
+        for member in due_members_for_gym_batched(gym_id, days_before, gym_timezone):
             member_id = member.id
             try:
                 log = create_or_get_log(
@@ -226,18 +273,21 @@ def run_due_reminders_for_gym(
                     template,
                     days_before,
                     scheduled_for=local_today,
+                    gym_timezone=gym_timezone,
                 )
                 if log.status == "sent":
                     counts["skipped"] += 1
                     db.session.commit()
+                    db.session.expire_all()
                     continue
                 send_reminder(log)
                 counts["queued"] += 1
                 counts[log.status] = counts.get(log.status, 0) + 1
                 db.session.commit()
+                db.session.expire_all()
             except Exception:
                 db.session.rollback()
-                logger.exception("Failed reminder for member %s in gym %s", member_id, gym_id)
+                _logger.exception("Failed reminder for member %s in gym %s", member_id, gym_id)
                 counts["failed"] += 1
 
     return counts

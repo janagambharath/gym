@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import Index
+from sqlalchemy import CheckConstraint, Index
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin
@@ -13,6 +13,7 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     __table_args__ = (
         Index("ix_renewals_gym_member", "gym_id", "member_id"),
         Index("ix_renewals_gym_prev_end", "gym_id", "previous_end"),
+        CheckConstraint("new_end >= new_start", name="ck_renewal_dates"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

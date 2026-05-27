@@ -15,13 +15,8 @@ class PaymentVerificationForm(FlaskForm):
         validators=[DataRequired()],
     )
     reference = StringField("Reference", validators=[Optional(), Length(max=160)])
-    status = SelectField(
-        "Status",
-        choices=[("pending", "Pending"), ("verified", "Verified"), ("rejected", "Rejected")],
-        validators=[Optional()],
-    )
     renewal_days = DecimalField(
-        "Renewal days", places=0, validators=[DataRequired(), NumberRange(min=1)]
+        "Renewal days", places=0, validators=[DataRequired(), NumberRange(min=1, max=730)]
     )
     notes = TextAreaField("Notes", validators=[Optional(), Length(max=2000)])
     submit = SubmitField("Save payment")

@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import timedelta, timezone
 
 from flask_login import UserMixin
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.extensions import db, login_manager
 from app.models.mixins import TimestampMixin, utcnow
+
+
+_LOCKOUT_SCHEDULE = [
+    (3, timedelta(minutes=5)),
+    (5, timedelta(minutes=15)),
+    (8, timedelta(minutes=60)),
+    (12, timedelta(hours=24)),
+]
 
 
 class User(UserMixin, TimestampMixin, db.Model):
@@ -46,10 +54,20 @@ class User(UserMixin, TimestampMixin, db.Model):
 
     def record_failed_login(self) -> None:
         self.failed_login_count = (self.failed_login_count or 0) + 1
-        if self.failed_login_count >= 10:
-            from datetime import timedelta
+        for threshold, duration in _LOCKOUT_SCHEDULE:
+            if self.failed_login_count >= threshold:
+                self.locked_until = utcnow() + duration
+        if self.failed_login_count >= 3:
+            try:
+                import sentry_sdk
 
-            self.locked_until = utcnow() + timedelta(minutes=15)
+                sentry_sdk.capture_message(
+                    f"Account lockout triggered: user_id={self.id} "
+                    f"attempts={self.failed_login_count}",
+                    level="warning",
+                )
+            except Exception:
+                pass
 
     def reset_failed_logins(self) -> None:
         self.failed_login_count = 0

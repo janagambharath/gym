@@ -8,6 +8,9 @@ from flask import current_app
 from itsdangerous import URLSafeTimedSerializer
 
 
+E164_RE = re.compile(r"^\+\d{7,15}$")
+
+
 def slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", normalized).strip("-").lower()
@@ -15,12 +18,14 @@ def slugify(value: str) -> str:
 
 
 def phone_to_whatsapp(phone: str) -> str:
-    cleaned = re.sub(r"[^\d+]", "", phone or "")
-    if cleaned.startswith("+"):
-        return cleaned.lstrip("+")
-    if len(cleaned) == 10:
-        return f"91{cleaned}"
-    return cleaned
+    cleaned = re.sub(r"\s", "", (phone or "").strip())
+    if not cleaned.startswith("+"):
+        raise ValueError(
+            f"Phone number '{phone}' must be in E.164 format (+<country><number>)."
+        )
+    if not E164_RE.match(cleaned):
+        raise ValueError(f"Phone number '{phone}' is not a valid E.164 number.")
+    return cleaned[1:]
 
 
 def pagination_window(page: int, pages: int, radius: int = 2) -> range:
