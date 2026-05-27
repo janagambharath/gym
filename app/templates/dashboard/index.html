@@ -20,7 +20,7 @@
             </div>
             <div class="table-responsive">
                 <table class="table align-middle">
-                    <thead><tr><th>Member</th><th>Phone</th><th>Expiry</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Member</th><th>Phone</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
                     <tbody>
                     {% for member in expiring_members %}
                     <tr>
@@ -28,9 +28,17 @@
                         <td>{{ member.phone }}</td>
                         <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
                         <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                        <td class="text-end">
+                            <form method="post" action="{{ url_for('reminders.send_test', member_id=member.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-primary" type="submit">
+                                    <i class="bi bi-send"></i> Send
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4" class="text-secondary">No members yet.</td></tr>
+                    <tr><td colspan="5" class="text-secondary">No members yet.</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>

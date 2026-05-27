@@ -11,7 +11,13 @@ from app.extensions import db, limiter
 from app.models import Member, ReminderLog
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
-from app.services.reminder_service import run_due_reminders_for_gym, send_reminder
+from app.services.reminder_service import (
+    create_manual_test_log,
+    ensure_default_template,
+    resolve_qr_url,
+    run_due_reminders_for_gym,
+    send_reminder,
+)
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -122,3 +128,51 @@ def resend(reminder_id: int):
     db.session.commit()
     flash("Reminder send attempted.", "success" if log.status == "sent" else "warning")
     return redirect(url_for("reminders.index"))
+
+
+@reminders_bp.post("/members/<int:member_id>/send-test")
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+@limiter.limit("5 per minute")
+def send_test(member_id: int):
+    member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
+    if member.deleted_at is not None:
+        flash("Cannot send a test reminder to a deleted member.", "warning")
+        return redirect(request.referrer or url_for("reminders.index"))
+
+    qr_url = resolve_qr_url(current_user.gym_id)
+    if not qr_url:
+        flash(
+            "No active QR image URL is available. Add a Public QR URL, or set "
+            "PUBLIC_BASE_URL so uploaded QR images can be attached.",
+            "warning",
+        )
+        return redirect(request.referrer or url_for("gym.settings"))
+
+    try:
+        template = ensure_default_template(current_user.gym_id)
+        log = create_manual_test_log(
+            member,
+            template,
+            gym_timezone=current_user.gym.timezone or "Asia/Kolkata",
+        )
+        send_reminder(log, force=True)
+        audit(
+            action="send_test_reminder",
+            resource_type="reminder_log",
+            resource_id=log.id,
+            metadata={"member_id": member.id, "qr_url": qr_url},
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Test QR reminder failed for member %s", member.id)
+        flash(f"Test QR reminder failed: {str(exc)[:180]}", "warning")
+        return redirect(request.referrer or url_for("reminders.index"))
+
+    if log.status == "sent":
+        flash(f"Test QR reminder sent to {member.full_name}.", "success")
+    else:
+        flash(f"Test QR reminder failed: {log.error_message or 'Unknown error'}", "warning")
+    return redirect(request.referrer or url_for("reminders.index"))

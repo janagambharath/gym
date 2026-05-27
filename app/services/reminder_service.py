@@ -185,7 +185,7 @@ def create_or_get_log(
     return log
 
 
-def _resolve_qr_url(gym_id: int) -> str | None:
+def resolve_qr_url(gym_id: int) -> str | None:
     qr = QRSettings.query.filter_by(gym_id=gym_id, is_active=True).first()
     if not qr:
         return None
@@ -202,10 +202,41 @@ def _resolve_qr_url(gym_id: int) -> str | None:
     return candidate
 
 
-def send_reminder(log: ReminderLog) -> ReminderLog:
-    if log.status == "sent":
+def create_manual_test_log(
+    member: Member,
+    template: NotificationTemplate,
+    *,
+    gym_timezone: str = "Asia/Kolkata",
+) -> ReminderLog:
+    log = ReminderLog.query.filter_by(
+        gym_id=member.gym_id,
+        member_id=member.id,
+        cycle_end_date=member.membership_end,
+        reminder_stage="manual_test",
+        channel="whatsapp",
+    ).first()
+    if log:
         return log
-    if log.attempts >= MAX_REMINDER_ATTEMPTS:
+
+    log = ReminderLog(
+        gym_id=member.gym_id,
+        member_id=member.id,
+        template_id=template.id,
+        reminder_stage="manual_test",
+        cycle_end_date=member.membership_end,
+        scheduled_for=today_for_gym(gym_timezone),
+        phone_snapshot=phone_to_whatsapp(member.phone),
+        status="pending",
+    )
+    db.session.add(log)
+    db.session.flush()
+    return log
+
+
+def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
+    if log.status == "sent" and not force:
+        return log
+    if log.attempts >= MAX_REMINDER_ATTEMPTS and not force:
         raise ValueError(
             f"Reminder {log.id} has reached the maximum of "
             f"{MAX_REMINDER_ATTEMPTS} attempts."
@@ -220,7 +251,7 @@ def send_reminder(log: ReminderLog) -> ReminderLog:
         expiry_date=member.membership_end.strftime("%d %b %Y"),
     )
 
-    qr_url = _resolve_qr_url(member.gym_id)
+    qr_url = resolve_qr_url(member.gym_id)
     whatsapp = WhatsAppService()
     log.attempts += 1
     log.message_snapshot = message

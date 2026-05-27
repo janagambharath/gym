@@ -42,6 +42,11 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-clockwise"></i></button>
                     </form>
+                    {% elif log.member %}
+                    <form method="post" action="{{ url_for('reminders.send_test', member_id=log.member.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-primary"><i class="bi bi-send"></i></button>
+                    </form>
                     {% endif %}
                 </td>
             </tr>
