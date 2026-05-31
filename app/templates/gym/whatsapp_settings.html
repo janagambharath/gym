@@ -17,6 +17,14 @@
         {{ form.hidden_tag() }}
         {% include "partials/form_errors.html" %}
         <div class="row g-3">
+            <div class="col-12">
+                {{ form.whatsapp_business_account_id.label(class="form-label") }}
+                {{ form.whatsapp_business_account_id(class="form-control", placeholder="Meta WABA ID") }}
+                <div class="text-secondary text-sm mt-1">
+                    Saving an enabled number validates it with Meta and subscribes this app
+                    to inbound webhook events for the WABA.
+                </div>
+            </div>
             <div class="col-md-6">
                 {{ form.phone_number_id.label(class="form-label") }}
                 {{ form.phone_number_id(class="form-control", placeholder="Meta phone number ID") }}

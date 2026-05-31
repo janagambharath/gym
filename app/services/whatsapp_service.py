@@ -35,9 +35,64 @@ class WhatsAppService:
         self.gym_id = gym.id
         self.gym_enabled = gym.whatsapp_enabled
         self.enabled = current_app.config["WHATSAPP_ENABLED"]
+        self.whatsapp_business_account_id = gym.whatsapp_business_account_id
         self.phone_number_id = gym.phone_number_id
         self.access_token = current_app.config["WHATSAPP_ACCESS_TOKEN"]
         self.api_version = current_app.config["WHATSAPP_API_VERSION"]
+
+    def connect_webhooks(self) -> WhatsAppResult:
+        if not self.whatsapp_business_account_id:
+            return WhatsAppResult(ok=False, error="Meta WhatsApp Business Account ID is missing")
+        if not self.phone_number_id:
+            return WhatsAppResult(ok=False, error="Gym WhatsApp phone number ID is missing")
+        if not self.access_token:
+            return WhatsAppResult(ok=False, error="WhatsApp access token is missing")
+
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        phone_numbers_url = (
+            f"https://graph.facebook.com/{self.api_version}/"
+            f"{self.whatsapp_business_account_id}/phone_numbers"
+        )
+        try:
+            response = _SESSION.get(
+                phone_numbers_url,
+                params={"fields": "id", "limit": 100},
+                headers=headers,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            return WhatsAppResult(ok=False, error=f"Could not validate phone number: {exc}")
+
+        if response.status_code >= 400:
+            self._handle_auth_failure(response.status_code)
+            return WhatsAppResult(ok=False, error=self._response_error(response))
+
+        phone_number_ids = {
+            str(phone_number.get("id"))
+            for phone_number in response.json().get("data", [])
+            if phone_number.get("id")
+        }
+        if str(self.phone_number_id) not in phone_number_ids:
+            return WhatsAppResult(
+                ok=False,
+                error="Phone number ID does not belong to that WhatsApp Business Account",
+            )
+
+        subscribed_apps_url = (
+            f"https://graph.facebook.com/{self.api_version}/"
+            f"{self.whatsapp_business_account_id}/subscribed_apps"
+        )
+        try:
+            response = _SESSION.post(subscribed_apps_url, headers=headers, timeout=20)
+        except requests.RequestException as exc:
+            return WhatsAppResult(ok=False, error=f"Could not subscribe webhooks: {exc}")
+
+        if response.status_code >= 400:
+            self._handle_auth_failure(response.status_code)
+            return WhatsAppResult(ok=False, error=self._response_error(response))
+        if not response.json().get("success"):
+            return WhatsAppResult(ok=False, error="Meta did not confirm webhook subscription")
+        return WhatsAppResult(ok=True)
 
     def send_text(self, *, to: str, body: str) -> WhatsAppResult:
         configuration_error = self._configuration_error()
@@ -196,12 +251,7 @@ class WhatsAppService:
 
             if response.status_code >= 400:
                 self._handle_auth_failure(response.status_code)
-                safe_error = f"HTTP {response.status_code}"
-                try:
-                    error_data = response.json()
-                    safe_error = error_data.get("error", {}).get("message", safe_error)[:200]
-                except Exception:
-                    pass
+                safe_error = self._response_error(response)
                 current_app.logger.warning(
                     "WhatsApp API error %s for phone_number_id %s",
                     response.status_code,
@@ -223,3 +273,13 @@ class WhatsAppService:
         if not self.phone_number_id:
             return "Gym WhatsApp phone number ID is missing"
         return None
+
+    @staticmethod
+    def _response_error(response: requests.Response) -> str:
+        safe_error = f"HTTP {response.status_code}"
+        try:
+            error_data = response.json()
+            safe_error = error_data.get("error", {}).get("message", safe_error)[:200]
+        except Exception:
+            pass
+        return safe_error

@@ -240,7 +240,8 @@ def _register_health_check(app: Flask) -> None:
             db.session.execute(text("SELECT 1"))
             db.session.execute(
                 text(
-                    "SELECT trial_ends_at, max_members, phone_number_id, "
+                    "SELECT trial_ends_at, max_members, whatsapp_business_account_id, "
+                    "phone_number_id, "
                     "whatsapp_enabled, welcome_message_template, "
                     "renewal_reminder_template FROM gyms LIMIT 1"
                 )

@@ -5,11 +5,13 @@ import hmac
 import json
 import unittest
 from datetime import date, timedelta
+from unittest.mock import Mock, patch
 
 from app import create_app
 from app.extensions import db
-from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog
+from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, User
 from app.services.reminder_service import due_members_for_gym, run_due_reminders_for_gym
+from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 
 
 class WhatsAppOption2TestCase(unittest.TestCase):
@@ -28,6 +30,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.gym_one = Gym(
             name="Gym One",
             slug="gym-one",
+            whatsapp_business_account_id="100001",
             phone_number_id="111111",
             business_phone_number="+919000000001",
             whatsapp_enabled=True,
@@ -40,12 +43,20 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.gym_two = Gym(
             name="Gym Two",
             slug="gym-two",
+            whatsapp_business_account_id="100002",
             phone_number_id="222222",
             business_phone_number="+919000000002",
             whatsapp_enabled=True,
         )
         db.session.add_all([self.gym_one, self.gym_two])
         db.session.flush()
+        self.owner = User(
+            gym_id=self.gym_one.id,
+            email="owner@example.com",
+            full_name="Gym One Owner",
+            role="gym_owner",
+        )
+        self.owner.set_password("ChangeMe123!")
 
         self.member_one = Member(
             gym_id=self.gym_one.id,
@@ -65,7 +76,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             phone="+919100000003",
             membership_end=self.expiry,
         )
-        db.session.add_all([self.member_one, self.member_two, self.unopted_member])
+        db.session.add_all([self.owner, self.member_one, self.member_two, self.unopted_member])
         db.session.add(
             QRSettings(
                 gym_id=self.gym_one.id,
@@ -172,6 +183,71 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(log_one.status, "sent")
         self.assertEqual(log_two.status, "pending")
 
+    @patch("app.services.whatsapp_service._SESSION.post")
+    @patch("app.services.whatsapp_service._SESSION.get")
+    def test_connect_webhooks_validates_number_and_subscribes_waba(
+        self,
+        get: Mock,
+        post: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_ACCESS_TOKEN"] = "test-token"
+        get.return_value = self._graph_response(
+            {"data": [{"id": self.gym_one.phone_number_id}]}
+        )
+        post.return_value = self._graph_response({"success": True})
+
+        result = WhatsAppService(self.gym_one).connect_webhooks()
+
+        self.assertTrue(result.ok)
+        self.assertIn(
+            f"/{self.gym_one.whatsapp_business_account_id}/phone_numbers",
+            get.call_args.args[0],
+        )
+        self.assertIn(
+            f"/{self.gym_one.whatsapp_business_account_id}/subscribed_apps",
+            post.call_args.args[0],
+        )
+
+    @patch("app.services.whatsapp_service._SESSION.get")
+    def test_connect_webhooks_rejects_phone_number_from_another_waba(self, get: Mock) -> None:
+        self.app.config["WHATSAPP_ACCESS_TOKEN"] = "test-token"
+        get.return_value = self._graph_response({"data": [{"id": "different-number"}]})
+
+        result = WhatsAppService(self.gym_one).connect_webhooks()
+
+        self.assertFalse(result.ok)
+        self.assertIn("does not belong", result.error or "")
+
+    @patch.object(WhatsAppService, "connect_webhooks")
+    def test_owner_settings_subscribes_before_saving_enabled_connection(
+        self,
+        connect_webhooks: Mock,
+    ) -> None:
+        connect_webhooks.return_value = WhatsAppResult(ok=True)
+        response = self.client.post(
+            "/auth/login",
+            data={"email": self.owner.email, "password": "ChangeMe123!"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        response = self.client.post(
+            "/app/whatsapp-settings",
+            data={
+                "whatsapp_business_account_id": "100003",
+                "phone_number_id": "333333",
+                "business_phone_number": "+919000000003",
+                "whatsapp_enabled": "y",
+                "welcome_message_template": "Welcome {{member_name}}.",
+                "renewal_reminder_template": "Renew by {{expiry_date}}.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        connect_webhooks.assert_called_once()
+        db.session.refresh(self.gym_one)
+        self.assertEqual(self.gym_one.whatsapp_business_account_id, "100003")
+        self.assertEqual(self.gym_one.phone_number_id, "333333")
+
     def _reminder_log(self, gym: Gym, member: Member) -> ReminderLog:
         log = ReminderLog(
             gym_id=gym.id,
@@ -185,6 +261,13 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         )
         db.session.add(log)
         return log
+
+    @staticmethod
+    def _graph_response(payload: dict, status_code: int = 200) -> Mock:
+        response = Mock()
+        response.status_code = status_code
+        response.json.return_value = payload
+        return response
 
 
 if __name__ == "__main__":

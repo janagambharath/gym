@@ -19,6 +19,7 @@ from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
 from app.services.storage_service import delete_local_upload, save_gym_qr
+from app.services.whatsapp_service import WhatsAppService
 from app.utils.decorators import active_gym_required, roles_required
 from app.utils.helpers import normalize_public_media_url
 
@@ -114,11 +115,18 @@ def whatsapp_settings():
     gym = Gym.query.filter_by(id=current_user.gym_id).first_or_404()
     form = WhatsAppSettingsForm(obj=gym)
     if form.validate_on_submit():
+        gym.whatsapp_business_account_id = form.whatsapp_business_account_id.data
         gym.phone_number_id = form.phone_number_id.data
         gym.business_phone_number = form.business_phone_number.data
         gym.whatsapp_enabled = form.whatsapp_enabled.data
         gym.welcome_message_template = form.welcome_message_template.data.strip()
         gym.renewal_reminder_template = form.renewal_reminder_template.data.strip()
+        if gym.whatsapp_enabled:
+            result = WhatsAppService(gym).connect_webhooks()
+            if not result.ok:
+                db.session.rollback()
+                flash(f"Could not connect WhatsApp number: {result.error}", "danger")
+                return redirect(url_for("gym.whatsapp_settings"))
         try:
             audit(
                 action="update_whatsapp_settings",

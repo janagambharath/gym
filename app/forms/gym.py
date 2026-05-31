@@ -49,6 +49,10 @@ class NotificationTemplateForm(FlaskForm):
 
 
 class WhatsAppSettingsForm(FlaskForm):
+    whatsapp_business_account_id = StringField(
+        "Meta WhatsApp Business Account ID",
+        validators=[Optional(), Length(max=255)],
+    )
     phone_number_id = StringField(
         "Meta phone number ID",
         validators=[Optional(), Length(max=255)],
@@ -67,6 +71,15 @@ class WhatsAppSettingsForm(FlaskForm):
         validators=[DataRequired(), Length(max=4000)],
     )
     submit = SubmitField("Save WhatsApp settings")
+
+    def validate_whatsapp_business_account_id(self, field) -> None:
+        field.data = (field.data or "").strip() or None
+        if field.data and not field.data.isdigit():
+            raise ValidationError("Meta WhatsApp Business Account ID must contain digits only.")
+        if self.whatsapp_enabled.data and not field.data:
+            raise ValidationError(
+                "Meta WhatsApp Business Account ID is required when WhatsApp is enabled."
+            )
 
     def validate_phone_number_id(self, field) -> None:
         field.data = (field.data or "").strip() or None
