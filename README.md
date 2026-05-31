@@ -108,8 +108,9 @@ Set:
 own Meta WhatsApp Business Account (WABA) ID, WhatsApp Business number, and Meta phone
 number ID from the dashboard's WhatsApp Settings page. Saving an enabled connection
 validates that the phone number belongs to the WABA and subscribes the app to that WABA's
-webhook events. The server-side Meta access token must have permission to manage and send
-from each connected WABA.
+webhook events with a WABA-specific callback override pointing to this deployment. The
+server-side Meta access token must have permission to manage and send from each connected
+WABA.
 
 Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL.
 Meta inbound messages and delivery status callbacks are handled at `/webhook/whatsapp`.

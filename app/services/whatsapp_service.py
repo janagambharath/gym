@@ -47,6 +47,12 @@ class WhatsAppService:
             return WhatsAppResult(ok=False, error="Gym WhatsApp phone number ID is missing")
         if not self.access_token:
             return WhatsAppResult(ok=False, error="WhatsApp access token is missing")
+        public_base_url = current_app.config.get("PUBLIC_BASE_URL", "").rstrip("/")
+        verify_token = current_app.config.get("WHATSAPP_VERIFY_TOKEN", "")
+        if not public_base_url:
+            return WhatsAppResult(ok=False, error="PUBLIC_BASE_URL is missing")
+        if not verify_token:
+            return WhatsAppResult(ok=False, error="WhatsApp verify token is missing")
 
         headers = {"Authorization": f"Bearer {self.access_token}"}
         phone_numbers_url = (
@@ -83,7 +89,15 @@ class WhatsAppService:
             f"{self.whatsapp_business_account_id}/subscribed_apps"
         )
         try:
-            response = _SESSION.post(subscribed_apps_url, headers=headers, timeout=20)
+            response = _SESSION.post(
+                subscribed_apps_url,
+                json={
+                    "override_callback_uri": f"{public_base_url}/webhook/whatsapp",
+                    "verify_token": verify_token,
+                },
+                headers=headers,
+                timeout=20,
+            )
         except requests.RequestException as exc:
             return WhatsAppResult(ok=False, error=f"Could not subscribe webhooks: {exc}")
 

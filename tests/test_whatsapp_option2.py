@@ -19,7 +19,9 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.app = create_app("testing")
         self.app.config.update(
             WHATSAPP_ENABLED=False,
+            WHATSAPP_VERIFY_TOKEN="test-verify-token",
             WHATSAPP_WEBHOOK_SECRET="test-webhook-secret",
+            PUBLIC_BASE_URL="https://example.test",
         )
         self.client = self.app.test_client()
         self.context = self.app.app_context()
@@ -227,6 +229,13 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertIn(
             f"/{self.gym_one.whatsapp_business_account_id}/subscribed_apps",
             post.call_args.args[0],
+        )
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {
+                "override_callback_uri": "https://example.test/webhook/whatsapp",
+                "verify_token": "test-verify-token",
+            },
         )
 
     @patch("app.services.whatsapp_service._SESSION.get")
