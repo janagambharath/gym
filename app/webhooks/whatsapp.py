@@ -4,6 +4,7 @@ import hashlib
 import hmac
 
 from flask import Blueprint, current_app, request
+from sqlalchemy import func, or_
 
 from app.extensions import csrf, db
 from app.models import Gym, Member, ReminderLog
@@ -44,6 +45,7 @@ def verify():
 def receive():
     signature = request.headers.get("X-Hub-Signature-256", "")
     if not _verify_signature(request.get_data(), signature):
+        current_app.logger.warning("Rejected WhatsApp webhook with invalid signature")
         return "Forbidden", 403
 
     data = request.get_json(silent=True) or {}
@@ -66,8 +68,15 @@ def receive():
 def _gym_for_value(value: dict) -> Gym | None:
     phone_number_id = str(value.get("metadata", {}).get("phone_number_id") or "").strip()
     if not phone_number_id:
+        current_app.logger.warning("Ignored WhatsApp webhook without phone_number_id")
         return None
-    return Gym.query.filter_by(phone_number_id=phone_number_id).first()
+    gym = Gym.query.filter_by(phone_number_id=phone_number_id).first()
+    if not gym:
+        current_app.logger.warning(
+            "Ignored WhatsApp webhook for unconfigured phone_number_id=%s",
+            phone_number_id,
+        )
+    return gym
 
 
 def _process_status(gym_id: int, status: dict) -> bool:
@@ -106,10 +115,14 @@ def _process_message(gym: Gym, message: dict) -> bool:
         current_app.logger.warning("Ignored WhatsApp message with invalid sender for gym %s", gym.id)
         return False
 
+    canonical_phone = f"+{whatsapp_phone}"
     members = (
         Member.query.filter(
             Member.gym_id == gym.id,
-            Member.phone == f"+{whatsapp_phone}",
+            or_(
+                Member.phone == canonical_phone,
+                func.replace(func.trim(Member.phone), " ", "") == canonical_phone,
+            ),
             Member.deleted_at.is_(None),
         )
         .order_by(Member.id.asc())
@@ -118,11 +131,13 @@ def _process_message(gym: Gym, message: dict) -> bool:
         .all()
     )
     if len(members) != 1:
-        if len(members) > 1:
-            current_app.logger.warning(
-                "Ignored WhatsApp opt-in for ambiguous member phone in gym %s",
-                gym.id,
-            )
+        reason = "not found" if not members else "ambiguous"
+        current_app.logger.warning(
+            "Ignored WhatsApp opt-in: member phone %s in gym %s was %s",
+            _masked_phone(whatsapp_phone),
+            gym.id,
+            reason,
+        )
         return False
 
     member = members[0]
@@ -167,3 +182,7 @@ def _process_message(gym: Gym, message: dict) -> bool:
             result.error,
         )
     return True
+
+
+def _masked_phone(phone: str) -> str:
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"

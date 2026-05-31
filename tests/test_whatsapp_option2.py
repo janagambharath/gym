@@ -130,6 +130,27 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             1,
         )
 
+    def test_inbound_message_matches_legacy_phone_with_spaces(self) -> None:
+        self.member_one.phone = "+91 91000 00001"
+        db.session.commit()
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "messages": [{"id": "inbound-spaced", "from": "919100000001"}],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+        self.assertTrue(self.member_one.whatsapp_opted_in)
+
         self.assertEqual(self._post_webhook(payload).status_code, 200)
         self.assertEqual(
             AuditLog.query.filter_by(gym_id=self.gym_one.id, action="whatsapp_opt_in").count(),
