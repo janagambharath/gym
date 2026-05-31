@@ -17,9 +17,11 @@ from app.models import (
     ReminderLog,
     RenewalHistory,
 )
+from app.models.gym import DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
+from app.services.whatsapp_template_service import render_message_template
 from app.utils.helpers import normalize_public_media_url, phone_to_whatsapp, signed_upload_url
 
 
@@ -59,6 +61,7 @@ def _due_members_query(gym_id: int, days_before: int, gym_timezone: str):
     return (
         Member.query.filter_by(gym_id=gym_id, status="active")
         .filter(Member.deleted_at.is_(None))
+        .filter(Member.whatsapp_opted_in.is_(True))
         .filter(Member.membership_end == target_date)
         .filter(~Member.id.in_(already_renewed))
         .filter(~Member.id.in_(already_paid))
@@ -129,10 +132,7 @@ def ensure_default_template(gym_id: int) -> NotificationTemplate:
         gym_id=gym_id,
         name="Default renewal reminder",
         days_before=3,
-        message_body=(
-            "Hi {{ member_name }}, your {{ gym_name }} membership expires on "
-            "{{ expiry_date }}. Please renew to keep access active."
-        ),
+        message_body=DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE,
     )
     db.session.add(template)
     db.session.flush()
@@ -243,16 +243,37 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
         )
 
     member = log.member
-    gym = db.session.get(Gym, member.gym_id)
-    template = log.template or ensure_default_template(member.gym_id)
-    message = template.render(
-        gym_name=gym.name,
-        member_name=member.full_name,
-        expiry_date=member.membership_end.strftime("%d %b %Y"),
-    )
+    if member.gym_id != log.gym_id:
+        raise ValueError("Reminder tenant does not match member tenant.")
+    if not member.whatsapp_opted_in:
+        raise ValueError("Member has not opted in to WhatsApp reminders.")
+
+    gym = Gym.query.filter_by(id=log.gym_id).first()
+    if not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
+        raise ValueError("WhatsApp is not configured and enabled for this gym.")
+
+    expiry_date = member.membership_end.strftime("%d %b %Y")
+    days_left = (member.membership_end - today_for_gym(gym.timezone)).days
+    try:
+        message = render_message_template(
+            gym.renewal_reminder_template,
+            gym_name=gym.name,
+            member_name=member.full_name,
+            expiry_date=expiry_date,
+            days_left=days_left,
+        )
+    except Exception:
+        _logger.exception("Could not render renewal reminder template for gym %s", gym.id)
+        message = render_message_template(
+            DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE,
+            gym_name=gym.name,
+            member_name=member.full_name,
+            expiry_date=expiry_date,
+            days_left=days_left,
+        )
 
     qr_url = resolve_qr_url(member.gym_id)
-    whatsapp = WhatsAppService()
+    whatsapp = WhatsAppService(gym)
     log.attempts += 1
     log.message_snapshot = message
     try:
@@ -281,6 +302,15 @@ def run_due_reminders_for_gym(
     gym_timezone: str = "Asia/Kolkata",
 ) -> dict:
     counts = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
+    gym = Gym.query.filter_by(id=gym_id).first()
+    if (
+        not gym
+        or not gym.is_operational()
+        or not gym.whatsapp_enabled
+        or not gym.phone_number_id
+    ):
+        return counts
+
     local_today = today_for_gym(gym_timezone)
 
     for days_before in days_before_values:

@@ -2,7 +2,7 @@
 {% block title %}Settings | RenewalDesk{% endblock %}
 {% block page_title %}Gym Settings{% endblock %}
 {% block page_actions %}
-<a class="btn btn-outline-primary" href="{{ url_for('gym.template_form') }}"><i class="bi bi-chat-left-text"></i> New template</a>
+<a class="btn btn-outline-primary" href="{{ url_for('gym.whatsapp_settings') }}"><i class="bi bi-whatsapp"></i> WhatsApp settings</a>
 {% endblock %}
 {% block content %}
 <div class="row g-4">
@@ -41,19 +41,14 @@
     </div>
     <div class="col-lg-4">
         <div class="panel">
-            <div class="panel-header">
-                <h2>Reminder templates</h2>
-            </div>
-            <div class="list-group list-group-flush">
-                {% for template in templates %}
-                <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('gym.template_form', template_id=template.id) }}">
-                    <span>{{ template.name }}</span>
-                    <span class="badge bg-light text-dark">{{ template.days_before }} days</span>
-                </a>
-                {% else %}
-                <div class="list-group-item text-secondary">No templates yet.</div>
-                {% endfor %}
-            </div>
+            <h2>WhatsApp reminders</h2>
+            <p class="text-secondary">
+                Connect this gym's WhatsApp Business number and edit welcome and renewal
+                messages on the dedicated WhatsApp Settings page.
+            </p>
+            <a class="btn btn-outline-primary" href="{{ url_for('gym.whatsapp_settings') }}">
+                <i class="bi bi-whatsapp"></i> Open WhatsApp settings
+            </a>
         </div>
     </div>
 </div>

@@ -59,6 +59,9 @@
                 <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('staff.') else '' }}" href="{{ url_for('staff.index') }}">
                     <i class="bi bi-person-badge nav-icon"></i> Staff
                 </a>
+                <a class="nav-item {{ 'active' if request.endpoint == 'gym.whatsapp_settings' else '' }}" href="{{ url_for('gym.whatsapp_settings') }}">
+                    <i class="bi bi-whatsapp nav-icon"></i> WhatsApp Settings
+                </a>
                 <a class="nav-item {{ 'active' if request.endpoint in ['gym.settings', 'gym.template_form'] else '' }}" href="{{ url_for('gym.settings') }}">
                     <i class="bi bi-gear nav-icon"></i> Settings
                 </a>

@@ -8,6 +8,17 @@ from app.extensions import db
 from app.models.mixins import TimestampMixin
 
 
+DEFAULT_WHATSAPP_WELCOME_TEMPLATE = (
+    "Hi {{ member_name }}, welcome to {{ gym_name }}. "
+    "You are now opted in for WhatsApp membership updates."
+)
+DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE = (
+    "Hi {{ member_name }}, your {{ gym_name }} membership expires on "
+    "{{ expiry_date }}. You have {{ days_left }} day(s) left. "
+    "Please complete payment using the attached QR image."
+)
+
+
 class Gym(TimestampMixin, db.Model):
     __tablename__ = "gyms"
     __table_args__ = (
@@ -27,6 +38,19 @@ class Gym(TimestampMixin, db.Model):
     trial_ends_at = db.Column(db.Date, nullable=True)
     max_members = db.Column(db.Integer, nullable=True)
     address = db.Column(db.Text, nullable=True)
+    phone_number_id = db.Column(db.String(255), nullable=True, unique=True, index=True)
+    business_phone_number = db.Column(db.String(40), nullable=True, unique=True, index=True)
+    whatsapp_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    welcome_message_template = db.Column(
+        db.Text,
+        nullable=False,
+        default=DEFAULT_WHATSAPP_WELCOME_TEMPLATE,
+    )
+    renewal_reminder_template = db.Column(
+        db.Text,
+        nullable=False,
+        default=DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE,
+    )
 
     users = db.relationship("User", back_populates="gym", cascade="all, delete-orphan")
     plans = db.relationship(

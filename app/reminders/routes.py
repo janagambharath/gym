@@ -69,6 +69,10 @@ def index():
 @limiter.limit("2 per minute")
 def run_now():
     gym_id = current_user.gym_id
+    if not current_user.gym.whatsapp_enabled or not current_user.gym.phone_number_id:
+        flash("Connect and enable this gym's WhatsApp Business number first.", "warning")
+        return redirect(url_for("gym.whatsapp_settings"))
+
     gym_timezone = current_user.gym.timezone or "Asia/Kolkata"
     days_before = list(current_app.config["REMINDER_DAYS_BEFORE"])
     job_id = uuid.uuid4().hex
@@ -140,6 +144,12 @@ def send_test(member_id: int):
     if member.deleted_at is not None:
         flash("Cannot send a test reminder to a deleted member.", "warning")
         return redirect(request.referrer or url_for("reminders.index"))
+    if not member.whatsapp_opted_in:
+        flash("This member has not opted in by messaging the gym's WhatsApp number.", "warning")
+        return redirect(request.referrer or url_for("reminders.index"))
+    if not current_user.gym.whatsapp_enabled or not current_user.gym.phone_number_id:
+        flash("Connect and enable this gym's WhatsApp Business number first.", "warning")
+        return redirect(url_for("gym.whatsapp_settings"))
 
     qr_url = resolve_qr_url(current_user.gym_id)
     if not qr_url:

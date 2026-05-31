@@ -9,6 +9,8 @@ from flask import current_app
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from app.models import Gym
+
 
 def _build_session() -> requests.Session:
     session = requests.Session()
@@ -29,15 +31,24 @@ class WhatsAppResult:
 
 
 class WhatsAppService:
-    def __init__(self) -> None:
+    def __init__(self, gym: Gym) -> None:
+        self.gym_id = gym.id
+        self.gym_enabled = gym.whatsapp_enabled
         self.enabled = current_app.config["WHATSAPP_ENABLED"]
-        self.phone_number_id = current_app.config["WHATSAPP_PHONE_NUMBER_ID"]
+        self.phone_number_id = gym.phone_number_id
         self.access_token = current_app.config["WHATSAPP_ACCESS_TOKEN"]
         self.api_version = current_app.config["WHATSAPP_API_VERSION"]
 
     def send_text(self, *, to: str, body: str) -> WhatsAppResult:
+        configuration_error = self._configuration_error()
+        if configuration_error:
+            return WhatsAppResult(ok=False, error=configuration_error)
         if not self.enabled:
-            current_app.logger.info("WhatsApp disabled; simulated message to %s", to)
+            current_app.logger.info(
+                "WhatsApp disabled globally; simulated message for gym %s to %s",
+                self.gym_id,
+                to,
+            )
             return WhatsAppResult(ok=True, provider_message_id="simulated")
         payload = {
             "messaging_product": "whatsapp",
@@ -49,8 +60,15 @@ class WhatsAppService:
         return self._post(payload)
 
     def send_image(self, *, to: str, image_url: str, caption: str) -> WhatsAppResult:
+        configuration_error = self._configuration_error()
+        if configuration_error:
+            return WhatsAppResult(ok=False, error=configuration_error)
         if not self.enabled:
-            current_app.logger.info("WhatsApp disabled; simulated image message to %s", to)
+            current_app.logger.info(
+                "WhatsApp disabled globally; simulated image message for gym %s to %s",
+                self.gym_id,
+                to,
+            )
             return WhatsAppResult(ok=True, provider_message_id="simulated-image")
 
         media_id = self._upload_media(image_url)
@@ -75,7 +93,7 @@ class WhatsAppService:
 
     def _upload_media(self, image_url: str) -> str | None:
         url_hash = hashlib.sha256(image_url.encode()).hexdigest()[:16]
-        cache_key = f"wa_media_id:{url_hash}"
+        cache_key = f"wa_media_id:{self.phone_number_id}:{url_hash}"
 
         try:
             import redis as _redis
@@ -139,7 +157,7 @@ class WhatsAppService:
         )
 
     def _post(self, payload: dict, *, retries: int = 3) -> WhatsAppResult:
-        if not self.phone_number_id or not self.access_token:
+        if not self.access_token:
             return WhatsAppResult(ok=False, error="WhatsApp credentials are missing")
 
         url = (
@@ -198,3 +216,10 @@ class WhatsAppService:
             return WhatsAppResult(ok=True, provider_message_id=message_id)
 
         return WhatsAppResult(ok=False, error=f"Failed after {retries} attempts: {last_error}")
+
+    def _configuration_error(self) -> str | None:
+        if not self.gym_enabled:
+            return "WhatsApp is not enabled for this gym"
+        if not self.phone_number_id:
+            return "Gym WhatsApp phone number ID is missing"
+        return None

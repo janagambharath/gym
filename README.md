@@ -99,14 +99,20 @@ In development, `DevelopmentConfig` enables the in-process scheduler by default.
 Set:
 
 - `WHATSAPP_ENABLED=true`
-- `WHATSAPP_PHONE_NUMBER_ID`
 - `WHATSAPP_ACCESS_TOKEN`
 - `WHATSAPP_VERIFY_TOKEN`
 - `WHATSAPP_WEBHOOK_SECRET`
 - `PUBLIC_BASE_URL`
 
+`WHATSAPP_ENABLED` is the platform-wide delivery switch. Each gym owner connects their
+own WhatsApp Business number and Meta phone number ID from the dashboard's WhatsApp
+Settings page. The server-side Meta access token must have permission to send from each
+connected phone number ID.
+
 Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL.
-Meta delivery status callbacks are handled at `/webhook/whatsapp`.
+Meta inbound messages and delivery status callbacks are handled at `/webhook/whatsapp`.
+The first inbound message from a known member opts that member in and triggers the gym's
+configured welcome message. Scheduled renewal reminders are sent only to opted-in members.
 
 ## Tenant safety
 

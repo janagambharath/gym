@@ -238,7 +238,16 @@ def _register_health_check(app: Flask) -> None:
     def health():
         try:
             db.session.execute(text("SELECT 1"))
-            db.session.execute(text("SELECT trial_ends_at, max_members FROM gyms LIMIT 1"))
+            db.session.execute(
+                text(
+                    "SELECT trial_ends_at, max_members, phone_number_id, "
+                    "whatsapp_enabled, welcome_message_template, "
+                    "renewal_reminder_template FROM gyms LIMIT 1"
+                )
+            )
+            db.session.execute(
+                text("SELECT whatsapp_opted_in, whatsapp_opted_in_at FROM members LIMIT 1")
+            )
             db.session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
             return jsonify({"status": "ok", "db": "ok", "schema": "ok"}), 200
         except Exception as exc:

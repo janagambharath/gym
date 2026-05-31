@@ -79,7 +79,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
             _refresh_redis_lock(redis_url, _lock_ttl(app))
 
         app.logger.info("Running scheduled reminder scan")
-        active_gyms = Gym.query.filter_by(status="active").all()
+        active_gyms = Gym.query.filter_by(status="active", whatsapp_enabled=True).all()
         for gym in active_gyms:
             try:
                 result = run_due_reminders_for_gym(

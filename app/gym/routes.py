@@ -8,8 +8,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.forms import MembershipPlanForm, NotificationTemplateForm, QRSettingsForm
-from app.models import Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
+from app.forms import (
+    MembershipPlanForm,
+    NotificationTemplateForm,
+    QRSettingsForm,
+    WhatsAppSettingsForm,
+)
+from app.models import Gym, Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
@@ -86,11 +91,6 @@ def settings():
         flash("Payment QR settings saved.", "success")
         return redirect(url_for("gym.settings"))
 
-    templates = (
-        NotificationTemplate.query.filter_by(gym_id=gym_id)
-        .order_by(NotificationTemplate.days_before.asc())
-        .all()
-    )
     current_qr_url = None
     if qr_settings.qr_public_url:
         current_qr_url = normalize_public_media_url(qr_settings.qr_public_url)
@@ -102,9 +102,38 @@ def settings():
         "gym/settings.html",
         form=form,
         qr_settings=qr_settings,
-        templates=templates,
         current_qr_url=current_qr_url,
     )
+
+
+@gym_bp.route("/whatsapp-settings", methods=["GET", "POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def whatsapp_settings():
+    gym = Gym.query.filter_by(id=current_user.gym_id).first_or_404()
+    form = WhatsAppSettingsForm(obj=gym)
+    if form.validate_on_submit():
+        gym.phone_number_id = form.phone_number_id.data
+        gym.business_phone_number = form.business_phone_number.data
+        gym.whatsapp_enabled = form.whatsapp_enabled.data
+        gym.welcome_message_template = form.welcome_message_template.data.strip()
+        gym.renewal_reminder_template = form.renewal_reminder_template.data.strip()
+        try:
+            audit(
+                action="update_whatsapp_settings",
+                resource_type="gym",
+                resource_id=gym.id,
+                metadata={"whatsapp_enabled": gym.whatsapp_enabled},
+            )
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash("That WhatsApp number is already connected to another gym.", "danger")
+            return redirect(url_for("gym.whatsapp_settings"))
+        flash("WhatsApp settings saved.", "success")
+        return redirect(url_for("gym.whatsapp_settings"))
+    return render_template("gym/whatsapp_settings.html", form=form, gym=gym)
 
 
 @gym_bp.post("/settings/qr/remove")

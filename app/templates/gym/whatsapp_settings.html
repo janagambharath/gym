@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}WhatsApp Settings | RenewalDesk{% endblock %}
+{% block page_title %}WhatsApp Settings{% endblock %}
+{% block content %}
+<div class="panel narrow-panel">
+    <div class="panel-header">
+        <h2>Gym WhatsApp Business number</h2>
+        <span class="badge {{ 'status-active' if gym.whatsapp_enabled else 'badge-inactive' }}">
+            {{ 'Enabled' if gym.whatsapp_enabled else 'Disabled' }}
+        </span>
+    </div>
+    <p class="text-secondary mb-3">
+        Connect the WhatsApp Business number used by this gym. Incoming member messages opt
+        that member in and receive the welcome message below.
+    </p>
+    <form method="post" novalidate>
+        {{ form.hidden_tag() }}
+        {% include "partials/form_errors.html" %}
+        <div class="row g-3">
+            <div class="col-md-6">
+                {{ form.phone_number_id.label(class="form-label") }}
+                {{ form.phone_number_id(class="form-control", placeholder="Meta phone number ID") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.business_phone_number.label(class="form-label") }}
+                {{ form.business_phone_number(class="form-control", placeholder="+919876543210") }}
+            </div>
+        </div>
+        <div class="form-check my-3">
+            {{ form.whatsapp_enabled(class="form-check-input") }}
+            {{ form.whatsapp_enabled.label(class="form-check-label") }}
+        </div>
+        <div class="alert alert-info mb-3">
+            Supported variables:
+            <span class="font-mono">{{ '{{member_name}}' }}</span>,
+            <span class="font-mono">{{ '{{gym_name}}' }}</span>,
+            <span class="font-mono">{{ '{{expiry_date}}' }}</span>,
+            <span class="font-mono">{{ '{{days_left}}' }}</span>
+        </div>
+        <div class="mb-3">
+            {{ form.welcome_message_template.label(class="form-label") }}
+            {{ form.welcome_message_template(class="form-control", rows="5") }}
+        </div>
+        <div class="mb-3">
+            {{ form.renewal_reminder_template.label(class="form-label") }}
+            {{ form.renewal_reminder_template(class="form-control", rows="6") }}
+            <div class="text-secondary text-sm mt-1">
+                Renewal reminders attach the active payment QR configured in Gym Settings.
+            </div>
+        </div>
+        {{ form.submit(class="btn btn-primary") }}
+    </form>
+</div>
+{% endblock %}

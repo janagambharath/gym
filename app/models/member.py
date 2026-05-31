@@ -32,6 +32,7 @@ class Member(TenantMixin, TimestampMixin, db.Model):
         Index("ix_members_gym_status", "gym_id", "status"),
         Index("ix_members_gym_expiry", "gym_id", "membership_end"),
         Index("ix_members_gym_phone", "gym_id", "phone"),
+        Index("ix_members_gym_whatsapp_opted_in", "gym_id", "whatsapp_opted_in"),
         CheckConstraint(
             "status IN ('active', 'expired', 'paused', 'deleted')",
             name="ck_members_status",
@@ -53,6 +54,8 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
     external_ref = db.Column(db.String(120), nullable=True)
+    whatsapp_opted_in = db.Column(db.Boolean, nullable=False, default=False)
+    whatsapp_opted_in_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     gym = db.relationship("Gym", back_populates="members")
     plan = db.relationship("MembershipPlan", back_populates="members")

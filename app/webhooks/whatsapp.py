@@ -6,7 +6,13 @@ import hmac
 from flask import Blueprint, current_app, request
 
 from app.extensions import csrf, db
-from app.models import ReminderLog
+from app.models import Gym, Member, ReminderLog
+from app.models.gym import DEFAULT_WHATSAPP_WELCOME_TEMPLATE
+from app.models.mixins import utcnow
+from app.services.audit_service import audit
+from app.services.whatsapp_service import WhatsAppService
+from app.services.whatsapp_template_service import render_message_template
+from app.utils.helpers import phone_to_whatsapp
 
 
 webhooks_bp = Blueprint("webhooks", __name__, url_prefix="/webhook")
@@ -45,20 +51,35 @@ def receive():
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
+            gym = _gym_for_value(value)
+            if not gym:
+                continue
             for status in value.get("statuses", []):
-                changed = _process_status(status) or changed
+                changed = _process_status(gym.id, status) or changed
+            for message in value.get("messages", []):
+                changed = _process_message(gym, message) or changed
     if changed:
         db.session.commit()
     return "ok", 200
 
 
-def _process_status(status: dict) -> bool:
+def _gym_for_value(value: dict) -> Gym | None:
+    phone_number_id = str(value.get("metadata", {}).get("phone_number_id") or "").strip()
+    if not phone_number_id:
+        return None
+    return Gym.query.filter_by(phone_number_id=phone_number_id).first()
+
+
+def _process_status(gym_id: int, status: dict) -> bool:
     provider_id = status.get("id")
     whatsapp_status = status.get("status")
     if not provider_id or not whatsapp_status:
         return False
 
-    log = ReminderLog.query.filter_by(provider_message_id=provider_id).first()
+    log = ReminderLog.query.filter_by(
+        gym_id=gym_id,
+        provider_message_id=provider_id,
+    ).first()
     if not log:
         return False
 
@@ -72,3 +93,77 @@ def _process_status(status: dict) -> bool:
             log.error_message = str(errors[0].get("title") or errors[0])[:500]
         return True
     return False
+
+
+def _process_message(gym: Gym, message: dict) -> bool:
+    if not gym.whatsapp_enabled or not gym.is_operational():
+        return False
+
+    sender = str(message.get("from") or "").strip()
+    try:
+        whatsapp_phone = phone_to_whatsapp(f"+{sender.lstrip('+')}")
+    except ValueError:
+        current_app.logger.warning("Ignored WhatsApp message with invalid sender for gym %s", gym.id)
+        return False
+
+    members = (
+        Member.query.filter(
+            Member.gym_id == gym.id,
+            Member.phone == f"+{whatsapp_phone}",
+            Member.deleted_at.is_(None),
+        )
+        .order_by(Member.id.asc())
+        .with_for_update()
+        .limit(2)
+        .all()
+    )
+    if len(members) != 1:
+        if len(members) > 1:
+            current_app.logger.warning(
+                "Ignored WhatsApp opt-in for ambiguous member phone in gym %s",
+                gym.id,
+            )
+        return False
+
+    member = members[0]
+    if member.whatsapp_opted_in:
+        return False
+
+    member.whatsapp_opted_in = True
+    member.whatsapp_opted_in_at = utcnow()
+    audit(
+        action="whatsapp_opt_in",
+        resource_type="member",
+        resource_id=member.id,
+        gym_id=gym.id,
+        metadata={"provider_message_id": message.get("id")},
+    )
+
+    expiry_date = member.membership_end.strftime("%d %b %Y")
+    try:
+        welcome_message = render_message_template(
+            gym.welcome_message_template,
+            gym_name=gym.name,
+            member_name=member.full_name,
+            expiry_date=expiry_date,
+            days_left=member.days_until_expiry,
+        )
+    except Exception:
+        current_app.logger.exception("Could not render WhatsApp welcome template for gym %s", gym.id)
+        welcome_message = render_message_template(
+            DEFAULT_WHATSAPP_WELCOME_TEMPLATE,
+            gym_name=gym.name,
+            member_name=member.full_name,
+            expiry_date=expiry_date,
+            days_left=member.days_until_expiry,
+        )
+
+    result = WhatsAppService(gym).send_text(to=whatsapp_phone, body=welcome_message)
+    if not result.ok:
+        current_app.logger.warning(
+            "Could not send WhatsApp welcome message for gym %s member %s: %s",
+            gym.id,
+            member.id,
+            result.error,
+        )
+    return True
