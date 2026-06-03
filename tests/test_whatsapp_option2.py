@@ -181,6 +181,40 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             f"Renew Member One at Gym One by {self.expiry.strftime('%d %b %Y')} (3 days).",
         )
 
+    @patch.object(WhatsAppService, "send_image")
+    @patch.object(WhatsAppService, "send_text")
+    def test_manual_test_reminder_sends_text_without_qr(
+        self,
+        send_text: Mock,
+        send_image: Mock,
+    ) -> None:
+        send_text.return_value = WhatsAppResult(ok=True, provider_message_id="text-message")
+        self.member_one.whatsapp_opted_in = True
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        db.session.commit()
+
+        self.assertEqual(
+            self.client.post(
+                "/auth/login",
+                data={"email": self.owner.email, "password": "ChangeMe123!"},
+            ).status_code,
+            302,
+        )
+
+        response = self.client.post(f"/reminders/members/{self.member_one.id}/send-test")
+
+        self.assertEqual(response.status_code, 302)
+        send_text.assert_called_once()
+        send_image.assert_not_called()
+
+        log = ReminderLog.query.filter_by(
+            gym_id=self.gym_one.id,
+            member_id=self.member_one.id,
+            reminder_stage="manual_test",
+        ).one()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "text-message")
+
     def test_delivery_status_updates_are_scoped_to_webhook_gym(self) -> None:
         self.member_one.whatsapp_opted_in = True
         self.member_two.whatsapp_opted_in = True

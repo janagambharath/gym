@@ -152,13 +152,6 @@ def send_test(member_id: int):
         return redirect(url_for("gym.whatsapp_settings"))
 
     qr_url = resolve_qr_url(current_user.gym_id)
-    if not qr_url:
-        flash(
-            "No active QR image URL is available. Add a Public QR URL, or set "
-            "PUBLIC_BASE_URL so uploaded QR images can be attached.",
-            "warning",
-        )
-        return redirect(request.referrer or url_for("gym.settings"))
 
     try:
         template = ensure_default_template(current_user.gym_id)
@@ -172,17 +165,21 @@ def send_test(member_id: int):
             action="send_test_reminder",
             resource_type="reminder_log",
             resource_id=log.id,
-            metadata={"member_id": member.id, "qr_url": qr_url},
+            metadata={
+                "member_id": member.id,
+                "qr_attached": bool(qr_url),
+                "qr_url": qr_url,
+            },
         )
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        current_app.logger.exception("Test QR reminder failed for member %s", member.id)
-        flash(f"Test QR reminder failed: {str(exc)[:180]}", "warning")
+        current_app.logger.exception("Test reminder failed for member %s", member.id)
+        flash(f"Test reminder failed: {str(exc)[:180]}", "warning")
         return redirect(request.referrer or url_for("reminders.index"))
 
     if log.status == "sent":
-        flash(f"Test QR reminder sent to {member.full_name}.", "success")
+        flash(f"Test reminder sent to {member.full_name}.", "success")
     else:
-        flash(f"Test QR reminder failed: {log.error_message or 'Unknown error'}", "warning")
+        flash(f"Test reminder failed: {log.error_message or 'Unknown error'}", "warning")
     return redirect(request.referrer or url_for("reminders.index"))
