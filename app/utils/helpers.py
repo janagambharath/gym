@@ -19,11 +19,13 @@ def slugify(value: str) -> str:
 
 
 def phone_to_whatsapp(phone: str) -> str:
-    cleaned = re.sub(r"\s", "", (phone or "").strip())
-    if not cleaned.startswith("+"):
+    raw = (phone or "").strip()
+    if not raw.startswith("+"):
         raise ValueError(
             f"Phone number '{phone}' must be in E.164 format (+<country><number>)."
         )
+    digits = re.sub(r"\D", "", raw)
+    cleaned = f"+{digits}"
     if not E164_RE.match(cleaned):
         raise ValueError(f"Phone number '{phone}' is not a valid E.164 number.")
     return cleaned[1:]

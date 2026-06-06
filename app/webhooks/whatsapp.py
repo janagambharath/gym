@@ -4,7 +4,6 @@ import hashlib
 import hmac
 
 from flask import Blueprint, current_app, request
-from sqlalchemy import func, or_
 
 from app.extensions import csrf, db
 from app.models import Gym, Member, ReminderLog
@@ -115,21 +114,7 @@ def _process_message(gym: Gym, message: dict) -> bool:
         current_app.logger.warning("Ignored WhatsApp message with invalid sender for gym %s", gym.id)
         return False
 
-    canonical_phone = f"+{whatsapp_phone}"
-    members = (
-        Member.query.filter(
-            Member.gym_id == gym.id,
-            or_(
-                Member.phone == canonical_phone,
-                func.replace(func.trim(Member.phone), " ", "") == canonical_phone,
-            ),
-            Member.deleted_at.is_(None),
-        )
-        .order_by(Member.id.asc())
-        .with_for_update()
-        .limit(2)
-        .all()
-    )
+    members = _matching_members_for_sender(gym.id, whatsapp_phone)
     if len(members) != 1:
         reason = "not found" if not members else "ambiguous"
         current_app.logger.warning(
@@ -138,11 +123,30 @@ def _process_message(gym: Gym, message: dict) -> bool:
             gym.id,
             reason,
         )
-        return False
+        audit(
+            action="whatsapp_opt_in_ignored",
+            resource_type="member",
+            gym_id=gym.id,
+            metadata={
+                "provider_message_id": message.get("id"),
+                "sender": _masked_phone(whatsapp_phone),
+                "reason": reason,
+                "matches": len(members),
+            },
+        )
+        return True
 
     member = members[0]
+    canonical_phone = f"+{whatsapp_phone}"
+    phone_normalized = member.phone != canonical_phone
+    if phone_normalized:
+        member.phone = canonical_phone
+
     if member.whatsapp_opted_in:
-        return False
+        if not member.whatsapp_opted_in_at:
+            member.whatsapp_opted_in_at = utcnow()
+            return True
+        return phone_normalized
 
     member.whatsapp_opted_in = True
     member.whatsapp_opted_in_at = utcnow()
@@ -151,7 +155,10 @@ def _process_message(gym: Gym, message: dict) -> bool:
         resource_type="member",
         resource_id=member.id,
         gym_id=gym.id,
-        metadata={"provider_message_id": message.get("id")},
+        metadata={
+            "provider_message_id": message.get("id"),
+            "phone_normalized": phone_normalized,
+        },
     )
 
     expiry_date = member.membership_end.strftime("%d %b %Y")
@@ -182,6 +189,36 @@ def _process_message(gym: Gym, message: dict) -> bool:
             result.error,
         )
     return True
+
+
+def _phone_digits(value: str | None) -> str:
+    return "".join(char for char in (value or "") if char.isdigit())
+
+
+def _matching_members_for_sender(gym_id: int, whatsapp_phone: str) -> list[Member]:
+    members = (
+        Member.query.filter(
+            Member.gym_id == gym_id,
+            Member.deleted_at.is_(None),
+        )
+        .order_by(Member.id.asc())
+        .with_for_update()
+        .all()
+    )
+    exact_matches = [
+        member for member in members if _phone_digits(member.phone) == whatsapp_phone
+    ]
+    if exact_matches:
+        return exact_matches[:2]
+
+    suffix_matches = [
+        member
+        for member in members
+        if (digits := _phone_digits(member.phone))
+        and len(digits) >= 10
+        and whatsapp_phone.endswith(digits)
+    ]
+    return suffix_matches[:2]
 
 
 def _masked_phone(phone: str) -> str:

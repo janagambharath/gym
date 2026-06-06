@@ -164,6 +164,85 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             1,
         )
 
+    def test_inbound_message_matches_legacy_phone_with_separators(self) -> None:
+        self.member_one.phone = "+91-91000-00001"
+        db.session.commit()
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "messages": [{"id": "inbound-separated", "from": "919100000001"}],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+        self.assertTrue(self.member_one.whatsapp_opted_in)
+        self.assertEqual(self.member_one.phone, "+919100000001")
+
+    def test_inbound_message_matches_legacy_local_phone_and_normalizes_it(self) -> None:
+        self.member_one.phone = "9100000001"
+        db.session.commit()
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "messages": [{"id": "inbound-local", "from": "919100000001"}],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+        self.assertTrue(self.member_one.whatsapp_opted_in)
+        self.assertEqual(self.member_one.phone, "+919100000001")
+
+    def test_inbound_message_does_not_guess_between_duplicate_local_matches(self) -> None:
+        self.member_one.phone = "9100000001"
+        duplicate = Member(
+            gym_id=self.gym_one.id,
+            full_name="Duplicate Member",
+            phone="9100000001",
+            membership_end=self.expiry,
+        )
+        db.session.add(duplicate)
+        db.session.commit()
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "messages": [{"id": "inbound-duplicate", "from": "919100000001"}],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+        self.assertFalse(self.member_one.whatsapp_opted_in)
+        self.assertFalse(duplicate.whatsapp_opted_in)
+
+        ignored = AuditLog.query.filter_by(
+            gym_id=self.gym_one.id,
+            action="whatsapp_opt_in_ignored",
+        ).one()
+        self.assertEqual(ignored.metadata_json["reason"], "ambiguous")
+
     def test_scheduler_sends_and_logs_only_opted_in_members(self) -> None:
         self.member_one.whatsapp_opted_in = True
         db.session.commit()
