@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete
 from flask import has_request_context, request
@@ -44,7 +44,7 @@ def audit(
 
 
 def purge_old_audit_logs(retention_days: int = 90) -> int:
-    cutoff = date.today() - timedelta(days=retention_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     result = db.session.execute(delete(AuditLog).where(AuditLog.created_at < cutoff))
     db.session.commit()
     return result.rowcount or 0

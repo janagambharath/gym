@@ -88,7 +88,7 @@ def gym_detail(gym_id: int):
         "pending_payments": PaymentVerification.query.filter_by(gym_id=gym.id, status="pending").count(),
         "sent_reminders": ReminderLog.query.filter_by(gym_id=gym.id, status="sent").count(),
     }
-    users = User.query.filter_by(gym_id=gym.id).order_by(User.created_at.desc()).all()
+    users = User.query.filter_by(gym_id=gym.id).order_by(User.created_at.desc()).limit(100).all()
     return render_template("admin/gym_detail.html", gym=gym, stats=stats, users=users)
 
 

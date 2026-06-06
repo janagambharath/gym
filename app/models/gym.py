@@ -65,7 +65,9 @@ class Gym(TimestampMixin, db.Model):
     def is_operational(self) -> bool:
         if self.status != "active":
             return False
-        if self.subscription_status == "trial" and self.trial_ends_at:
+        if self.subscription_status == "trial":
+            if not self.trial_ends_at:
+                return False
             return date.today() <= self.trial_ends_at
         return True
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone as tz
 import logging
+import time
 import zoneinfo
 
 from sqlalchemy import select
@@ -19,6 +20,7 @@ from app.models import (
 )
 from app.models.gym import DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE
 from app.models.mixins import utcnow
+from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
@@ -96,6 +98,33 @@ def due_members_for_gym_batched(
         for member in batch:
             last_id = member.id
             yield member
+
+
+def auto_expire_members_for_gym(gym: Gym) -> int:
+    local_today = today_for_gym(gym.timezone or "Asia/Kolkata")
+    expired_members = (
+        Member.query.filter(
+            Member.gym_id == gym.id,
+            Member.membership_end < local_today,
+            Member.status == "active",
+            Member.deleted_at.is_(None),
+        )
+        .with_for_update()
+        .order_by(Member.id.asc())
+        .all()
+    )
+    for member in expired_members:
+        member.status = "expired"
+        audit(
+            action="auto_expired",
+            resource_type="member",
+            resource_id=member.id,
+            gym_id=gym.id,
+            metadata={"membership_end": str(member.membership_end)},
+        )
+    if expired_members:
+        invalidate_dashboard_cache(gym.id)
+    return len(expired_members)
 
 
 def template_for(gym_id: int, days_before: int) -> NotificationTemplate | None:
@@ -386,6 +415,7 @@ def run_due_reminders_for_gym(
                 counts[log.status] = counts.get(log.status, 0) + 1
                 db.session.commit()
                 db.session.expire_all()
+                time.sleep(0.05)
             except Exception:
                 db.session.rollback()
                 _logger.exception("Failed reminder for member %s in gym %s", member_id, gym_id)

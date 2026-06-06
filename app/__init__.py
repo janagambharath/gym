@@ -122,6 +122,13 @@ def _validate_config(app: Flask, selected_config: str) -> None:
             "REDIS_URL must be set to a real Redis instance in production. "
             "In-memory rate limiting does not work across multiple workers."
         )
+    if app.config.get("WHATSAPP_ENABLED"):
+        webhook_secret = app.config.get("WHATSAPP_WEBHOOK_SECRET", "")
+        if not webhook_secret or len(webhook_secret) < 16:
+            raise RuntimeError(
+                "WHATSAPP_WEBHOOK_SECRET must be set to at least 16 characters "
+                "when WHATSAPP_ENABLED=true."
+            )
 
 
 def _ensure_runtime_dirs(app: Flask) -> None:
@@ -303,7 +310,25 @@ def _register_template_helpers(app: Flask) -> None:
 
 
 def _register_cli(app: Flask) -> None:
+    import click
+
     from app.models import Gym, User
+
+    def _iter_active_gyms(batch_size: int = 50):
+        last_id = 0
+        while True:
+            batch = (
+                Gym.query.filter_by(status="active")
+                .filter(Gym.id > last_id)
+                .order_by(Gym.id.asc())
+                .limit(batch_size)
+                .all()
+            )
+            if not batch:
+                break
+            for gym in batch:
+                last_id = gym.id
+                yield gym
 
     @app.cli.command("create-admin")
     def create_admin() -> None:
@@ -344,9 +369,16 @@ def _register_cli(app: Flask) -> None:
 
         gym = Gym.query.filter_by(slug="demo-gym").first()
         if not gym:
-            gym = Gym(name="Demo Fitness", slug="demo-gym", email="owner@example.com")
+            gym = Gym(
+                name="Demo Fitness",
+                slug="demo-gym",
+                email="owner@example.com",
+                trial_ends_at=date.today() + timedelta(days=14),
+            )
             db.session.add(gym)
             db.session.flush()
+        elif gym.subscription_status == "trial" and not gym.trial_ends_at:
+            gym.trial_ends_at = date.today() + timedelta(days=14)
 
         owner = User.query.filter_by(email="owner@example.com").first()
         if not owner:
@@ -419,41 +451,19 @@ def _register_cli(app: Flask) -> None:
     def run_reminders() -> None:
         import json
 
-        from app.models import Member
-        from app.services.audit_service import audit
-        from app.services.analytics_service import invalidate_dashboard_cache
-        from app.services.reminder_service import run_due_reminders_for_gym, today_for_gym
+        from app.services.reminder_service import (
+            auto_expire_members_for_gym,
+            run_due_reminders_for_gym,
+        )
 
-        active_gyms = Gym.query.filter_by(status="active").all()
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
-        for gym in active_gyms:
-            local_today = today_for_gym(gym.timezone or "Asia/Kolkata")
-            expired_members = (
-                Member.query.filter(
-                    Member.gym_id == gym.id,
-                    Member.membership_end < local_today,
-                    Member.status == "active",
-                    Member.deleted_at.is_(None),
-                )
-                .with_for_update()
-                .order_by(Member.id.asc())
-                .all()
-            )
-            for member in expired_members:
-                member.status = "expired"
-                audit(
-                    action="auto_expired",
-                    resource_type="member",
-                    resource_id=member.id,
-                    gym_id=gym.id,
-                    metadata={"membership_end": str(member.membership_end)},
-                )
-            if expired_members:
-                invalidate_dashboard_cache(gym.id)
+        for gym in _iter_active_gyms():
+            expired_count = auto_expire_members_for_gym(gym)
+            if expired_count:
                 db.session.commit()
                 app.logger.info(
                     json.dumps(
-                        {"event": "auto_expired", "gym_id": gym.id, "count": len(expired_members)}
+                        {"event": "auto_expired", "gym_id": gym.id, "count": expired_count}
                     )
                 )
 
@@ -477,6 +487,28 @@ def _register_cli(app: Flask) -> None:
 
         count = purge_old_audit_logs(retention_days=90)
         print(f"Purged {count} audit log entries older than 90 days.")
+
+    @app.cli.command("hard-delete-gym")
+    @click.argument("gym_slug")
+    @click.option("--confirm", is_flag=True, help="Must pass --confirm to proceed.")
+    def hard_delete_gym(gym_slug: str, confirm: bool) -> None:
+        """Permanently delete a suspended gym and its associated data."""
+        if not confirm:
+            print("ERROR: Pass --confirm to permanently delete this gym.")
+            return
+        gym = Gym.query.filter_by(slug=gym_slug).first()
+        if not gym:
+            print(f"ERROR: Gym '{gym_slug}' not found.")
+            return
+        if gym.status != "suspended":
+            print(
+                f"ERROR: Gym '{gym_slug}' is not suspended (status={gym.status}). "
+                "Suspend it first from the admin panel."
+            )
+            return
+        db.session.delete(gym)
+        db.session.commit()
+        print(f"Permanently deleted gym '{gym_slug}' and all associated data.")
 
 
 def _start_scheduler(app: Flask) -> None:

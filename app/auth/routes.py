@@ -57,7 +57,13 @@ def login():
         if not user or not password_ok:
             if user:
                 user.record_failed_login()
-                db.session.commit()
+            else:
+                audit(
+                    action="login_failed_unknown_email",
+                    resource_type="user",
+                    metadata={"attempted_email": form.email.data.lower().strip()},
+                )
+            db.session.commit()
             flash("Invalid email or password.", "danger")
             return render_template("auth/login.html", form=form)
         if not user.is_active:

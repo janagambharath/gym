@@ -7,11 +7,12 @@ from flask import Flask
 
 from app.extensions import scheduler
 from app.models import Gym
-from app.services.reminder_service import run_due_reminders_for_gym
+from app.services.reminder_service import auto_expire_members_for_gym, run_due_reminders_for_gym
 
 
 _logger = logging.getLogger(__name__)
 _LOCK_KEY = "renewaldesk:scheduler_lock"
+_GYM_BATCH_SIZE = 50
 
 
 def _lock_ttl(app: Flask) -> int:
@@ -72,15 +73,50 @@ def configure_scheduler(app: Flask) -> bool:
     return True
 
 
+def _iter_active_gyms():
+    last_id = 0
+    while True:
+        batch = (
+            Gym.query.filter_by(status="active")
+            .filter(Gym.id > last_id)
+            .order_by(Gym.id.asc())
+            .limit(_GYM_BATCH_SIZE)
+            .all()
+        )
+        if not batch:
+            break
+        for gym in batch:
+            last_id = gym.id
+            yield gym
+
+
 def _scheduled_reminder_job(app: Flask) -> None:
     with app.app_context():
+        from app.extensions import db
+
         redis_url = app.config.get("REDIS_URL", "memory://")
         if redis_url != "memory://":
             _refresh_redis_lock(redis_url, _lock_ttl(app))
 
         app.logger.info("Running scheduled reminder scan")
-        active_gyms = Gym.query.filter_by(status="active", whatsapp_enabled=True).all()
-        for gym in active_gyms:
+        for gym in _iter_active_gyms():
+            try:
+                expired_count = auto_expire_members_for_gym(gym)
+                if expired_count:
+                    db.session.commit()
+                    app.logger.info(
+                        "Auto-expired %s members for gym %s",
+                        expired_count,
+                        gym.id,
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Auto-expiry failed for gym %s", gym.id)
+                continue
+
+            if not gym.whatsapp_enabled:
+                db.session.expire_all()
+                continue
             try:
                 result = run_due_reminders_for_gym(
                     gym.id,
@@ -89,7 +125,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 )
                 app.logger.info("Reminder scan for gym %s: %s", gym.id, result)
             except Exception:
-                from app.extensions import db
-
                 db.session.rollback()
                 app.logger.exception("Reminder scan failed for gym %s", gym.id)
+            finally:
+                db.session.expire_all()

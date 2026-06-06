@@ -18,7 +18,11 @@ from app.models import Gym, Member, MembershipPlan, NotificationTemplate, Paymen
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
-from app.services.storage_service import delete_local_upload, save_gym_qr
+from app.services.storage_service import (
+    delete_local_upload,
+    invalidate_whatsapp_media_cache,
+    save_gym_qr,
+)
 from app.services.whatsapp_service import WhatsAppService
 from app.utils.decorators import active_gym_required, roles_required
 from app.utils.helpers import normalize_public_media_url
@@ -76,6 +80,7 @@ def settings():
 
     form = QRSettingsForm(obj=qr_settings)
     if form.validate_on_submit():
+        old_media_url = _whatsapp_media_cache_url(qr_settings)
         qr_settings.payment_label = form.payment_label.data
         qr_settings.upi_id = form.upi_id.data
         qr_settings.qr_public_url = form.qr_public_url.data
@@ -87,6 +92,7 @@ def settings():
             except ValueError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("gym.settings"))
+        invalidate_whatsapp_media_cache(current_user.gym.phone_number_id, old_media_url)
         audit(action="update_qr_settings", resource_type="qr_settings", resource_id=qr_settings.id)
         db.session.commit()
         flash("Payment QR settings saved.", "success")
@@ -118,6 +124,7 @@ def whatsapp_settings():
         gym.whatsapp_business_account_id = form.whatsapp_business_account_id.data
         gym.phone_number_id = form.phone_number_id.data
         gym.business_phone_number = form.business_phone_number.data
+        gym.timezone = form.timezone.data
         gym.whatsapp_enabled = form.whatsapp_enabled.data
         gym.welcome_message_template = form.welcome_message_template.data.strip()
         gym.renewal_reminder_template = form.renewal_reminder_template.data.strip()
@@ -151,6 +158,7 @@ def whatsapp_settings():
 def remove_qr():
     qr_settings = QRSettings.query.filter_by(gym_id=current_user.gym_id).first_or_404()
     old_path = qr_settings.qr_image_path
+    old_media_url = _whatsapp_media_cache_url(qr_settings)
     if old_path and not old_path.startswith(("http://", "https://")):
         try:
             delete_local_upload(old_path)
@@ -162,10 +170,19 @@ def remove_qr():
     qr_settings.qr_public_url = None
     qr_settings.qr_image_path = None
     qr_settings.is_active = False
+    invalidate_whatsapp_media_cache(current_user.gym.phone_number_id, old_media_url)
     audit(action="remove_qr_settings", resource_type="qr_settings", resource_id=qr_settings.id)
     db.session.commit()
     flash("Payment QR removed.", "success")
     return redirect(url_for("gym.settings"))
+
+
+def _whatsapp_media_cache_url(qr_settings: QRSettings) -> str | None:
+    if qr_settings.qr_public_url:
+        return normalize_public_media_url(qr_settings.qr_public_url) or None
+    if qr_settings.qr_image_path and qr_settings.qr_image_path.startswith(("http://", "https://")):
+        return normalize_public_media_url(qr_settings.qr_image_path) or None
+    return None
 
 
 @gym_bp.route("/templates/new", methods=["GET", "POST"])

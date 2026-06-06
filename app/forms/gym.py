@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+import zoneinfo
 
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileAllowed, FileField
-from wtforms import BooleanField, IntegerField, StringField, SubmitField, TextAreaField
+from wtforms import BooleanField, IntegerField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Length, NumberRange, Optional, URL, ValidationError
 
 from app.services.whatsapp_template_service import validate_message_template
@@ -12,6 +13,17 @@ from app.utils.helpers import normalize_public_media_url
 
 
 E164_RE = re.compile(r"^\+\d{7,15}$")
+DEFAULT_TIMEZONE = "Asia/Kolkata"
+
+
+def timezone_choices() -> list[tuple[str, str]]:
+    try:
+        timezones = sorted(zoneinfo.available_timezones())
+    except Exception:
+        timezones = [DEFAULT_TIMEZONE, "UTC"]
+    if DEFAULT_TIMEZONE not in timezones:
+        timezones.insert(0, DEFAULT_TIMEZONE)
+    return [(timezone, timezone) for timezone in timezones]
 
 
 class QRSettingsForm(FlaskForm):
@@ -61,6 +73,7 @@ class WhatsAppSettingsForm(FlaskForm):
         "WhatsApp Business number",
         validators=[Optional(), Length(max=40)],
     )
+    timezone = SelectField("Gym timezone", validators=[DataRequired()])
     whatsapp_enabled = BooleanField("Enable WhatsApp for this gym")
     welcome_message_template = TextAreaField(
         "Welcome message",
@@ -71,6 +84,12 @@ class WhatsAppSettingsForm(FlaskForm):
         validators=[DataRequired(), Length(max=4000)],
     )
     submit = SubmitField("Save WhatsApp settings")
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.timezone.choices = timezone_choices()
+        if not self.timezone.data:
+            self.timezone.data = DEFAULT_TIMEZONE
 
     def validate_whatsapp_business_account_id(self, field) -> None:
         field.data = (field.data or "").strip() or None
@@ -97,6 +116,12 @@ class WhatsAppSettingsForm(FlaskForm):
             )
         if self.whatsapp_enabled.data and not field.data:
             raise ValidationError("Business phone number is required when WhatsApp is enabled.")
+
+    def validate_timezone(self, field) -> None:
+        try:
+            zoneinfo.ZoneInfo(field.data)
+        except Exception as exc:
+            raise ValidationError("Choose a valid timezone.") from exc
 
     def validate_welcome_message_template(self, field) -> None:
         self._validate_template(field)

@@ -4,12 +4,12 @@ from datetime import date
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.forms import MemberForm
-from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
@@ -60,26 +60,27 @@ def index():
 @roles_required("gym_owner", "staff")
 def create():
     gym = current_user.gym
-    if gym.max_members is not None:
-        current_count = (
-            Member.query.filter_by(gym_id=gym.id)
-            .filter(Member.deleted_at.is_(None))
-            .count()
-        )
-        if gym.members_at_limit(current_count):
+    form = _member_form()
+    if request.method == "GET":
+        if _gym_at_member_limit(gym):
             flash(
                 f"You have reached the {gym.max_members}-member limit on your current plan. "
                 "Upgrade to add more members.",
                 "warning",
             )
             return redirect(url_for("members.index"))
-
-    form = _member_form()
-    if request.method == "GET":
         form.membership_start.data = date.today()
         form.membership_end.data = date.today()
         form.status.data = "active"
     if form.validate_on_submit():
+        locked_gym = _locked_gym(gym.id)
+        if _gym_at_member_limit(locked_gym):
+            flash(
+                f"You have reached the {locked_gym.max_members}-member limit on your "
+                "current plan. Upgrade to add more members.",
+                "warning",
+            )
+            return redirect(url_for("members.index"))
         member = Member(gym_id=current_user.gym_id)
         _apply_member_form(member, form)
         db.session.add(member)
@@ -155,3 +156,22 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.membership_end = form.membership_end.data
     member.status = form.status.data
     member.notes = form.notes.data
+
+
+def _locked_gym(gym_id: int) -> Gym:
+    return db.session.execute(select(Gym).where(Gym.id == gym_id).with_for_update()).scalar_one()
+
+
+def _gym_at_member_limit(gym: Gym) -> bool:
+    if gym.max_members is None:
+        return False
+    current_count = (
+        db.session.query(func.count(Member.id))
+        .filter(
+            Member.gym_id == gym.id,
+            Member.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    return gym.members_at_limit(current_count)

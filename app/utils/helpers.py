@@ -49,6 +49,9 @@ def normalize_public_media_url(value: str | None) -> str:
         if file_id:
             return f"https://drive.google.com/uc?export=download&id={file_id}"
 
+    if parsed.scheme == "http":
+        return "https" + url[4:]
+
     return url
 
 

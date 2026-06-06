@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -64,6 +65,23 @@ def delete_local_upload(relative_path: str | None) -> None:
         raise ValueError("Refusing to delete a file outside the upload folder.")
     if target.exists() and target.is_file():
         target.unlink()
+
+
+def invalidate_whatsapp_media_cache(phone_number_id: str | None, media_url: str | None) -> None:
+    if not phone_number_id or not media_url:
+        return
+    redis_url = current_app.config.get("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        return
+    try:
+        import redis as _redis
+
+        url_hash = hashlib.sha256(media_url.encode()).hexdigest()[:16]
+        cache_key = f"wa_media_id:{phone_number_id}:{url_hash}"
+        redis_client = _redis.from_url(redis_url, socket_connect_timeout=2)
+        redis_client.delete(cache_key)
+    except Exception:
+        current_app.logger.exception("Could not invalidate WhatsApp media cache")
 
 
 def _save_to_local(file: FileStorage, gym_id: int, extension: str) -> str:

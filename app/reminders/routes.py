@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as _json
 import threading
 import uuid
 
@@ -8,13 +9,12 @@ from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager
 
 from app.extensions import db, limiter
-from app.models import Member, ReminderLog
+from app.models import Member, QRSettings, ReminderLog
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.reminder_service import (
     create_manual_test_log,
     ensure_default_template,
-    resolve_qr_url,
     run_due_reminders_for_gym,
     send_reminder,
 )
@@ -22,7 +22,20 @@ from app.utils.decorators import active_gym_required, roles_required
 
 
 reminders_bp = Blueprint("reminders", __name__, url_prefix="/reminders")
-_scan_jobs: dict[str, dict] = {}
+_SCAN_JOB_TTL = 300
+
+
+def _set_scan_job(job_id: str, payload: dict) -> None:
+    redis_url = current_app.config.get("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        return
+    try:
+        import redis as _redis
+
+        redis_client = _redis.from_url(redis_url, socket_connect_timeout=2)
+        redis_client.setex(f"scan_job:{job_id}", _SCAN_JOB_TTL, _json.dumps(payload))
+    except Exception:
+        current_app.logger.exception("Could not persist reminder scan job status")
 
 
 def _format_scan_result(result: dict) -> tuple[str, str]:
@@ -82,7 +95,7 @@ def run_now():
         with app.app_context():
             try:
                 result = run_due_reminders_for_gym(gym_id, days_before, gym_timezone)
-                _scan_jobs[job_id] = {"status": "done", "result": result}
+                _set_scan_job(job_id, {"status": "done", "result": result})
                 message, category = _format_scan_result(result)
                 app.logger.info(
                     "Manual reminder scan complete job=%s gym=%s category=%s result=%s",
@@ -93,17 +106,17 @@ def run_now():
                 )
             except Exception as exc:
                 db.session.rollback()
-                _scan_jobs[job_id] = {"status": "error", "error": str(exc)}
+                _set_scan_job(job_id, {"status": "error", "error": str(exc)})
                 app.logger.exception("Manual reminder scan failed job=%s gym=%s", job_id, gym_id)
 
-    _scan_jobs[job_id] = {"status": "running"}
+    _set_scan_job(job_id, {"status": "running"})
     audit(
         action="run_reminders_now",
         resource_type="reminder_log",
         metadata={"job_id": job_id, "days_before": days_before},
     )
     db.session.commit()
-    threading.Thread(target=_background_scan, daemon=True).start()
+    threading.Thread(target=_background_scan, daemon=False).start()
 
     flash("Reminder scan started in background. Refresh in a moment.", "info")
     return redirect(url_for("reminders.index"))
@@ -151,8 +164,6 @@ def send_test(member_id: int):
         flash("Connect and enable this gym's WhatsApp Business number first.", "warning")
         return redirect(url_for("gym.whatsapp_settings"))
 
-    qr_url = resolve_qr_url(current_user.gym_id)
-
     try:
         template = ensure_default_template(current_user.gym_id)
         log = create_manual_test_log(
@@ -161,14 +172,21 @@ def send_test(member_id: int):
             gym_timezone=current_user.gym.timezone or "Asia/Kolkata",
         )
         send_reminder(log, force=True)
+        qr_active = bool(
+            QRSettings.query.filter_by(gym_id=current_user.gym_id, is_active=True)
+            .filter(
+                (QRSettings.qr_public_url.isnot(None))
+                | (QRSettings.qr_image_path.isnot(None))
+            )
+            .first()
+        )
         audit(
             action="send_test_reminder",
             resource_type="reminder_log",
             resource_id=log.id,
             metadata={
                 "member_id": member.id,
-                "qr_attached": bool(qr_url),
-                "qr_url": qr_url,
+                "qr_active": qr_active,
             },
         )
         db.session.commit()

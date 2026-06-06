@@ -12,6 +12,7 @@ from app.extensions import db
 from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, User
 from app.services.reminder_service import (
     MAX_REMINDER_ATTEMPTS,
+    auto_expire_members_for_gym,
     due_members_for_gym,
     run_due_reminders_for_gym,
     send_reminder,
@@ -37,6 +38,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.gym_one = Gym(
             name="Gym One",
             slug="gym-one",
+            trial_ends_at=date.today() + timedelta(days=14),
             whatsapp_business_account_id="100001",
             phone_number_id="111111",
             business_phone_number="+919000000001",
@@ -50,6 +52,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.gym_two = Gym(
             name="Gym Two",
             slug="gym-two",
+            trial_ends_at=date.today() + timedelta(days=14),
             whatsapp_business_account_id="100002",
             phone_number_id="222222",
             business_phone_number="+919000000002",
@@ -112,6 +115,40 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             headers={"X-Hub-Signature-256": signature},
         )
 
+    def test_webhook_rejects_when_dedicated_secret_is_missing(self) -> None:
+        self.app.config["WHATSAPP_ACCESS_TOKEN"] = "legacy-fallback-token"
+        self.app.config["WHATSAPP_WEBHOOK_SECRET"] = ""
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "messages": [{"id": "inbound-unsigned", "from": "919100000001"}],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        legacy_signature = "sha256=" + hmac.new(
+            b"legacy-fallback-token",
+            body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = self.client.post(
+            "/webhook/whatsapp",
+            data=body,
+            content_type="application/json",
+            headers={"X-Hub-Signature-256": legacy_signature},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(self.member_one.whatsapp_opted_in)
+
     def test_first_inbound_message_opts_in_only_the_resolved_gyms_member(self) -> None:
         payload = {
             "entry": [
@@ -135,6 +172,35 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(
             AuditLog.query.filter_by(gym_id=self.gym_one.id, action="whatsapp_opt_in").count(),
             1,
+        )
+
+    def test_reaction_message_does_not_opt_member_in(self) -> None:
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "messages": [
+                                    {
+                                        "id": "reaction-1",
+                                        "from": "919100000001",
+                                        "type": "reaction",
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+        self.assertFalse(self.member_one.whatsapp_opted_in)
+        self.assertEqual(
+            AuditLog.query.filter_by(gym_id=self.gym_one.id, action="whatsapp_opt_in").count(),
+            0,
         )
 
     def test_inbound_message_matches_legacy_phone_with_spaces(self) -> None:
@@ -263,6 +329,20 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(
             logs[0].message_snapshot,
             f"Renew Member One at Gym One by {self.expiry.strftime('%d %b %Y')} (3 days).",
+        )
+
+    def test_auto_expire_members_for_gym_marks_expired_active_members(self) -> None:
+        self.member_one.membership_end = date.today() - timedelta(days=1)
+        self.member_one.status = "active"
+        db.session.commit()
+
+        count = auto_expire_members_for_gym(self.gym_one)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(self.member_one.status, "expired")
+        self.assertEqual(
+            AuditLog.query.filter_by(gym_id=self.gym_one.id, action="auto_expired").count(),
+            1,
         )
 
     @patch.object(WhatsAppService, "send_image")
@@ -475,6 +555,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
                 "whatsapp_business_account_id": "100003",
                 "phone_number_id": "333333",
                 "business_phone_number": "+919000000003",
+                "timezone": "Asia/Kolkata",
                 "whatsapp_enabled": "y",
                 "welcome_message_template": "Welcome {{member_name}}.",
                 "renewal_reminder_template": "Renew by {{expiry_date}}.",
@@ -486,6 +567,36 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         db.session.refresh(self.gym_one)
         self.assertEqual(self.gym_one.whatsapp_business_account_id, "100003")
         self.assertEqual(self.gym_one.phone_number_id, "333333")
+        self.assertEqual(self.gym_one.timezone, "Asia/Kolkata")
+
+    def test_member_limit_is_enforced_on_submit(self) -> None:
+        self.gym_one.max_members = 2
+        db.session.commit()
+        self.assertEqual(
+            self.client.post(
+                "/auth/login",
+                data={"email": self.owner.email, "password": "ChangeMe123!"},
+            ).status_code,
+            302,
+        )
+
+        response = self.client.post(
+            "/members/new",
+            data={
+                "full_name": "Limit Test",
+                "phone": "+919100000099",
+                "email": "",
+                "gender": "",
+                "plan_id": "0",
+                "membership_start": str(date.today()),
+                "membership_end": str(date.today() + timedelta(days=30)),
+                "status": "active",
+                "notes": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(Member.query.filter_by(full_name="Limit Test").first())
 
     def _reminder_log(self, gym: Gym, member: Member) -> ReminderLog:
         log = ReminderLog(

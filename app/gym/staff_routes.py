@@ -5,7 +5,7 @@ from flask_login import current_user, login_required
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.extensions import db
-from app.models import User
+from app.models import Gym, User
 from app.services.audit_service import audit
 from app.utils.decorators import active_gym_required, roles_required
 
@@ -70,6 +70,11 @@ def accept_invite(token: str):
         payload = _invite_serializer().loads(token, max_age=_INVITE_MAX_AGE)
     except (BadSignature, SignatureExpired):
         flash("This invite link is invalid or has expired.", "danger")
+        return redirect(url_for("auth.login"))
+
+    gym = Gym.query.filter_by(id=payload["gym_id"]).first()
+    if not gym or not gym.is_operational():
+        flash("This invite is no longer valid because the gym is not active.", "warning")
         return redirect(url_for("auth.login"))
 
     if request.method == "POST":

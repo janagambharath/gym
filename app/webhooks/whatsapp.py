@@ -20,10 +20,11 @@ csrf.exempt(webhooks_bp)
 
 
 def _verify_signature(payload: bytes, signature_header: str) -> bool:
-    secret = current_app.config.get("WHATSAPP_WEBHOOK_SECRET") or current_app.config.get(
-        "WHATSAPP_ACCESS_TOKEN", ""
-    )
+    secret = current_app.config.get("WHATSAPP_WEBHOOK_SECRET", "")
     if not secret:
+        current_app.logger.error(
+            "WHATSAPP_WEBHOOK_SECRET is not set. Rejecting WhatsApp webhook call."
+        )
         return False
     expected = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header or "")
@@ -105,6 +106,10 @@ def _process_status(gym_id: int, status: dict) -> bool:
 
 def _process_message(gym: Gym, message: dict) -> bool:
     if not gym.whatsapp_enabled or not gym.is_operational():
+        return False
+
+    message_type = message.get("type") or "text"
+    if message_type not in {"text", "image", "audio", "video", "document", "sticker", "button"}:
         return False
 
     sender = str(message.get("from") or "").strip()
