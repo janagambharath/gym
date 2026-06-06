@@ -293,7 +293,22 @@ class WhatsAppService:
         safe_error = f"HTTP {response.status_code}"
         try:
             error_data = response.json()
-            safe_error = error_data.get("error", {}).get("message", safe_error)[:200]
+            error = error_data.get("error", {})
+            if isinstance(error, dict):
+                parts = [str(error.get("message") or safe_error)]
+                details = error.get("error_data", {}).get("details")
+                if details:
+                    parts.append(str(details))
+                code = error.get("code")
+                subcode = error.get("error_subcode")
+                if code:
+                    code_text = f"code {code}"
+                    if subcode:
+                        code_text += f"/{subcode}"
+                    parts.append(code_text)
+                safe_error = " | ".join(parts)[:500]
+            else:
+                safe_error = str(error or safe_error)[:500]
         except Exception:
             pass
         return safe_error

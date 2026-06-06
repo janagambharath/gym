@@ -112,7 +112,7 @@ webhook events with a WABA-specific callback override pointing to this deploymen
 server-side Meta access token must have permission to manage and send from each connected
 WABA.
 
-Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL.
+Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL when available, and falls back to a text reminder when no fetchable QR is configured or image delivery fails.
 Meta inbound messages and delivery status callbacks are handled at `/webhook/whatsapp`.
 The first inbound message from a known member opts that member in and triggers the gym's
 configured welcome message. Scheduled renewal reminders are sent only to opted-in members.

@@ -99,7 +99,7 @@ def _process_status(gym_id: int, status: dict) -> bool:
         log.status = "failed"
         errors = status.get("errors") or []
         if errors:
-            log.error_message = str(errors[0].get("title") or errors[0])[:500]
+            log.error_message = _format_status_error(errors[0])
         return True
     return False
 
@@ -186,3 +186,22 @@ def _process_message(gym: Gym, message: dict) -> bool:
 
 def _masked_phone(phone: str) -> str:
     return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
+
+
+def _format_status_error(error: dict) -> str:
+    if not isinstance(error, dict):
+        return str(error)[:500]
+
+    parts = [
+        str(
+            error.get("title")
+            or error.get("message")
+            or error.get("details")
+            or "WhatsApp delivery failed"
+        )
+    ]
+    if error.get("details") and error.get("details") not in parts:
+        parts.append(str(error["details"]))
+    if error.get("code"):
+        parts.append(f"code {error['code']}")
+    return " | ".join(parts)[:500]

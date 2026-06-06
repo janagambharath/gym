@@ -15,7 +15,7 @@ DEFAULT_WHATSAPP_WELCOME_TEMPLATE = (
 DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE = (
     "Hi {{ member_name }}, your {{ gym_name }} membership expires on "
     "{{ expiry_date }}. You have {{ days_left }} day(s) left. "
-    "Please complete payment using the attached QR image."
+    "Please complete your renewal payment to keep access active."
 )
 
 

@@ -10,7 +10,12 @@ from unittest.mock import Mock, patch
 from app import create_app
 from app.extensions import db
 from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, User
-from app.services.reminder_service import due_members_for_gym, run_due_reminders_for_gym
+from app.services.reminder_service import (
+    MAX_REMINDER_ATTEMPTS,
+    due_members_for_gym,
+    run_due_reminders_for_gym,
+    send_reminder,
+)
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 
 
@@ -215,6 +220,75 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(log.status, "sent")
         self.assertEqual(log.provider_message_id, "text-message")
 
+    @patch.object(WhatsAppService, "send_image")
+    @patch.object(WhatsAppService, "send_text")
+    def test_reminder_falls_back_to_text_when_qr_image_send_fails(
+        self,
+        send_text: Mock,
+        send_image: Mock,
+    ) -> None:
+        send_image.return_value = WhatsAppResult(ok=False, error="QR image rejected")
+        send_text.return_value = WhatsAppResult(ok=True, provider_message_id="text-fallback")
+        self.member_one.whatsapp_opted_in = True
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_image.assert_called_once()
+        send_text.assert_called_once()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "text-fallback")
+        self.assertIsNone(log.error_message)
+
+    @patch.object(WhatsAppService, "send_image")
+    @patch.object(WhatsAppService, "send_text")
+    def test_reminder_records_image_and_text_errors_when_both_fail(
+        self,
+        send_text: Mock,
+        send_image: Mock,
+    ) -> None:
+        send_image.return_value = WhatsAppResult(ok=False, error="QR image rejected")
+        send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
+        self.member_one.whatsapp_opted_in = True
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        self.assertEqual(log.status, "failed")
+        self.assertIn("Image send failed: QR image rejected", log.error_message or "")
+        self.assertIn("text fallback failed: 24-hour window closed", log.error_message or "")
+
+    @patch.object(WhatsAppService, "send_text")
+    def test_manual_resend_can_retry_failed_log_after_max_attempts(
+        self,
+        send_text: Mock,
+    ) -> None:
+        send_text.return_value = WhatsAppResult(ok=True, provider_message_id="manual-retry")
+        self.member_one.whatsapp_opted_in = True
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        log = self._reminder_log(self.gym_one, self.member_one)
+        log.status = "failed"
+        log.attempts = MAX_REMINDER_ATTEMPTS
+        db.session.commit()
+
+        self.assertEqual(
+            self.client.post(
+                "/auth/login",
+                data={"email": self.owner.email, "password": "ChangeMe123!"},
+            ).status_code,
+            302,
+        )
+
+        response = self.client.post(f"/reminders/{log.id}/resend")
+
+        self.assertEqual(response.status_code, 302)
+        send_text.assert_called_once()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.attempts, MAX_REMINDER_ATTEMPTS + 1)
+        self.assertEqual(log.provider_message_id, "manual-retry")
+
     def test_delivery_status_updates_are_scoped_to_webhook_gym(self) -> None:
         self.member_one.whatsapp_opted_in = True
         self.member_two.whatsapp_opted_in = True
@@ -281,6 +355,28 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertIn("does not belong", result.error or "")
+
+    @patch("app.services.whatsapp_service._SESSION.post")
+    def test_whatsapp_send_errors_include_meta_details(self, post: Mock) -> None:
+        self.app.config.update(WHATSAPP_ENABLED=True, WHATSAPP_ACCESS_TOKEN="test-token")
+        post.return_value = self._graph_response(
+            {
+                "error": {
+                    "message": "Re-engagement message",
+                    "code": 131047,
+                    "error_subcode": 2494102,
+                    "error_data": {"details": "More than 24 hours have passed."},
+                }
+            },
+            status_code=400,
+        )
+
+        result = WhatsAppService(self.gym_one).send_text(to="919100000001", body="Test")
+
+        self.assertFalse(result.ok)
+        self.assertIn("Re-engagement message", result.error or "")
+        self.assertIn("More than 24 hours have passed.", result.error or "")
+        self.assertIn("code 131047/2494102", result.error or "")
 
     @patch.object(WhatsAppService, "connect_webhooks")
     def test_owner_settings_subscribes_before_saving_enabled_connection(

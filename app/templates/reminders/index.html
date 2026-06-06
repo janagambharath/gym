@@ -34,7 +34,12 @@
                 <td>{{ log.member.full_name }}</td>
                 <td>{{ log.reminder_stage.replace('_', ' ') }}</td>
                 <td>{{ log.cycle_end_date.strftime('%d %b %Y') }}</td>
-                <td><span class="badge status-{{ log.status }}">{{ log.status }}</span></td>
+                <td>
+                    <span class="badge status-{{ log.status }}">{{ log.status }}</span>
+                    {% if log.status == 'failed' and log.error_message %}
+                    <div class="reminder-error text-secondary text-sm mt-1">{{ log.error_message }}</div>
+                    {% endif %}
+                </td>
                 <td>{{ log.attempts }}</td>
                 <td class="text-end">
                     {% if log.status != 'sent' %}

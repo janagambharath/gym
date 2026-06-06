@@ -125,7 +125,7 @@ def register():
                 days_before=3,
                 message_body=(
                     "Hi {{ member_name }}, your {{ gym_name }} membership expires on "
-                    "{{ expiry_date }}. Please complete payment using the QR image."
+                    "{{ expiry_date }}. Please complete your renewal payment to keep access active."
                 ),
             )
         )

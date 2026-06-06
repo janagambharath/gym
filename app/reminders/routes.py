@@ -123,7 +123,7 @@ def resend(reminder_id: int):
         flash("This reminder has already been sent.", "info")
         return redirect(url_for("reminders.index"))
     try:
-        send_reminder(log)
+        send_reminder(log, force=True)
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "warning")

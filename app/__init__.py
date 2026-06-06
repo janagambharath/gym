@@ -406,8 +406,8 @@ def _register_cli(app: Flask) -> None:
                     days_before=3,
                     message_body=(
                         "Hi {{ member_name }}, your {{ gym_name }} membership "
-                        "expires on {{ expiry_date }}. Please pay using the QR "
-                        "and share confirmation."
+                        "expires on {{ expiry_date }}. Please complete your "
+                        "renewal payment and share confirmation."
                     ),
                 )
             )

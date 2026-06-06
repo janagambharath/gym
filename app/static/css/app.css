@@ -815,6 +815,11 @@ textarea.form-control { resize: vertical; min-height: 90px; }
 
 .list-group-item-action:hover { background: var(--surface-2); color: var(--ink); }
 
+.reminder-error {
+  max-width: 440px;
+  word-break: break-word;
+}
+
 .qr-preview,
 .qr-preview-box img {
   width: 100%;

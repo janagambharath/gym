@@ -233,6 +233,42 @@ def create_manual_test_log(
     return log
 
 
+def _combine_send_errors(image_error: str | None, text_error: str | None) -> str:
+    if image_error and text_error:
+        return f"Image send failed: {image_error}; text fallback failed: {text_error}"[:500]
+    return (text_error or image_error or "Unknown error")[:500]
+
+
+def _send_whatsapp_message(
+    whatsapp: WhatsAppService,
+    *,
+    to: str,
+    message: str,
+    qr_url: str | None,
+) -> WhatsAppResult:
+    if not qr_url:
+        return whatsapp.send_text(to=to, body=message)
+
+    image_result = whatsapp.send_image(to=to, image_url=qr_url, caption=message)
+    if image_result.ok:
+        return image_result
+
+    _logger.warning(
+        "WhatsApp image reminder failed for %s; falling back to text: %s",
+        to,
+        image_result.error or "Unknown error",
+    )
+    text_result = whatsapp.send_text(to=to, body=message)
+    if text_result.ok:
+        return text_result
+
+    return WhatsAppResult(
+        ok=False,
+        provider_message_id=text_result.provider_message_id or image_result.provider_message_id,
+        error=_combine_send_errors(image_result.error, text_result.error),
+    )
+
+
 def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     if log.status == "sent" and not force:
         return log
@@ -276,11 +312,14 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     whatsapp = WhatsAppService(gym)
     log.attempts += 1
     log.message_snapshot = message
+    log.provider_message_id = None
     try:
-        if qr_url:
-            result = whatsapp.send_image(to=log.phone_snapshot, image_url=qr_url, caption=message)
-        else:
-            result = whatsapp.send_text(to=log.phone_snapshot, body=message)
+        result = _send_whatsapp_message(
+            whatsapp,
+            to=log.phone_snapshot,
+            message=message,
+            qr_url=qr_url,
+        )
     except Exception as exc:
         result = WhatsAppResult(ok=False, error=str(exc)[:200], provider_message_id=None)
 
@@ -291,6 +330,7 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
         log.error_message = None
     else:
         log.status = "failed"
+        log.provider_message_id = result.provider_message_id
         log.error_message = (result.error or "Unknown error")[:500]
     invalidate_dashboard_cache(log.gym_id)
     return log
