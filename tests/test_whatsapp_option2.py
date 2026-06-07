@@ -400,24 +400,76 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(log.provider_message_id, "text-fallback")
         self.assertIsNone(log.error_message)
 
-    @patch.object(WhatsAppService, "send_image")
-    @patch.object(WhatsAppService, "send_text")
     @patch.object(WhatsAppService, "send_template")
-    def test_reminder_uses_approved_template_when_configured(
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_reminder_uses_settings_qr_image_before_template_fallback(
         self,
-        send_template: Mock,
-        send_text: Mock,
         send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
     ) -> None:
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
-        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-message")
+        send_image.return_value = WhatsAppResult(ok=True, provider_message_id="settings-image")
         self.member_one.whatsapp_opted_in = True
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
 
         send_reminder(log, force=True)
 
+        send_image.assert_called_once()
+        send_text.assert_not_called()
+        send_template.assert_not_called()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "settings-image")
+
+    @patch.object(WhatsAppService, "send_template")
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_reminder_uses_settings_message_before_template_fallback(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_text.return_value = WhatsAppResult(ok=True, provider_message_id="settings-message")
+        self.member_one.whatsapp_opted_in = True
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_text.assert_called_once()
+        send_template.assert_not_called()
+        send_image.assert_not_called()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "settings-message")
+
+    @patch.object(WhatsAppService, "send_template")
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_reminder_uses_template_fallback_when_settings_message_fails(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-message")
+        self.member_one.whatsapp_opted_in = True
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_text.assert_called_once()
         send_template.assert_called_once()
         self.assertEqual(
             send_template.call_args.kwargs["body_parameters"],
@@ -428,10 +480,42 @@ class WhatsAppOption2TestCase(unittest.TestCase):
                 "3",
             ],
         )
-        send_text.assert_not_called()
         send_image.assert_not_called()
         self.assertEqual(log.status, "sent")
         self.assertEqual(log.provider_message_id, "template-message")
+
+    @patch.object(WhatsAppService, "send_template")
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_reminder_records_settings_and_template_errors_when_both_fail(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
+        send_template.return_value = WhatsAppResult(ok=False, error="template missing")
+        self.member_one.whatsapp_opted_in = True
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_text.assert_called_once()
+        send_template.assert_called_once()
+        send_image.assert_not_called()
+        self.assertEqual(log.status, "failed")
+        self.assertIn(
+            "WhatsApp Settings message failed: 24-hour window closed",
+            log.error_message or "",
+        )
+        self.assertIn(
+            "template fallback failed: template missing",
+            log.error_message or "",
+        )
 
     @patch.object(WhatsAppService, "send_image")
     @patch.object(WhatsAppService, "send_text")

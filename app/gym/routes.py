@@ -224,12 +224,12 @@ def _whatsapp_diagnostics(gym: Gym) -> list[dict[str, str | bool]]:
             "detail": "Set" if gym.phone_number_id else "Missing",
         },
         {
-            "label": "Reminder template",
+            "label": "Template fallback",
             "ok": bool(reminder_template_name),
             "detail": (
                 reminder_template_name
                 if reminder_template_name
-                else "Not configured; free-form messages only work inside Meta's 24-hour window"
+                else "Not configured; WhatsApp Settings message must be inside Meta's 24-hour window"
             ),
         },
     ]

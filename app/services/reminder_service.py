@@ -282,6 +282,10 @@ def _send_whatsapp_message(
     qr_url: str | None,
     template_context: dict[str, object],
 ) -> WhatsAppResult:
+    session_result = _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
+    if session_result.ok:
+        return session_result
+
     template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
     if template_name:
         template_result = whatsapp.send_template(
@@ -293,30 +297,23 @@ def _send_whatsapp_message(
         if template_result.ok:
             return template_result
         _logger.warning(
-            "WhatsApp template reminder failed for %s; falling back to session message: %s",
+            "WhatsApp settings reminder failed for %s: %s; template fallback also failed: %s",
             to,
+            session_result.error or "Unknown error",
             template_result.error or "Unknown error",
         )
-        fallback_result = _send_session_message(
-            whatsapp,
-            to=to,
-            message=message,
-            qr_url=qr_url,
-        )
-        if fallback_result.ok:
-            return fallback_result
         return WhatsAppResult(
             ok=False,
             provider_message_id=(
-                fallback_result.provider_message_id or template_result.provider_message_id
+                template_result.provider_message_id or session_result.provider_message_id
             ),
             error=(
-                f"Template send failed: {template_result.error or 'Unknown error'}; "
-                f"session fallback failed: {fallback_result.error or 'Unknown error'}"
+                f"WhatsApp Settings message failed: {session_result.error or 'Unknown error'}; "
+                f"template fallback failed: {template_result.error or 'Unknown error'}"
             )[:500],
         )
 
-    return _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
+    return session_result
 
 
 def _send_session_message(
