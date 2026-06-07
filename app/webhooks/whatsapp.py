@@ -100,6 +100,13 @@ def _process_status(gym_id: int, status: dict) -> bool:
         errors = status.get("errors") or []
         if errors:
             log.error_message = _format_status_error(errors[0])
+        current_app.logger.warning(
+            "WhatsApp provider marked delivery failed log=%s gym=%s provider_id=%s error=%s",
+            log.id,
+            gym_id,
+            provider_id,
+            log.error_message or "Unknown provider error",
+        )
         return True
     return False
 

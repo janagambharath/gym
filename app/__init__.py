@@ -257,7 +257,20 @@ def _register_health_check(app: Flask) -> None:
                 text("SELECT whatsapp_opted_in, whatsapp_opted_in_at FROM members LIMIT 1")
             )
             db.session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
-            return jsonify({"status": "ok", "db": "ok", "schema": "ok"}), 200
+            revision = (
+                os.getenv("RAILWAY_GIT_COMMIT_SHA")
+                or os.getenv("GIT_COMMIT_SHA")
+                or os.getenv("SOURCE_VERSION")
+                or ""
+            )
+            return jsonify(
+                {
+                    "status": "ok",
+                    "db": "ok",
+                    "schema": "ok",
+                    "revision": revision[:12],
+                }
+            ), 200
         except Exception as exc:
             app.logger.exception("Health check DB failure")
             return jsonify({"status": "error", "db": str(exc)}), 503

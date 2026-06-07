@@ -295,6 +295,11 @@ def _send_whatsapp_message(
             body_parameters=_template_body_parameters(template_context),
         )
         if template_result.ok:
+            _logger.warning(
+                "WhatsApp settings reminder failed for %s: %s; template fallback succeeded",
+                to,
+                session_result.error or "Unknown error",
+            )
             return template_result
         _logger.warning(
             "WhatsApp settings reminder failed for %s: %s; template fallback also failed: %s",
@@ -313,6 +318,11 @@ def _send_whatsapp_message(
             )[:500],
         )
 
+    _logger.warning(
+        "WhatsApp settings reminder failed for %s and no template fallback is configured: %s",
+        to,
+        session_result.error or "Unknown error",
+    )
     return session_result
 
 
@@ -410,6 +420,15 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
         log.status = "failed"
         log.provider_message_id = result.provider_message_id
         log.error_message = (result.error or "Unknown error")[:500]
+        _logger.warning(
+            "WhatsApp reminder failed log=%s gym=%s member=%s phone=%s attempts=%s error=%s",
+            log.id,
+            log.gym_id,
+            member.id,
+            log.phone_snapshot,
+            log.attempts,
+            log.error_message,
+        )
     invalidate_dashboard_cache(log.gym_id)
     return log
 
