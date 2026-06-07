@@ -90,6 +90,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         db.session.add(
             QRSettings(
                 gym_id=self.gym_one.id,
+                upi_id="gymone@ybl",
                 qr_public_url="https://example.com/qr.png",
                 is_active=True,
             )
@@ -463,7 +464,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
         send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-message")
         self.member_one.whatsapp_opted_in = True
-        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).update({"is_active": False})
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
 
@@ -477,7 +478,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
                 self.member_one.full_name,
                 self.gym_one.name,
                 self.expiry.strftime("%d %b %Y"),
-                "3",
+                "gymone@ybl",
             ],
         )
         send_image.assert_not_called()
@@ -643,7 +644,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
                 self.member_one.full_name,
                 self.gym_one.name,
                 self.expiry.strftime("%d %b %Y"),
-                "3",
+                "gymone@ybl",
             ],
         )
         self.assertEqual(log.status, "sent")

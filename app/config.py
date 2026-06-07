@@ -62,7 +62,7 @@ class Config:
         name.strip()
         for name in os.getenv(
             "WHATSAPP_REMINDER_TEMPLATE_BODY_PARAMS",
-            "member_name,gym_name,expiry_date,days_left",
+            "member_name,gym_name,expiry_date,payment_upi_id",
         ).split(",")
         if name.strip()
     ]

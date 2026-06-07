@@ -10,6 +10,7 @@ SUPPORTED_TEMPLATE_VARIABLES = frozenset(
         "gym_name",
         "expiry_date",
         "days_left",
+        "payment_upi_id",
     }
 )
 _ENV = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
@@ -34,6 +35,7 @@ def render_message_template(
     member_name: str,
     expiry_date: str,
     days_left: int,
+    payment_upi_id: str = "",
 ) -> str:
     validate_message_template(message_template)
     return _ENV.from_string(message_template).render(
@@ -41,4 +43,5 @@ def render_message_template(
         member_name=member_name,
         expiry_date=expiry_date,
         days_left=days_left,
+        payment_upi_id=payment_upi_id,
     )

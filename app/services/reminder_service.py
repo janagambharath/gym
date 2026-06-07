@@ -275,6 +275,7 @@ def _template_body_parameters(context: dict[str, object]) -> list[str]:
 
 
 def _template_context(gym: Gym, member: Member) -> dict[str, object]:
+    qr_settings = QRSettings.query.filter_by(gym_id=gym.id).first()
     expiry_date = member.membership_end.strftime("%d %b %Y")
     days_left = (member.membership_end - today_for_gym(gym.timezone)).days
     return {
@@ -282,6 +283,7 @@ def _template_context(gym: Gym, member: Member) -> dict[str, object]:
         "member_name": member.full_name,
         "expiry_date": expiry_date,
         "days_left": days_left,
+        "payment_upi_id": (qr_settings.upi_id if qr_settings else "") or "",
     }
 
 
