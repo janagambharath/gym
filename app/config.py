@@ -54,6 +54,18 @@ class Config:
     WHATSAPP_WEBHOOK_SECRET = os.getenv(
         "WHATSAPP_WEBHOOK_SECRET", os.getenv("WHATSAPP_APP_SECRET", "")
     )
+    WHATSAPP_REMINDER_TEMPLATE_NAME = os.getenv("WHATSAPP_REMINDER_TEMPLATE_NAME", "").strip()
+    WHATSAPP_REMINDER_TEMPLATE_LANGUAGE = os.getenv(
+        "WHATSAPP_REMINDER_TEMPLATE_LANGUAGE", "en_US"
+    ).strip()
+    WHATSAPP_REMINDER_TEMPLATE_BODY_PARAMS = [
+        name.strip()
+        for name in os.getenv(
+            "WHATSAPP_REMINDER_TEMPLATE_BODY_PARAMS",
+            "member_name,gym_name,expiry_date,days_left",
+        ).split(",")
+        if name.strip()
+    ]
     REDIS_URL = os.getenv("REDIS_URL", "memory://")
 
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

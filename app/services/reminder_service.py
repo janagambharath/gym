@@ -5,6 +5,7 @@ import logging
 import time
 import zoneinfo
 
+from flask import current_app
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -268,7 +269,57 @@ def _combine_send_errors(image_error: str | None, text_error: str | None) -> str
     return (text_error or image_error or "Unknown error")[:500]
 
 
+def _template_body_parameters(context: dict[str, object]) -> list[str]:
+    configured_params = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_BODY_PARAMS", [])
+    return [str(context.get(param_name, "")) for param_name in configured_params]
+
+
 def _send_whatsapp_message(
+    whatsapp: WhatsAppService,
+    *,
+    to: str,
+    message: str,
+    qr_url: str | None,
+    template_context: dict[str, object],
+) -> WhatsAppResult:
+    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+    if template_name:
+        template_result = whatsapp.send_template(
+            to=to,
+            template_name=template_name,
+            language_code=current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_LANGUAGE", "en_US"),
+            body_parameters=_template_body_parameters(template_context),
+        )
+        if template_result.ok:
+            return template_result
+        _logger.warning(
+            "WhatsApp template reminder failed for %s; falling back to session message: %s",
+            to,
+            template_result.error or "Unknown error",
+        )
+        fallback_result = _send_session_message(
+            whatsapp,
+            to=to,
+            message=message,
+            qr_url=qr_url,
+        )
+        if fallback_result.ok:
+            return fallback_result
+        return WhatsAppResult(
+            ok=False,
+            provider_message_id=(
+                fallback_result.provider_message_id or template_result.provider_message_id
+            ),
+            error=(
+                f"Template send failed: {template_result.error or 'Unknown error'}; "
+                f"session fallback failed: {fallback_result.error or 'Unknown error'}"
+            )[:500],
+        )
+
+    return _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
+
+
+def _send_session_message(
     whatsapp: WhatsAppService,
     *,
     to: str,
@@ -319,22 +370,22 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
 
     expiry_date = member.membership_end.strftime("%d %b %Y")
     days_left = (member.membership_end - today_for_gym(gym.timezone)).days
+    template_context = {
+        "gym_name": gym.name,
+        "member_name": member.full_name,
+        "expiry_date": expiry_date,
+        "days_left": days_left,
+    }
     try:
         message = render_message_template(
             gym.renewal_reminder_template,
-            gym_name=gym.name,
-            member_name=member.full_name,
-            expiry_date=expiry_date,
-            days_left=days_left,
+            **template_context,
         )
     except Exception:
         _logger.exception("Could not render renewal reminder template for gym %s", gym.id)
         message = render_message_template(
             DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE,
-            gym_name=gym.name,
-            member_name=member.full_name,
-            expiry_date=expiry_date,
-            days_left=days_left,
+            **template_context,
         )
 
     qr_url = resolve_qr_url(member.gym_id)
@@ -348,6 +399,7 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
             to=log.phone_snapshot,
             message=message,
             qr_url=qr_url,
+            template_context=template_context,
         )
     except Exception as exc:
         result = WhatsAppResult(ok=False, error=str(exc)[:200], provider_message_id=None)

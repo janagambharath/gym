@@ -128,6 +128,50 @@ class WhatsAppService:
         }
         return self._post(payload)
 
+    def send_template(
+        self,
+        *,
+        to: str,
+        template_name: str,
+        language_code: str,
+        body_parameters: list[str] | None = None,
+    ) -> WhatsAppResult:
+        configuration_error = self._configuration_error()
+        if configuration_error:
+            return WhatsAppResult(ok=False, error=configuration_error)
+        if not template_name:
+            return WhatsAppResult(ok=False, error="WhatsApp reminder template name is missing")
+        if not self.enabled:
+            current_app.logger.info(
+                "WhatsApp disabled globally; simulated template message for gym %s to %s",
+                self.gym_id,
+                to,
+            )
+            return WhatsAppResult(ok=True, provider_message_id="simulated-template")
+
+        template: dict = {
+            "name": template_name,
+            "language": {"code": language_code or "en_US"},
+        }
+        if body_parameters:
+            template["components"] = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": str(parameter)}
+                        for parameter in body_parameters
+                    ],
+                }
+            ]
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to.replace("+", ""),
+            "type": "template",
+            "template": template,
+        }
+        return self._post(payload)
+
     def send_image(self, *, to: str, image_url: str, caption: str) -> WhatsAppResult:
         configuration_error = self._configuration_error()
         if configuration_error:

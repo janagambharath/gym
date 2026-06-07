@@ -148,7 +148,12 @@ def whatsapp_settings():
             return redirect(url_for("gym.whatsapp_settings"))
         flash("WhatsApp settings saved.", "success")
         return redirect(url_for("gym.whatsapp_settings"))
-    return render_template("gym/whatsapp_settings.html", form=form, gym=gym)
+    return render_template(
+        "gym/whatsapp_settings.html",
+        form=form,
+        gym=gym,
+        diagnostics=_whatsapp_diagnostics(gym),
+    )
 
 
 @gym_bp.post("/settings/qr/remove")
@@ -183,6 +188,51 @@ def _whatsapp_media_cache_url(qr_settings: QRSettings) -> str | None:
     if qr_settings.qr_image_path and qr_settings.qr_image_path.startswith(("http://", "https://")):
         return normalize_public_media_url(qr_settings.qr_image_path) or None
     return None
+
+
+def _whatsapp_diagnostics(gym: Gym) -> list[dict[str, str | bool]]:
+    reminder_template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+    return [
+        {
+            "label": "Platform delivery",
+            "ok": bool(current_app.config.get("WHATSAPP_ENABLED")),
+            "detail": "WHATSAPP_ENABLED=true" if current_app.config.get("WHATSAPP_ENABLED") else "Off in env",
+        },
+        {
+            "label": "Access token",
+            "ok": bool(current_app.config.get("WHATSAPP_ACCESS_TOKEN")),
+            "detail": "Set" if current_app.config.get("WHATSAPP_ACCESS_TOKEN") else "Missing",
+        },
+        {
+            "label": "Webhook secret",
+            "ok": bool(current_app.config.get("WHATSAPP_WEBHOOK_SECRET")),
+            "detail": "Set" if current_app.config.get("WHATSAPP_WEBHOOK_SECRET") else "Missing",
+        },
+        {
+            "label": "Verify token",
+            "ok": bool(current_app.config.get("WHATSAPP_VERIFY_TOKEN")),
+            "detail": "Set" if current_app.config.get("WHATSAPP_VERIFY_TOKEN") else "Missing",
+        },
+        {
+            "label": "Public URL",
+            "ok": bool(current_app.config.get("PUBLIC_BASE_URL")),
+            "detail": current_app.config.get("PUBLIC_BASE_URL") or "Missing",
+        },
+        {
+            "label": "Gym phone ID",
+            "ok": bool(gym.phone_number_id),
+            "detail": "Set" if gym.phone_number_id else "Missing",
+        },
+        {
+            "label": "Reminder template",
+            "ok": bool(reminder_template_name),
+            "detail": (
+                reminder_template_name
+                if reminder_template_name
+                else "Not configured; free-form messages only work inside Meta's 24-hour window"
+            ),
+        },
+    ]
 
 
 @gym_bp.route("/templates/new", methods=["GET", "POST"])

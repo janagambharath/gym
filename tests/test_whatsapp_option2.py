@@ -402,6 +402,39 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
     @patch.object(WhatsAppService, "send_image")
     @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_template")
+    def test_reminder_uses_approved_template_when_configured(
+        self,
+        send_template: Mock,
+        send_text: Mock,
+        send_image: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-message")
+        self.member_one.whatsapp_opted_in = True
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_template.assert_called_once()
+        self.assertEqual(
+            send_template.call_args.kwargs["body_parameters"],
+            [
+                self.member_one.full_name,
+                self.gym_one.name,
+                self.expiry.strftime("%d %b %Y"),
+                "3",
+            ],
+        )
+        send_text.assert_not_called()
+        send_image.assert_not_called()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "template-message")
+
+    @patch.object(WhatsAppService, "send_image")
+    @patch.object(WhatsAppService, "send_text")
     def test_reminder_records_image_and_text_errors_when_both_fail(
         self,
         send_text: Mock,
@@ -536,6 +569,45 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertIn("Re-engagement message", result.error or "")
         self.assertIn("More than 24 hours have passed.", result.error or "")
         self.assertIn("code 131047/2494102", result.error or "")
+
+    @patch("app.services.whatsapp_service._SESSION.post")
+    def test_whatsapp_template_payload_uses_body_parameters(self, post: Mock) -> None:
+        self.app.config.update(WHATSAPP_ENABLED=True, WHATSAPP_ACCESS_TOKEN="test-token")
+        post.return_value = self._graph_response({"messages": [{"id": "wamid-template"}]})
+
+        result = WhatsAppService(self.gym_one).send_template(
+            to="919100000001",
+            template_name="renewal_reminder",
+            language_code="en_US",
+            body_parameters=["Member One", "Gym One", "10 Jun 2026", "3"],
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.provider_message_id, "wamid-template")
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": "919100000001",
+                "type": "template",
+                "template": {
+                    "name": "renewal_reminder",
+                    "language": {"code": "en_US"},
+                    "components": [
+                        {
+                            "type": "body",
+                            "parameters": [
+                                {"type": "text", "text": "Member One"},
+                                {"type": "text", "text": "Gym One"},
+                                {"type": "text", "text": "10 Jun 2026"},
+                                {"type": "text", "text": "3"},
+                            ],
+                        }
+                    ],
+                },
+            },
+        )
 
     @patch.object(WhatsAppService, "connect_webhooks")
     def test_owner_settings_subscribes_before_saving_enabled_connection(
