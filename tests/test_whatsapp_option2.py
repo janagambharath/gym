@@ -590,6 +590,114 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(log_one.status, "sent")
         self.assertEqual(log_two.status, "pending")
 
+    @patch.object(WhatsAppService, "send_template")
+    def test_reengagement_delivery_failure_uses_template_fallback(
+        self,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_template.return_value = WhatsAppResult(
+            ok=True,
+            provider_message_id="template-provider",
+        )
+        self.member_one.whatsapp_opted_in = True
+        log = self._reminder_log(self.gym_one, self.member_one)
+        log.status = "sent"
+        log.provider_message_id = "settings-provider"
+        db.session.commit()
+
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "statuses": [
+                                    {
+                                        "id": "settings-provider",
+                                        "status": "failed",
+                                        "errors": [
+                                            {
+                                                "title": "Re-engagement message",
+                                                "code": 131047,
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+
+        send_template.assert_called_once()
+        self.assertEqual(send_template.call_args.kwargs["to"], log.phone_snapshot)
+        self.assertEqual(
+            send_template.call_args.kwargs["body_parameters"],
+            [
+                self.member_one.full_name,
+                self.gym_one.name,
+                self.expiry.strftime("%d %b %Y"),
+                "3",
+            ],
+        )
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "template-provider")
+        self.assertIsNone(log.error_message)
+
+    @patch.object(WhatsAppService, "send_template")
+    def test_reengagement_delivery_failure_records_template_fallback_error(
+        self,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_template.return_value = WhatsAppResult(ok=False, error="template missing")
+        self.member_one.whatsapp_opted_in = True
+        log = self._reminder_log(self.gym_one, self.member_one)
+        log.status = "sent"
+        log.provider_message_id = "settings-provider"
+        db.session.commit()
+
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": self.gym_one.phone_number_id},
+                                "statuses": [
+                                    {
+                                        "id": "settings-provider",
+                                        "status": "failed",
+                                        "errors": [
+                                            {
+                                                "title": "Re-engagement message",
+                                                "code": 131047,
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.assertEqual(self._post_webhook(payload).status_code, 200)
+
+        send_template.assert_called_once()
+        self.assertEqual(log.status, "failed")
+        self.assertEqual(log.provider_message_id, "settings-provider")
+        self.assertIn("Re-engagement message", log.error_message or "")
+        self.assertIn("template fallback failed: template missing", log.error_message or "")
+
     @patch("app.services.whatsapp_service._SESSION.post")
     @patch("app.services.whatsapp_service._SESSION.get")
     def test_connect_webhooks_validates_number_and_subscribes_waba(

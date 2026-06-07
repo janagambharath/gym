@@ -274,6 +274,65 @@ def _template_body_parameters(context: dict[str, object]) -> list[str]:
     return [str(context.get(param_name, "")) for param_name in configured_params]
 
 
+def _template_context(gym: Gym, member: Member) -> dict[str, object]:
+    expiry_date = member.membership_end.strftime("%d %b %Y")
+    days_left = (member.membership_end - today_for_gym(gym.timezone)).days
+    return {
+        "gym_name": gym.name,
+        "member_name": member.full_name,
+        "expiry_date": expiry_date,
+        "days_left": days_left,
+    }
+
+
+def send_template_fallback_for_reengagement(
+    log: ReminderLog,
+    *,
+    original_error: str | None = None,
+) -> bool:
+    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+    if not template_name:
+        return False
+
+    member = log.member
+    gym = Gym.query.filter_by(id=log.gym_id).first()
+    if not member or not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
+        return False
+
+    result = WhatsAppService(gym).send_template(
+        to=log.phone_snapshot,
+        template_name=template_name,
+        language_code=current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_LANGUAGE", "en_US"),
+        body_parameters=_template_body_parameters(_template_context(gym, member)),
+    )
+    if result.ok:
+        log.status = "sent"
+        log.sent_at = utcnow()
+        log.provider_message_id = result.provider_message_id
+        log.error_message = None
+        _logger.warning(
+            "WhatsApp template fallback sent after re-engagement failure log=%s gym=%s provider_id=%s",
+            log.id,
+            log.gym_id,
+            result.provider_message_id,
+        )
+        return True
+
+    log.status = "failed"
+    log.provider_message_id = result.provider_message_id or log.provider_message_id
+    log.error_message = (
+        f"{original_error or 'Re-engagement message'}; "
+        f"template fallback failed: {result.error or 'Unknown error'}"
+    )[:500]
+    _logger.warning(
+        "WhatsApp template fallback failed after re-engagement failure log=%s gym=%s error=%s",
+        log.id,
+        log.gym_id,
+        log.error_message,
+    )
+    return True
+
+
 def _send_whatsapp_message(
     whatsapp: WhatsAppService,
     *,
@@ -375,14 +434,7 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     if not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
         raise ValueError("WhatsApp is not configured and enabled for this gym.")
 
-    expiry_date = member.membership_end.strftime("%d %b %Y")
-    days_left = (member.membership_end - today_for_gym(gym.timezone)).days
-    template_context = {
-        "gym_name": gym.name,
-        "member_name": member.full_name,
-        "expiry_date": expiry_date,
-        "days_left": days_left,
-    }
+    template_context = _template_context(gym, member)
     try:
         message = render_message_template(
             gym.renewal_reminder_template,

@@ -10,6 +10,7 @@ from app.models import Gym, Member, ReminderLog
 from app.models.gym import DEFAULT_WHATSAPP_WELCOME_TEMPLATE
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
+from app.services.reminder_service import send_template_fallback_for_reengagement
 from app.services.whatsapp_service import WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
 from app.utils.helpers import phone_to_whatsapp
@@ -107,6 +108,12 @@ def _process_status(gym_id: int, status: dict) -> bool:
             provider_id,
             log.error_message or "Unknown provider error",
         )
+        if _is_reengagement_error(errors, log.error_message):
+            send_template_fallback_for_reengagement(
+                log,
+                original_error=log.error_message,
+            )
+            return True
         return True
     return False
 
@@ -254,3 +261,10 @@ def _format_status_error(error: dict) -> str:
     if error.get("code"):
         parts.append(f"code {error['code']}")
     return " | ".join(parts)[:500]
+
+
+def _is_reengagement_error(errors: list[dict], formatted_error: str | None) -> bool:
+    if any(str(error.get("code")) == "131047" for error in errors if isinstance(error, dict)):
+        return True
+    error_text = (formatted_error or "").lower()
+    return "re-engagement" in error_text or "131047" in error_text
