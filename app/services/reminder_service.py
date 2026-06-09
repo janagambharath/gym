@@ -61,14 +61,16 @@ def _due_members_query(gym_id: int, days_before: int, gym_timezone: str):
         PaymentVerification.status == "verified",
         PaymentVerification.created_at >= recent_payment_cutoff,
     )
-    return (
+    query = (
         Member.query.filter_by(gym_id=gym_id, status="active")
         .filter(Member.deleted_at.is_(None))
-        .filter(Member.whatsapp_opted_in.is_(True))
         .filter(Member.membership_end == target_date)
         .filter(~Member.id.in_(already_renewed))
         .filter(~Member.id.in_(already_paid))
     )
+    if not current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", ""):
+        query = query.filter(Member.whatsapp_opted_in.is_(True))
+    return query
 
 
 def due_members_for_gym(
@@ -274,6 +276,24 @@ def _template_body_parameters(context: dict[str, object]) -> list[str]:
     return [str(context.get(param_name, "")) for param_name in configured_params]
 
 
+def _send_template_message(
+    whatsapp: WhatsAppService,
+    *,
+    to: str,
+    template_context: dict[str, object],
+) -> WhatsAppResult:
+    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+    if not template_name:
+        return WhatsAppResult(ok=False, error="WhatsApp reminder template is not configured")
+
+    return whatsapp.send_template(
+        to=to,
+        template_name=template_name,
+        language_code=current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_LANGUAGE", "en_US"),
+        body_parameters=_template_body_parameters(template_context),
+    )
+
+
 def _template_context(gym: Gym, member: Member) -> dict[str, object]:
     qr_settings = QRSettings.query.filter_by(gym_id=gym.id).first()
     expiry_date = member.membership_end.strftime("%d %b %Y")
@@ -301,11 +321,10 @@ def send_template_fallback_for_reengagement(
     if not member or not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
         return False
 
-    result = WhatsAppService(gym).send_template(
+    result = _send_template_message(
+        WhatsAppService(gym),
         to=log.phone_snapshot,
-        template_name=template_name,
-        language_code=current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_LANGUAGE", "en_US"),
-        body_parameters=_template_body_parameters(_template_context(gym, member)),
+        template_context=_template_context(gym, member),
     )
     if result.ok:
         log.status = "sent"
@@ -342,19 +361,18 @@ def _send_whatsapp_message(
     message: str,
     qr_url: str | None,
     template_context: dict[str, object],
+    allow_session_message: bool,
 ) -> WhatsAppResult:
+    if not allow_session_message:
+        return _send_template_message(whatsapp, to=to, template_context=template_context)
+
     session_result = _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
     if session_result.ok:
         return session_result
 
     template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
     if template_name:
-        template_result = whatsapp.send_template(
-            to=to,
-            template_name=template_name,
-            language_code=current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_LANGUAGE", "en_US"),
-            body_parameters=_template_body_parameters(template_context),
-        )
+        template_result = _send_template_message(whatsapp, to=to, template_context=template_context)
         if template_result.ok:
             _logger.warning(
                 "WhatsApp settings reminder failed for %s: %s; template fallback succeeded",
@@ -429,8 +447,13 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     member = log.member
     if member.gym_id != log.gym_id:
         raise ValueError("Reminder tenant does not match member tenant.")
-    if not member.whatsapp_opted_in:
-        raise ValueError("Member has not opted in to WhatsApp reminders.")
+    if (
+        not member.whatsapp_opted_in
+        and not current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+    ):
+        raise ValueError(
+            "Member has not opted in and no approved WhatsApp reminder template is configured."
+        )
 
     gym = Gym.query.filter_by(id=log.gym_id).first()
     if not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
@@ -461,6 +484,7 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
             message=message,
             qr_url=qr_url,
             template_context=template_context,
+            allow_session_message=member.whatsapp_opted_in,
         )
     except Exception as exc:
         result = WhatsAppResult(ok=False, error=str(exc)[:200], provider_message_id=None)

@@ -157,8 +157,12 @@ def send_test(member_id: int):
     if member.deleted_at is not None:
         flash("Cannot send a test reminder to a deleted member.", "warning")
         return redirect(request.referrer or url_for("reminders.index"))
-    if not member.whatsapp_opted_in:
-        flash("This member has not opted in by messaging the gym's WhatsApp number.", "warning")
+    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+    if not member.whatsapp_opted_in and not template_name:
+        flash(
+            "This member has not opted in, and no approved Meta template is configured.",
+            "warning",
+        )
         return redirect(request.referrer or url_for("reminders.index"))
     if not current_user.gym.whatsapp_enabled or not current_user.gym.phone_number_id:
         flash("Connect and enable this gym's WhatsApp Business number first.", "warning")

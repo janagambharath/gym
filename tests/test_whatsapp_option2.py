@@ -332,6 +332,26 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             f"Renew Member One at Gym One by {self.expiry.strftime('%d %b %Y')} (3 days).",
         )
 
+    def test_scheduler_with_template_includes_unopted_members(self) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+
+        self.assertEqual(
+            [member.id for member in due_members_for_gym(self.gym_one.id, 3)],
+            [self.member_one.id, self.unopted_member.id],
+        )
+        result = run_due_reminders_for_gym(self.gym_one.id, [3])
+
+        self.assertEqual(result["sent"], 2)
+        logs = ReminderLog.query.filter_by(
+            gym_id=self.gym_one.id,
+            reminder_stage="3_days_before_expiry",
+        ).order_by(ReminderLog.member_id.asc()).all()
+        self.assertEqual(
+            [log.member_id for log in logs],
+            [self.member_one.id, self.unopted_member.id],
+        )
+        self.assertEqual([log.status for log in logs], ["sent", "sent"])
+
     def test_auto_expire_members_for_gym_marks_expired_active_members(self) -> None:
         self.member_one.membership_end = date.today() - timedelta(days=1)
         self.member_one.status = "active"
@@ -379,6 +399,41 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         ).one()
         self.assertEqual(log.status, "sent")
         self.assertEqual(log.provider_message_id, "text-message")
+
+    @patch.object(WhatsAppService, "send_template")
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_manual_test_reminder_uses_template_for_unopted_member(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-test")
+
+        self.assertEqual(
+            self.client.post(
+                "/auth/login",
+                data={"email": self.owner.email, "password": "ChangeMe123!"},
+            ).status_code,
+            302,
+        )
+
+        response = self.client.post(f"/reminders/members/{self.unopted_member.id}/send-test")
+
+        self.assertEqual(response.status_code, 302)
+        send_template.assert_called_once()
+        send_text.assert_not_called()
+        send_image.assert_not_called()
+
+        log = ReminderLog.query.filter_by(
+            gym_id=self.gym_one.id,
+            member_id=self.unopted_member.id,
+            reminder_stage="manual_test",
+        ).one()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "template-test")
 
     @patch.object(WhatsAppService, "send_image")
     @patch.object(WhatsAppService, "send_text")
@@ -449,6 +504,38 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         send_image.assert_not_called()
         self.assertEqual(log.status, "sent")
         self.assertEqual(log.provider_message_id, "settings-message")
+
+    @patch.object(WhatsAppService, "send_template")
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_reminder_uses_template_directly_for_unopted_member(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-direct")
+        log = self._reminder_log(self.gym_one, self.unopted_member)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_template.assert_called_once()
+        self.assertEqual(
+            send_template.call_args.kwargs["body_parameters"],
+            [
+                self.unopted_member.full_name,
+                self.gym_one.name,
+                self.expiry.strftime("%d %b %Y"),
+                "gymone@ybl",
+            ],
+        )
+        send_text.assert_not_called()
+        send_image.assert_not_called()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "template-direct")
 
     @patch.object(WhatsAppService, "send_template")
     @patch.object(WhatsAppService, "send_text")
