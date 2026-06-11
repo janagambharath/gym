@@ -63,13 +63,7 @@ class Gym(TimestampMixin, db.Model):
     )
 
     def is_operational(self) -> bool:
-        if self.status != "active":
-            return False
-        if self.subscription_status == "trial":
-            if not self.trial_ends_at:
-                return False
-            return date.today() <= self.trial_ends_at
-        return True
+        return self.status == "active"
 
     def members_at_limit(self, current_count: int) -> bool:
         if self.max_members is None:

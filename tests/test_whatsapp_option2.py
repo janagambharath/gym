@@ -366,6 +366,29 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             1,
         )
 
+    def test_expired_trial_does_not_block_active_gym_login(self) -> None:
+        self.gym_one.trial_ends_at = date.today() - timedelta(days=1)
+        db.session.commit()
+
+        response = self.client.post(
+            "/auth/login",
+            data={"email": self.owner.email, "password": "ChangeMe123!"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+    def test_suspended_gym_blocks_login(self) -> None:
+        self.gym_one.status = "suspended"
+        db.session.commit()
+
+        response = self.client.post(
+            "/auth/login",
+            data={"email": self.owner.email, "password": "ChangeMe123!"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"This gym account is suspended", response.data)
+
     @patch.object(WhatsAppService, "send_image")
     @patch.object(WhatsAppService, "send_text")
     def test_manual_test_reminder_sends_text_without_qr(
