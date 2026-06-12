@@ -303,7 +303,14 @@ class WhatsAppService:
                 continue
 
             if response.status_code >= 500:
-                last_error = f"HTTP {response.status_code}"
+                safe_error = self._response_error(response)
+                current_app.logger.warning(
+                    "WhatsApp API server error %s for phone_number_id %s: %s",
+                    response.status_code,
+                    self.phone_number_id,
+                    safe_error,
+                )
+                last_error = safe_error
                 time.sleep(2**attempt)
                 continue
 

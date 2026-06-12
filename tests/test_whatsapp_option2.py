@@ -873,6 +873,34 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertIn("More than 24 hours have passed.", result.error or "")
         self.assertIn("code 131047/2494102", result.error or "")
 
+    @patch("app.services.whatsapp_service.time.sleep")
+    @patch("app.services.whatsapp_service._SESSION.post")
+    def test_whatsapp_server_errors_include_meta_details(
+        self,
+        post: Mock,
+        sleep: Mock,
+    ) -> None:
+        self.app.config.update(WHATSAPP_ENABLED=True, WHATSAPP_ACCESS_TOKEN="test-token")
+        post.return_value = self._graph_response(
+            {
+                "error": {
+                    "message": "Temporary WhatsApp outage",
+                    "code": 2,
+                    "error_data": {"details": "Retry later"},
+                }
+            },
+            status_code=500,
+        )
+
+        result = WhatsAppService(self.gym_one).send_text(to="919100000001", body="Test")
+
+        self.assertFalse(result.ok)
+        self.assertIn("Temporary WhatsApp outage", result.error or "")
+        self.assertIn("Retry later", result.error or "")
+        self.assertIn("code 2", result.error or "")
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual(sleep.call_count, 3)
+
     @patch("app.services.whatsapp_service._SESSION.post")
     def test_whatsapp_template_payload_uses_body_parameters(self, post: Mock) -> None:
         self.app.config.update(WHATSAPP_ENABLED=True, WHATSAPP_ACCESS_TOKEN="test-token")
