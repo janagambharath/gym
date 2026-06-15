@@ -16,25 +16,48 @@
                 <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan' }}</dd>
                 <dt>Membership</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to {{ member.membership_end.strftime('%d %b %Y') }}</dd>
                 <dt>Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status }}</span></dd>
-                <dt>WhatsApp opt-in</dt>
+                <dt>WhatsApp session</dt>
                 <dd>
-                    {% if member.whatsapp_opted_in %}
-                    <span class="badge status-active">Opted in</span>
-                    {% if member.whatsapp_opted_in_at %}
-                    <div class="text-secondary text-sm mt-1">{{ member.whatsapp_opted_in_at.strftime('%d %b %Y %H:%M') }}</div>
-                    {% endif %}
+                    {% if member.has_open_whatsapp_session %}
+                    <span class="badge status-active">Open 24h window</span>
+                    {% elif member.last_inbound_at %}
+                    <span class="badge badge-inactive">Template required</span>
                     {% else %}
-                    <span class="badge badge-inactive">Not opted in</span>
+                    <span class="badge badge-inactive">No recent inbound</span>
+                    {% endif %}
+                    {% if member.last_inbound_at %}
+                    <div class="text-secondary text-sm mt-1">{{ member.last_inbound_at.strftime('%d %b %Y %H:%M') }}</div>
                     {% endif %}
                 </dd>
             </dl>
             {% if current_user.role == 'gym_owner' %}
             <form method="post" action="{{ url_for('members.delete', member_id=member.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-outline-danger w-100" data-confirm="Remove this member?">
-                    <i class="bi bi-trash"></i> Delete
+                <button class="btn btn-outline-danger w-100" data-confirm="Remove this member? They will be hidden but their history is kept.">
+                    <i class="bi bi-trash"></i> Remove member
                 </button>
             </form>
+            <button class="btn btn-outline-danger w-100 mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#hardDeleteBox">
+                <i class="bi bi-exclamation-triangle"></i> Permanently delete
+            </button>
+            <div class="collapse mt-2" id="hardDeleteBox">
+                <div class="card card-body border-danger">
+                    <p class="small text-secondary mb-2">
+                        This permanently deletes {{ member.full_name }} and all payment,
+                        renewal, and reminder history. This cannot be undone.
+                    </p>
+                    <form method="post" action="{{ url_for('members.hard_delete', member_id=member.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <label class="form-label small" for="hard-delete-confirm">
+                            Type <strong>{{ member.full_name }}</strong> to confirm
+                        </label>
+                        <input class="form-control form-control-sm mb-2" id="hard-delete-confirm" name="confirm" autocomplete="off">
+                        <button class="btn btn-danger btn-sm w-100" type="submit">
+                            <i class="bi bi-trash3"></i> Permanently delete
+                        </button>
+                    </form>
+                </div>
+            </div>
             {% endif %}
         </div>
     </div>

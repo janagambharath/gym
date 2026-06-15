@@ -11,6 +11,7 @@ from sqlalchemy.orm import contains_eager
 from app.extensions import db, limiter
 from app.models import Member, QRSettings, ReminderLog
 from app.repositories import TenantRepository
+from app.services.error_messages import friendly_error
 from app.services.audit_service import audit
 from app.services.reminder_service import (
     create_manual_test_log,
@@ -23,6 +24,7 @@ from app.utils.decorators import active_gym_required, roles_required
 
 reminders_bp = Blueprint("reminders", __name__, url_prefix="/reminders")
 _SCAN_JOB_TTL = 300
+_RUN_NOW_LOCK_TTL = 600
 
 
 def _set_scan_job(job_id: str, payload: dict) -> None:
@@ -42,6 +44,11 @@ def _format_scan_result(result: dict) -> tuple[str, str]:
     sent = result.get("sent", 0)
     failed = result.get("failed", 0)
     skipped = result.get("skipped", 0)
+    queued = result.get("queued", 0)
+
+    if queued == 0 and sent == 0 and failed == 0 and skipped == 0:
+        return "No members are due for a reminder right now.", "info"
+
     category = "success" if failed == 0 else "warning"
     parts = [f"{sent} reminder{'s' if sent != 1 else ''} sent"]
     if skipped:
@@ -49,6 +56,41 @@ def _format_scan_result(result: dict) -> tuple[str, str]:
     if failed:
         parts.append(f"{failed} failed")
     return " / ".join(parts), category
+
+
+def _run_now_lock_key(gym_id: int) -> str:
+    return f"renewaldesk:run_now_lock:{gym_id}"
+
+
+def _acquire_run_now_lock(gym_id: int) -> bool:
+    redis_url = current_app.config.get("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        current_app.logger.warning(
+            "REDIS_URL not set; cannot lock run_now for gym %s. Concurrent scans are possible.",
+            gym_id,
+        )
+        return True
+    try:
+        import redis as _redis
+
+        client = _redis.from_url(redis_url, socket_connect_timeout=2)
+        return bool(client.set(_run_now_lock_key(gym_id), "1", nx=True, ex=_RUN_NOW_LOCK_TTL))
+    except Exception:
+        current_app.logger.exception("Could not acquire run_now lock for gym %s", gym_id)
+        return True
+
+
+def _release_run_now_lock(gym_id: int) -> None:
+    redis_url = current_app.config.get("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        return
+    try:
+        import redis as _redis
+
+        client = _redis.from_url(redis_url, socket_connect_timeout=2)
+        client.delete(_run_now_lock_key(gym_id))
+    except Exception:
+        current_app.logger.exception("Could not release run_now lock for gym %s", gym_id)
 
 
 @reminders_bp.route("/")
@@ -86,6 +128,13 @@ def run_now():
         flash("Connect and enable this gym's WhatsApp Business number first.", "warning")
         return redirect(url_for("gym.whatsapp_settings"))
 
+    if not _acquire_run_now_lock(gym_id):
+        flash(
+            "A reminder scan is already running for this gym. Please wait for it to finish.",
+            "warning",
+        )
+        return redirect(url_for("reminders.index"))
+
     gym_timezone = current_user.gym.timezone or "Asia/Kolkata"
     days_before = list(current_app.config["REMINDER_DAYS_BEFORE"])
     job_id = uuid.uuid4().hex
@@ -108,6 +157,8 @@ def run_now():
                 db.session.rollback()
                 _set_scan_job(job_id, {"status": "error", "error": str(exc)})
                 app.logger.exception("Manual reminder scan failed job=%s gym=%s", job_id, gym_id)
+            finally:
+                _release_run_now_lock(gym_id)
 
     _set_scan_job(job_id, {"status": "running"})
     audit(
@@ -157,13 +208,6 @@ def send_test(member_id: int):
     if member.deleted_at is not None:
         flash("Cannot send a test reminder to a deleted member.", "warning")
         return redirect(request.referrer or url_for("reminders.index"))
-    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
-    if not member.whatsapp_opted_in and not template_name:
-        flash(
-            "This member has not opted in, and no approved Meta template is configured.",
-            "warning",
-        )
-        return redirect(request.referrer or url_for("reminders.index"))
     if not current_user.gym.whatsapp_enabled or not current_user.gym.phone_number_id:
         flash("Connect and enable this gym's WhatsApp Business number first.", "warning")
         return redirect(url_for("gym.whatsapp_settings"))
@@ -203,5 +247,9 @@ def send_test(member_id: int):
     if log.status == "sent":
         flash(f"Test reminder sent to {member.full_name}.", "success")
     else:
-        flash(f"Test reminder failed: {log.error_message or 'Unknown error'}", "warning")
+        friendly = friendly_error(log.error_message)
+        flash(
+            f"Test reminder failed: {friendly or log.error_message or 'Unknown error'}",
+            "warning",
+        )
     return redirect(request.referrer or url_for("reminders.index"))

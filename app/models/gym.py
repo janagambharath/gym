@@ -10,7 +10,7 @@ from app.models.mixins import TimestampMixin
 
 DEFAULT_WHATSAPP_WELCOME_TEMPLATE = (
     "Hi {{ member_name }}, welcome to {{ gym_name }}. "
-    "You are now opted in for WhatsApp membership updates."
+    "You'll receive membership updates and reminders on WhatsApp."
 )
 DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE = (
     "Hi {{ member_name }}, your {{ gym_name }} membership expires on "

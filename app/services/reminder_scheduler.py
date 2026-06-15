@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 
 from flask import Flask
 
@@ -67,6 +68,7 @@ def configure_scheduler(app: Flask) -> bool:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=300,
+        next_run_time=datetime.now(),
         replace_existing=True,
     )
     _logger.info("Scheduler configured with Redis lock on pid=%s", os.getpid())

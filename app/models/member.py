@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta, timezone as tz
 from decimal import Decimal
 
 from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from app.extensions import db
-from app.models.mixins import TenantMixin, TimestampMixin
+from app.models.mixins import TenantMixin, TimestampMixin, utcnow
 
 
 class MembershipPlan(TenantMixin, TimestampMixin, db.Model):
@@ -56,6 +56,7 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     external_ref = db.Column(db.String(120), nullable=True)
     whatsapp_opted_in = db.Column(db.Boolean, nullable=False, default=False)
     whatsapp_opted_in_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_inbound_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     gym = db.relationship("Gym", back_populates="members")
     plan = db.relationship("MembershipPlan", back_populates="members")
@@ -80,6 +81,16 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
+
+    @property
+    def has_open_whatsapp_session(self) -> bool:
+        """True when Meta's 24-hour customer-service window is open."""
+        if not self.last_inbound_at:
+            return False
+        last_inbound = self.last_inbound_at
+        if last_inbound.tzinfo is None:
+            last_inbound = last_inbound.replace(tzinfo=tz.utc)
+        return utcnow() - last_inbound < timedelta(hours=24)
 
     def refresh_status(self) -> None:
         self.status = "expired" if self.is_expired else "active"

@@ -36,8 +36,20 @@
                 <td>{{ log.cycle_end_date.strftime('%d %b %Y') }}</td>
                 <td>
                     <span class="badge status-{{ log.status }}">{{ log.status }}</span>
+                    {% if log.provider_message_id and log.provider_message_id.startswith('simulated') %}
+                    <span class="badge badge-trial" title="WHATSAPP_ENABLED is off platform-wide; no real message was sent">TEST MODE</span>
+                    {% endif %}
                     {% if log.status == 'failed' and log.error_message %}
-                    <div class="reminder-error text-secondary text-sm mt-1">{{ log.error_message }}</div>
+                    {% set friendly = log.error_message|friendly_whatsapp_error %}
+                    <div class="reminder-error text-secondary text-sm mt-1">
+                        {{ friendly or log.error_message }}
+                    </div>
+                    {% if friendly %}
+                    <details class="text-sm mt-1">
+                        <summary class="text-muted" style="cursor:pointer;">Technical details</summary>
+                        <div class="reminder-error text-secondary text-sm mt-1">{{ log.error_message }}</div>
+                    </details>
+                    {% endif %}
                     {% endif %}
                 </td>
                 <td>{{ log.attempts }}</td>

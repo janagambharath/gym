@@ -180,6 +180,7 @@ def _register_blueprints(app: Flask) -> None:
     from app.auth.routes import auth_bp
     from app.gym.routes import gym_bp
     from app.gym.staff_routes import staff_bp
+    from app.members.import_routes import import_bp
     from app.members.routes import members_bp
     from app.payments.routes import payments_bp
     from app.reminders.routes import reminders_bp
@@ -189,6 +190,7 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(gym_bp)
     app.register_blueprint(staff_bp)
     app.register_blueprint(members_bp)
+    app.register_blueprint(import_bp)
     app.register_blueprint(payments_bp)
     app.register_blueprint(reminders_bp)
     app.register_blueprint(webhooks_bp)
@@ -312,6 +314,10 @@ def _register_upload_route(app: Flask) -> None:
 
 
 def _register_template_helpers(app: Flask) -> None:
+    from app.services.error_messages import friendly_error
+
+    app.jinja_env.filters["friendly_whatsapp_error"] = friendly_error
+
     @app.context_processor
     def inject_helpers():
         def page_url(page: int) -> str:
@@ -320,6 +326,29 @@ def _register_template_helpers(app: Flask) -> None:
             return url_for(request.endpoint, **(request.view_args or {}), **args)
 
         return {"page_url": page_url, "current_year": datetime.utcnow().year}
+
+
+def _record_reminders_heartbeat(app: Flask, totals: dict) -> None:
+    import json
+    from datetime import datetime, timezone
+
+    redis_url = app.config.get("REDIS_URL", "memory://")
+    if redis_url == "memory://":
+        return
+    try:
+        import redis as _redis
+
+        client = _redis.from_url(redis_url, socket_connect_timeout=2)
+        payload = json.dumps(
+            {"completed_at": datetime.now(timezone.utc).isoformat(), "totals": totals}
+        )
+        client.setex("renewaldesk:reminders_heartbeat", 48 * 3600, payload)
+    except Exception:
+        app.logger.exception("Could not record reminders heartbeat")
+    try:
+        sentry_sdk.capture_message(f"run-reminders completed: {totals}", level="info")
+    except Exception:
+        pass
 
 
 def _register_cli(app: Flask) -> None:
@@ -493,6 +522,48 @@ def _register_cli(app: Flask) -> None:
                 )
             )
         app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
+        _record_reminders_heartbeat(app, totals)
+
+    @app.cli.command("check-reminders-heartbeat")
+    def check_reminders_heartbeat() -> None:
+        """Exit non-zero if run-reminders has not completed in the last 25 hours."""
+        import json
+        from datetime import datetime, timezone
+
+        redis_url = app.config.get("REDIS_URL", "memory://")
+        if redis_url == "memory://":
+            print("REDIS_URL not set; cannot check heartbeat.")
+            raise SystemExit(1)
+
+        try:
+            import redis as _redis
+
+            client = _redis.from_url(redis_url, socket_connect_timeout=2)
+            raw = client.get("renewaldesk:reminders_heartbeat")
+        except Exception as exc:
+            print(f"Could not read heartbeat from Redis: {exc}")
+            raise SystemExit(1)
+
+        if not raw:
+            print("No reminders heartbeat found. run-reminders may have never completed.")
+            raise SystemExit(1)
+
+        payload = json.loads(raw)
+        last_run = datetime.fromisoformat(payload["completed_at"])
+        if last_run.tzinfo is None:
+            last_run = last_run.replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - last_run).total_seconds() / 3600
+        if age_hours > 25:
+            print(
+                f"ALERT: run-reminders last completed {age_hours:.1f} hours ago "
+                f"(at {payload['completed_at']}). Expected at least once per 24h."
+            )
+            raise SystemExit(1)
+
+        print(
+            f"OK: run-reminders last completed {age_hours:.1f} hours ago. "
+            f"totals={payload['totals']}"
+        )
 
     @app.cli.command("purge-audit-logs")
     def purge_audit_logs() -> None:

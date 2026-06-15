@@ -9,9 +9,17 @@
             {{ 'Enabled' if gym.whatsapp_enabled else 'Disabled' }}
         </span>
     </div>
+    {% if gym.whatsapp_enabled and not platform_delivery_enabled %}
+    <div class="alert alert-danger mb-3">
+        <strong>Test mode active.</strong> WhatsApp is enabled for this gym, but the
+        platform-wide delivery switch is off. Reminders will be logged as sent, but
+        <strong>no real WhatsApp messages are being delivered</strong> to members.
+    </div>
+    {% endif %}
     <p class="text-secondary mb-3">
-        Connect the WhatsApp Business number used by this gym. Incoming member messages opt
-        that member in and receive the welcome message below.
+        Connect the WhatsApp Business number used by this gym. Approved Meta templates can
+        reach members directly; incoming member messages open Meta's 24-hour normal-message
+        window.
     </p>
     <form method="post" novalidate>
         {{ form.hidden_tag() }}

@@ -68,8 +68,6 @@ def _due_members_query(gym_id: int, days_before: int, gym_timezone: str):
         .filter(~Member.id.in_(already_renewed))
         .filter(~Member.id.in_(already_paid))
     )
-    if not current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", ""):
-        query = query.filter(Member.whatsapp_opted_in.is_(True))
     return query
 
 
@@ -447,14 +445,6 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     member = log.member
     if member.gym_id != log.gym_id:
         raise ValueError("Reminder tenant does not match member tenant.")
-    if (
-        not member.whatsapp_opted_in
-        and not current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
-    ):
-        raise ValueError(
-            "Member has not opted in and no approved WhatsApp reminder template is configured."
-        )
-
     gym = Gym.query.filter_by(id=log.gym_id).first()
     if not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
         raise ValueError("WhatsApp is not configured and enabled for this gym.")
@@ -484,7 +474,7 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
             message=message,
             qr_url=qr_url,
             template_context=template_context,
-            allow_session_message=member.whatsapp_opted_in,
+            allow_session_message=member.has_open_whatsapp_session,
         )
     except Exception as exc:
         result = WhatsAppResult(ok=False, error=str(exc)[:200], provider_message_id=None)

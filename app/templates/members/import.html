@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Import Members | RenewalDesk{% endblock %}
+{% block page_title %}Import members{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel">
+            <h2>Upload CSV</h2>
+            <p class="text-secondary">
+                Required columns: <span class="font-mono">full_name</span>,
+                <span class="font-mono">phone</span>,
+                <span class="font-mono">membership_start</span>,
+                <span class="font-mono">membership_end</span>.
+                Optional: <span class="font-mono">email</span>,
+                <span class="font-mono">gender</span>,
+                <span class="font-mono">plan</span>,
+                <span class="font-mono">status</span>,
+                <span class="font-mono">notes</span>.
+            </p>
+            <p class="text-secondary text-sm">
+                Phone numbers must be in E.164 format, for example
+                <span class="font-mono">+919876543210</span>. Dates can be
+                <span class="font-mono">YYYY-MM-DD</span>,
+                <span class="font-mono">DD-MM-YYYY</span>, or
+                <span class="font-mono">DD/MM/YYYY</span>. Plan names must already exist under
+                <a href="{{ url_for('gym.plans') }}">Plans</a>.
+            </p>
+            <form method="post" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="mb-3">
+                    <input class="form-control" type="file" name="csv_file" accept=".csv" required>
+                </div>
+                <button class="btn btn-primary" type="submit">
+                    <i class="bi bi-upload"></i> Import members
+                </button>
+                <a class="btn btn-outline-secondary" href="{{ url_for('members.index') }}">Cancel</a>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="panel">
+            <h2>Example CSV</h2>
+            <pre class="text-sm" style="white-space:pre-wrap;">full_name,phone,membership_start,membership_end,plan,status
+Aarav Sharma,+919999999999,2026-06-01,2026-07-01,Monthly,active
+Maya Iyer,+918888888888,2026-05-01,2026-06-01,Monthly,expired</pre>
+        </div>
+        {% if row_errors %}
+        <div class="panel mt-4">
+            <div class="panel-header">
+                <h2>Row errors</h2>
+                {% if imported is defined %}
+                <span class="badge status-active">{{ imported }} imported</span>
+                {% endif %}
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Row</th><th>Errors</th></tr></thead>
+                    <tbody>
+                    {% for row_num, errors in row_errors.items() %}
+                    <tr>
+                        <td>{{ row_num }}</td>
+                        <td>
+                            <ul class="mb-0 ps-3">
+                            {% for error in errors %}
+                                <li class="text-sm">{{ error }}</li>
+                            {% endfor %}
+                            </ul>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-secondary text-sm mb-0">
+                Fix these rows in your CSV and re-upload. Only the rows above were skipped;
+                {% if imported is defined %}the other {{ imported }} were imported.{% else %}no rows were imported because all rows had errors.{% endif %}
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

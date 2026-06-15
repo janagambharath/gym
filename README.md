@@ -63,10 +63,14 @@ flask --app app:create_app db upgrade
 flask --app app:create_app create-admin
 ```
 
-For production, keep `ENABLE_SCHEDULER=false` on web workers and run reminders from exactly one Railway cron/worker process:
+For production, the built-in scheduler is enabled by default and protected by a
+Redis lock so only one web worker runs the scan. It runs once on startup and then
+every 24 hours by default (`REMINDER_JOB_MINUTES=1440`). You can also run the
+one-shot command from a Railway cron/worker process:
 
 ```bash
 flask --app app:create_app run-reminders
+flask --app app:create_app check-reminders-heartbeat
 ```
 
 Check schema state before a deploy with:
@@ -114,8 +118,10 @@ WABA.
 
 Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL when available, and falls back to a text reminder when no fetchable QR is configured or image delivery fails.
 Meta inbound messages and delivery status callbacks are handled at `/webhook/whatsapp`.
-The first inbound message from a known member opts that member in and triggers the gym's
-configured welcome message. Scheduled renewal reminders are sent only to opted-in members.
+Inbound messages from known members refresh Meta's 24-hour normal-message window and trigger
+the configured welcome message on first contact. Scheduled renewal reminders scan all due
+active members; members without an open 24-hour window are sent through the approved Meta
+template when configured.
 
 ## Tenant safety
 

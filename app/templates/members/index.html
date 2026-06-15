@@ -2,6 +2,7 @@
 {% block title %}Members | RenewalDesk{% endblock %}
 {% block page_title %}Members{% endblock %}
 {% block page_actions %}
+<a class="btn btn-outline-primary" href="{{ url_for('members_import.import_members') }}"><i class="bi bi-upload"></i> Import CSV</a>
 <a class="btn btn-primary" href="{{ url_for('members.create') }}"><i class="bi bi-person-plus"></i> Add member</a>
 {% endblock %}
 {% block content %}

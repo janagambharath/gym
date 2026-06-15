@@ -39,13 +39,13 @@ class Config:
     AWS_S3_REGION = os.getenv("AWS_S3_REGION", "ap-south-1")
     AWS_S3_PUBLIC_BASE_URL = os.getenv("AWS_S3_PUBLIC_BASE_URL", "").rstrip("/")
 
-    ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
+    ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
     REMINDER_DAYS_BEFORE = [
         int(day.strip())
         for day in os.getenv("REMINDER_DAYS_BEFORE", "7,3,1,0").split(",")
         if day.strip()
     ]
-    REMINDER_JOB_MINUTES = int(os.getenv("REMINDER_JOB_MINUTES", "60"))
+    REMINDER_JOB_MINUTES = int(os.getenv("REMINDER_JOB_MINUTES", "1440"))
 
     WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "false").lower() == "true"
     WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")

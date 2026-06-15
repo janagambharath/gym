@@ -146,6 +146,32 @@ def delete(member_id: int):
     return redirect(url_for("members.index"))
 
 
+@members_bp.post("/<int:member_id>/hard-delete")
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def hard_delete(member_id: int):
+    """Permanently remove a member and all related records."""
+    member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
+
+    if request.form.get("confirm", "").strip() != member.full_name:
+        flash("Type the member's full name exactly to confirm permanent deletion.", "danger")
+        return redirect(url_for("members.detail", member_id=member.id))
+
+    member_name = member.full_name
+    audit(
+        action="hard_delete_member",
+        resource_type="member",
+        resource_id=member.id,
+        metadata={"full_name": member_name, "phone": member.phone},
+    )
+    db.session.delete(member)
+    invalidate_dashboard_cache(current_user.gym_id)
+    db.session.commit()
+    flash(f"{member_name} has been permanently deleted.", "success")
+    return redirect(url_for("members.index"))
+
+
 def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.full_name = form.full_name.data.strip()
     member.phone = form.phone.data.strip()

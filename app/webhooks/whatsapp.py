@@ -4,6 +4,7 @@ import hashlib
 import hmac
 
 from flask import Blueprint, current_app, request
+from sqlalchemy import func, or_
 
 from app.extensions import csrf, db
 from app.models import Gym, Member, ReminderLog
@@ -137,13 +138,13 @@ def _process_message(gym: Gym, message: dict) -> bool:
     if len(members) != 1:
         reason = "not found" if not members else "ambiguous"
         current_app.logger.warning(
-            "Ignored WhatsApp opt-in: member phone %s in gym %s was %s",
+            "Ignored WhatsApp inbound: member phone %s in gym %s was %s",
             _masked_phone(whatsapp_phone),
             gym.id,
             reason,
         )
         audit(
-            action="whatsapp_opt_in_ignored",
+            action="whatsapp_inbound_ignored",
             resource_type="member",
             gym_id=gym.id,
             metadata={
@@ -162,13 +163,14 @@ def _process_message(gym: Gym, message: dict) -> bool:
         member.phone = canonical_phone
 
     if member.whatsapp_opted_in:
+        member.last_inbound_at = utcnow()
         if not member.whatsapp_opted_in_at:
-            member.whatsapp_opted_in_at = utcnow()
-            return True
-        return phone_normalized
+            member.whatsapp_opted_in_at = member.last_inbound_at
+        return True
 
     member.whatsapp_opted_in = True
     member.whatsapp_opted_in_at = utcnow()
+    member.last_inbound_at = member.whatsapp_opted_in_at
     audit(
         action="whatsapp_opt_in",
         resource_type="member",
@@ -215,13 +217,28 @@ def _phone_digits(value: str | None) -> str:
 
 
 def _matching_members_for_sender(gym_id: int, whatsapp_phone: str) -> list[Member]:
+    normalized_phone = func.replace(
+        func.replace(func.replace(Member.phone, "+", ""), " ", ""),
+        "-",
+        "",
+    )
+    candidates_filter = [
+        Member.phone == f"+{whatsapp_phone}",
+        Member.phone == whatsapp_phone,
+        normalized_phone == whatsapp_phone,
+    ]
+    if len(whatsapp_phone) >= 10:
+        candidates_filter.append(normalized_phone.like(f"%{whatsapp_phone[-10:]}"))
+
     members = (
         Member.query.filter(
             Member.gym_id == gym_id,
             Member.deleted_at.is_(None),
+            or_(*candidates_filter),
         )
         .order_by(Member.id.asc())
         .with_for_update()
+        .limit(10)
         .all()
     )
     exact_matches = [

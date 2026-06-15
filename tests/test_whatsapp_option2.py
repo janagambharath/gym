@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from app import create_app
 from app.extensions import db
 from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, User
+from app.models.mixins import utcnow
 from app.services.reminder_service import (
     MAX_REMINDER_ATTEMPTS,
     auto_expire_members_for_gym,
@@ -306,27 +307,29 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         ignored = AuditLog.query.filter_by(
             gym_id=self.gym_one.id,
-            action="whatsapp_opt_in_ignored",
+            action="whatsapp_inbound_ignored",
         ).one()
         self.assertEqual(ignored.metadata_json["reason"], "ambiguous")
 
-    def test_scheduler_sends_and_logs_only_opted_in_members(self) -> None:
-        self.member_one.whatsapp_opted_in = True
+    def test_scheduler_attempts_all_due_members_without_opt_in_gate(self) -> None:
+        self._opt_in(self.member_one)
         db.session.commit()
 
         self.assertEqual(
             [member.id for member in due_members_for_gym(self.gym_one.id, 3)],
-            [self.member_one.id],
+            [self.member_one.id, self.unopted_member.id],
         )
         result = run_due_reminders_for_gym(self.gym_one.id, [3])
         self.assertEqual(result["sent"], 1)
+        self.assertEqual(result["failed"], 1)
 
         logs = ReminderLog.query.filter_by(
             gym_id=self.gym_one.id,
             reminder_stage="3_days_before_expiry",
-        ).all()
-        self.assertEqual(len(logs), 1)
-        self.assertEqual(logs[0].member_id, self.member_one.id)
+        ).order_by(ReminderLog.member_id.asc()).all()
+        self.assertEqual(len(logs), 2)
+        self.assertEqual([log.member_id for log in logs], [self.member_one.id, self.unopted_member.id])
+        self.assertEqual([log.status for log in logs], ["sent", "failed"])
         self.assertEqual(
             logs[0].message_snapshot,
             f"Renew Member One at Gym One by {self.expiry.strftime('%d %b %Y')} (3 days).",
@@ -397,7 +400,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         send_image: Mock,
     ) -> None:
         send_text.return_value = WhatsAppResult(ok=True, provider_message_id="text-message")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
         db.session.commit()
 
@@ -467,7 +470,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
     ) -> None:
         send_image.return_value = WhatsAppResult(ok=False, error="QR image rejected")
         send_text.return_value = WhatsAppResult(ok=True, provider_message_id="text-fallback")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
 
@@ -491,7 +494,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
         send_image.return_value = WhatsAppResult(ok=True, provider_message_id="settings-image")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
 
@@ -515,7 +518,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
         send_text.return_value = WhatsAppResult(ok=True, provider_message_id="settings-message")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
@@ -563,6 +566,53 @@ class WhatsAppOption2TestCase(unittest.TestCase):
     @patch.object(WhatsAppService, "send_template")
     @patch.object(WhatsAppService, "send_text")
     @patch.object(WhatsAppService, "send_image")
+    def test_reminder_skips_session_message_when_24h_window_closed(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+        send_template: Mock,
+    ) -> None:
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-only")
+
+        self.member_one.whatsapp_opted_in = True
+        self.member_one.whatsapp_opted_in_at = utcnow() - timedelta(days=3)
+        self.member_one.last_inbound_at = utcnow() - timedelta(days=3)
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_text.assert_not_called()
+        send_image.assert_not_called()
+        send_template.assert_called_once()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "template-only")
+
+    @patch.object(WhatsAppService, "send_image")
+    @patch.object(WhatsAppService, "send_text")
+    def test_reminder_attempts_session_message_when_24h_window_open(
+        self,
+        send_text: Mock,
+        send_image: Mock,
+    ) -> None:
+        send_text.return_value = WhatsAppResult(ok=True, provider_message_id="session-message")
+        self.member_one.last_inbound_at = utcnow() - timedelta(hours=1)
+        QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
+        log = self._reminder_log(self.gym_one, self.member_one)
+        db.session.commit()
+
+        send_reminder(log, force=True)
+
+        send_text.assert_called_once()
+        send_image.assert_not_called()
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.provider_message_id, "session-message")
+
+    @patch.object(WhatsAppService, "send_template")
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
     def test_reminder_uses_template_fallback_when_settings_message_fails(
         self,
         send_image: Mock,
@@ -573,7 +623,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
         send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
         send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-message")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).update({"is_active": False})
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
@@ -608,7 +658,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
         send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
         send_template.return_value = WhatsAppResult(ok=False, error="template missing")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
@@ -637,7 +687,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
     ) -> None:
         send_image.return_value = WhatsAppResult(ok=False, error="QR image rejected")
         send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
 
@@ -653,7 +703,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         send_text: Mock,
     ) -> None:
         send_text.return_value = WhatsAppResult(ok=True, provider_message_id="manual-retry")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
         log = self._reminder_log(self.gym_one, self.member_one)
         log.status = "failed"
@@ -677,8 +727,8 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(log.provider_message_id, "manual-retry")
 
     def test_delivery_status_updates_are_scoped_to_webhook_gym(self) -> None:
-        self.member_one.whatsapp_opted_in = True
-        self.member_two.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
+        self._opt_in(self.member_two)
         log_one = self._reminder_log(self.gym_one, self.member_one)
         log_two = self._reminder_log(self.gym_two, self.member_two)
         db.session.commit()
@@ -712,7 +762,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             ok=True,
             provider_message_id="template-provider",
         )
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         log = self._reminder_log(self.gym_one, self.member_one)
         log.status = "sent"
         log.provider_message_id = "settings-provider"
@@ -769,7 +819,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
         send_template.return_value = WhatsAppResult(ok=False, error="template missing")
-        self.member_one.whatsapp_opted_in = True
+        self._opt_in(self.member_one)
         log = self._reminder_log(self.gym_one, self.member_one)
         log.status = "sent"
         log.provider_message_id = "settings-provider"
@@ -1021,6 +1071,12 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         response.status_code = status_code
         response.json.return_value = payload
         return response
+
+    @staticmethod
+    def _opt_in(member: Member) -> None:
+        member.whatsapp_opted_in = True
+        member.whatsapp_opted_in_at = utcnow()
+        member.last_inbound_at = utcnow()
 
 
 if __name__ == "__main__":

@@ -153,6 +153,7 @@ def whatsapp_settings():
         form=form,
         gym=gym,
         diagnostics=_whatsapp_diagnostics(gym),
+        platform_delivery_enabled=bool(current_app.config.get("WHATSAPP_ENABLED")),
     )
 
 
