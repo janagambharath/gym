@@ -311,7 +311,20 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         ).one()
         self.assertEqual(ignored.metadata_json["reason"], "ambiguous")
 
-    def test_scheduler_attempts_all_due_members_without_opt_in_gate(self) -> None:
+    @patch.object(WhatsAppService, "send_text")
+    @patch.object(WhatsAppService, "send_image")
+    def test_scheduler_attempts_all_due_members_without_opt_in_gate(
+        self,
+        send_image: Mock,
+        send_text: Mock,
+    ) -> None:
+        def image_result(*, to: str, image_url: str, caption: str) -> WhatsAppResult:
+            if to == "919100000001":
+                return WhatsAppResult(ok=True, provider_message_id="session-image")
+            return WhatsAppResult(ok=False, error="24-hour window closed")
+
+        send_image.side_effect = image_result
+        send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
         self._opt_in(self.member_one)
         db.session.commit()
 
@@ -322,6 +335,8 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         result = run_due_reminders_for_gym(self.gym_one.id, [3])
         self.assertEqual(result["sent"], 1)
         self.assertEqual(result["failed"], 1)
+        self.assertEqual(send_image.call_count, 2)
+        send_text.assert_called_once()
 
         logs = ReminderLog.query.filter_by(
             gym_id=self.gym_one.id,

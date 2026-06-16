@@ -359,16 +359,24 @@ def _send_whatsapp_message(
     message: str,
     qr_url: str | None,
     template_context: dict[str, object],
-    allow_session_message: bool,
+    has_open_session: bool,
 ) -> WhatsAppResult:
-    if not allow_session_message:
-        return _send_template_message(whatsapp, to=to, template_context=template_context)
+    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+
+    if not has_open_session:
+        if template_name:
+            return _send_template_message(whatsapp, to=to, template_context=template_context)
+        _logger.info(
+            "No open WhatsApp session and no template configured for %s. "
+            "Attempting session message; Meta will reject with 131047 if the window is closed.",
+            to,
+        )
+        return _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
 
     session_result = _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
     if session_result.ok:
         return session_result
 
-    template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
     if template_name:
         template_result = _send_template_message(whatsapp, to=to, template_context=template_context)
         if template_result.ok:
@@ -474,7 +482,7 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
             message=message,
             qr_url=qr_url,
             template_context=template_context,
-            allow_session_message=member.has_open_whatsapp_session,
+            has_open_session=member.has_open_whatsapp_session,
         )
     except Exception as exc:
         result = WhatsAppResult(ok=False, error=str(exc)[:200], provider_message_id=None)

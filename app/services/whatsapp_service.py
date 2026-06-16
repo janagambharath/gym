@@ -288,11 +288,11 @@ class WhatsAppService:
                 )
             except requests.Timeout:
                 last_error = "Request timed out"
-                time.sleep(2**attempt)
+                time.sleep(min(2**attempt, 2))
                 continue
             except requests.ConnectionError:
                 last_error = "Connection error"
-                time.sleep(2**attempt)
+                time.sleep(min(2**attempt, 2))
                 continue
 
             if response.status_code == 429:
@@ -311,7 +311,7 @@ class WhatsAppService:
                     safe_error,
                 )
                 last_error = safe_error
-                time.sleep(2**attempt)
+                time.sleep(min(2**attempt, 2))
                 continue
 
             if response.status_code >= 400:

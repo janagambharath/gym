@@ -126,8 +126,16 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     gym.timezone or "Asia/Kolkata",
                 )
                 app.logger.info("Reminder scan for gym %s: %s", gym.id, result)
-            except Exception:
+            except Exception as exc:
                 db.session.rollback()
                 app.logger.exception("Reminder scan failed for gym %s", gym.id)
+                try:
+                    import sentry_sdk
+
+                    with sentry_sdk.push_scope() as scope:
+                        scope.set_extra("gym_id", gym.id)
+                        sentry_sdk.capture_exception(exc)
+                except Exception:
+                    pass
             finally:
                 db.session.expire_all()

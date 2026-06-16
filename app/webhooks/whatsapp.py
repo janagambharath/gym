@@ -38,7 +38,7 @@ def verify():
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
     verify_token = current_app.config.get("WHATSAPP_VERIFY_TOKEN", "")
-    if mode == "subscribe" and token and token == verify_token:
+    if mode == "subscribe" and token and hmac.compare_digest(token, verify_token):
         return challenge or "", 200
     return "Forbidden", 403
 
