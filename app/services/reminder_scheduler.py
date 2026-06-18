@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+import uuid
 from datetime import datetime
 
 from flask import Flask
@@ -14,10 +16,48 @@ from app.services.reminder_service import auto_expire_members_for_gym, run_due_r
 _logger = logging.getLogger(__name__)
 _LOCK_KEY = "renewaldesk:scheduler_lock"
 _GYM_BATCH_SIZE = 50
+_LOCK_OWNER: str | None = None
 
 
 def _lock_ttl(app: Flask) -> int:
     return max((app.config["REMINDER_JOB_MINUTES"] * 60 * 2), 300)
+
+
+def _deployment_id() -> str:
+    return (
+        os.getenv("RAILWAY_DEPLOYMENT_ID")
+        or os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("GIT_COMMIT_SHA")
+        or os.getenv("SOURCE_VERSION")
+        or "local"
+    )
+
+
+def _lock_owner() -> str:
+    global _LOCK_OWNER
+    if _LOCK_OWNER is None:
+        _LOCK_OWNER = json.dumps(
+            {
+                "deployment": _deployment_id(),
+                "pid": os.getpid(),
+                "token": uuid.uuid4().hex,
+            },
+            sort_keys=True,
+        )
+    return _LOCK_OWNER
+
+
+def _lock_deployment(owner: bytes | str | None) -> str | None:
+    if not owner:
+        return None
+    if isinstance(owner, bytes):
+        owner = owner.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(owner)
+    except json.JSONDecodeError:
+        return None
+    deployment = payload.get("deployment")
+    return deployment if isinstance(deployment, str) else None
 
 
 def _acquire_redis_lock(redis_url: str, ttl: int) -> bool:
@@ -25,7 +65,34 @@ def _acquire_redis_lock(redis_url: str, ttl: int) -> bool:
         import redis as _redis
 
         r = _redis.from_url(redis_url, socket_connect_timeout=2)
-        return bool(r.set(_LOCK_KEY, os.getpid(), nx=True, ex=ttl))
+        owner = _lock_owner()
+        if r.set(_LOCK_KEY, owner, nx=True, ex=ttl):
+            return True
+
+        current_owner = r.get(_LOCK_KEY)
+        current_deployment = _lock_deployment(current_owner)
+        if current_deployment == _deployment_id():
+            return False
+
+        with r.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(_LOCK_KEY)
+                    watched_owner = pipe.get(_LOCK_KEY)
+                    watched_deployment = _lock_deployment(watched_owner)
+                    if watched_deployment == _deployment_id():
+                        pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.set(_LOCK_KEY, owner, ex=ttl)
+                    pipe.execute()
+                    _logger.info(
+                        "Replaced stale scheduler lock from deployment %s",
+                        watched_deployment or "unknown",
+                    )
+                    return True
+                except _redis.WatchError:
+                    continue
     except Exception as exc:
         _logger.warning("Could not acquire Redis scheduler lock: %s", exc)
         return False
@@ -36,7 +103,8 @@ def _refresh_redis_lock(redis_url: str, ttl: int) -> None:
         import redis as _redis
 
         r = _redis.from_url(redis_url, socket_connect_timeout=2)
-        r.expire(_LOCK_KEY, ttl)
+        if r.get(_LOCK_KEY) == _lock_owner().encode("utf-8"):
+            r.expire(_LOCK_KEY, ttl)
     except Exception:
         _logger.exception("Could not refresh Redis scheduler lock")
 

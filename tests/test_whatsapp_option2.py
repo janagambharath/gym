@@ -22,6 +22,64 @@ from app.services import reminder_scheduler
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 
 
+class _FakeRedis:
+    def __init__(self, value: bytes | None = None) -> None:
+        self.value = value
+
+    def set(
+        self,
+        key: str,
+        value: str,
+        nx: bool = False,
+        ex: int | None = None,
+    ) -> bool:
+        if nx and self.value is not None:
+            return False
+        self.value = value.encode("utf-8")
+        return True
+
+    def get(self, key: str) -> bytes | None:
+        return self.value
+
+    def expire(self, key: str, ttl: int) -> bool:
+        return True
+
+    def pipeline(self):
+        return _FakeRedisPipeline(self)
+
+
+class _FakeRedisPipeline:
+    def __init__(self, redis_client: _FakeRedis) -> None:
+        self.redis_client = redis_client
+        self.pending_value: str | None = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def watch(self, key: str) -> None:
+        return None
+
+    def get(self, key: str) -> bytes | None:
+        return self.redis_client.get(key)
+
+    def unwatch(self) -> None:
+        return None
+
+    def multi(self) -> None:
+        return None
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.pending_value = value
+
+    def execute(self) -> list:
+        if self.pending_value is not None:
+            self.redis_client.value = self.pending_value.encode("utf-8")
+        return []
+
+
 class WhatsAppOption2TestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.app = create_app("testing")
@@ -1105,6 +1163,35 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         next_run_time = add_job.call_args.kwargs["next_run_time"]
         self.assertIsNotNone(next_run_time.tzinfo)
         self.assertIsNotNone(next_run_time.utcoffset())
+
+    def test_scheduler_lock_replaces_stale_deployment_lock(self) -> None:
+        previous_owner = json.dumps(
+            {"deployment": "old-deploy", "pid": 3, "token": "old"},
+            sort_keys=True,
+        ).encode("utf-8")
+        fake_redis = _FakeRedis(previous_owner)
+        reminder_scheduler._LOCK_OWNER = None
+
+        with patch.dict("os.environ", {"RAILWAY_DEPLOYMENT_ID": "new-deploy"}):
+            with patch("redis.from_url", return_value=fake_redis):
+                self.assertTrue(reminder_scheduler._acquire_redis_lock("redis://test", 300))
+
+        new_owner = json.loads(fake_redis.value.decode("utf-8"))
+        self.assertEqual(new_owner["deployment"], "new-deploy")
+
+    def test_scheduler_lock_keeps_same_deployment_lock(self) -> None:
+        existing_owner = json.dumps(
+            {"deployment": "same-deploy", "pid": 2, "token": "active"},
+            sort_keys=True,
+        ).encode("utf-8")
+        fake_redis = _FakeRedis(existing_owner)
+        reminder_scheduler._LOCK_OWNER = None
+
+        with patch.dict("os.environ", {"RAILWAY_DEPLOYMENT_ID": "same-deploy"}):
+            with patch("redis.from_url", return_value=fake_redis):
+                self.assertFalse(reminder_scheduler._acquire_redis_lock("redis://test", 300))
+
+        self.assertEqual(fake_redis.value, existing_owner)
 
     def _reminder_log(self, gym: Gym, member: Member) -> ReminderLog:
         log = ReminderLog(
