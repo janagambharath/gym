@@ -1193,6 +1193,17 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         self.assertEqual(fake_redis.value, existing_owner)
 
+    def test_scheduler_lock_replaces_legacy_numeric_lock(self) -> None:
+        fake_redis = _FakeRedis(b"1")
+        reminder_scheduler._LOCK_OWNER = None
+
+        with patch.dict("os.environ", {"RAILWAY_DEPLOYMENT_ID": "new-deploy"}):
+            with patch("redis.from_url", return_value=fake_redis):
+                self.assertTrue(reminder_scheduler._acquire_redis_lock("redis://test", 300))
+
+        new_owner = json.loads(fake_redis.value.decode("utf-8"))
+        self.assertEqual(new_owner["deployment"], "new-deploy")
+
     def _reminder_log(self, gym: Gym, member: Member) -> ReminderLog:
         log = ReminderLog(
             gym_id=gym.id,

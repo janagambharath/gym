@@ -56,6 +56,8 @@ def _lock_deployment(owner: bytes | str | None) -> str | None:
         payload = json.loads(owner)
     except json.JSONDecodeError:
         return None
+    if not isinstance(payload, dict):
+        return None
     deployment = payload.get("deployment")
     return deployment if isinstance(deployment, str) else None
 
