@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 from datetime import datetime
@@ -589,9 +590,16 @@ def _register_cli(app: Flask) -> None:
 def _start_scheduler(app: Flask) -> None:
     if not app.config["ENABLE_SCHEDULER"]:
         return
+    if _is_flask_cli_process():
+        app.logger.info("Skipping scheduler start for Flask CLI command.")
+        return
 
     from app.services.reminder_scheduler import configure_scheduler
 
     configured = configure_scheduler(app)
     if configured and not scheduler.running:
         scheduler.start()
+
+
+def _is_flask_cli_process() -> bool:
+    return Path(sys.argv[0]).name.lower() in {"flask", "flask.exe"}

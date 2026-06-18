@@ -7,7 +7,7 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import Mock, patch
 
-from app import create_app
+from app import _start_scheduler, create_app
 from app.extensions import db
 from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, User
 from app.models.mixins import utcnow
@@ -1065,6 +1065,29 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertIsNone(Member.query.filter_by(full_name="Limit Test").first())
+
+    def test_scheduler_does_not_start_for_flask_cli_process(self) -> None:
+        app = create_app("testing")
+        app.config["ENABLE_SCHEDULER"] = True
+
+        with patch("sys.argv", ["flask", "--app", "app:create_app", "db", "upgrade"]):
+            with patch("app.services.reminder_scheduler.configure_scheduler") as configure:
+                _start_scheduler(app)
+
+        configure.assert_not_called()
+
+    def test_scheduler_can_start_for_gunicorn_process(self) -> None:
+        app = create_app("testing")
+        app.config["ENABLE_SCHEDULER"] = True
+
+        with patch("sys.argv", ["gunicorn", "--config", "gunicorn.conf.py"]):
+            with patch(
+                "app.services.reminder_scheduler.configure_scheduler",
+                return_value=False,
+            ) as configure:
+                _start_scheduler(app)
+
+        configure.assert_called_once_with(app)
 
     def _reminder_log(self, gym: Gym, member: Member) -> ReminderLog:
         log = ReminderLog(
