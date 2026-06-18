@@ -18,6 +18,7 @@ from app.services.reminder_service import (
     run_due_reminders_for_gym,
     send_reminder,
 )
+from app.services import reminder_scheduler
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 
 
@@ -1088,6 +1089,22 @@ class WhatsAppOption2TestCase(unittest.TestCase):
                 _start_scheduler(app)
 
         configure.assert_called_once_with(app)
+
+    def test_scheduler_initial_run_time_is_timezone_aware(self) -> None:
+        app = create_app("testing")
+        app.config.update(REDIS_URL="redis://example.test:6379/0")
+
+        with patch(
+            "app.services.reminder_scheduler._acquire_redis_lock",
+            return_value=True,
+        ):
+            with patch.object(reminder_scheduler.scheduler, "get_job", return_value=None):
+                with patch.object(reminder_scheduler.scheduler, "add_job") as add_job:
+                    self.assertTrue(reminder_scheduler.configure_scheduler(app))
+
+        next_run_time = add_job.call_args.kwargs["next_run_time"]
+        self.assertIsNotNone(next_run_time.tzinfo)
+        self.assertIsNotNone(next_run_time.utcoffset())
 
     def _reminder_log(self, gym: Gym, member: Member) -> ReminderLog:
         log = ReminderLog(
