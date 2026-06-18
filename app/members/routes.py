@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -52,6 +53,107 @@ def index():
         .paginate(page=page, per_page=20, error_out=False)
     )
     return render_template("members/index.html", pagination=pagination, status=status, search=search)
+
+
+@members_bp.route("/bulk-renew", methods=["GET", "POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def bulk_renew():
+    if request.method == "POST":
+        member_ids = _selected_member_ids()
+        renewal_days = _parse_renewal_days(request.form.get("renewal_days", "30"))
+        amount = _parse_amount(request.form.get("amount", "0"))
+        notes = (request.form.get("notes") or "").strip()
+
+        if not member_ids:
+            flash("Select at least one member.", "warning")
+            return redirect(url_for("members.bulk_renew"))
+        if renewal_days is None:
+            flash("Renewal days must be between 1 and 730.", "danger")
+            return redirect(url_for("members.bulk_renew"))
+        if amount is None:
+            flash("Amount must be zero or more.", "danger")
+            return redirect(url_for("members.bulk_renew"))
+
+        members = (
+            db.session.execute(
+                select(Member)
+                .where(
+                    Member.gym_id == current_user.gym_id,
+                    Member.deleted_at.is_(None),
+                    Member.id.in_(member_ids),
+                )
+                .order_by(Member.full_name.asc())
+                .with_for_update()
+            )
+            .scalars()
+            .all()
+        )
+        if not members:
+            flash("No matching members found.", "warning")
+            return redirect(url_for("members.bulk_renew"))
+
+        today = date.today()
+        renewed_ids = []
+        for member in members:
+            previous_end = member.membership_end
+            new_start = max(today, previous_end + timedelta(days=1))
+            new_end = new_start + timedelta(days=renewal_days - 1)
+            member.membership_start = new_start
+            member.membership_end = new_end
+            member.status = "active"
+            renewed_ids.append(member.id)
+            db.session.add(
+                RenewalHistory(
+                    gym_id=member.gym_id,
+                    member_id=member.id,
+                    plan_id=member.plan_id,
+                    renewed_by_id=current_user.id,
+                    previous_end=previous_end,
+                    new_start=new_start,
+                    new_end=new_end,
+                    amount=amount,
+                    notes=notes or f"Bulk renewed for {renewal_days} days.",
+                )
+            )
+
+        audit(
+            action="bulk_renew_members",
+            resource_type="member",
+            metadata={
+                "member_ids": renewed_ids,
+                "count": len(renewed_ids),
+                "renewal_days": renewal_days,
+            },
+        )
+        invalidate_dashboard_cache(current_user.gym_id)
+        db.session.commit()
+        flash(f"Renewed {len(renewed_ids)} members.", "success")
+        return redirect(url_for("members.bulk_renew", status="expired"))
+
+    status = request.args.get("status", "expired")
+    search = request.args.get("q", "").strip()
+    query = Member.query.filter_by(gym_id=current_user.gym_id).filter(Member.deleted_at.is_(None))
+    if status and status != "all":
+        query = query.filter(Member.status == status)
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(Member.full_name.ilike(like), Member.phone.ilike(like)))
+    members = (
+        query.options(joinedload(Member.plan))
+        .order_by(Member.membership_end.asc(), Member.full_name.asc())
+        .limit(300)
+        .all()
+    )
+    return render_template(
+        "members/bulk_renew.html",
+        members=members,
+        status=status,
+        search=search,
+        default_renewal_days=30,
+        default_amount=0,
+    )
 
 
 @members_bp.route("/new", methods=["GET", "POST"])
@@ -182,6 +284,36 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.membership_end = form.membership_end.data
     member.status = form.status.data
     member.notes = form.notes.data
+
+
+def _selected_member_ids() -> list[int]:
+    member_ids: list[int] = []
+    for raw_id in request.form.getlist("member_ids"):
+        try:
+            member_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            continue
+    return member_ids
+
+
+def _parse_renewal_days(raw_value: str | None) -> int | None:
+    try:
+        renewal_days = int(raw_value or "0")
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= renewal_days <= 730:
+        return None
+    return renewal_days
+
+
+def _parse_amount(raw_value: str | None) -> Decimal | None:
+    try:
+        amount = Decimal((raw_value or "0").strip() or "0")
+    except (AttributeError, InvalidOperation):
+        return None
+    if amount < 0:
+        return None
+    return amount
 
 
 def _locked_gym(gym_id: int) -> Gym:

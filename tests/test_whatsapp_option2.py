@@ -5,11 +5,12 @@ import hmac
 import json
 import unittest
 from datetime import date, timedelta
+from decimal import Decimal
 from unittest.mock import Mock, patch
 
 from app import _start_scheduler, create_app
 from app.extensions import db
-from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, User
+from app.models import AuditLog, Gym, Member, QRSettings, ReminderLog, RenewalHistory, User
 from app.models.mixins import utcnow
 from app.services.reminder_service import (
     MAX_REMINDER_ATTEMPTS,
@@ -174,6 +175,12 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             data=body,
             content_type="application/json",
             headers={"X-Hub-Signature-256": signature},
+        )
+
+    def _login_owner(self) -> None:
+        self.client.post(
+            "/auth/login",
+            data={"email": self.owner.email, "password": "ChangeMe123!"},
         )
 
     def test_webhook_rejects_when_dedicated_secret_is_missing(self) -> None:
@@ -1124,6 +1131,54 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertIsNone(Member.query.filter_by(full_name="Limit Test").first())
+
+    def test_bulk_renew_page_loads_for_owner(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/members/bulk-renew")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Bulk renew members", response.data)
+
+    def test_bulk_renew_updates_selected_paid_members(self) -> None:
+        previous_one = date.today() - timedelta(days=5)
+        previous_three = date.today() - timedelta(days=2)
+        self.member_one.membership_start = previous_one - timedelta(days=30)
+        self.member_one.membership_end = previous_one
+        self.member_one.status = "expired"
+        self.unopted_member.membership_start = previous_three - timedelta(days=30)
+        self.unopted_member.membership_end = previous_three
+        self.unopted_member.status = "expired"
+        db.session.commit()
+        self._login_owner()
+
+        response = self.client.post(
+            "/members/bulk-renew",
+            data={
+                "member_ids": [str(self.member_one.id), str(self.unopted_member.id)],
+                "renewal_days": "30",
+                "amount": "500",
+                "notes": "June paid",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(self.member_one)
+        db.session.refresh(self.unopted_member)
+        self.assertEqual(self.member_one.status, "active")
+        self.assertEqual(self.unopted_member.status, "active")
+        self.assertEqual(self.member_one.membership_start, date.today())
+        self.assertEqual(self.unopted_member.membership_start, date.today())
+        self.assertEqual(self.member_one.membership_end, date.today() + timedelta(days=29))
+        self.assertEqual(self.unopted_member.membership_end, date.today() + timedelta(days=29))
+
+        renewals = RenewalHistory.query.filter(
+            RenewalHistory.member_id.in_([self.member_one.id, self.unopted_member.id])
+        ).all()
+        self.assertEqual(len(renewals), 2)
+        self.assertEqual({renewal.previous_end for renewal in renewals}, {previous_one, previous_three})
+        self.assertEqual({renewal.amount for renewal in renewals}, {Decimal("500.00")})
+        self.assertEqual({renewal.notes for renewal in renewals}, {"June paid"})
 
     def test_scheduler_does_not_start_for_flask_cli_process(self) -> None:
         app = create_app("testing")

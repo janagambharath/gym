@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Bulk Renew | RenewalDesk{% endblock %}
+{% block page_title %}Bulk renew members{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('members.index') }}"><i class="bi bi-people"></i> Members</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-5">
+            <input class="form-control" name="q" value="{{ search }}" placeholder="Search by name or phone">
+        </div>
+        <div class="col-md-3">
+            <select class="form-select" name="status">
+                <option value="all" {% if status == 'all' %}selected{% endif %}>All statuses</option>
+                {% for option in ['expired','active','paused'] %}
+                <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-search"></i> Filter</button>
+        </div>
+    </form>
+
+    <form method="post" id="bulk-renew-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3 mb-3">
+            <div class="col-md-3">
+                <label class="form-label" for="renewal_days">Renewal days</label>
+                <input class="form-control" id="renewal_days" name="renewal_days" type="number" min="1" max="730" value="{{ default_renewal_days }}" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label" for="amount">Amount per member</label>
+                <input class="form-control" id="amount" name="amount" type="number" min="0" step="0.01" value="{{ default_amount }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label" for="notes">Notes</label>
+                <input class="form-control" id="notes" name="notes" maxlength="2000" value="Bulk renewal">
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th style="width:48px;">
+                            <input class="form-check-input" id="select-all-members" type="checkbox" aria-label="Select all">
+                        </th>
+                        <th>Name</th>
+                        <th>Phone</th>
+                        <th>Plan</th>
+                        <th>Current expiry</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for member in members %}
+                <tr>
+                    <td>
+                        <input class="form-check-input bulk-member-checkbox" name="member_ids" value="{{ member.id }}" type="checkbox" aria-label="Select {{ member.full_name }}">
+                    </td>
+                    <td><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
+                    <td>{{ member.phone }}</td>
+                    <td>{{ member.plan.name if member.plan else 'No plan' }}</td>
+                    <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
+                    <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-secondary">No members found.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-end mt-3">
+            <button class="btn btn-primary" type="submit" data-confirm="Renew selected members?">
+                <i class="bi bi-arrow-repeat"></i> Renew selected
+            </button>
+        </div>
+    </form>
+</div>
+<script>
+document.getElementById("select-all-members")?.addEventListener("change", (event) => {
+  document.querySelectorAll(".bulk-member-checkbox").forEach((checkbox) => {
+    checkbox.checked = event.target.checked;
+  });
+});
+</script>
+{% endblock %}
