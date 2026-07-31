@@ -312,3 +312,35 @@ def toggle_plan(plan_id: int):
     db.session.commit()
     flash("Plan status updated.", "success")
     return redirect(url_for("gym.plans"))
+
+
+@gym_bp.route("/activity")
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def activity_log():
+    from app.models import AuditLog
+
+    page = request.args.get("page", 1, type=int)
+    action_filter = request.args.get("action", "").strip()
+    query = AuditLog.query.filter_by(gym_id=current_user.gym_id)
+    if action_filter:
+        query = query.filter(AuditLog.action == action_filter)
+    pagination = (
+        query.order_by(AuditLog.created_at.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
+    # Collect distinct actions for the filter dropdown
+    action_choices = (
+        db.session.query(AuditLog.action)
+        .filter_by(gym_id=current_user.gym_id)
+        .distinct()
+        .order_by(AuditLog.action.asc())
+        .all()
+    )
+    return render_template(
+        "gym/activity_log.html",
+        pagination=pagination,
+        action_filter=action_filter,
+        action_choices=[row[0] for row in action_choices],
+    )

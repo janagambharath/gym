@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
@@ -333,3 +333,41 @@ def _gym_at_member_limit(gym: Gym) -> bool:
         or 0
     )
     return gym.members_at_limit(current_count)
+
+
+@members_bp.get("/export")
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def export():
+    """Download all non-deleted members as a CSV file."""
+    import csv
+    import io
+
+    members = (
+        Member.query.filter_by(gym_id=current_user.gym_id)
+        .filter(Member.deleted_at.is_(None))
+        .options(joinedload(Member.plan))
+        .order_by(Member.full_name.asc())
+        .all()
+    )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "full_name", "phone", "email", "gender", "plan",
+        "membership_start", "membership_end", "status", "joined_on", "notes",
+    ])
+    for m in members:
+        writer.writerow([
+            m.full_name, m.phone, m.email or "", m.gender or "",
+            m.plan.name if m.plan else "", m.membership_start, m.membership_end,
+            m.status, m.joined_on, m.notes or "",
+        ])
+    audit(action="export_members", resource_type="member", metadata={"count": len(members)})
+    db.session.commit()
+    gym_slug = current_user.gym.slug if current_user.gym else "members"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={gym_slug}-members.csv"},
+    )

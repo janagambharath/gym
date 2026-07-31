@@ -1,9 +1,17 @@
-from app.forms.auth import LoginForm, RegisterGymForm
+from app.forms.auth import (
+    ChangePasswordForm,
+    ForgotPasswordForm,
+    LoginForm,
+    RegisterGymForm,
+    ResetPasswordForm,
+)
 from app.forms.gym import NotificationTemplateForm, QRSettingsForm, WhatsAppSettingsForm
 from app.forms.member import MemberForm, MembershipPlanForm
 from app.forms.payment import PaymentVerificationForm
 
 __all__ = [
+    "ChangePasswordForm",
+    "ForgotPasswordForm",
     "LoginForm",
     "MemberForm",
     "MembershipPlanForm",
@@ -11,5 +19,6 @@ __all__ = [
     "PaymentVerificationForm",
     "QRSettingsForm",
     "RegisterGymForm",
+    "ResetPasswordForm",
     "WhatsAppSettingsForm",
 ]

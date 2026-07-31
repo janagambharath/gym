@@ -20,7 +20,10 @@
                 {{ form.remember(class="form-check-input") }}
                 {{ form.remember.label(class="form-check-label") }}
             </div>
-            <a href="{{ url_for('auth.register') }}" class="small text-muted">Create gym</a>
+            <div>
+                <a href="{{ url_for('auth.forgot_password') }}" class="small text-muted me-2">Forgot password?</a>
+                <a href="{{ url_for('auth.register') }}" class="small text-muted">Create gym</a>
+            </div>
         </div>
         {{ form.submit(class="btn btn-primary w-100") }}
     </form>
