@@ -12,6 +12,7 @@ from app.forms.member import E164_RE
 from app.models import Member, MembershipPlan
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
+from app.services.reminder_service import today_for_gym
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -107,6 +108,10 @@ def import_members():
         status = row.get("status", "active") or "active"
         if status not in {"active", "expired", "paused"}:
             errors.append(f"status '{status}' must be active, expired, or paused")
+        elif membership_end and status == "active" and membership_end < today_for_gym(
+            current_user.gym.timezone
+        ):
+            status = "expired"
 
         email = row.get("email", "") or None
         gender = row.get("gender", "") or None

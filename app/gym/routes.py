@@ -18,6 +18,7 @@ from app.models import Gym, Member, MembershipPlan, NotificationTemplate, Paymen
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
+from app.services.reminder_service import auto_expire_members_for_gym
 from app.services.storage_service import (
     delete_local_upload,
     invalidate_whatsapp_media_cache,
@@ -37,6 +38,8 @@ gym_bp = Blueprint("gym", __name__, url_prefix="/app")
 @roles_required("gym_owner", "staff")
 def dashboard():
     gym_id = current_user.gym_id
+    if auto_expire_members_for_gym(current_user.gym):
+        db.session.commit()
     stats = gym_dashboard_stats(gym_id)
     expiring_members = (
         Member.query.filter(

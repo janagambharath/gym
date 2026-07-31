@@ -14,10 +14,17 @@ from app.models import Gym, Member, MembershipPlan, PaymentVerification, Renewal
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.utils.decorators import active_gym_required, roles_required
 
 
 members_bp = Blueprint("members", __name__, url_prefix="/members")
+
+
+def _sync_expired_members() -> None:
+    """Persist overdue active memberships before presenting member data."""
+    if auto_expire_members_for_gym(current_user.gym):
+        db.session.commit()
 
 
 def _member_form(member: Member | None = None) -> MemberForm:
@@ -38,6 +45,7 @@ def _member_form(member: Member | None = None) -> MemberForm:
 @active_gym_required
 @roles_required("gym_owner", "staff")
 def index():
+    _sync_expired_members()
     page = request.args.get("page", 1, type=int)
     status = request.args.get("status", "")
     search = request.args.get("q", "").strip()
@@ -60,6 +68,7 @@ def index():
 @active_gym_required
 @roles_required("gym_owner", "staff")
 def bulk_renew():
+    _sync_expired_members()
     if request.method == "POST":
         member_ids = _selected_member_ids()
         renewal_days = _parse_renewal_days(request.form.get("renewal_days", "30"))
@@ -200,6 +209,7 @@ def create():
 @active_gym_required
 @roles_required("gym_owner", "staff")
 def detail(member_id: int):
+    _sync_expired_members()
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
     renewals = (
         RenewalHistory.query.filter_by(gym_id=current_user.gym_id, member_id=member.id)
@@ -219,6 +229,7 @@ def detail(member_id: int):
 @active_gym_required
 @roles_required("gym_owner", "staff")
 def edit(member_id: int):
+    _sync_expired_members()
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
     form = _member_form(member)
     if form.validate_on_submit():
@@ -283,6 +294,8 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.membership_start = form.membership_start.data
     member.membership_end = form.membership_end.data
     member.status = form.status.data
+    if member.status == "active" and member.membership_end < today_for_gym(current_user.gym.timezone):
+        member.status = "expired"
     member.notes = form.notes.data
 
 

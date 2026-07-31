@@ -450,6 +450,24 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             1,
         )
 
+    def test_members_page_expires_overdue_active_members_before_filtering(self) -> None:
+        self.member_one.membership_end = date.today() - timedelta(days=1)
+        self.member_one.status = "active"
+        self.member_two.membership_end = date.today() - timedelta(days=1)
+        self.member_two.status = "active"
+        db.session.commit()
+        self._login_owner()
+
+        response = self.client.get("/members/?status=expired")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Member One", response.data)
+        self.assertNotIn(b"Member Two", response.data)
+        db.session.refresh(self.member_one)
+        db.session.refresh(self.member_two)
+        self.assertEqual(self.member_one.status, "expired")
+        self.assertEqual(self.member_two.status, "active")
+
     def test_expired_trial_does_not_block_active_gym_login(self) -> None:
         self.gym_one.trial_ends_at = date.today() - timedelta(days=1)
         db.session.commit()
