@@ -3,13 +3,20 @@ from __future__ import annotations
 from datetime import date, timedelta
 from urllib.parse import urljoin, urlparse
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
 from app.extensions import db, limiter
-from app.forms import LoginForm, RegisterGymForm
+from app.forms import (
+    ChangePasswordForm,
+    ForgotPasswordForm,
+    LoginForm,
+    RegisterGymForm,
+    ResetPasswordForm,
+)
 from app.models import Gym, MembershipPlan, NotificationTemplate, QRSettings, User
 from app.services.audit_service import audit
 from app.utils.helpers import slugify
@@ -110,6 +117,7 @@ def register():
             phone=form.phone.data.strip(),
             status="active",
             trial_ends_at=date.today() + timedelta(days=14),
+            max_members=50,
         )
         db.session.add(gym)
         db.session.flush()
@@ -157,3 +165,81 @@ def logout():
     logout_user()
     flash("Signed out.", "info")
     return redirect(url_for("auth.login"))
+
+
+@auth_bp.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    form = ChangePasswordForm()
+    if form.validate_on_submit():
+        if not current_user.check_password(form.current_password.data):
+            flash("Current password is incorrect.", "danger")
+            return render_template("auth/change_password.html", form=form)
+        current_user.set_password(form.new_password.data)
+        audit(action="change_password", resource_type="user", resource_id=current_user.id)
+        db.session.commit()
+        flash("Password changed successfully.", "success")
+        if current_user.is_super_admin:
+            return redirect(url_for("admin.dashboard"))
+        return redirect(url_for("gym.dashboard"))
+    return render_template("auth/change_password.html", form=form)
+
+
+_RESET_SALT = "password-reset"
+_RESET_MAX_AGE = 30 * 60  # 30 minutes
+
+
+@auth_bp.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
+def forgot_password():
+    if current_user.is_authenticated:
+        return redirect(url_for("auth.change_password"))
+    form = ForgotPasswordForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(email=form.email.data.lower().strip()).first()
+        if user and user.is_active:
+            serializer = URLSafeTimedSerializer(
+                current_app.config["SECRET_KEY"], salt=_RESET_SALT
+            )
+            token = serializer.dumps({"user_id": user.id})
+            reset_url = url_for("auth.reset_password", token=token, _external=True)
+            current_app.logger.info(
+                "Password reset link for %s: %s", user.email, reset_url
+            )
+            # TODO: Send via email or WhatsApp
+        # Always show the same message to prevent email enumeration
+        flash(
+            "If an account with that email exists, a reset link has been generated. "
+            "Check application logs or contact support.",
+            "info",
+        )
+        return redirect(url_for("auth.login"))
+    return render_template("auth/forgot_password.html", form=form)
+
+
+@auth_bp.route("/reset-password/<token>", methods=["GET", "POST"])
+@limiter.limit("10 per hour")
+def reset_password(token: str):
+    if current_user.is_authenticated:
+        return redirect(url_for("auth.change_password"))
+    serializer = URLSafeTimedSerializer(
+        current_app.config["SECRET_KEY"], salt=_RESET_SALT
+    )
+    try:
+        payload = serializer.loads(token, max_age=_RESET_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        flash("This reset link is invalid or has expired.", "danger")
+        return redirect(url_for("auth.forgot_password"))
+    user = db.session.get(User, payload.get("user_id"))
+    if not user:
+        flash("Invalid reset link.", "danger")
+        return redirect(url_for("auth.forgot_password"))
+    form = ResetPasswordForm()
+    if form.validate_on_submit():
+        user.set_password(form.new_password.data)
+        user.reset_failed_logins()
+        audit(action="password_reset", resource_type="user", resource_id=user.id)
+        db.session.commit()
+        flash("Password has been reset. Sign in with your new password.", "success")
+        return redirect(url_for("auth.login"))
+    return render_template("auth/reset_password.html", form=form)

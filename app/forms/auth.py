@@ -37,3 +37,29 @@ class RegisterGymForm(FlaskForm):
         "Confirm password", validators=[DataRequired(), EqualTo("password")]
     )
     submit = SubmitField("Create account")
+
+
+class ChangePasswordForm(FlaskForm):
+    current_password = PasswordField("Current password", validators=[DataRequired()])
+    new_password = PasswordField(
+        "New password", validators=[DataRequired(), Length(min=10), PasswordStrength()]
+    )
+    confirm_new_password = PasswordField(
+        "Confirm new password", validators=[DataRequired(), EqualTo("new_password")]
+    )
+    submit = SubmitField("Change password")
+
+
+class ForgotPasswordForm(FlaskForm):
+    email = EmailField("Email", validators=[DataRequired(), Email(), Length(max=255)])
+    submit = SubmitField("Send reset link")
+
+
+class ResetPasswordForm(FlaskForm):
+    new_password = PasswordField(
+        "New password", validators=[DataRequired(), Length(min=10), PasswordStrength()]
+    )
+    confirm_password = PasswordField(
+        "Confirm password", validators=[DataRequired(), EqualTo("new_password")]
+    )
+    submit = SubmitField("Reset password")
