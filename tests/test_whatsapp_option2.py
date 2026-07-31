@@ -468,6 +468,18 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.assertEqual(self.member_one.status, "expired")
         self.assertEqual(self.member_two.status, "active")
 
+    def test_members_page_shows_delete_action_for_owner(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/members/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            f'action="/members/{self.member_one.id}/delete"'.encode(),
+            response.data,
+        )
+        self.assertIn(b"> Delete", response.data)
+
     def test_expired_trial_does_not_block_active_gym_login(self) -> None:
         self.gym_one.trial_ends_at = date.today() - timedelta(days=1)
         db.session.commit()
