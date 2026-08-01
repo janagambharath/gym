@@ -28,7 +28,7 @@ def active_gym_required(view):
             return redirect(url_for("auth.login"))
         if current_user.is_super_admin:
             return view(*args, **kwargs)
-        if current_user.gym is None or not current_user.gym.is_operational():
+        if not current_user.gym or not current_user.gym.is_operational():
             flash("This gym account is not active. Contact platform support.", "warning")
             logout_user()
             return redirect(url_for("auth.login"))
