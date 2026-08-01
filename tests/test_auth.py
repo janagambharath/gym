@@ -44,7 +44,7 @@ def test_registration_creates_gym_with_limits(client):
     assert gym.subscription_status == "trial"
 
 
-def test_trial_expiry_blocks_access(client, seed_gym, app):
+def test_trial_expiry_does_not_block_access(client, seed_gym, app):
     with app.app_context():
         gym = seed_gym["gym"]
         gym.trial_ends_at = date.today() - timedelta(days=1)
@@ -57,4 +57,5 @@ def test_trial_expiry_blocks_access(client, seed_gym, app):
     )
 
     response = client.get("/app/dashboard", follow_redirects=True)
-    assert b"Your 14-day free trial has ended" in response.data
+    assert response.status_code == 200
+    assert b"Dashboard" in response.data
