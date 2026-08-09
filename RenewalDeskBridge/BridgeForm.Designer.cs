@@ -39,6 +39,7 @@ namespace RenewalDeskBridge
         private System.Windows.Forms.TextBox txtTestEnrollNumber;
         private System.Windows.Forms.Label lblTestMemberName;
         private System.Windows.Forms.TextBox txtTestMemberName;
+        private System.Windows.Forms.Button btnConfirmEnrollment;
         private System.Windows.Forms.Button btnTestEnable;
         private System.Windows.Forms.Button btnTestDisable;
         private System.Windows.Forms.Label lblDenyTimeZoneId;
@@ -81,6 +82,7 @@ namespace RenewalDeskBridge
             this.txtTestEnrollNumber = new System.Windows.Forms.TextBox();
             this.lblTestMemberName = new System.Windows.Forms.Label();
             this.txtTestMemberName = new System.Windows.Forms.TextBox();
+            this.btnConfirmEnrollment = new System.Windows.Forms.Button();
             this.btnTestEnable = new System.Windows.Forms.Button();
             this.btnTestDisable = new System.Windows.Forms.Button();
             this.lblDenyTimeZoneId = new System.Windows.Forms.Label();
@@ -95,7 +97,7 @@ namespace RenewalDeskBridge
             this.SuspendLayout();
 
             // lblTitle
-            this.lblTitle.Text = "Renewal Desk Bridge (Dev/Test)";
+            this.lblTitle.Text = "Renewal Desk Bridge";
             this.lblTitle.Font = new System.Drawing.Font("Segoe UI", 14F, System.Drawing.FontStyle.Bold);
             this.lblTitle.Location = new System.Drawing.Point(20, 15);
             this.lblTitle.Size = new System.Drawing.Size(500, 30);
@@ -151,7 +153,7 @@ namespace RenewalDeskBridge
             this.grpApi.Location = new System.Drawing.Point(520, 55);
             this.grpApi.Size = new System.Drawing.Size(460, 190);
 
-            this.lblGymId.Text = "Gym ID:";
+            this.lblGymId.Text = "Bridge ID:";
             this.lblGymId.Location = new System.Drawing.Point(15, 30);
             this.lblGymId.Size = new System.Drawing.Size(90, 20);
             this.txtGymId.Location = new System.Drawing.Point(115, 27);
@@ -162,7 +164,7 @@ namespace RenewalDeskBridge
             this.lblApiBaseUrl.Size = new System.Drawing.Size(90, 20);
             this.txtApiBaseUrl.Location = new System.Drawing.Point(115, 57);
             this.txtApiBaseUrl.Size = new System.Drawing.Size(320, 22);
-            this.txtApiBaseUrl.Text = "http://localhost:5080";
+            this.txtApiBaseUrl.Text = "https://your-renewaldesk-domain";
 
             this.lblApiKey.Text = "API Key:";
             this.lblApiKey.Location = new System.Drawing.Point(15, 90);
@@ -208,12 +210,11 @@ namespace RenewalDeskBridge
             this.txtTestEnrollNumber.Location = new System.Drawing.Point(140, 67);
             this.txtTestEnrollNumber.Size = new System.Drawing.Size(100, 22);
 
-            this.lblTestMemberName.Text = "Name (API create only):";
+            this.lblTestMemberName.Text = "Renewal Desk Member ID:";
             this.lblTestMemberName.Location = new System.Drawing.Point(250, 70);
-            this.lblTestMemberName.Size = new System.Drawing.Size(100, 20);
-            this.txtTestMemberName.Location = new System.Drawing.Point(355, 67);
-            this.txtTestMemberName.Size = new System.Drawing.Size(140, 22);
-            this.txtTestMemberName.Enabled = false;
+            this.lblTestMemberName.Size = new System.Drawing.Size(140, 20);
+            this.txtTestMemberName.Location = new System.Drawing.Point(395, 67);
+            this.txtTestMemberName.Size = new System.Drawing.Size(100, 22);
 
             this.btnTestEnable.Text = "Restore membership access";
             this.btnTestEnable.Location = new System.Drawing.Point(510, 65);
@@ -245,6 +246,11 @@ namespace RenewalDeskBridge
             this.btnMarkPhysicalTestPassed.Size = new System.Drawing.Size(190, 30);
             this.btnMarkPhysicalTestPassed.Click += new System.EventHandler(this.btnMarkPhysicalTestPassed_Click);
 
+            this.btnConfirmEnrollment.Text = "Confirm enrollment";
+            this.btnConfirmEnrollment.Location = new System.Drawing.Point(580, 104);
+            this.btnConfirmEnrollment.Size = new System.Drawing.Size(180, 30);
+            this.btnConfirmEnrollment.Click += new System.EventHandler(this.btnConfirmEnrollment_Click);
+
             this.lblMembershipPolicyStatus.Text = "Expiry policy: NOT PREPARED — automatic expiry commands are locked.";
             this.lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkRed;
             this.lblMembershipPolicyStatus.Location = new System.Drawing.Point(15, 145);
@@ -264,6 +270,7 @@ namespace RenewalDeskBridge
             this.grpTests.Controls.Add(this.txtDenyTimeZoneId);
             this.grpTests.Controls.Add(this.btnPrepareDenyTimeZone);
             this.grpTests.Controls.Add(this.btnMarkPhysicalTestPassed);
+            this.grpTests.Controls.Add(this.btnConfirmEnrollment);
             this.grpTests.Controls.Add(this.lblMembershipPolicyStatus);
 
             // Log

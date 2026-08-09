@@ -19,8 +19,11 @@ namespace RenewalDeskBridge.Config
         // but we keep it configurable in case of serial fallback later.
         public int MachineNumber { get; set; } = 1;
 
+        // This legacy property name is retained for existing appsettings.json
+        // files and the HTTP contract.  It is the backend-issued public bridge
+        // ID, not the gym's database ID or a secret.
         public string GymId { get; set; } = "";
-        public string ApiBaseUrl { get; set; } = "http://localhost:5080"; // mock API default
+        public string ApiBaseUrl { get; set; } = "";
         public string ApiKey { get; set; } = "";
 
         public int HeartbeatIntervalSeconds { get; set; } = 60;

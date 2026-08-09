@@ -23,11 +23,13 @@ namespace RenewalDeskBridge.CloudApi
         private readonly HttpClient _http;
         private readonly string _gymId;
 
-        public RenewalDeskClient(string baseUrl, string apiKey, string gymId)
+        public RenewalDeskClient(string baseUrl, string apiKey, string gymId, string deviceSerial)
         {
             _gymId = gymId;
             _http = new HttpClient { BaseAddress = new Uri(baseUrl) };
             _http.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
+            _http.DefaultRequestHeaders.Add("X-RenewalDesk-Bridge-Protocol", "2");
+            _http.DefaultRequestHeaders.Add("X-Device-Serial", deviceSerial);
             _http.Timeout = TimeSpan.FromSeconds(15);
         }
 
@@ -46,7 +48,8 @@ namespace RenewalDeskBridge.CloudApi
         {
             try
             {
-                var resp = await _http.GetAsync($"/api/bridge/v1/commands/pending?gymId={_gymId}");
+                var resp = await _http.GetAsync(
+                    $"/api/bridge/v1/commands/pending?gymId={Uri.EscapeDataString(_gymId)}");
                 if (!resp.IsSuccessStatusCode) return Array.Empty<PendingCommand>();
 
                 string json = await resp.Content.ReadAsStringAsync();
@@ -61,15 +64,22 @@ namespace RenewalDeskBridge.CloudApi
             }
         }
 
-        public async Task<bool> AckCommandAsync(string commandId, string status, string errorMessage = null)
+        /// <summary>
+        /// Acknowledge a leased command.  The lease token is deliberately part of the
+        /// body rather than inferred from the command ID: a late bridge must never
+        /// acknowledge a newer worker's lease by accident.
+        /// </summary>
+        public async Task<bool> AckCommandAsync(string commandId, string status, string errorMessage,
+                                                string leaseToken)
         {
-            var payload = new { status, errorMessage };
-            return await PostAsync($"/api/bridge/v1/commands/{commandId}/ack", payload);
+            var payload = new { status, errorMessage, leaseToken };
+            return await PostAsync($"/api/bridge/v1/commands/{Uri.EscapeDataString(commandId)}/ack", payload);
         }
 
-        public async Task<bool> ConfirmEnrollmentAsync(string memberId, string deviceEnrollNumber)
+        public async Task<bool> ConfirmEnrollmentAsync(string memberId, string deviceEnrollNumber,
+                                                       string terminalUserName)
         {
-            var payload = new { memberId, deviceEnrollNumber, gymId = _gymId };
+            var payload = new { memberId, deviceEnrollNumber, terminalUserName, gymId = _gymId };
             return await PostAsync("/api/bridge/v1/enrollment/confirm", payload);
         }
 
@@ -91,19 +101,37 @@ namespace RenewalDeskBridge.CloudApi
 
     public class AttendanceEventDto
     {
+        // Generated once when the scan is written to outbox.db.  Retries reuse the
+        // same value, allowing the online API to safely deduplicate them.
+        [JsonProperty("eventId")]
+        public string EventId { get; set; }
+        [JsonProperty("gymId")]
         public string GymId { get; set; }
+        [JsonProperty("deviceEnrollNumber")]
         public string DeviceEnrollNumber { get; set; }
+        [JsonProperty("eventTime")]
         public DateTime EventTime { get; set; }
+        [JsonProperty("verifyMethod")]
         public int VerifyMethod { get; set; }
+        [JsonProperty("isInvalid")]
         public bool IsInvalid { get; set; }
     }
 
     public class PendingCommand
     {
+        [JsonProperty("id")]
         public string Id { get; set; }
+        // Issued by the online API when it leases this command to this bridge.
+        // It must be returned unchanged in the acknowledgement body.
+        [JsonProperty("leaseToken")]
+        public string LeaseToken { get; set; }
+        [JsonProperty("commandType")]
         public string CommandType { get; set; } // enable_user, disable_user, create_user, delete_user, unlock_door
+        [JsonProperty("enrollNumber")]
         public string EnrollNumber { get; set; }
+        [JsonProperty("memberName")]
         public string MemberName { get; set; }
+        [JsonProperty("delaySeconds")]
         public int? DelaySeconds { get; set; }
     }
 }

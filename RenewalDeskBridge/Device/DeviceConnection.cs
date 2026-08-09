@@ -148,6 +148,34 @@ namespace RenewalDeskBridge.Device
         }
 
         /// <summary>
+        /// Confirms that an existing TFT/IFACE terminal user can be read before
+        /// binding its Enroll Number to a Renewal Desk member.  This never
+        /// creates or edits a fingerprint/template.
+        /// </summary>
+        public bool TryGetUserProfile(string enrollNumber, out DeviceUserProfile profile)
+        {
+            profile = null;
+            if (!_isConnected) return false;
+
+            string name;
+            string password;
+            int privilege;
+            bool enabled;
+            bool ok = _zk.SSR_GetUserInfo(_machineNumber, enrollNumber, out name, out password,
+                                           out privilege, out enabled);
+            if (ok)
+            {
+                profile = new DeviceUserProfile
+                {
+                    Name = name ?? string.Empty,
+                    Privilege = privilege,
+                    Enabled = enabled
+                };
+            }
+            return ok;
+        }
+
+        /// <summary>
         /// Reads the physical terminal serial number.  Membership-access backups are
         /// keyed by this value rather than the terminal IP, because an IP address can
         /// be reused for a different device later.
@@ -302,5 +330,12 @@ namespace RenewalDeskBridge.Device
         public int VerifyMethod { get; set; }
         public DateTime Timestamp { get; set; }
         public int WorkCode { get; set; }
+    }
+
+    public class DeviceUserProfile
+    {
+        public string Name { get; set; }
+        public int Privilege { get; set; }
+        public bool Enabled { get; set; }
     }
 }

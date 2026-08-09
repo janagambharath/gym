@@ -25,6 +25,10 @@ physical door locked.
 11. [Production safeguards](#11-production-safeguards)
 12. [Troubleshooting](#12-troubleshooting)
 
+For the live Railway connection, use
+[ONLINE_RENEWAL_DESK_SETUP.md](ONLINE_RENEWAL_DESK_SETUP.md) after completing
+the local device and physical-door checks in this guide.
+
 ---
 
 ## 1. What the bridge does
@@ -503,6 +507,11 @@ intended safety behaviour.
 ## 11. Production safeguards
 
 Before pointing the bridge at the real Renewal Desk backend:
+
+> Follow [the live Railway setup guide](ONLINE_RENEWAL_DESK_SETUP.md). The
+> production backend issues a unique Bridge ID and API key bound to the
+> biometric terminal serial; do not substitute a gym name, database ID, or
+> `localhost` value.
 
 1. retain `access_state.db` with normal backups; it contains the original
    schedules required to restore expired members;

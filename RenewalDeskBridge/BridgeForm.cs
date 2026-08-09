@@ -26,7 +26,11 @@ namespace RenewalDeskBridge
         private readonly LocalOutbox _outbox = new LocalOutbox();
         private readonly AccessStateStore _accessState = new AccessStateStore();
         private readonly MembershipAccessService _membershipAccess;
+        // The device event handler and retry loop can both request an attendance
+        // flush.  Serialize them so one local event is not posted twice in parallel.
+        private readonly SemaphoreSlim _attendanceFlushLock = new SemaphoreSlim(1, 1);
         private RenewalDeskClient _api;
+        private string _connectedDeviceSerial = string.Empty;
 
         private CancellationTokenSource _cts;
 
@@ -86,9 +90,12 @@ namespace RenewalDeskBridge
             if (_device.IsConnected)
             {
                 _cts?.Cancel();
+                _api = null;
+                _connectedDeviceSerial = string.Empty;
                 _device.Disconnect();
                 btnConnect.Text = "Connect";
                 UpdateDeviceStatus(false);
+                UpdateApiStatus(false);
                 Log("Disconnected from device.");
                 UpdateMembershipPolicyStatus();
                 return;
@@ -108,10 +115,20 @@ namespace RenewalDeskBridge
             {
                 Log($"Connected to device at {_config.DeviceIp}:{_config.DevicePort}.");
                 btnConnect.Text = "Disconnect";
+                if (_device.TryGetDeviceSerialNumber(out string deviceSerial))
+                {
+                    _connectedDeviceSerial = deviceSerial.Trim();
+                    Log($"Device serial: {_connectedDeviceSerial}");
+                }
+                else
+                {
+                    Log("WARNING: Could not read the device serial. Online Renewal Desk connection is locked.");
+                }
 
-                _api = new RenewalDeskClient(_config.ApiBaseUrl, _config.ApiKey, _config.GymId);
-                _cts = new CancellationTokenSource();
-                StartBackgroundLoops(_cts.Token);
+                if (!TryStartCloudConnection())
+                {
+                    UpdateApiStatus(false);
+                }
                 UpdateMembershipPolicyStatus();
             }
             else
@@ -121,6 +138,34 @@ namespace RenewalDeskBridge
                     "Check: is the IP correct? Is the Ethernet cable plugged in? " +
                     "Is this PC on the same network as the device?");
             }
+        }
+
+        private bool TryStartCloudConnection()
+        {
+            if (string.IsNullOrWhiteSpace(_connectedDeviceSerial))
+            {
+                Log("Renewal Desk not started: read the terminal serial first, then create a matching bridge credential.");
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(_config.GymId) || string.IsNullOrWhiteSpace(_config.ApiKey))
+            {
+                Log("Renewal Desk not started: enter the backend-issued Bridge ID and API key, then reconnect.");
+                return false;
+            }
+            if (!Uri.TryCreate(_config.ApiBaseUrl, UriKind.Absolute, out Uri apiUri) ||
+                (apiUri.Scheme != Uri.UriSchemeHttps &&
+                 !string.Equals(apiUri.Host, "localhost", StringComparison.OrdinalIgnoreCase) &&
+                 !string.Equals(apiUri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)))
+            {
+                Log("Renewal Desk not started: enter a valid HTTPS API URL (HTTP is allowed only for localhost mock testing).");
+                return false;
+            }
+
+            _api = new RenewalDeskClient(apiUri.GetLeftPart(UriPartial.Authority), _config.ApiKey,
+                                         _config.GymId, _connectedDeviceSerial);
+            _cts = new CancellationTokenSource();
+            StartBackgroundLoops(_cts.Token);
+            return true;
         }
 
         private void UpdateDeviceStatus(bool connected)
@@ -265,6 +310,65 @@ namespace RenewalDeskBridge
             UpdateMembershipPolicyStatus();
         }
 
+        private async void btnConfirmEnrollment_Click(object sender, EventArgs e)
+        {
+            if (!_device.IsConnected)
+            {
+                MessageBox.Show("Connect to the biometric device first.", "Not connected");
+                return;
+            }
+            if (_api == null)
+            {
+                MessageBox.Show(
+                    "Connect with the backend-issued Bridge ID and API key first.",
+                    "Renewal Desk not connected");
+                return;
+            }
+
+            string memberId = txtTestMemberName.Text.Trim();
+            string enrollNumber = txtTestEnrollNumber.Text.Trim();
+            if (!int.TryParse(memberId, out int parsedMemberId) || parsedMemberId <= 0)
+            {
+                MessageBox.Show("Enter the numeric Renewal Desk Member ID shown on the member profile.",
+                                "Missing Member ID");
+                return;
+            }
+            if (!DeviceConnection.TryParseNumericDeviceUserId(enrollNumber, out int ignoredUserId))
+            {
+                MessageBox.Show("Enter the exact canonical numeric Enroll Number from the terminal.",
+                                "Invalid Enroll Number");
+                return;
+            }
+            if (!_device.TryGetUserProfile(enrollNumber, out DeviceUserProfile profile))
+            {
+                Log($"Enrollment confirmation failed: terminal user {enrollNumber} could not be read. " +
+                    "Enroll the member fingerprint on the terminal first.");
+                return;
+            }
+            if (profile.Privilege != 0)
+            {
+                Log($"Enrollment confirmation refused: terminal user {enrollNumber} has administrator privilege.");
+                return;
+            }
+
+            var confirmation = MessageBox.Show(
+                "The terminal user was read back successfully.\r\n\r\n" +
+                "Renewal Desk Member ID: " + parsedMemberId + "\r\n" +
+                "Terminal Enroll Number: " + enrollNumber + "\r\n" +
+                "Terminal user name: " + (profile.Name ?? string.Empty) + "\r\n\r\n" +
+                "Continue only after confirming that this exact member's fingerprint was enrolled under this number. " +
+                "This does not create, replace, or delete any biometric template.",
+                "Confirm biometric-member binding", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (confirmation != DialogResult.Yes) return;
+
+            bool confirmed = await _api.ConfirmEnrollmentAsync(
+                parsedMemberId.ToString(), enrollNumber, profile.Name ?? string.Empty);
+            Log(confirmed
+                ? $"Enrollment confirmed: Renewal Desk member {parsedMemberId} is bound to terminal user {enrollNumber}."
+                : $"Enrollment confirmation was rejected by Renewal Desk for member {parsedMemberId}. " +
+                  "Check the Member ID, terminal serial, and whether this Enroll Number was already assigned.");
+        }
+
         // ---------- Real-time attendance ----------
 
         private void Device_OnAttendance(AttendanceEvent evt)
@@ -290,23 +394,40 @@ namespace RenewalDeskBridge
 
         private async Task TryPushSingleEventAsync()
         {
+            await FlushAttendanceAsync(limit: 1);
+        }
+
+        private async Task FlushAttendanceAsync(int limit)
+        {
             if (_api == null) return;
 
-            var unsent = _outbox.GetUnsent(limit: 1);
-            foreach (var row in unsent)
+            await _attendanceFlushLock.WaitAsync();
+            try
             {
-                var dto = new AttendanceEventDto
+                var unsent = _outbox.GetUnsent(limit);
+                foreach (var row in unsent)
                 {
-                    GymId = _config.GymId,
-                    DeviceEnrollNumber = row.EnrollNumber,
-                    EventTime = row.EventTime,
-                    VerifyMethod = row.VerifyMethod,
-                    IsInvalid = row.IsInvalid
-                };
-
-                bool sent = await _api.SendAttendanceAsync(dto);
-                if (sent) _outbox.MarkSent(row.Id);
+                    bool sent = await _api.SendAttendanceAsync(CreateAttendanceDto(row));
+                    if (sent) _outbox.MarkSent(row.Id);
+                }
             }
+            finally
+            {
+                _attendanceFlushLock.Release();
+            }
+        }
+
+        private AttendanceEventDto CreateAttendanceDto(OutboxRow row)
+        {
+            return new AttendanceEventDto
+            {
+                EventId = row.EventId,
+                GymId = _config.GymId,
+                DeviceEnrollNumber = row.EnrollNumber,
+                EventTime = row.EventTime,
+                VerifyMethod = row.VerifyMethod,
+                IsInvalid = row.IsInvalid
+            };
         }
 
         // ---------- Background loops: heartbeat, command poll, retry flush ----------
@@ -338,10 +459,7 @@ namespace RenewalDeskBridge
                     var commands = await _api.GetPendingCommandsAsync();
                     foreach (var cmd in commands)
                     {
-                        CommandExecutionResult result = ExecuteCommand(cmd);
-                        await _api.AckCommandAsync(cmd.Id, result.Success ? "acked" : "failed", result.Message);
-                        RunOnUi(() => Log($"Command {cmd.CommandType} for {cmd.EnrollNumber}: " +
-                                           (result.Success ? "OK - " : "FAILED - ") + result.Message));
+                        await ProcessPendingCommandAsync(cmd);
                     }
                 }
                 catch (Exception ex)
@@ -352,6 +470,74 @@ namespace RenewalDeskBridge
                 try { await Task.Delay(TimeSpan.FromSeconds(_config.CommandPollIntervalSeconds), token); }
                 catch (TaskCanceledException) { break; }
             }
+        }
+
+        private async Task ProcessPendingCommandAsync(PendingCommand cmd)
+        {
+            if (cmd == null)
+            {
+                RunOnUi(() => Log("Received an empty command record; it was ignored."));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(cmd.Id))
+            {
+                RunOnUi(() => Log("Received a command without an ID; it was not executed."));
+                return;
+            }
+
+            // The production API always leases a command before returning it.  Refuse
+            // an unleased command because we would have no way to prove that our ACK
+            // belongs to the current delivery.
+            if (string.IsNullOrWhiteSpace(cmd.LeaseToken))
+            {
+                RunOnUi(() => Log($"Command {cmd.Id} was missing its lease token and was not executed."));
+                return;
+            }
+
+            CommandReceipt receipt;
+            bool isRedelivery = _outbox.TryGetCommandReceipt(cmd.Id, out receipt);
+
+            if (!isRedelivery)
+            {
+                CommandExecutionResult result = ExecuteCommand(cmd);
+                receipt = new CommandReceipt
+                {
+                    CommandId = cmd.Id,
+                    CommandType = cmd.CommandType,
+                    EnrollNumber = cmd.EnrollNumber,
+                    Status = result.Success ? "acked" : "failed",
+                    ResultMessage = result.Message,
+                    LeaseToken = cmd.LeaseToken,
+                    CompletedAtUtc = DateTime.UtcNow
+                };
+
+                // Persist the device outcome before contacting the API.  If the ACK
+                // is lost or this PC restarts, a redelivery will reuse this receipt
+                // instead of repeating a physical access-control operation.
+                if (!_outbox.TryRecordCommandReceipt(receipt))
+                {
+                    if (!_outbox.TryGetCommandReceipt(cmd.Id, out receipt))
+                    {
+                        throw new InvalidOperationException(
+                            "Could not save or retrieve the local receipt for command " + cmd.Id + ".");
+                    }
+                    isRedelivery = true;
+                }
+            }
+
+            bool acked = await _api.AckCommandAsync(cmd.Id, receipt.Status, receipt.ResultMessage,
+                                                     cmd.LeaseToken);
+            RunOnUi(() =>
+            {
+                string outcome = receipt.Status == "acked" ? "OK" : "FAILED";
+                string retryNote = acked
+                    ? "ACK sent."
+                    : "ACK not confirmed; the saved receipt will prevent duplicate execution on redelivery.";
+                string duplicateNote = isRedelivery ? " Redelivery was not re-executed." : string.Empty;
+                Log($"Command {cmd.CommandType} for {cmd.EnrollNumber}: {outcome} - " +
+                    (receipt.ResultMessage ?? string.Empty) + duplicateNote + " " + retryNote);
+            });
         }
 
         private CommandExecutionResult ExecuteCommand(PendingCommand cmd)
@@ -396,20 +582,7 @@ namespace RenewalDeskBridge
             {
                 try
                 {
-                    var unsent = _outbox.GetUnsent(limit: 50);
-                    foreach (var row in unsent)
-                    {
-                        var dto = new AttendanceEventDto
-                        {
-                            GymId = _config.GymId,
-                            DeviceEnrollNumber = row.EnrollNumber,
-                            EventTime = row.EventTime,
-                            VerifyMethod = row.VerifyMethod,
-                            IsInvalid = row.IsInvalid
-                        };
-                        bool sent = await _api.SendAttendanceAsync(dto);
-                        if (sent) _outbox.MarkSent(row.Id);
-                    }
+                    await FlushAttendanceAsync(limit: 50);
                 }
                 catch (Exception ex)
                 {

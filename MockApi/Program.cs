@@ -64,14 +64,17 @@ app.MapGet("/api/bridge/v1/commands/pending", (string gymId) =>
         commandType = c.CommandType,
         enrollNumber = c.EnrollNumber,
         memberName = c.MemberName,
-        delaySeconds = c.DelaySeconds
+        delaySeconds = c.DelaySeconds,
+        // The real server leases commands.  The mock includes the same field so
+        // local safety testing exercises the production client behaviour.
+        leaseToken = c.LeaseToken
     }));
 });
 
 // ---- POST /api/bridge/v1/commands/{id}/ack ----
 app.MapPost("/api/bridge/v1/commands/{id}/ack", (string id, AckRequest req) =>
 {
-    Console.WriteLine($"[ack] command={id} status={req.status} error={req.errorMessage}");
+    Console.WriteLine($"[ack] command={id} status={req.status} lease={req.leaseToken} error={req.errorMessage}");
     return Results.Ok();
 });
 
@@ -123,7 +126,8 @@ app.MapPost("/test/queue", (HttpRequest req) =>
         form["commandType"].ToString(),
         form["enrollNumber"].ToString(),
         form["memberName"].ToString(),
-        5
+        5,
+        Guid.NewGuid().ToString("N")
     );
     pendingCommands.Enqueue(cmd);
     commandLog.Add(cmd);
@@ -138,9 +142,9 @@ app.Run();
 // ---- request/record types ----
 record HeartbeatRequest(string? gymId, string? status, DateTime? timestamp);
 record AttendanceRequest(string gymId, string deviceEnrollNumber, DateTime eventTime, int verifyMethod, bool isInvalid);
-record AckRequest(string status, string? errorMessage);
+record AckRequest(string status, string? errorMessage, string? leaseToken);
 record EnrollmentConfirmRequest(string memberId, string deviceEnrollNumber, string gymId);
 
-record CommandRecord(int Id, string GymId, string CommandType, string EnrollNumber, string? MemberName, int? DelaySeconds);
+record CommandRecord(int Id, string GymId, string CommandType, string EnrollNumber, string? MemberName, int? DelaySeconds, string LeaseToken);
 record AttendanceRecord(string GymId, string EnrollNumber, DateTime EventTime, int VerifyMethod, bool IsInvalid, DateTime ReceivedAt);
 record HeartbeatRecord(string Status, DateTime At);
