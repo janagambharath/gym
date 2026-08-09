@@ -10,15 +10,7 @@
     <AssemblyName>RenewalDeskBridge</AssemblyName>
     <RootNamespace>RenewalDeskBridge</RootNamespace>
     <ApplicationIcon></ApplicationIcon>
-    <!--
-      IMPORTANT: zkemkeeper.dll must be registered on this machine BEFORE building/running.
-      Run Register_SDK x64.bat (from the eSSL SDK pack, SDK/x64 folder) as Administrator first.
-      That registers the COM component so Visual Studio can add it as a COM reference:
-        Solution Explorer -> Dependencies -> right-click -> Add COM Reference -> "zkemkeeper"
-      This .csproj assumes that reference has been added; if you open this in Visual Studio
-      and the zkemkeeper reference is missing, add it via that COM Reference dialog -
-      it cannot be restored via NuGet, it must come from the registered DLL on this PC.
-    -->
+    <!-- zkemkeeper.dll is a 64-bit COM server; register SDK/x64/zkemkeeper.dll before building. -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,20 +23,37 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- BridgeConfig loads this file from beside the executable at runtime. -->
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <!--
-    NOTE ON THE COM REFERENCE (read this before building):
-    I deliberately did NOT hardcode a <COMReference> block with a GUID here, because
-    guessing that GUID wrong would cause a confusing, hard-to-diagnose build failure -
-    worse than no reference at all. Visual Studio generates the correct one automatically
-    when you add it yourself, and it only takes 30 seconds:
-
-      1. Run "Register_SDK x64.bat" (from the eSSL SDK pack, SDK/x64 folder) AS ADMINISTRATOR.
-      2. Open this project in Visual Studio.
-      3. Solution Explorer -> right-click "Dependencies" -> "Add COM Reference..."
-      4. Find "ZKEMKeeper 1.0 Type Library" (or similar name) in the list -> check it -> OK.
-      5. Visual Studio will insert the correct <COMReference> block into this .csproj for you.
-
-    Do this BEFORE opening Device/DeviceConnection.cs, or that file won't compile.
+    The .NET SDK's cross-platform MSBuild cannot run ResolveComReference (MSB4803).
+    Its build therefore consumes the SDK-generated interop assembly below.  Windows
+    MSBuild continues to resolve this actual type-library reference from the registered
+    x64 COM server, so Visual Studio users get the standard COM-reference behaviour.
   -->
+  <ItemGroup Condition="'$(MSBuildRuntimeType)' == 'Core'">
+    <Reference Include="Interop.zkemkeeper">
+      <HintPath>Interop\Interop.zkemkeeper.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- GUID and version verified from the supplied eSSL 6.3.1.55 SDK demo projects. -->
+  <ItemGroup Condition="'$(MSBuildRuntimeType)' != 'Core'">
+    <COMReference Include="zkemkeeper">
+      <Guid>{FE9DED34-E159-408E-8490-B720A5E632C7}</Guid>
+      <VersionMajor>1</VersionMajor>
+      <VersionMinor>0</VersionMinor>
+      <Lcid>0</Lcid>
+      <WrapperTool>tlbimp</WrapperTool>
+      <Isolated>false</Isolated>
+    </COMReference>
+  </ItemGroup>
 
 </Project>
