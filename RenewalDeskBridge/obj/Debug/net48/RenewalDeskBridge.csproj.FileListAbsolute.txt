@@ -1,0 +1,5 @@
+C:\Users\bhara\Downloads\RenewalDeskBridge\RenewalDeskBridge\obj\Debug\net48\RenewalDeskBridge.csproj.AssemblyReference.cache
+C:\Users\bhara\Downloads\RenewalDeskBridge\RenewalDeskBridge\obj\Debug\net48\RenewalDeskBridge.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\bhara\Downloads\RenewalDeskBridge\RenewalDeskBridge\obj\Debug\net48\RenewalDeskBridge.AssemblyInfoInputs.cache
+C:\Users\bhara\Downloads\RenewalDeskBridge\RenewalDeskBridge\obj\Debug\net48\RenewalDeskBridge.AssemblyInfo.cs
+C:\Users\bhara\Downloads\RenewalDeskBridge\RenewalDeskBridge\obj\Debug\net48\RenewalDeskBridge.csproj.CoreCompileInputs.cache

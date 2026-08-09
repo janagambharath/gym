@@ -1,0 +1,77 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\bhara\\Downloads\\RenewalDeskBridge\\RenewalDeskBridge\\RenewalDeskBridge.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\bhara\\Downloads\\RenewalDeskBridge\\RenewalDeskBridge\\RenewalDeskBridge.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\bhara\\Downloads\\RenewalDeskBridge\\RenewalDeskBridge\\RenewalDeskBridge.csproj",
+        "projectName": "RenewalDeskBridge",
+        "projectPath": "C:\\Users\\bhara\\Downloads\\RenewalDeskBridge\\RenewalDeskBridge\\RenewalDeskBridge.csproj",
+        "packagesPath": "C:\\Users\\bhara\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\bhara\\Downloads\\RenewalDeskBridge\\RenewalDeskBridge\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\bhara\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net48"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net48": {
+            "targetAlias": "net48",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net48": {
+          "targetAlias": "net48",
+          "dependencies": {
+            "Microsoft.NETFramework.ReferenceAssemblies": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[1.0.3, )",
+              "autoReferenced": true
+            },
+            "Microsoft.NETFramework.ReferenceAssemblies.net48": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[1.0.3, )"
+            },
+            "Newtonsoft.Json": {
+              "target": "Package",
+              "version": "[13.0.3, )"
+            },
+            "System.Data.SQLite.Core": {
+              "target": "Package",
+              "version": "[1.0.118, )"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Users\\bhara\\AppData\\Local\\Microsoft\\dotnet\\sdk\\8.0.423\\RuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win7-x64": {
+          "#import": []
+        }
+      }
+    }
+  }
+}

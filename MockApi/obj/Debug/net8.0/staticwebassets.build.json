@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "dUpZYXcFjgr3TA6ZejyxsqAY9uLxK7brZOw6kagLYSc=",
+  "Source": "RenewalDeskMockApi",
+  "BasePath": "_content/RenewalDeskMockApi",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}

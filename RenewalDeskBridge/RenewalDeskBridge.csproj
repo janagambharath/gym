@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>RenewalDeskBridge</AssemblyName>
+    <RootNamespace>RenewalDeskBridge</RootNamespace>
+    <ApplicationIcon></ApplicationIcon>
+    <!--
+      IMPORTANT: zkemkeeper.dll must be registered on this machine BEFORE building/running.
+      Run Register_SDK x64.bat (from the eSSL SDK pack, SDK/x64 folder) as Administrator first.
+      That registers the COM component so Visual Studio can add it as a COM reference:
+        Solution Explorer -> Dependencies -> right-click -> Add COM Reference -> "zkemkeeper"
+      This .csproj assumes that reference has been added; if you open this in Visual Studio
+      and the zkemkeeper reference is missing, add it via that COM Reference dialog -
+      it cannot be restored via NuGet, it must come from the registered DLL on this PC.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!--
+    NOTE ON THE COM REFERENCE (read this before building):
+    I deliberately did NOT hardcode a <COMReference> block with a GUID here, because
+    guessing that GUID wrong would cause a confusing, hard-to-diagnose build failure -
+    worse than no reference at all. Visual Studio generates the correct one automatically
+    when you add it yourself, and it only takes 30 seconds:
+
+      1. Run "Register_SDK x64.bat" (from the eSSL SDK pack, SDK/x64 folder) AS ADMINISTRATOR.
+      2. Open this project in Visual Studio.
+      3. Solution Explorer -> right-click "Dependencies" -> "Add COM Reference..."
+      4. Find "ZKEMKeeper 1.0 Type Library" (or similar name) in the list -> check it -> OK.
+      5. Visual Studio will insert the correct <COMReference> block into this .csproj for you.
+
+    Do this BEFORE opening Device/DeviceConnection.cs, or that file won't compile.
+  -->
+
+</Project>

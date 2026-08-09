@@ -15,3 +15,17 @@ node_modules/
 dist/
 build/
 *.log
+
+# .NET build outputs and IDE settings
+bin/
+obj/
+.vs/
+*.suo
+*.user
+
+# NuGet, temporary installer, and Windows metadata
+packages/
+*.tmp
+dotnet-install.ps1
+Thumbs.db
+Desktop.ini
