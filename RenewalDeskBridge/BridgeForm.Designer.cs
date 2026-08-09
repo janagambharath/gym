@@ -198,11 +198,12 @@ namespace RenewalDeskBridge
             this.txtTestEnrollNumber.Location = new System.Drawing.Point(140, 67);
             this.txtTestEnrollNumber.Size = new System.Drawing.Size(100, 22);
 
-            this.lblTestMemberName.Text = "Name (if new):";
+            this.lblTestMemberName.Text = "Name (API create only):";
             this.lblTestMemberName.Location = new System.Drawing.Point(250, 70);
             this.lblTestMemberName.Size = new System.Drawing.Size(100, 20);
             this.txtTestMemberName.Location = new System.Drawing.Point(355, 67);
             this.txtTestMemberName.Size = new System.Drawing.Size(140, 22);
+            this.txtTestMemberName.Enabled = false;
 
             this.btnTestEnable.Text = "Set ENABLED";
             this.btnTestEnable.Location = new System.Drawing.Point(510, 65);

@@ -9,7 +9,8 @@ namespace RenewalDeskBridge.Device
     /// Every method signature here is copied EXACTLY from the SDK's own demo source
     /// (Communication Protocol SDK (Ver6.3.1.55)N/Demo/C#/IFace/*), not guessed:
     ///   - Connect_Net(string ip, int port)              -> AccessControl demo, ACMain.cs
-    ///   - ACUnlock(int machineNumber, int delaySeconds)  -> AccessControl demo, ACMain.cs
+    ///   - ACUnlock(int machineNumber, int delayTenths)   -> AccessControl demo, ACMain.cs
+    ///   - SSR_EnableUser(int, string, bool)              -> TFT UserInfo demo
     ///   - SSR_SetUserInfo(int, string, string, string, int, bool) -> UserInfo demo
     ///   - RegEvent(int machineNumber, int eventMask)     -> AccessControl demo
     ///   - OnAttTransactionEx event signature             -> RTEvents demo, RTEventsMain.cs
@@ -79,19 +80,21 @@ namespace RenewalDeskBridge.Device
         }
 
         /// <summary>
-        /// Unlocks the door relay for delaySeconds, then it re-locks automatically.
-        /// This matches ACMain.cs's btnACUnlock_Click exactly.
+        /// Unlocks the door relay for the requested number of whole seconds, then it
+        /// re-locks automatically. The SDK's ACUnlock delay unit is one tenth of a
+        /// second, so convert the UI-facing seconds here.
         /// </summary>
         public bool UnlockDoor(int delaySeconds)
         {
             if (!_isConnected) return false;
-            return _zk.ACUnlock(_machineNumber, delaySeconds);
+            int delayTenths = Math.Max(1, delaySeconds) * 10;
+            return _zk.ACUnlock(_machineNumber, delayTenths);
         }
 
         /// <summary>
-        /// Creates OR updates a user, including enabling/disabling them - this one SDK call
-        /// does both jobs because bEnabled is one of its parameters. There is no separate
-        /// "create" vs "enable" call in this SDK; SSR_SetUserInfo covers both.
+        /// Creates or updates a user profile. Use SetUserEnabled for an existing
+        /// account's availability: the vendor SDK provides SSR_EnableUser as the
+        /// dedicated TFT/IFACE operation for that purpose.
         ///
         /// enrollNumber is a STRING - map your Renewal Desk member ID to a short numeric
         /// string (e.g. "10234"), don't pass a UUID or anything with special characters
@@ -103,36 +106,44 @@ namespace RenewalDeskBridge.Device
             bool ok = _zk.SSR_SetUserInfo(_machineNumber, enrollNumber, name, password, privilege, enabled);
             if (ok)
             {
-                _zk.RefreshData(_machineNumber); // commits pending changes - demo calls this after batches
+                ok = _zk.RefreshData(_machineNumber); // commits pending changes - demo calls this after batches
             }
             return ok;
         }
 
         /// <summary>
-        /// Convenience wrapper for the common case: just flip enabled/disabled on an
-        /// already-known user. Re-reads current info first so we don't clobber their
-        /// name/password with blanks - SSR_SetUserInfo requires all fields together.
+        /// Sets whether an existing user account is available to verify. This must use
+        /// SSR_EnableUser rather than rewriting the user's profile with
+        /// SSR_SetUserInfo: the vendor TFT UserInfo demo uses this dedicated method for
+        /// enable/disable operations.
         /// </summary>
         public bool SetUserEnabled(string enrollNumber, bool enabled)
         {
             if (!_isConnected) return false;
 
-            string name = "";
-            string password = "";
-            int privilege = 0;
-            bool currentlyEnabled = false;
-
-            // SSR_GetUserInfo signature also comes from the SDK demo (UserInfo project) -
-            // parameters are passed by ref and populated by the call.
-            bool found = _zk.SSR_GetUserInfo(_machineNumber, enrollNumber, out name, out password,
-                                              out privilege, out currentlyEnabled);
-            if (!found)
+            bool ok = _zk.SSR_EnableUser(_machineNumber, enrollNumber, enabled);
+            if (ok)
             {
-                // User doesn't exist on the device yet - caller should use SetUser() to create them first.
-                return false;
+                ok = _zk.RefreshData(_machineNumber);
             }
+            return ok;
+        }
 
-            return SetUser(enrollNumber, name, enabled, privilege, password);
+        /// <summary>
+        /// Reads back an existing user's account-availability flag after a change.
+        /// A successful write alone never proves that the terminal will deny physical
+        /// access, so callers must also perform a real fingerprint test.
+        /// </summary>
+        public bool TryGetUserEnabled(string enrollNumber, out bool enabled)
+        {
+            enabled = false;
+            if (!_isConnected) return false;
+
+            string name;
+            string password;
+            int privilege;
+            return _zk.SSR_GetUserInfo(_machineNumber, enrollNumber, out name, out password,
+                                       out privilege, out enabled);
         }
 
         public bool DeleteUser(string enrollNumber)

@@ -27,5 +27,6 @@ obj/
 packages/
 *.tmp
 dotnet-install.ps1
+.tools/
 Thumbs.db
 Desktop.ini

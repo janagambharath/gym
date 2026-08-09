@@ -158,22 +158,36 @@ namespace RenewalDeskBridge
                 return;
             }
 
-            // Try to just flip enabled state on an existing user first; if they don't exist
-            // yet on the device, fall back to creating them (test-only convenience - real
-            // member creation should go through the command queue from Renewal Desk).
+            // Never create a user as a side effect of a manual enable/disable test. A
+            // typo must not overwrite or create a record on a live member device.
             bool ok = _device.SetUserEnabled(enrollNumber, enabled);
             if (!ok)
             {
-                string testName = string.IsNullOrEmpty(txtTestMemberName.Text)
-                    ? "Test Member" : txtTestMemberName.Text.Trim();
-                ok = _device.SetUser(enrollNumber, testName, enabled);
+                Log($"FAILED to set user {enrollNumber} to {(enabled ? "ENABLED" : "DISABLED")}. " +
+                    $"Device error code: {_device.GetLastErrorCode()}. The user was not created or modified.");
+                return;
             }
 
-            Log(ok
-                ? $"User {enrollNumber} set to {(enabled ? "ENABLED" : "DISABLED")}. " +
-                  "Now physically test their fingerprint at the device to confirm."
-                : $"FAILED to set user {enrollNumber}. Check the enroll number is valid " +
-                  "and the device accepted the format.");
+            bool readBack;
+            if (_device.TryGetUserEnabled(enrollNumber, out readBack))
+            {
+                if (readBack == enabled)
+                {
+                    Log($"User {enrollNumber} set to {(enabled ? "ENABLED" : "DISABLED")} " +
+                        "(device read-back confirmed). Now physically test their fingerprint at the device to confirm.");
+                }
+                else
+                {
+                    Log($"WARNING: device accepted the {(enabled ? "ENABLE" : "DISABLE")} command for user " +
+                        $"{enrollNumber}, but read-back says {(readBack ? "ENABLED" : "DISABLED")}. " +
+                        "Do not rely on this result; restore the intended state and investigate the device.");
+                }
+            }
+            else
+            {
+                Log($"User {enrollNumber} command was accepted, but the bridge could not read the state back " +
+                    $"(device error code: {_device.GetLastErrorCode()}). Do not rely on it until physical testing succeeds.");
+            }
         }
 
         // ---------- Real-time attendance ----------

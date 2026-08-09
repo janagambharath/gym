@@ -445,11 +445,14 @@ does not pass this check.
 
 1. Enter the test user's **device Enroll Number** in the bridge.
 2. Click **Set DISABLED**.
-3. Have the person scan the test fingerprint.
-4. Confirm the device rejects it and the door remains locked.
-5. Click **Set ENABLED**.
-6. Have the person scan again.
-7. Confirm the device accepts the fingerprint and access works normally.
+3. Confirm the log says **device read-back confirmed** before scanning. A green
+   button result by itself is not proof.
+4. Have the person scan the test fingerprint.
+5. Confirm the device rejects it and the door remains locked.
+6. Click **Set ENABLED**.
+7. Confirm the log says **device read-back confirmed**, then have the person
+   scan again.
+8. Confirm the device accepts the fingerprint and access works normally.
 
 **Pass condition:** physically rejected when disabled and physically accepted
 when enabled. This is the most important check.
