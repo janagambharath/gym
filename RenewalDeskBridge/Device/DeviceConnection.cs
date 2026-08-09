@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using zkemkeeper;
 
 namespace RenewalDeskBridge.Device
@@ -144,6 +145,97 @@ namespace RenewalDeskBridge.Device
             int privilege;
             return _zk.SSR_GetUserInfo(_machineNumber, enrollNumber, out name, out password,
                                        out privilege, out enabled);
+        }
+
+        /// <summary>
+        /// Reads the physical terminal serial number.  Membership-access backups are
+        /// keyed by this value rather than the terminal IP, because an IP address can
+        /// be reused for a different device later.
+        /// </summary>
+        public bool TryGetDeviceSerialNumber(out string serialNumber)
+        {
+            serialNumber = string.Empty;
+            if (!_isConnected) return false;
+
+            return _zk.GetSerialNumber(_machineNumber, out serialNumber) &&
+                   !string.IsNullOrWhiteSpace(serialNumber);
+        }
+
+        /// <summary>
+        /// Reads an access-control time-zone definition.  A TFT/X990 definition is
+        /// 56 digits: seven Sunday-to-Saturday HHmmHHmm ranges.
+        /// </summary>
+        public bool TryGetTimeZoneDefinition(int timeZoneId, out string definition)
+        {
+            definition = string.Empty;
+            if (!_isConnected) return false;
+
+            return _zk.GetTZInfo(_machineNumber, timeZoneId, ref definition);
+        }
+
+        /// <summary>
+        /// Writes a global access-control time-zone definition and commits it to the
+        /// device.  Callers must read it back after this method succeeds; a COM true
+        /// result alone is never treated as proof of the terminal's final state.
+        /// </summary>
+        public bool SetTimeZoneDefinition(int timeZoneId, string definition)
+        {
+            if (!_isConnected) return false;
+
+            bool ok = _zk.SetTZInfo(_machineNumber, timeZoneId, definition);
+            return ok && _zk.RefreshData(_machineNumber);
+        }
+
+        /// <summary>
+        /// Reads the TFT/X990 personal/group access-control time-zone string for a
+        /// user.  This SDK API accepts an Int32 device user ID even though most other
+        /// user APIs accept an enrol-number string.
+        /// </summary>
+        public bool TryGetUserTimeZones(string enrollNumber, out string timeZones)
+        {
+            timeZones = string.Empty;
+            if (!_isConnected || !TryParseNumericDeviceUserId(enrollNumber, out int userId))
+                return false;
+
+            return _zk.GetUserTZStr(_machineNumber, userId, ref timeZones);
+        }
+
+        /// <summary>
+        /// Sets the TFT/X990 personal/group access-control time-zone string for one
+        /// user, then commits it.  The caller must perform an exact read-back check.
+        /// </summary>
+        public bool SetUserTimeZones(string enrollNumber, string timeZones)
+        {
+            if (!_isConnected || !TryParseNumericDeviceUserId(enrollNumber, out int userId))
+                return false;
+
+            bool ok = _zk.SetUserTZStr(_machineNumber, userId, timeZones);
+            return ok && _zk.RefreshData(_machineNumber);
+        }
+
+        public bool TryGetAccessControlFunction(out int accessControlFunction)
+        {
+            accessControlFunction = 0;
+            if (!_isConnected) return false;
+            return _zk.GetACFun(ref accessControlFunction);
+        }
+
+        /// <summary>
+        /// The X990 time-zone methods require a canonical positive 32-bit numeric
+        /// device user ID.  Reject ambiguous IDs (for example "001" or a UUID)
+        /// rather than accidentally changing a different user's schedule.
+        /// </summary>
+        public static bool TryParseNumericDeviceUserId(string enrollNumber, out int userId)
+        {
+            userId = 0;
+            if (string.IsNullOrWhiteSpace(enrollNumber)) return false;
+
+            string trimmed = enrollNumber.Trim();
+            if (!int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out userId) || userId <= 0)
+                return false;
+
+            return string.Equals(userId.ToString(CultureInfo.InvariantCulture), trimmed,
+                                 StringComparison.Ordinal);
         }
 
         public bool DeleteUser(string enrollNumber)

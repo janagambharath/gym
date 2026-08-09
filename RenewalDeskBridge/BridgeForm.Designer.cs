@@ -41,6 +41,11 @@ namespace RenewalDeskBridge
         private System.Windows.Forms.TextBox txtTestMemberName;
         private System.Windows.Forms.Button btnTestEnable;
         private System.Windows.Forms.Button btnTestDisable;
+        private System.Windows.Forms.Label lblDenyTimeZoneId;
+        private System.Windows.Forms.TextBox txtDenyTimeZoneId;
+        private System.Windows.Forms.Button btnPrepareDenyTimeZone;
+        private System.Windows.Forms.Button btnMarkPhysicalTestPassed;
+        private System.Windows.Forms.Label lblMembershipPolicyStatus;
 
         private System.Windows.Forms.Label lblLog;
         private System.Windows.Forms.TextBox txtLog;
@@ -78,6 +83,11 @@ namespace RenewalDeskBridge
             this.txtTestMemberName = new System.Windows.Forms.TextBox();
             this.btnTestEnable = new System.Windows.Forms.Button();
             this.btnTestDisable = new System.Windows.Forms.Button();
+            this.lblDenyTimeZoneId = new System.Windows.Forms.Label();
+            this.txtDenyTimeZoneId = new System.Windows.Forms.TextBox();
+            this.btnPrepareDenyTimeZone = new System.Windows.Forms.Button();
+            this.btnMarkPhysicalTestPassed = new System.Windows.Forms.Button();
+            this.lblMembershipPolicyStatus = new System.Windows.Forms.Label();
 
             this.lblLog = new System.Windows.Forms.Label();
             this.txtLog = new System.Windows.Forms.TextBox();
@@ -176,9 +186,9 @@ namespace RenewalDeskBridge
             this.grpApi.Controls.Add(this.lblApiStatus);
 
             // grpTests
-            this.grpTests.Text = "3. Manual Tests (prove it works before trusting it)";
+            this.grpTests.Text = "3. Membership Access (physical-door proof required)";
             this.grpTests.Location = new System.Drawing.Point(20, 255);
-            this.grpTests.Size = new System.Drawing.Size(960, 130);
+            this.grpTests.Size = new System.Drawing.Size(960, 195);
 
             this.lblUnlockDelay.Text = "Unlock delay (sec):";
             this.lblUnlockDelay.Location = new System.Drawing.Point(15, 30);
@@ -192,7 +202,7 @@ namespace RenewalDeskBridge
             this.btnTestUnlock.Size = new System.Drawing.Size(140, 30);
             this.btnTestUnlock.Click += new System.EventHandler(this.btnTestUnlock_Click);
 
-            this.lblTestEnrollNumber.Text = "Test Enroll Number:";
+            this.lblTestEnrollNumber.Text = "Member Enroll Number:";
             this.lblTestEnrollNumber.Location = new System.Drawing.Point(15, 70);
             this.lblTestEnrollNumber.Size = new System.Drawing.Size(120, 20);
             this.txtTestEnrollNumber.Location = new System.Drawing.Point(140, 67);
@@ -205,17 +215,41 @@ namespace RenewalDeskBridge
             this.txtTestMemberName.Size = new System.Drawing.Size(140, 22);
             this.txtTestMemberName.Enabled = false;
 
-            this.btnTestEnable.Text = "Set ENABLED";
+            this.btnTestEnable.Text = "Restore membership access";
             this.btnTestEnable.Location = new System.Drawing.Point(510, 65);
-            this.btnTestEnable.Size = new System.Drawing.Size(110, 30);
+            this.btnTestEnable.Size = new System.Drawing.Size(170, 30);
             this.btnTestEnable.BackColor = System.Drawing.Color.LightGreen;
             this.btnTestEnable.Click += new System.EventHandler(this.btnTestEnable_Click);
 
-            this.btnTestDisable.Text = "Set DISABLED";
-            this.btnTestDisable.Location = new System.Drawing.Point(630, 65);
-            this.btnTestDisable.Size = new System.Drawing.Size(110, 30);
+            this.btnTestDisable.Text = "Expire / test access";
+            this.btnTestDisable.Location = new System.Drawing.Point(690, 65);
+            this.btnTestDisable.Size = new System.Drawing.Size(170, 30);
             this.btnTestDisable.BackColor = System.Drawing.Color.LightCoral;
             this.btnTestDisable.Click += new System.EventHandler(this.btnTestDisable_Click);
+
+            this.lblDenyTimeZoneId.Text = "Reserved deny TZ:";
+            this.lblDenyTimeZoneId.Location = new System.Drawing.Point(15, 110);
+            this.lblDenyTimeZoneId.Size = new System.Drawing.Size(120, 20);
+
+            this.txtDenyTimeZoneId.Location = new System.Drawing.Point(140, 107);
+            this.txtDenyTimeZoneId.Size = new System.Drawing.Size(50, 22);
+            this.txtDenyTimeZoneId.Text = "50";
+
+            this.btnPrepareDenyTimeZone.Text = "Prepare deny TZ";
+            this.btnPrepareDenyTimeZone.Location = new System.Drawing.Point(205, 104);
+            this.btnPrepareDenyTimeZone.Size = new System.Drawing.Size(160, 30);
+            this.btnPrepareDenyTimeZone.Click += new System.EventHandler(this.btnPrepareDenyTimeZone_Click);
+
+            this.btnMarkPhysicalTestPassed.Text = "Mark physical test passed";
+            this.btnMarkPhysicalTestPassed.Location = new System.Drawing.Point(375, 104);
+            this.btnMarkPhysicalTestPassed.Size = new System.Drawing.Size(190, 30);
+            this.btnMarkPhysicalTestPassed.Click += new System.EventHandler(this.btnMarkPhysicalTestPassed_Click);
+
+            this.lblMembershipPolicyStatus.Text = "Expiry policy: NOT PREPARED — automatic expiry commands are locked.";
+            this.lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkRed;
+            this.lblMembershipPolicyStatus.Location = new System.Drawing.Point(15, 145);
+            this.lblMembershipPolicyStatus.Size = new System.Drawing.Size(900, 35);
+            this.lblMembershipPolicyStatus.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
 
             this.grpTests.Controls.Add(this.lblUnlockDelay);
             this.grpTests.Controls.Add(this.txtUnlockDelay);
@@ -226,16 +260,21 @@ namespace RenewalDeskBridge
             this.grpTests.Controls.Add(this.txtTestMemberName);
             this.grpTests.Controls.Add(this.btnTestEnable);
             this.grpTests.Controls.Add(this.btnTestDisable);
+            this.grpTests.Controls.Add(this.lblDenyTimeZoneId);
+            this.grpTests.Controls.Add(this.txtDenyTimeZoneId);
+            this.grpTests.Controls.Add(this.btnPrepareDenyTimeZone);
+            this.grpTests.Controls.Add(this.btnMarkPhysicalTestPassed);
+            this.grpTests.Controls.Add(this.lblMembershipPolicyStatus);
 
             // Log
             this.lblLog.Text = "Live Log:";
-            this.lblLog.Location = new System.Drawing.Point(20, 395);
+            this.lblLog.Location = new System.Drawing.Point(20, 460);
             this.lblLog.Size = new System.Drawing.Size(200, 20);
             this.lblLog.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
 
             this.txtLog.Multiline = true;
             this.txtLog.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtLog.Location = new System.Drawing.Point(20, 420);
+            this.txtLog.Location = new System.Drawing.Point(20, 485);
             this.txtLog.Size = new System.Drawing.Size(960, 260);
             this.txtLog.ReadOnly = true;
             this.txtLog.Font = new System.Drawing.Font("Consolas", 9F);
@@ -243,7 +282,7 @@ namespace RenewalDeskBridge
             this.txtLog.ForeColor = System.Drawing.Color.LightGreen;
 
             // BridgeForm
-            this.ClientSize = new System.Drawing.Size(1000, 700);
+            this.ClientSize = new System.Drawing.Size(1000, 765);
             this.Text = "Renewal Desk Bridge";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.BridgeForm_FormClosing);
 

@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using RenewalDeskBridge.AccessControl;
 using RenewalDeskBridge.CloudApi;
 using RenewalDeskBridge.Config;
 using RenewalDeskBridge.Device;
@@ -23,6 +24,8 @@ namespace RenewalDeskBridge
         private readonly BridgeConfig _config;
         private readonly DeviceConnection _device = new DeviceConnection();
         private readonly LocalOutbox _outbox = new LocalOutbox();
+        private readonly AccessStateStore _accessState = new AccessStateStore();
+        private readonly MembershipAccessService _membershipAccess;
         private RenewalDeskClient _api;
 
         private CancellationTokenSource _cts;
@@ -31,7 +34,9 @@ namespace RenewalDeskBridge
         {
             InitializeComponent();
             _config = BridgeConfig.Load();
+            _membershipAccess = new MembershipAccessService(_device, _accessState, _config);
             LoadConfigIntoFields();
+            UpdateMembershipPolicyStatus();
 
             _device.OnAttendance += Device_OnAttendance;
         }
@@ -44,6 +49,7 @@ namespace RenewalDeskBridge
             txtGymId.Text = _config.GymId;
             txtApiBaseUrl.Text = _config.ApiBaseUrl;
             txtApiKey.Text = _config.ApiKey;
+            txtDenyTimeZoneId.Text = _config.MembershipDenyTimeZoneId.ToString();
         }
 
         private void SaveFieldsIntoConfig()
@@ -54,6 +60,20 @@ namespace RenewalDeskBridge
             _config.GymId = txtGymId.Text.Trim();
             _config.ApiBaseUrl = txtApiBaseUrl.Text.Trim();
             _config.ApiKey = txtApiKey.Text.Trim();
+            if (int.TryParse(txtDenyTimeZoneId.Text.Trim(), out int denyTimeZoneId))
+            {
+                // Once a policy has been prepared, changing the textbox must not
+                // silently point existing backups at a different global terminal slot.
+                if (!_config.MembershipAccessPolicyPrepared ||
+                    denyTimeZoneId == _config.MembershipDenyTimeZoneId)
+                {
+                    _config.MembershipDenyTimeZoneId = denyTimeZoneId;
+                }
+                else
+                {
+                    txtDenyTimeZoneId.Text = _config.MembershipDenyTimeZoneId.ToString();
+                }
+            }
             _config.Save();
         }
 
@@ -70,6 +90,7 @@ namespace RenewalDeskBridge
                 btnConnect.Text = "Connect";
                 UpdateDeviceStatus(false);
                 Log("Disconnected from device.");
+                UpdateMembershipPolicyStatus();
                 return;
             }
 
@@ -91,6 +112,7 @@ namespace RenewalDeskBridge
                 _api = new RenewalDeskClient(_config.ApiBaseUrl, _config.ApiKey, _config.GymId);
                 _cts = new CancellationTokenSource();
                 StartBackgroundLoops(_cts.Token);
+                UpdateMembershipPolicyStatus();
             }
             else
             {
@@ -115,6 +137,20 @@ namespace RenewalDeskBridge
             lblApiStatus.ForeColor = connected
                 ? System.Drawing.Color.DarkGreen
                 : System.Drawing.Color.DarkRed;
+        }
+
+        private void UpdateMembershipPolicyStatus()
+        {
+            lblMembershipPolicyStatus.Text = _membershipAccess == null
+                ? "Expiry policy: loading..."
+                : _membershipAccess.DescribePolicyStatus();
+
+            if (_config != null && _config.MembershipAccessPolicyPhysicallyVerified)
+                lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkGreen;
+            else if (_config != null && _config.MembershipAccessPolicyPrepared)
+                lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkOrange;
+            else
+                lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkRed;
         }
 
         // ---------- Manual test buttons ----------
@@ -142,6 +178,59 @@ namespace RenewalDeskBridge
             RunTestUserToggle(enabled: false);
         }
 
+        private void btnPrepareDenyTimeZone_Click(object sender, EventArgs e)
+        {
+            if (!_device.IsConnected)
+            {
+                MessageBox.Show("Connect to the device first.", "Not connected");
+                return;
+            }
+
+            if (!int.TryParse(txtDenyTimeZoneId.Text.Trim(), out int timeZoneId))
+            {
+                MessageBox.Show("Enter a whole-number time-zone ID from 2 to 50.", "Invalid time zone");
+                return;
+            }
+
+            var confirmation = MessageBox.Show(
+                "This changes one global access-control time-zone on the terminal.\r\n\r\n" +
+                "Continue only if the gym owner has confirmed that time-zone #" + timeZoneId +
+                " is unused by every user and group. Never use #1.\r\n\r\n" +
+                "The bridge will back up the current definition before changing it.",
+                "Confirm unused terminal time zone", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (confirmation != DialogResult.Yes) return;
+
+            MembershipAccessResult result = _membershipAccess.PrepareDenyTimeZone(timeZoneId, ownerConfirmedUnused: true);
+            Log(result.Message);
+            if (result.Success)
+            {
+                txtDenyTimeZoneId.Text = _config.MembershipDenyTimeZoneId.ToString();
+                UpdateMembershipPolicyStatus();
+            }
+        }
+
+        private void btnMarkPhysicalTestPassed_Click(object sender, EventArgs e)
+        {
+            if (!_device.IsConnected)
+            {
+                MessageBox.Show("Connect to the device first.", "Not connected");
+                return;
+            }
+
+            var confirmation = MessageBox.Show(
+                "Click Yes only after a safe non-admin enrolled member was assigned to the deny rule " +
+                "and their fingerprint was physically rejected at this door.\r\n\r\n" +
+                "A scan log or a successful device read-back is not enough.",
+                "Confirm physical-door test", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (confirmation != DialogResult.Yes) return;
+
+            MembershipAccessResult result = _membershipAccess.MarkPhysicalTestPassed();
+            Log(result.Message);
+            UpdateMembershipPolicyStatus();
+        }
+
         private void RunTestUserToggle(bool enabled)
         {
             if (!_device.IsConnected)
@@ -158,36 +247,22 @@ namespace RenewalDeskBridge
                 return;
             }
 
-            // Never create a user as a side effect of a manual enable/disable test. A
-            // typo must not overwrite or create a record on a live member device.
-            bool ok = _device.SetUserEnabled(enrollNumber, enabled);
-            if (!ok)
+            if (!enabled)
             {
-                Log($"FAILED to set user {enrollNumber} to {(enabled ? "ENABLED" : "DISABLED")}. " +
-                    $"Device error code: {_device.GetLastErrorCode()}. The user was not created or modified.");
-                return;
+                var confirmation = MessageBox.Show(
+                    "This assigns an all-day deny access schedule to one member. It does not delete " +
+                    "fingerprints, but the member may be refused at the door until you restore them.\r\n\r\n" +
+                    "Use only a safe non-admin test member and keep someone at the door. Continue?",
+                    "Confirm membership expiry test", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (confirmation != DialogResult.Yes) return;
             }
 
-            bool readBack;
-            if (_device.TryGetUserEnabled(enrollNumber, out readBack))
-            {
-                if (readBack == enabled)
-                {
-                    Log($"User {enrollNumber} set to {(enabled ? "ENABLED" : "DISABLED")} " +
-                        "(device read-back confirmed). Now physically test their fingerprint at the device to confirm.");
-                }
-                else
-                {
-                    Log($"WARNING: device accepted the {(enabled ? "ENABLE" : "DISABLE")} command for user " +
-                        $"{enrollNumber}, but read-back says {(readBack ? "ENABLED" : "DISABLED")}. " +
-                        "Do not rely on this result; restore the intended state and investigate the device.");
-                }
-            }
-            else
-            {
-                Log($"User {enrollNumber} command was accepted, but the bridge could not read the state back " +
-                    $"(device error code: {_device.GetLastErrorCode()}). Do not rely on it until physical testing succeeds.");
-            }
+            MembershipAccessResult result = enabled
+                ? _membershipAccess.RestoreMembershipAccess(enrollNumber)
+                : _membershipAccess.DisableMembershipAccess(enrollNumber, allowUnverifiedTest: true);
+
+            Log(result.Message);
+            UpdateMembershipPolicyStatus();
         }
 
         // ---------- Real-time attendance ----------
@@ -263,10 +338,10 @@ namespace RenewalDeskBridge
                     var commands = await _api.GetPendingCommandsAsync();
                     foreach (var cmd in commands)
                     {
-                        bool ok = ExecuteCommand(cmd);
-                        await _api.AckCommandAsync(cmd.Id, ok ? "acked" : "failed");
+                        CommandExecutionResult result = ExecuteCommand(cmd);
+                        await _api.AckCommandAsync(cmd.Id, result.Success ? "acked" : "failed", result.Message);
                         RunOnUi(() => Log($"Command {cmd.CommandType} for {cmd.EnrollNumber}: " +
-                                           (ok ? "OK" : "FAILED")));
+                                           (result.Success ? "OK - " : "FAILED - ") + result.Message));
                     }
                 }
                 catch (Exception ex)
@@ -279,23 +354,40 @@ namespace RenewalDeskBridge
             }
         }
 
-        private bool ExecuteCommand(PendingCommand cmd)
+        private CommandExecutionResult ExecuteCommand(PendingCommand cmd)
         {
             switch (cmd.CommandType)
             {
                 case "enable_user":
-                    return _device.SetUserEnabled(cmd.EnrollNumber, true);
+                    return FromMembershipResult(_membershipAccess.RestoreMembershipAccess(cmd.EnrollNumber));
                 case "disable_user":
-                    return _device.SetUserEnabled(cmd.EnrollNumber, false);
+                    return FromMembershipResult(_membershipAccess.DisableMembershipAccess(cmd.EnrollNumber,
+                                                                                            allowUnverifiedTest: false));
                 case "create_user":
-                    return _device.SetUser(cmd.EnrollNumber, cmd.MemberName ?? "Member", true);
+                    return FromDeviceResult(_device.SetUser(cmd.EnrollNumber, cmd.MemberName ?? "Member", true),
+                                            "User profile was created or updated.");
                 case "delete_user":
-                    return _device.DeleteUser(cmd.EnrollNumber);
+                    return FromDeviceResult(_device.DeleteUser(cmd.EnrollNumber), "User profile was deleted.");
                 case "unlock_door":
-                    return _device.UnlockDoor(cmd.DelaySeconds ?? 5);
+                    return FromDeviceResult(_device.UnlockDoor(cmd.DelaySeconds ?? 5), "Door unlock command was sent.");
                 default:
-                    return false;
+                    return CommandExecutionResult.Fail("Unknown command type.");
             }
+        }
+
+        private CommandExecutionResult FromMembershipResult(MembershipAccessResult result)
+        {
+            return result.Success
+                ? CommandExecutionResult.Ok(result.Message)
+                : CommandExecutionResult.Fail(result.Message);
+        }
+
+        private CommandExecutionResult FromDeviceResult(bool success, string successMessage)
+        {
+            return success
+                ? CommandExecutionResult.Ok(successMessage)
+                : CommandExecutionResult.Fail("The biometric device rejected the command. Error code: " +
+                                              _device.GetLastErrorCode() + ".");
         }
 
         private async Task RetryFlushLoopAsync(CancellationToken token)
@@ -351,6 +443,22 @@ namespace RenewalDeskBridge
         {
             _cts?.Cancel();
             _device.Dispose();
+        }
+
+        private sealed class CommandExecutionResult
+        {
+            public bool Success { get; private set; }
+            public string Message { get; private set; }
+
+            public static CommandExecutionResult Ok(string message)
+            {
+                return new CommandExecutionResult { Success = true, Message = message };
+            }
+
+            public static CommandExecutionResult Fail(string message)
+            {
+                return new CommandExecutionResult { Success = false, Message = message };
+            }
         }
     }
 }

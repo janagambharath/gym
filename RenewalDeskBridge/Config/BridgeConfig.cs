@@ -27,6 +27,15 @@ namespace RenewalDeskBridge.Config
         public int CommandPollIntervalSeconds { get; set; } = 10;
         public int RetryFlushIntervalSeconds { get; set; } = 30;
 
+        // Membership expiry on the X990 is enforced through a dedicated, per-user
+        // access-control time zone.  These values are deliberately off by default:
+        // a person at the physical door must prove the rule before the bridge accepts
+        // automatic expiry commands.
+        public int MembershipDenyTimeZoneId { get; set; } = 50;
+        public string MembershipPolicyDeviceSerial { get; set; } = "";
+        public bool MembershipAccessPolicyPrepared { get; set; } = false;
+        public bool MembershipAccessPolicyPhysicallyVerified { get; set; } = false;
+
         private static readonly string ConfigPath =
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
 

@@ -1,78 +1,116 @@
-# Renewal Desk Bridge: Complete Gym Laptop Setup and Test Guide
+# Renewal Desk Bridge: Complete Gym Laptop Setup and Access-Control Test Guide
 
-This guide is for the Windows computer that will run at the gym. It explains
-how to prepare the laptop, connect it to the eSSL X990+ID device, and prove the
-important membership-access behaviour on real hardware.
+This runbook is for the Windows computer that stays at the gym. It explains how
+to connect the Renewal Desk Bridge to an eSSL X990+ID terminal and, most
+importantly, how to prove that an expired membership actually leaves the
+physical door locked.
 
-> **Goal:** when a Renewal Desk membership expires, its enrolled fingerprint
-> must be rejected at the door. When the membership becomes active again, that
-> same fingerprint must be accepted.
-
-This is a developer/test procedure. It is not an installer guide or a final
-handover document for the gym owner.
+> **Do not skip the physical-door test.** A successful SDK call, a green status,
+> or a `SCAN:` log line does not prove that the installed lock obeys the terminal.
 
 ---
 
 ## Table of contents
 
-1. [How the bridge works](#1-how-the-bridge-works)
-2. [Who does what](#2-who-does-what)
+1. [What the bridge does](#1-what-the-bridge-does)
+2. [Safety rules and responsibilities](#2-safety-rules-and-responsibilities)
 3. [Before starting](#3-before-starting)
 4. [Network preflight](#4-network-preflight-mandatory)
-5. [Files to copy to the gym laptop](#5-files-to-copy-to-the-gym-laptop)
-6. [Install the eSSL SDK](#6-install-the-essl-sdk-one-time)
-7. [Check the mock API runtime](#7-check-the-mock-api-runtime)
-8. [Configure the bridge](#8-configure-the-bridge)
-9. [Start the mock API and bridge](#9-start-the-mock-api-and-bridge)
-10. [Run the six real-hardware checks](#10-run-the-six-real-hardware-checks)
-11. [Troubleshooting](#11-troubleshooting)
-12. [After the test phase](#12-after-the-test-phase)
+5. [Copy the files](#5-copy-the-files)
+6. [Register the eSSL SDK](#6-register-the-essl-sdk-one-time)
+7. [Install/check the Mock API runtime](#7-installcheck-the-mock-api-runtime)
+8. [Configure and start the software](#8-configure-and-start-the-software)
+9. [Commission membership expiry safely](#9-commission-membership-expiry-safely)
+10. [Test automatic Renewal Desk commands](#10-test-automatic-renewal-desk-commands)
+11. [Production safeguards](#11-production-safeguards)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
-## 1. How the bridge works
+## 1. What the bridge does
 
 ```text
-Renewal Desk cloud
+Renewal Desk backend / test Mock API
         |
-        | membership command: enable_user / disable_user
+        | enable_user / disable_user command
         v
-RenewalDeskBridge on a Windows PC at the gym
+RenewalDeskBridge on the gym Windows laptop
         |
-        | direct eSSL SDK connection: device IP + TCP port 4370
+        | eSSL SDK over LAN: terminal IP + TCP port 4370
         v
-eSSL X990+ID biometric device
+eSSL X990+ID biometric terminal
         |
         v
-Physical door lock and fingerprint access
+Terminal relay / installed door lock
 ```
 
-The bridge is deliberately local because the biometric device is on the gym's
-LAN. The gym laptop must be able to reach the device directly over TCP port
-`4370`.
+The biometric terminal is on the gym LAN, so the bridge must run at the gym
+where it can reach the terminal directly. The developer can use AnyDesk for
+support, but AnyDesk does not replace this local network requirement.
 
-### Do not use the device's Cloud Server / ADMS screen
+### How expired membership is enforced
+
+The terminal tested for this project can report a user as **disabled** while
+still opening the physical door. Therefore the bridge does **not** rely on the
+generic `SSR_EnableUser(false)` account flag as the membership-access rule.
+
+Instead, the bridge uses the X990 access-control mechanism:
+
+1. A technician reserves one unused terminal time-zone slot (normally `50`, but
+   only after the gym confirms it is unused).
+2. The bridge stores the slot's original definition in `access_state.db` before
+   changing it.
+3. It creates an all-day-deny definition in that reserved slot.
+4. On expiry, it saves the member's exact current personal/group time-zone
+   string, then assigns that member only the deny slot.
+5. On renewal, it restores the exact saved string. It does not delete the
+   fingerprint template.
+
+The deny definition is seven repetitions of `23572356`:
+
+```text
+23572356235723562357235623572356235723562357235623572356
+```
+
+For this firmware, each `23572356` means `23:57–23:56`; an end time earlier
+than the start time is an all-day access denial. A denied member receives a
+personal schedule such as `50:0:0:1`.
+
+### Do not use Cloud Server / ADMS settings
 
 The device may show **Cloud Server Setting**, **ADMS**, a server address, and
-port `8081`. Those settings are not used by this project. Do not place the
-laptop IP, `localhost`, or a Renewal Desk URL into that screen.
+port `8081`. This project does not use that page. Do not enter the laptop IP,
+`localhost`, or a Renewal Desk URL there.
 
-This bridge uses the device's **Ethernet IP** and **TCP COMM Port 4370** through
-the supplied eSSL SDK. The included Mock API is not an ADMS server.
+The bridge uses the device's **Ethernet IP** and **TCP COMM Port 4370** through
+the eSSL SDK.
 
 ---
 
-## 2. Who does what
+## 2. Safety rules and responsibilities
 
 | Person | Responsibility |
 | --- | --- |
-| Developer / Renewal Desk team | Installs the bridge, configures it, runs the test commands, and watches the logs. |
-| Gym owner / staff | Provides a suitable Windows computer, administrator approval, device IP/Comm Password, and a safe test member. |
-| Person at the door | Physically confirms door unlocks and whether the test fingerprint is accepted or rejected. |
-| Network owner / technician | Helps only if the gym laptop cannot reach the biometric device. |
+| Developer / Renewal Desk team | Installs the bridge, checks logs, queues test commands, and records results. |
+| Gym owner / manager | Authorises the installation, identifies a spare access time-zone, and chooses a safe test member. |
+| Person beside the door | Confirms whether the lock physically stays locked or opens. |
+| Network / lock technician | Resolves LAN isolation, Normal Open settings, relay wiring, or controller problems. |
 
-The gym owner does not need to learn the software. They do need to approve the
-one-time administrator setup and physically verify the access result.
+Follow these rules every time:
+
+- Use a normal, non-admin enrolled test member. **Never test terminal User 1
+  unless the owner explicitly confirms it is safe.**
+- Keep a person beside the door for every expiry/restore test.
+- Do not delete users, fingerprints, groups, or global access schedules while
+  testing membership expiry.
+- Never overwrite time-zone `1`; it is the terminal's default always-access
+  time zone.
+- Never prepare a time zone until the gym owner has confirmed it is unused by
+  every device user and group.
+- Do not delete `access_state.db` while any expired member may later need their
+  original access schedule restored.
+- If a test fails, restore the safe test user when possible and stop. Do not
+  mark the system ready just because a status label is green.
 
 ---
 
@@ -80,38 +118,30 @@ one-time administrator setup and physically verify the access result.
 
 ### 3.1 Choose the gym laptop
 
-Use a Windows 10 or Windows 11 **64-bit** computer that:
+Use a 64-bit Windows 10 or Windows 11 computer that:
 
 - stays at the gym and can remain powered on;
-- has a stable connection to the gym network;
-- can reach the biometric device's network;
-- has an administrator available for one-time SDK registration;
-- has enough disk space for the bridge, SDK, and local `outbox.db` queue;
-- does not go to sleep during testing or normal operation.
+- connects reliably to the gym network;
+- can reach the biometric terminal on TCP port `4370`;
+- has an administrator available for the one-time SDK registration;
+- does not go to sleep during normal operation.
 
-The bridge targets .NET Framework 4.8, which Windows 10/11 normally includes.
-**Do not install Visual Studio on the gym laptop.**
+The bridge is a .NET Framework 4.8 Windows application. Visual Studio is not
+needed on the client laptop.
 
-### 3.2 Have these details ready
+### 3.2 Collect these details first
 
-Before touching the bridge, obtain:
+- biometric device Ethernet IP (device: `Menu -> COMM. -> Ethernet`);
+- TCP COMM Port (normally `4370`);
+- device Comm Password / Comm Key, only if it was configured;
+- one safe, already fingerprint-enrolled **numeric** device Enroll Number;
+- a staff member at the physical door;
+- a confirmed unused time-zone slot between `2` and `50`;
+- approval to change one terminal time-zone and temporarily deny the safe user.
 
-- device Ethernet IP address (from the device: `Menu -> COMM. -> Ethernet`);
-- device TCP COMM Port (normally `4370`);
-- device Comm Password / Comm Key, only if one was configured;
-- one safe, already fingerprint-enrolled **test Enroll Number**;
-- a staff member who can stand at the door during the test;
-- permission to temporarily disable and re-enable that safe test user.
+### 3.3 IP address rule
 
-Use a non-critical test member. Do not perform the first disable test on a
-busy gym member or a staff member who needs access during the test.
-
-### 3.3 Important IP rule
-
-The laptop and device need addresses in the same network range, but they must
-have **different** IP addresses.
-
-Example:
+The laptop and device need different IP addresses in the same LAN range.
 
 ```text
 Laptop:  192.168.1.4
@@ -119,30 +149,26 @@ Device:  192.168.1.201
 Mask:    255.255.255.0
 ```
 
-Never give both the laptop and device the same address. Never change the
-device's address just to match the laptop exactly.
+Do **not** make the two addresses identical. A laptop on Wi-Fi and a device on
+Ethernet can communicate if the router bridges Wi-Fi to LAN and does not isolate
+clients.
 
 ---
 
 ## 4. Network preflight (mandatory)
 
-Do this before launching the bridge. A successful build does not help if the
-gym laptop cannot reach the biometric device.
+### 4.1 Read the device address
 
-### 4.1 Record the device's current address
-
-On the biometric device, open:
+On the terminal, open:
 
 ```text
 Menu -> COMM. -> Ethernet
 ```
 
-Record the displayed IP and TCP COMM Port. If DHCP is enabled, the device IP
-may change after a router restart, so use the value currently shown on screen.
+Record the IP address and TCP COMM Port. If DHCP is enabled, this address can
+change after a router restart. Do not change ADMS/Cloud Server settings.
 
-Do not change the Cloud Server / ADMS settings.
-
-### 4.2 Inspect the gym laptop network
+### 4.2 Check the laptop address
 
 On the gym laptop, open Command Prompt and run:
 
@@ -150,60 +176,47 @@ On the gym laptop, open Command Prompt and run:
 ipconfig
 ```
 
-Note the active Wi-Fi or Ethernet adapter IPv4 address, subnet mask, and
-gateway.
+Find the active Wi-Fi or Ethernet adapter's IPv4 address and gateway. Guest
+Wi-Fi, an isolated SSID, a separate VLAN, or a second router can block device
+traffic even if the addresses look similar.
 
-Wi-Fi for the laptop and Ethernet for the device can work together if both are
-bridged by the same router/switch. Guest Wi-Fi, a separate VLAN, or AP/client
-isolation can block device access even if the numbers look similar.
+### 4.3 Test the terminal port
 
-### 4.3 Test the actual device port
-
-Replace `DEVICE_IP` with the IP currently shown on the biometric device:
+Replace `DEVICE_IP` with the actual terminal address:
 
 ```bat
 powershell -Command "Test-NetConnection -ComputerName DEVICE_IP -Port 4370 | Select-Object ComputerName,RemotePort,TcpTestSucceeded"
 ```
 
-Example:
-
-```bat
-powershell -Command "Test-NetConnection -ComputerName 192.168.0.101 -Port 4370 | Select-Object ComputerName,RemotePort,TcpTestSucceeded"
-```
-
-Expected result:
+Example success:
 
 ```text
 ComputerName  RemotePort TcpTestSucceeded
 ------------  ---------- ----------------
-192.168.x.x        4370             True
+192.168.1.201       4370             True
 ```
 
-Only continue if `TcpTestSucceeded` is `True`.
+Continue only when `TcpTestSucceeded` is `True`.
 
 ### 4.4 If the port test is false
 
-Stop here. Do not try unlock, enable, disable, or attendance tests.
+Stop here; do not change user access or repeatedly change device IP addresses.
 
-Check these items with the gym/network owner:
+Ask the gym/network owner to check:
 
-1. The device's Ethernet cable is firmly connected at both ends.
-2. The device cable goes to a LAN port on the correct router/switch, not to a
-   WAN/Internet port or an unrelated router.
-3. The laptop is on the main gym network, not guest Wi-Fi.
-4. The router does not have **AP Isolation**, **Client Isolation**, **Wireless
-   Isolation**, or guest isolation blocking Wi-Fi-to-LAN traffic.
-5. If the laptop has no Ethernet socket, use a USB-to-Ethernet adapter and a
-   temporary LAN cable to a spare port on the same switch/router as the device.
-
-Do not repeatedly change the biometric device IP while the network path is
-unknown. The test must succeed before software troubleshooting can begin.
+1. both ends of the terminal Ethernet cable;
+2. that the cable reaches the correct LAN switch/router, not a WAN port;
+3. that the laptop is on the main gym Wi-Fi, not guest Wi-Fi;
+4. AP Isolation, Client Isolation, Wireless Isolation, guest isolation, and
+   VLAN settings; and
+5. a temporary Ethernet connection/USB-to-Ethernet adapter if diagnosis is
+   needed.
 
 ---
 
-## 5. Files to copy to the gym laptop
+## 5. Copy the files
 
-Create these folders on the gym laptop:
+Choose stable folders on the gym laptop. This guide uses the following example:
 
 ```text
 C:\RenewalDeskBridge
@@ -211,16 +224,15 @@ C:\RenewalDeskMockApi
 C:\eSSL-SDK\x64
 ```
 
-Copy the **entire contents** of each source folder, including every DLL and
-subfolder. Do not copy only the `.exe` file.
+Copy the **whole contents** of each source directory — not just the `.exe`:
 
-| Source on developer computer | Destination on gym laptop |
+| Source on developer computer | Gym laptop destination |
 | --- | --- |
 | `RenewalDeskBridge\bin\Debug\net48\*` | `C:\RenewalDeskBridge\` |
 | `MockApi\bin\Debug\net8.0\*` | `C:\RenewalDeskMockApi\` |
-| `Communication Protocol SDK...\SDK\x64\*` | `C:\eSSL-SDK\x64\` |
+| supplied eSSL SDK `...\SDK\x64\*` | `C:\eSSL-SDK\x64\` |
 
-The bridge folder must contain, at minimum:
+The bridge folder must include at least:
 
 ```text
 RenewalDeskBridge.exe
@@ -232,76 +244,57 @@ System.Data.SQLite.dll
 x64\SQLite.Interop.dll
 ```
 
-The `appsettings.json` file must be next to `RenewalDeskBridge.exe`; it holds
-the device and API settings. The bridge creates `outbox.db` next to the EXE
-when it needs to queue attendance offline.
+After first use, keep these two bridge-created files with the executable:
 
-### File-transfer options
+```text
+outbox.db         # queued attendance when internet is unavailable
+access_state.db   # original member schedules needed to restore access safely
+```
 
-Use a method approved by the client, such as:
+When replacing the bridge with a newer build, close the bridge first and keep
+the client's existing `appsettings.json`, `outbox.db`, and `access_state.db`.
+Copy the updated program DLLs/EXE around them.
 
-- AnyDesk file transfer;
-- an approved cloud-storage link; or
-- a USB drive used by authorised gym staff.
-
-Do not send client credentials, Wi-Fi passwords, or API keys through an
-unapproved public channel.
+Use an authorised file-transfer method such as AnyDesk file transfer, approved
+cloud storage, or an approved USB drive. Do not send Wi-Fi credentials or API
+keys over an unapproved public channel.
 
 ---
 
-## 6. Install the eSSL SDK (one time)
+## 6. Register the eSSL SDK (one time)
 
-The SDK registration must happen on **every computer that runs the bridge**.
-Registering it on the developer's laptop does not register it on the gym
-laptop.
-
-### 6.1 Verify the copied SDK files
-
-Open Command Prompt and run:
-
-```bat
-dir C:\eSSL-SDK\x64\zkemkeeper.dll
-```
-
-If it says the file cannot be found, the SDK was not copied to the expected
-folder. Correct that before continuing.
-
-### 6.2 Run the vendor registration script as administrator
+The SDK must be registered on **every computer that runs the bridge**.
+Registration on the developer computer does not apply to the gym laptop.
 
 1. Open **Command Prompt as Administrator**.
-2. Run:
+2. Verify the copied DLL exists:
+
+   ```bat
+   dir C:\eSSL-SDK\x64\zkemkeeper.dll
+   ```
+
+3. Run the vendor script:
 
    ```bat
    cd /d C:\eSSL-SDK\x64
    "Register_SDK x64.bat"
    ```
 
-3. The vendor batch should copy its x64 dependency DLLs and register
-   `zkemkeeper.dll`.
-4. If a RegSvr32 dialog appears, read it before clicking OK. A successful
-   registration must not show a module-load error.
+4. The script should copy its x64 dependencies and register `zkemkeeper.dll`.
+   Do not dismiss a RegSvr32 module-load error as success.
 
-The vendor script copies SDK DLLs into `C:\Windows\System32`. Run it only with
-the gym owner's permission and only from the supplied x64 eSSL SDK folder.
-
-### 6.3 Optional registration verification
-
-In a normal Command Prompt, run:
+Optional verification:
 
 ```bat
 reg query "HKLM\SOFTWARE\Classes\TypeLib\{FE9DED34-E159-408E-8490-B720A5E632C7}" /s
 ```
 
-A successful registration reports **ZKEMKeeper 6.0 Control** and points to
-`C:\Windows\System32\zkemkeeper.dll`.
-
-The already-built bridge includes the generated interop DLL. Do not add a COM
-reference manually on the gym laptop and do not install Visual Studio for this
-test procedure.
+Expected output includes `ZKEMKeeper 6.0 Control` and a `win64` path pointing
+to `C:\Windows\System32\zkemkeeper.dll`.
 
 ---
 
-## 7. Check the Mock API runtime
+## 7. Install/check the Mock API runtime
 
 The Mock API is a .NET 8 ASP.NET Core application. On the gym laptop, run:
 
@@ -309,31 +302,28 @@ The Mock API is a .NET 8 ASP.NET Core application. On the gym laptop, run:
 dotnet --list-runtimes
 ```
 
-Look for:
+It must list:
 
 ```text
 Microsoft.AspNetCore.App 8.x.x
 ```
 
 If it is missing, install the official **.NET 8 ASP.NET Core Runtime (x64)**,
-then rerun the command. The .NET SDK also works, but it is not required merely
-to run the already-built Mock API.
+then run the command again. The .NET SDK is not required just to run the
+already-built Mock API.
 
 ---
 
-## 8. Configure the bridge
+## 8. Configure and start the software
 
-Edit this file on the gym laptop:
+### 8.1 Configure the bridge
 
-```text
-C:\RenewalDeskBridge\appsettings.json
-```
-
-For the local test phase, use this shape:
+Edit the `appsettings.json` beside `RenewalDeskBridge.exe`. For local mock
+testing, use this shape:
 
 ```json
 {
-  "DeviceIp": "DEVICE_IP_FROM_DEVICE_SCREEN",
+  "DeviceIp": "DEVICE_IP_FROM_TERMINAL_SCREEN",
   "DevicePort": 4370,
   "DeviceCommPassword": "",
   "MachineNumber": 1,
@@ -342,26 +332,22 @@ For the local test phase, use this shape:
   "ApiKey": "dev-test-key",
   "HeartbeatIntervalSeconds": 60,
   "CommandPollIntervalSeconds": 10,
-  "RetryFlushIntervalSeconds": 30
+  "RetryFlushIntervalSeconds": 30,
+  "MembershipDenyTimeZoneId": 50,
+  "MembershipPolicyDeviceSerial": "",
+  "MembershipAccessPolicyPrepared": false,
+  "MembershipAccessPolicyPhysicallyVerified": false
 }
 ```
 
-Replace only `DEVICE_IP_FROM_DEVICE_SCREEN` with the actual current device IP.
+Replace only `DEVICE_IP_FROM_TERMINAL_SCREEN` with the current terminal IP. If
+the device uses a Comm Password, enter its known value; never guess it.
 
-If the biometric device has a Comm Password/Comm Key, enter it in
-`DeviceCommPassword`. Otherwise, leave it empty. Do not invent or guess a
-password.
+The bridge also saves the connection fields when **Connect** is clicked.
 
-The bridge window also lets you edit these fields. Clicking **Connect** saves
-the displayed values back into `appsettings.json`.
+### 8.2 Start the Mock API
 
----
-
-## 9. Start the Mock API and bridge
-
-### 9.1 Start the Mock API first
-
-Open a Command Prompt and run:
+Open Command Prompt and run:
 
 ```bat
 cd /d C:\RenewalDeskMockApi
@@ -374,15 +360,13 @@ Expected output includes:
 Mock Renewal Desk API running at http://localhost:5080
 ```
 
-Keep that window open. In a browser on the gym laptop, open:
+Leave that terminal open. In the laptop browser, open:
 
 ```text
 http://localhost:5080
 ```
 
-The page is a developer-only test panel for queuing commands.
-
-### 9.2 Start the bridge
+### 8.3 Start and connect the bridge
 
 Run:
 
@@ -390,165 +374,207 @@ Run:
 C:\RenewalDeskBridge\RenewalDeskBridge.exe
 ```
 
-Confirm the bridge window shows:
+Confirm the device IP, port `4370`, Gym ID, and API URL. Click **Connect**.
 
-- Device IP: the current device address;
-- Port: `4370`;
-- Gym ID: `test-gym-1`;
-- API URL: `http://localhost:5080`.
+Expected result:
 
-Click **Connect**.
-
-If the device does not connect, capture the exact device error code from the
-bridge log. Do not call the test complete based only on a green Mock API label.
+- `Device: Connected` in green;
+- `Renewal Desk: Connected` in green after a heartbeat; and
+- an `Expiry policy: NOT PREPARED` message initially.
 
 ---
 
-## 10. Run the six real-hardware checks
+## 9. Commission membership expiry safely
 
-### Safety rules
+This section is required exactly once for a terminal/bridge installation, and
+again if the device is replaced or the reserved time-zone is changed.
 
-- Perform tests when someone is physically beside the door.
-- Use a non-critical, already-enrolled test user.
-- Tell the person at the door before any unlock/disable action.
-- Stop at the first failure; do not proceed to later checks.
-- A button click or `true` response is not proof. Physical behaviour is the
-  source of truth for unlock and enable/disable.
+### 9.1 Repair old test users first
 
-### Check 1: Device connection
+Earlier development builds used the terminal's generic account availability
+flag. If you previously clicked an old **Set DISABLED** button for User `1` or
+another test user, use the new bridge:
 
-1. In the bridge, click **Connect**.
-2. Confirm the status changes to **Device: Connected** in green.
-3. Record any device error code if it fails.
+1. enter that numeric Enroll Number;
+2. click **Restore membership access**; and
+3. wait for the log to say legacy account availability was set to enabled.
 
-**Pass condition:** green device connection status.
+Do not use User `1` as the physical-door test member. It may be an
+administrator and is not representative of normal member access.
 
-### Check 2: Mock API connection
+### 9.2 Confirm the relay is really controlled by the terminal
 
-1. Leave the Mock API console running.
-2. Wait for a heartbeat from the bridge.
-3. Confirm **Renewal Desk: Connected** turns green in the bridge.
-4. Confirm a `[heartbeat]` line appears in the Mock API console.
+Before changing a schedule:
 
-**Pass condition:** bridge and Mock API both show successful heartbeat traffic.
+1. place someone at the door;
+2. click **Test Unlock Door**; and
+3. confirm whether the physical lock releases.
 
-### Check 3: Physical door unlock
+If the lock does not respond, stop. This may mean the actual door is wired to a
+separate controller, the device is not controlling the lock, or its access
+control settings are not active. A membership rule cannot be proven by bridge
+software in that state.
 
-1. Tell the person at the door you are about to test the lock.
-2. In the bridge, click **Test Unlock Door**.
-3. Have them confirm that the physical lock clicked open.
+### 9.3 Reserve an unused terminal time-zone
 
-**Pass condition:** the door/lock physically unlocks. A success message alone
-does not pass this check.
+1. Ask the gym owner/installer which slot from `2` through `50` is unused by
+   all users and groups. `50` is only a suggestion; the bridge cannot safely
+   infer that it is free.
+2. Never select slot `1`.
+3. Enter the chosen number in **Reserved deny TZ**.
+4. Click **Prepare deny TZ**.
+5. Read the confirmation dialog carefully and click **Yes** only after the
+   owner has confirmed the slot is unused.
 
-### Check 4: Membership-style enable/disable
+The bridge first saves the current global time-zone definition in
+`access_state.db`, then writes the all-day deny definition and reads it back.
+The status changes to:
 
-1. Enter the test user's **device Enroll Number** in the bridge.
-2. Click **Set DISABLED**.
-3. Confirm the log says **device read-back confirmed** before scanning. A green
-   button result by itself is not proof.
-4. Have the person scan the test fingerprint.
-5. Confirm the device rejects it and the door remains locked.
-6. Click **Set ENABLED**.
-7. Confirm the log says **device read-back confirmed**, then have the person
-   scan again.
-8. Confirm the device accepts the fingerprint and access works normally.
+```text
+Expiry policy: TZ #NN prepared — physical door test required.
+```
 
-**Pass condition:** physically rejected when disabled and physically accepted
-when enabled. This is the most important check.
+This does not yet permit automatic `disable_user` commands.
 
-### Check 5: Attendance event
+### 9.4 Test one safe member at the physical door
 
-1. With the user enabled, have them scan their fingerprint.
-2. Confirm a `SCAN:` line appears in the bridge log.
-3. Confirm an `[attendance]` line appears in the Mock API console.
+1. Choose a normal, non-admin, already enrolled member. Confirm their normal
+   fingerprint currently opens the correct door.
+2. Enter their exact numeric device **Enroll Number**. Do not use their
+   Renewal Desk UUID, phone number, or a leading-zero form such as `008`.
+3. Click **Expire / test access** and approve the warning.
+4. Confirm the bridge log says the time-zone write was **read-back confirmed**.
+5. Have the member scan at the physical door.
 
-**Pass condition:** both logs show the same scan reaching the Mock API.
+Expected test result: the terminal may recognise the fingerprint or create an
+attendance event, but the door must stay locked.
 
-### Check 6: Automatic command queue
+#### If the door stays locked
 
-1. Open `http://localhost:5080` on the gym laptop.
-2. Queue a `disable_user` command for the same test Enroll Number.
-3. Do not click a manual disable button in the bridge.
-4. Wait for the command poll interval (normally about 10 seconds).
-5. Confirm the bridge log reports that it processed the command.
-6. Have the person at the door scan the fingerprint.
-7. Confirm it is physically rejected.
+1. Click **Mark physical test passed** and confirm only after seeing the real
+   lock stay closed.
+2. Click **Restore membership access** for the same member.
+3. Confirm the log says the original access schedule was restored and read back.
+4. Have the member scan again. Their normal access must return.
 
-**Pass condition:** the automatic cloud-style command reaches the device and
-causes the physical access result without a manual bridge action.
+The status becomes:
 
-After Check 6, queue or click **Set ENABLED** again so the safe test member is
-not accidentally left disabled.
+```text
+Expiry policy: TZ #NN PHYSICALLY VERIFIED — automatic expiry enabled.
+```
+
+#### If the door still opens
+
+1. Do **not** click **Mark physical test passed**.
+2. Click **Restore membership access** for the safe test member if the bridge
+   has a saved backup; keep the bridge open until the restore is read back.
+3. Stop automatic membership testing.
+4. Ask the installer to inspect the terminal's Access Control settings,
+   especially **Normal Open (NO) Time Period**, door mode, and lock/relay
+   wiring. A normally-open configuration or an external controller can override
+   individual terminal time zones.
+
+A successful `SCAN:` entry is not evidence of a successful rejection; it only
+shows that the terminal recognised a fingerprint or delivered a buffered event.
 
 ---
 
-## 11. Troubleshooting
+## 10. Test automatic Renewal Desk commands
+
+Do this only after section 9 shows **PHYSICALLY VERIFIED**.
+
+1. Open `http://localhost:5080` in the gym laptop browser.
+2. Use the same safe member and queue a `disable_user` command.
+3. Do not click the manual expiry button.
+4. Wait one command-poll interval (normally about 10 seconds).
+5. Confirm the bridge log says the command succeeded and reports the member's
+   deny schedule read-back.
+6. Have the person scan at the door. The door must remain locked.
+7. Queue an `enable_user` command for the same Enroll Number.
+8. Wait for the bridge log to report that the exact saved schedule was restored.
+9. Have the person scan again. Normal access must return.
+
+The mock console should print an acknowledgement for every command. If an
+automatic expiry command is rejected before physical verification, that is the
+intended safety behaviour.
+
+---
+
+## 11. Production safeguards
+
+Before pointing the bridge at the real Renewal Desk backend:
+
+1. retain `access_state.db` with normal backups; it contains the original
+   schedules required to restore expired members;
+2. keep the reserved deny time-zone unchanged on the terminal;
+3. give the terminal a documented static IP or DHCP reservation;
+4. prevent the laptop from sleeping and keep it connected to the gym LAN;
+5. ensure each backend command includes the exact terminal Enroll Number;
+6. retain a support process for device replacement, manual terminal edits, and
+   user/group access-policy changes; and
+7. test one safe member again after firmware, lock wiring, or access-control
+   configuration changes.
+
+If the bridge reports that an expired user's time-zone was changed directly at
+the terminal, it intentionally refuses to overwrite that newer value on
+renewal. Resolve that conflict before granting access; never make the bridge
+guess a group or time zone.
+
+---
+
+## 12. Troubleshooting
 
 ### `TcpTestSucceeded : False`
 
-This is a network problem. The bridge cannot solve it in code.
+This is a network problem, not an SDK-registration problem.
 
-- Confirm the current device IP from the device screen.
-- Confirm port `4370`.
-- Check both ends of the device Ethernet cable.
-- Verify the laptop is on the main gym network, not a guest network.
-- Check router AP/client isolation settings with the network owner.
-- Use a temporary Ethernet cable/USB-to-Ethernet adapter if necessary.
-
-### Device is on DHCP and its address changed
-
-Update `DeviceIp` in `appsettings.json` or the bridge UI to match the device
-screen, then reconnect. For a permanent deployment, the network owner should
-use a DHCP reservation or a documented static IP, rather than relying on a
-changing address.
+- Recheck the current device IP on the terminal screen and port `4370`.
+- Check the Ethernet cable and switch/router path.
+- Confirm main Wi-Fi rather than guest Wi-Fi.
+- Ask the network owner about client/AP isolation and VLANs.
+- Use a temporary Ethernet cable or USB-to-Ethernet adapter for diagnosis if
+  needed.
 
 ### `Class not registered`, `zkemkeeper`, or `CZKEMClass` error
 
-The SDK registration on the **gym laptop** is missing or failed.
+The SDK was not registered correctly on this laptop.
 
-1. Confirm `C:\eSSL-SDK\x64\zkemkeeper.dll` exists.
-2. Rerun `Register_SDK x64.bat` as Administrator.
-3. Check the RegSvr32 result rather than dismissing an error dialog.
-4. Verify the registry command from section 6.3.
+1. Confirm the x64 `zkemkeeper.dll` exists in the copied SDK folder.
+2. Rerun `Register_SDK x64.bat` from an elevated Command Prompt.
+3. Check any RegSvr32 error instead of dismissing it.
+4. Use the registry query in section 6.
 
 ### Mock API will not start
 
 - Run `dotnet --list-runtimes` and verify `Microsoft.AspNetCore.App 8.x`.
-- Check that `RenewalDeskMockApi.dll`, `.deps.json`, and `.runtimeconfig.json`
-  were copied together.
-- If port 5080 is already used, stop the other local program before retrying.
+- Keep `.dll`, `.deps.json`, and `.runtimeconfig.json` together.
+- Make sure another program is not already using port `5080`.
 
-### Bridge connects but user update fails
+### Bridge connects but expiry button fails
 
-- Confirm the Enroll Number is exactly the device user ID, not a Renewal Desk
-  UUID or a phone number unless it is actually the device ID.
-- Use an already-enrolled fingerprint user for the first test.
-- Check the Comm Password/Comm Key if one is configured on the device.
-- Record the bridge log/error and do not assume the physical access state
-  changed.
+- Use the exact numeric terminal Enroll Number.
+- Check the log's device error code.
+- Confirm the expiry policy was prepared for this exact device serial.
+- Confirm its status is PHYSICALLY VERIFIED for automatic commands.
+- Do not delete `access_state.db` or copy a different gym's access-state file.
 
-### Device changes work manually but not through the mock queue
+### User is on the deny schedule but restore refuses
 
-- Confirm the Mock API is still running at `http://localhost:5080`.
-- Confirm the bridge uses the same `GymId` as the mock test panel (`test-gym-1`).
-- Wait at least one command poll interval (normally 10 seconds).
-- Check bridge and Mock API console logs for the command and acknowledgement.
+The bridge has no original schedule backup on this laptop. It refuses to guess
+which group/time-zone rules to restore. Recover `access_state.db` from the
+original bridge laptop/backup or restore the exact setting through the terminal
+with the gym owner.
 
----
+### Read-back says denied, but the door opens
 
-## 12. After the test phase
+Stop automatic expiry tests. This proves the terminal data changed but the
+physical installation is not enforcing that member-level rule. Check:
 
-Do not hand the bridge to the gym owner as a finished production system until
-all six hardware checks pass.
+- terminal Access Control Role / user time-period settings;
+- active **Normal Open (NO)** time periods;
+- whether the tested door uses the terminal relay or a separate controller;
+- lock wiring, relay configuration, and fail-safe/fail-secure hardware; and
+- whether the person is entering through a different door/controller.
 
-After that separate decision, the next work is:
-
-1. Replace the local Mock API with the real Renewal Desk backend implementing
-   the same bridge endpoints.
-2. Give each gym a stable device IP or DHCP reservation.
-3. Provide a supported deployment package/installer.
-4. Decide whether the bridge should become a managed background service.
-5. Establish support, monitoring, backup, and credential-rotation procedures.
-
-Until then, this document remains a controlled development/test runbook.
+Do not mark the physical test as passed and do not tell the gym owner that
+expiry enforcement is live until the lock behaviour is physically proven.
