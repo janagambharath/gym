@@ -11,11 +11,19 @@
         <div class="panel">
             <h2>Profile</h2>
             <dl class="detail-list">
+                <dt>Renewal Desk Member ID</dt><dd>{{ member.id }}</dd>
                 <dt>Phone</dt><dd>{{ member.phone }}</dd>
                 <dt>Email</dt><dd>{{ member.email or '&mdash;'|safe }}</dd>
                 <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan' }}</dd>
                 <dt>Membership</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to {{ member.membership_end.strftime('%d %b %Y') }}</dd>
                 <dt>Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status }}</span></dd>
+                <dt>Biometric Enroll Number</dt>
+                <dd>
+                    {{ member.device_enroll_number or '&mdash;'|safe }}
+                    {% if not member.device_enroll_number %}
+                    <div class="text-secondary text-sm mt-1">Confirm it from the connected gym laptop after fingerprint enrollment.</div>
+                    {% endif %}
+                </dd>
                 <dt>WhatsApp session</dt>
                 <dd>
                     {% if member.has_open_whatsapp_session %}

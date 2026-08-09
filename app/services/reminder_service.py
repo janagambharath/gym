@@ -23,6 +23,7 @@ from app.models.gym import DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.bridge_service import queue_membership_command
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
 from app.utils.helpers import normalize_public_media_url, phone_to_whatsapp, signed_upload_url
@@ -116,6 +117,7 @@ def auto_expire_members_for_gym(gym: Gym) -> int:
     )
     for member in expired_members:
         member.status = "expired"
+        queue_membership_command(member)
         audit(
             action="auto_expired",
             resource_type="member",

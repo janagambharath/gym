@@ -15,6 +15,7 @@ from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
+from app.services.bridge_service import queue_membership_command
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -112,6 +113,7 @@ def bulk_renew():
             member.membership_start = new_start
             member.membership_end = new_end
             member.status = "active"
+            queue_membership_command(member)
             renewed_ids.append(member.id)
             db.session.add(
                 RenewalHistory(
@@ -196,6 +198,7 @@ def create():
         _apply_member_form(member, form)
         db.session.add(member)
         db.session.flush()
+        queue_membership_command(member)
         audit(action="create_member", resource_type="member", resource_id=member.id)
         invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
@@ -234,6 +237,7 @@ def edit(member_id: int):
     form = _member_form(member)
     if form.validate_on_submit():
         _apply_member_form(member, form)
+        queue_membership_command(member)
         audit(action="update_member", resource_type="member", resource_id=member.id)
         invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
@@ -252,6 +256,7 @@ def delete(member_id: int):
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
     member.deleted_at = utcnow()
     member.status = "deleted"
+    queue_membership_command(member)
     audit(action="soft_delete_member", resource_type="member", resource_id=member.id)
     invalidate_dashboard_cache(current_user.gym_id)
     db.session.commit()
@@ -269,6 +274,19 @@ def hard_delete(member_id: int):
 
     if request.form.get("confirm", "").strip() != member.full_name:
         flash("Type the member's full name exactly to confirm permanent deletion.", "danger")
+        return redirect(url_for("members.detail", member_id=member.id))
+
+    if member.device_enroll_number:
+        # The X990 retains fingerprint templates when a user is disabled.  If
+        # this row were deleted, its Enroll Number could be reused and the old
+        # person's fingerprint could unexpectedly be granted the new person's
+        # access.  Keep a soft-deleted tombstone until an explicit, audited
+        # terminal deletion/re-enrolment workflow exists.
+        flash(
+            "This member has biometric Enroll Number " + member.device_enroll_number +
+            ". Keep the soft-deleted record so that terminal identity cannot be reused.",
+            "danger",
+        )
         return redirect(url_for("members.detail", member_id=member.id))
 
     member_name = member.full_name
@@ -368,13 +386,13 @@ def export():
     writer = csv.writer(output)
     writer.writerow([
         "full_name", "phone", "email", "gender", "plan",
-        "membership_start", "membership_end", "status", "joined_on", "notes",
+        "membership_start", "membership_end", "status", "device_enroll_number", "joined_on", "notes",
     ])
     for m in members:
         writer.writerow([
             m.full_name, m.phone, m.email or "", m.gender or "",
             m.plan.name if m.plan else "", m.membership_start, m.membership_end,
-            m.status, m.joined_on, m.notes or "",
+            m.status, m.device_enroll_number or "", m.joined_on, m.notes or "",
         ])
     audit(action="export_members", resource_type="member", metadata={"count": len(members)})
     db.session.commit()

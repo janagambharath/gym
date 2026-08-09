@@ -52,14 +52,22 @@ Super admin after `create-admin` with the example password above:
 
 ## Railway deployment
 
-1. Create a Railway PostgreSQL database.
-2. Set environment variables from `.env.example`.
-3. Set `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `REDIS_URL=${{Redis.REDIS_URL}}`, and `PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` on the web service. Adjust `Postgres` and `Redis` to match the exact Railway service names.
-4. Use the included `Procfile` or `railway.json` start command.
-5. Run migrations:
+1. Make the Railway service's build root the folder containing `app/`,
+   `migrations/`, `requirements.txt`, and `railway.json`. If this project lives
+   in a `gym-main/` subfolder of a larger repository, set the Railway service
+   **Root Directory** to `gym-main`.
+2. Create or use the service's existing Railway PostgreSQL and Redis services.
+3. Set environment variables from `.env.example`, including
+   `FLASK_ENV=production` and a strong `SECRET_KEY`.
+4. Set `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `REDIS_URL=${{Redis.REDIS_URL}}`, and `PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` on the web service. Adjust `Postgres` and `Redis` to match the exact Railway service names.
+5. Use the included `railway.json` start command. It runs the Alembic upgrade
+   as a pre-deploy command.
+6. Verify migrations in the Railway service shell, then create the initial
+   admin only if this is a new installation:
 
 ```bash
 flask --app app:create_app db upgrade
+flask --app app:create_app db current
 flask --app app:create_app create-admin
 ```
 
@@ -95,6 +103,33 @@ scripts/backup_db.sh
 ```
 
 If `AWS_S3_BUCKET` is set, the backup script expects the AWS CLI to be available in that cron environment.
+
+## Biometric bridge (gym laptop)
+
+This app includes a protected, outbound-polling API for the Windows
+`RenewalDeskBridge` at each gym. It is deliberately separate from browser
+session routes: the laptop authenticates with a per-gym key, protocol version,
+and the eSSL terminal serial number. No public connection to the terminal is
+needed.
+
+After deploying the bridge migration, create an installation from the Railway
+service shell:
+
+```bash
+flask --app app:create_app bridge-list
+flask --app app:create_app bridge-create --gym-slug YOUR_GYM_SLUG --device-serial "TERMINAL_SERIAL"
+```
+
+The command prints a one-time key for the gym laptop. Run it only in an
+operator-controlled Railway shell and treat the command output as a secret: do
+not copy it into Git, chat, screenshots, or browser/server logs. Use
+`bridge-rotate-key` to revoke/replace it and `bridge-reconcile` after recovering
+from a persistent device error.
+
+The online bridge API leases `enable_user` / `disable_user` commands and
+records idempotent attendance events. The actual expiry rule remains local to
+the terminal, so the physical-door commissioning test is mandatory before
+automatic membership commands are trusted.
 
 In development, `DevelopmentConfig` enables the in-process scheduler by default. If you run multiple local app processes, set `ENABLE_SCHEDULER=false`.
 

@@ -47,6 +47,15 @@ class Config:
     ]
     REMINDER_JOB_MINUTES = int(os.getenv("REMINDER_JOB_MINUTES", "1440"))
 
+    # Command leases make delivery safe across laptop/network failures.  The
+    # bridge polls outbound over HTTPS; no biometric terminal is exposed.
+    BRIDGE_COMMAND_LEASE_SECONDS = int(os.getenv("BRIDGE_COMMAND_LEASE_SECONDS", "120"))
+    BRIDGE_COMMAND_BATCH_SIZE = int(os.getenv("BRIDGE_COMMAND_BATCH_SIZE", "25"))
+    BRIDGE_COMMAND_RETRY_SECONDS = int(os.getenv("BRIDGE_COMMAND_RETRY_SECONDS", "300"))
+    BRIDGE_COMMAND_MAX_EXECUTION_ATTEMPTS = int(
+        os.getenv("BRIDGE_COMMAND_MAX_EXECUTION_ATTEMPTS", "5")
+    )
+
     WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "false").lower() == "true"
     WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
     WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v20.0")

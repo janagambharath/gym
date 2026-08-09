@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models import Gym, Member, PaymentVerification, ReminderLog, User
 from app.services.audit_service import audit
+from app.services.bridge_service import queue_membership_command
 from app.utils.decorators import roles_required
 
 
@@ -123,6 +124,7 @@ def delete_gym(gym_id: int):
         )
         member.deleted_at = utcnow()
         member.status = "deleted"
+        queue_membership_command(member)
 
     gym.status = "suspended"
     audit(

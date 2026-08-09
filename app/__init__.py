@@ -179,6 +179,7 @@ def _init_extensions(app: Flask) -> None:
 def _register_blueprints(app: Flask) -> None:
     from app.admin.routes import admin_bp
     from app.auth.routes import auth_bp
+    from app.bridge.routes import bridge_bp
     from app.gym.routes import gym_bp
     from app.gym.staff_routes import staff_bp
     from app.members.import_routes import import_bp
@@ -196,6 +197,11 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(reminders_bp)
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(admin_bp)
+    # The gym-laptop agent uses an API key rather than browser cookies.  Keep
+    # CSRF protection on every dashboard form and exempt only this strict,
+    # independently authenticated machine API.
+    csrf.exempt(bridge_bp)
+    app.register_blueprint(bridge_bp)
 
 
 def _register_error_handlers(app: Flask) -> None:
@@ -346,7 +352,8 @@ def _record_reminders_heartbeat(app: Flask, totals: dict) -> None:
 def _register_cli(app: Flask) -> None:
     import click
 
-    from app.models import Gym, User
+    from app.models import Gym, Member, User
+    from app.bridge.cli import register_bridge_commands
 
     def _iter_active_gyms(batch_size: int = 50):
         last_id = 0
@@ -582,9 +589,28 @@ def _register_cli(app: Flask) -> None:
                 "Suspend it first from the admin panel."
             )
             return
+        # A disabled X990 user still retains their fingerprint template.  If
+        # we permanently delete the corresponding member rows, the enrol
+        # numbers become reusable and an old fingerprint could inherit a new
+        # member's access.  Keep these records as tombstones until an audited
+        # terminal delete-and-fresh-enrol workflow exists.
+        biometric_count = Member.query.filter(
+            Member.gym_id == gym.id,
+            Member.device_enroll_number.is_not(None),
+        ).count()
+        if biometric_count:
+            print(
+                f"ERROR: Gym '{gym_slug}' has {biometric_count} member(s) with biometric "
+                "Enroll Numbers. Keep the suspended gym as a terminal-identity tombstone; "
+                "do not hard-delete it until those terminal users have been explicitly "
+                "deleted and re-enrolled through an audited workflow."
+            )
+            return
         db.session.delete(gym)
         db.session.commit()
         print(f"Permanently deleted gym '{gym_slug}' and all associated data.")
+
+    register_bridge_commands(app)
 
 
 def _start_scheduler(app: Flask) -> None:

@@ -8,6 +8,7 @@ from app.extensions import db
 from app.models import Member, PaymentVerification, RenewalHistory
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.bridge_service import queue_membership_command
 
 
 def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal_days: int) -> RenewalHistory:
@@ -49,6 +50,7 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     member.membership_start = new_start
     member.membership_end = new_end
     member.status = "active"
+    queue_membership_command(member)
 
     renewal = RenewalHistory(
         gym_id=locked_payment.gym_id,

@@ -61,6 +61,9 @@ class Gym(TimestampMixin, db.Model):
     qr_settings = db.relationship(
         "QRSettings", back_populates="gym", cascade="all, delete-orphan", uselist=False
     )
+    bridge_installation = db.relationship(
+        "BridgeInstallation", back_populates="gym", cascade="all, delete-orphan", uselist=False
+    )
 
     def is_operational(self) -> bool:
         return self.status == "active"

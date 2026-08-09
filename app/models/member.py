@@ -37,6 +37,7 @@ class Member(TenantMixin, TimestampMixin, db.Model):
             "status IN ('active', 'expired', 'paused', 'deleted')",
             name="ck_members_status",
         ),
+        UniqueConstraint("gym_id", "device_enroll_number", name="uq_members_gym_device_enroll"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -54,6 +55,9 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
     external_ref = db.Column(db.String(120), nullable=True)
+    # This is the numeric Enroll Number stored on the gym's biometric terminal.
+    # It is intentionally separate from member.id and any external CRM reference.
+    device_enroll_number = db.Column(db.String(32), nullable=True)
     whatsapp_opted_in = db.Column(db.Boolean, nullable=False, default=False)
     whatsapp_opted_in_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_inbound_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -69,6 +73,8 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     payments = db.relationship(
         "PaymentVerification", back_populates="member", cascade="all, delete-orphan"
     )
+    bridge_commands = db.relationship("BridgeCommand", back_populates="member")
+    bridge_attendance = db.relationship("BridgeAttendance", back_populates="member")
 
     @property
     def days_until_expiry(self) -> int:
