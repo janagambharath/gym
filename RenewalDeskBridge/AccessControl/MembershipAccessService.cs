@@ -300,12 +300,11 @@ namespace RenewalDeskBridge.AccessControl
                     return MembershipAccessResult.Fail("Could not read the local user access backup: " + ex.Message);
                 }
 
-                if (!_device.TryGetUserTimeZones(enrollNumber, out string currentTimeZones))
-                    return DeviceFailure($"Could not read access time zones for user {enrollNumber}");
-
                 if (backup == null)
                 {
-                    if (string.Equals(currentTimeZones, BuildDeniedUserTimeZones(_config.MembershipDenyTimeZoneId),
+                    bool readUserTimeZones = _device.TryGetUserTimeZones(enrollNumber, out string legacyCurrentTimeZones);
+                    if (readUserTimeZones &&
+                        string.Equals(legacyCurrentTimeZones, BuildDeniedUserTimeZones(_config.MembershipDenyTimeZoneId),
                                       StringComparison.Ordinal))
                     {
                         return MembershipAccessResult.Fail(
@@ -319,10 +318,16 @@ namespace RenewalDeskBridge.AccessControl
                     if (!_device.SetUserEnabled(enrollNumber, true))
                         return DeviceFailure($"Could not restore legacy account availability for user {enrollNumber}");
 
+                    string readNote = readUserTimeZones
+                        ? "Its access time zones were left unchanged."
+                        : "Its access time zones could not be read, so no schedule was changed.";
                     return MembershipAccessResult.Ok(
-                        $"User {enrollNumber} has no membership schedule backup on this laptop, so its access " +
-                        "time zones were left unchanged. Legacy account availability was set to enabled.");
+                        $"User {enrollNumber} has no membership schedule backup on this laptop. " + readNote +
+                        " Legacy account availability was set to enabled.");
                 }
+
+                if (!_device.TryGetUserTimeZones(enrollNumber, out string currentTimeZones))
+                    return DeviceFailure($"Could not read access time zones for user {enrollNumber}");
 
                 string deniedTimeZones = BuildDeniedUserTimeZones(backup.DenyTimeZoneId);
                 if (!string.Equals(currentTimeZones, deniedTimeZones, StringComparison.Ordinal))
