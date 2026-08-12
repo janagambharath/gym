@@ -28,5 +28,10 @@ packages/
 *.tmp
 dotnet-install.ps1
 .tools/
+
+# Local deployment artifacts and separate backend working copies
+/RenewalDeskBridge-client-*.zip
+/gym-main/
+/gym-live-source/
 Thumbs.db
 Desktop.ini

@@ -20,17 +20,25 @@ namespace RenewalDeskBridge.CloudApi
     /// </summary>
     public class RenewalDeskClient
     {
-        private readonly HttpClient _http;
+        // Try a direct HTTPS connection first.  Some gym laptops have a stale
+        // Windows proxy configuration which breaks System.Net.Http even though a
+        // browser can open the same Railway URL.  If direct HTTPS is unavailable,
+        // retry once through the normal system-proxy path.
+        private readonly HttpClient _directHttp;
+        private readonly HttpClient _proxyHttp;
         private readonly string _gymId;
+
+        // Surface a safe diagnostic to the WinForms log.  Previously every HTTP
+        // failure looked identical (just a red status), which made on-site setup
+        // needlessly difficult.  This never contains the API key.
+        public string LastError { get; private set; } = string.Empty;
 
         public RenewalDeskClient(string baseUrl, string apiKey, string gymId, string deviceSerial)
         {
             _gymId = gymId;
-            _http = new HttpClient { BaseAddress = new Uri(baseUrl) };
-            _http.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
-            _http.DefaultRequestHeaders.Add("X-RenewalDesk-Bridge-Protocol", "2");
-            _http.DefaultRequestHeaders.Add("X-Device-Serial", deviceSerial);
-            _http.Timeout = TimeSpan.FromSeconds(15);
+            var baseUri = new Uri(baseUrl.TrimEnd('/') + "/");
+            _directHttp = CreateHttpClient(baseUri, apiKey, deviceSerial, useProxy: false);
+            _proxyHttp = CreateHttpClient(baseUri, apiKey, deviceSerial, useProxy: true);
         }
 
         public async Task<bool> SendHeartbeatAsync(string status)
@@ -48,18 +56,23 @@ namespace RenewalDeskBridge.CloudApi
         {
             try
             {
-                var resp = await _http.GetAsync(
-                    $"/api/bridge/v1/commands/pending?gymId={Uri.EscapeDataString(_gymId)}");
-                if (!resp.IsSuccessStatusCode) return Array.Empty<PendingCommand>();
+                using (var resp = await GetWithNetworkFallbackAsync(
+                    $"/api/bridge/v1/commands/pending?gymId={Uri.EscapeDataString(_gymId)}"))
+                {
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        LastError = await DescribeHttpFailureAsync("GET /api/bridge/v1/commands/pending", resp);
+                        return Array.Empty<PendingCommand>();
+                    }
 
-                string json = await resp.Content.ReadAsStringAsync();
-                return JsonConvert.DeserializeObject<PendingCommand[]>(json) ?? Array.Empty<PendingCommand>();
+                    LastError = string.Empty;
+                    string json = await resp.Content.ReadAsStringAsync();
+                    return JsonConvert.DeserializeObject<PendingCommand[]>(json) ?? Array.Empty<PendingCommand>();
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // Network hiccup - caller's poll loop will just try again next cycle.
-                // Not logging here to avoid noisy logs on flaky connections; the poll
-                // loop itself should log a summary if this keeps failing repeatedly.
+                LastError = DescribeException(ex);
                 return Array.Empty<PendingCommand>();
             }
         }
@@ -87,15 +100,110 @@ namespace RenewalDeskBridge.CloudApi
         {
             try
             {
-                string json = JsonConvert.SerializeObject(payload);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var resp = await _http.PostAsync(path, content);
-                return resp.IsSuccessStatusCode;
+                using (var resp = await PostWithNetworkFallbackAsync(path, payload))
+                {
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        LastError = string.Empty;
+                        return true;
+                    }
+
+                    LastError = await DescribeHttpFailureAsync("POST " + path, resp);
+                    return false;
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                LastError = DescribeException(ex);
                 return false;
             }
+        }
+
+        private static HttpClient CreateHttpClient(Uri baseUri, string apiKey, string deviceSerial, bool useProxy)
+        {
+            var handler = new HttpClientHandler { UseProxy = useProxy };
+            var client = new HttpClient(handler) { BaseAddress = baseUri };
+            client.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
+            client.DefaultRequestHeaders.Add("X-RenewalDesk-Bridge-Protocol", "2");
+            client.DefaultRequestHeaders.Add("X-Device-Serial", deviceSerial);
+            client.Timeout = TimeSpan.FromSeconds(15);
+            return client;
+        }
+
+        private async Task<HttpResponseMessage> PostWithNetworkFallbackAsync(string path, object payload)
+        {
+            try
+            {
+                return await PostWithClientAsync(_directHttp, path, payload);
+            }
+            catch (HttpRequestException directException)
+            {
+                try
+                {
+                    return await PostWithClientAsync(_proxyHttp, path, payload);
+                }
+                catch (Exception proxyException)
+                {
+                    throw new HttpRequestException(
+                        "Direct HTTPS and the Windows-proxy fallback both failed. Direct: " +
+                        DescribeException(directException) + " | Proxy fallback: " +
+                        DescribeException(proxyException), proxyException);
+                }
+            }
+        }
+
+        private static async Task<HttpResponseMessage> PostWithClientAsync(HttpClient client, string path, object payload)
+        {
+            string json = JsonConvert.SerializeObject(payload);
+            using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
+            {
+                return await client.PostAsync(path, content);
+            }
+        }
+
+        private async Task<HttpResponseMessage> GetWithNetworkFallbackAsync(string path)
+        {
+            try
+            {
+                return await _directHttp.GetAsync(path);
+            }
+            catch (HttpRequestException directException)
+            {
+                try
+                {
+                    return await _proxyHttp.GetAsync(path);
+                }
+                catch (Exception proxyException)
+                {
+                    throw new HttpRequestException(
+                        "Direct HTTPS and the Windows-proxy fallback both failed. Direct: " +
+                        DescribeException(directException) + " | Proxy fallback: " +
+                        DescribeException(proxyException), proxyException);
+                }
+            }
+        }
+
+        private static async Task<string> DescribeHttpFailureAsync(string request, HttpResponseMessage response)
+        {
+            string responseBody = await response.Content.ReadAsStringAsync();
+            if (responseBody.Length > 500)
+                responseBody = responseBody.Substring(0, 500) + "...";
+
+            return request + " returned " + (int)response.StatusCode + " (" +
+                   response.ReasonPhrase + "). " + responseBody;
+        }
+
+        private static string DescribeException(Exception exception)
+        {
+            if (exception == null) return "Unknown HTTP failure.";
+
+            var details = new StringBuilder();
+            for (Exception current = exception; current != null; current = current.InnerException)
+            {
+                if (details.Length > 0) details.Append(" --> ");
+                details.Append(current.GetType().Name).Append(": ").Append(current.Message);
+            }
+            return details.ToString();
         }
     }
 

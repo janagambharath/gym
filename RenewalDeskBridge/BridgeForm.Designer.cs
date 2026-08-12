@@ -46,6 +46,7 @@ namespace RenewalDeskBridge
         private System.Windows.Forms.TextBox txtDenyTimeZoneId;
         private System.Windows.Forms.Button btnPrepareDenyTimeZone;
         private System.Windows.Forms.Button btnMarkPhysicalTestPassed;
+        private System.Windows.Forms.Button btnDiagnoseAccess;
         private System.Windows.Forms.Label lblMembershipPolicyStatus;
 
         private System.Windows.Forms.Label lblLog;
@@ -89,6 +90,7 @@ namespace RenewalDeskBridge
             this.txtDenyTimeZoneId = new System.Windows.Forms.TextBox();
             this.btnPrepareDenyTimeZone = new System.Windows.Forms.Button();
             this.btnMarkPhysicalTestPassed = new System.Windows.Forms.Button();
+            this.btnDiagnoseAccess = new System.Windows.Forms.Button();
             this.lblMembershipPolicyStatus = new System.Windows.Forms.Label();
 
             this.lblLog = new System.Windows.Forms.Label();
@@ -251,6 +253,11 @@ namespace RenewalDeskBridge
             this.btnConfirmEnrollment.Size = new System.Drawing.Size(180, 30);
             this.btnConfirmEnrollment.Click += new System.EventHandler(this.btnConfirmEnrollment_Click);
 
+            this.btnDiagnoseAccess.Text = "Diagnose access (read-only)";
+            this.btnDiagnoseAccess.Location = new System.Drawing.Point(770, 104);
+            this.btnDiagnoseAccess.Size = new System.Drawing.Size(170, 30);
+            this.btnDiagnoseAccess.Click += new System.EventHandler(this.btnDiagnoseAccess_Click);
+
             this.lblMembershipPolicyStatus.Text = "Expiry policy: NOT PREPARED — automatic expiry commands are locked.";
             this.lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkRed;
             this.lblMembershipPolicyStatus.Location = new System.Drawing.Point(15, 145);
@@ -271,6 +278,7 @@ namespace RenewalDeskBridge
             this.grpTests.Controls.Add(this.btnPrepareDenyTimeZone);
             this.grpTests.Controls.Add(this.btnMarkPhysicalTestPassed);
             this.grpTests.Controls.Add(this.btnConfirmEnrollment);
+            this.grpTests.Controls.Add(this.btnDiagnoseAccess);
             this.grpTests.Controls.Add(this.lblMembershipPolicyStatus);
 
             // Log

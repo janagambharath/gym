@@ -146,7 +146,9 @@ settings and replace only the three cloud values with those from step 3:
   "ApiKey": "rdb_live_REPLACE_WITH_ONE_TIME_KEY",
   "HeartbeatIntervalSeconds": 60,
   "CommandPollIntervalSeconds": 10,
-  "RetryFlushIntervalSeconds": 30
+  "RetryFlushIntervalSeconds": 30,
+  "EnableLiveAttendanceEvents": false,
+  "EnableCloudCommandPolling": false
 }
 ```
 
@@ -170,6 +172,27 @@ If Renewal Desk stays red, check that the laptop has internet access, the
 Railway deployment is live, the `bridge_...` ID/key are correct, and the serial
 in the live log exactly matches the serial used during `bridge-create`.
 
+### Enable automatic membership commands only after the physical-door test
+
+The X990 package deliberately starts with cloud command polling **off**. It is
+safe to connect and send heartbeats, but it cannot automatically change a
+member's terminal access until the physical-door test has succeeded.
+
+After a safe normal member has been denied at the real door, the test has been
+marked passed, and that member has been restored, close the bridge and run
+`ENABLE_ONLINE_MEMBERSHIP_COMMANDS.cmd` from the same folder as the EXE. The
+script refuses to continue unless this exact laptop has the recorded prepared
+and physically verified policy. It keeps live attendance scan capture off for
+this X990 because its vendor COM callback is not stable on this model.
+
+Then start `START_ONLINE_BRIDGE.cmd` (without the test-mode shortcut) and wait
+for both connection statuses to be green. Preserve these local files when
+upgrading the bridge:
+
+- `appsettings.json` â€” credential and commissioning state;
+- `access_state.db` â€” each expired member's original access schedule; and
+- `outbox.db` â€” durable command/attendance delivery records.
+
 ## 5. Bind a member only after their fingerprint is enrolled
 
 Do not type biometric Enroll Numbers into the Renewal Desk web form or import
@@ -192,6 +215,12 @@ biometric Enroll Number remains reserved even if a member is later soft-deleted;
 do not reuse it unless an audited terminal deletion and fresh fingerprint
 enrollment process is completed.
 
+For an already-active new member, the first online `enable_user` command is a
+safe no-op when this laptop has never denied that terminal user. The bridge
+does not guess or overwrite the existing terminal schedule. Once that member
+later expires, the bridge records their original schedule before denying them;
+a subsequent renewal restores that saved schedule.
+
 ## 6. Membership automation
 
 After [the physical-door commissioning test](CLIENT_LAPTOP_SETUP.md#9-commission-membership-expiry-safely)
@@ -201,6 +230,10 @@ has passed:
 - an automatic expiry, pause, or soft deletion queues `disable_user`;
 - the laptop applies the terminal access-time-zone policy locally; and
 - the laptop acknowledges the result to Railway.
+
+This X990 release manages membership access only. Live attendance upload stays
+off until the terminal's real-time SDK event path has been hardened and proven
+stable; it does not affect fingerprint verification or door access control.
 
 Commands are leased and idempotent. Attendance has a durable event ID. If a
 temporary device/network operation fails, the server issues a bounded delayed

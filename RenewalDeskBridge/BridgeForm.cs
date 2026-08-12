@@ -31,18 +31,65 @@ namespace RenewalDeskBridge
         private readonly SemaphoreSlim _attendanceFlushLock = new SemaphoreSlim(1, 1);
         private RenewalDeskClient _api;
         private string _connectedDeviceSerial = string.Empty;
+        private bool _attendanceHandlerRegistered;
+        private readonly bool _x990AccessTestMode;
 
         private CancellationTokenSource _cts;
 
-        public BridgeForm()
+        public BridgeForm(bool x990AccessTestMode = false)
         {
             InitializeComponent();
+            _x990AccessTestMode = x990AccessTestMode;
             _config = BridgeConfig.Load();
             _membershipAccess = new MembershipAccessService(_device, _accessState, _config);
             LoadConfigIntoFields();
             UpdateMembershipPolicyStatus();
 
-            _device.OnAttendance += Device_OnAttendance;
+            // The production X990 currently crashes in its COM callback path, so
+            // attendance capture is deliberately disabled for this commissioning
+            // build. It has no bearing on fingerprint verification or door access.
+            if (_config.EnableLiveAttendanceEvents)
+            {
+                _device.OnAttendance += Device_OnAttendance;
+                _attendanceHandlerRegistered = true;
+            }
+
+            // The advanced diagnostic uses several optional access-control COM
+            // APIs. The client's firmware exits natively when they are invoked,
+            // before .NET can catch or log the error. Hide it rather than let an
+            // operator accidentally trigger another crash.
+            btnDiagnoseAccess.Visible = false;
+
+            // A package-provided shortcut explicitly starts a supervised X990
+            // test.  The regular production launch can poll online membership
+            // commands only when the local config has been deliberately enabled
+            // after this physical-door test.
+            btnTestEnable.Visible = _x990AccessTestMode;
+            btnTestDisable.Visible = _x990AccessTestMode;
+            btnPrepareDenyTimeZone.Visible = _x990AccessTestMode;
+            btnMarkPhysicalTestPassed.Visible = _x990AccessTestMode;
+            // Enrollment confirmation is intentionally available in both modes:
+            // it only binds an already-enrolled, normal terminal user to an
+            // online member after an operator checks the displayed identity.
+            // It never creates/deletes a fingerprint or changes access on its own.
+            btnConfirmEnrollment.Visible = true;
+            txtTestEnrollNumber.Visible = true;
+            lblTestEnrollNumber.Visible = true;
+            txtTestMemberName.Visible = true;
+            lblTestMemberName.Visible = true;
+            btnTestUnlock.Visible = _x990AccessTestMode;
+            txtUnlockDelay.Visible = _x990AccessTestMode;
+            lblUnlockDelay.Visible = _x990AccessTestMode;
+
+            if (_x990AccessTestMode)
+            {
+                grpTests.Text = "3. X990 controlled access test (cloud commands OFF)";
+            }
+            else
+            {
+                grpTests.Text = "3. Biometric member enrolment";
+                lblTestEnrollNumber.Text = "Terminal Enrol Number:";
+            }
         }
 
         private void LoadConfigIntoFields()
@@ -108,7 +155,8 @@ namespace RenewalDeskBridge
             }
 
             bool ok = _device.Connect(_config.DeviceIp, _config.DevicePort,
-                                       _config.DeviceCommPassword, _config.MachineNumber);
+                                       _config.DeviceCommPassword, _config.MachineNumber,
+                                       _config.EnableLiveAttendanceEvents);
             UpdateDeviceStatus(ok);
 
             if (ok)
@@ -123,6 +171,23 @@ namespace RenewalDeskBridge
                 else
                 {
                     Log("WARNING: Could not read the device serial. Online Renewal Desk connection is locked.");
+                }
+
+                if (!_config.EnableLiveAttendanceEvents)
+                {
+                    Log("Live attendance scan capture is OFF for stability during commissioning.");
+                }
+
+                if (!CloudCommandPollingEnabled)
+                {
+                    Log(_x990AccessTestMode
+                        ? "Cloud command polling is OFF for this supervised X990 test."
+                        : "Cloud command polling is OFF during X990 stability commissioning. " +
+                          "The Bridge sends online heartbeats only; it will not change device users or schedules.");
+                    if (_x990AccessTestMode)
+                    {
+                        Log("Only buttons clicked by the on-site operator can change one test user's access schedule.");
+                    }
                 }
 
                 if (!TryStartCloudConnection())
@@ -186,6 +251,15 @@ namespace RenewalDeskBridge
 
         private void UpdateMembershipPolicyStatus()
         {
+            if (!CloudCommandPollingEnabled)
+            {
+                lblMembershipPolicyStatus.Text = _x990AccessTestMode
+                    ? "X990 controlled test mode: cloud commands are OFF; only supervised manual testing is available."
+                    : "Commissioning mode: cloud membership commands are OFF — no device access changes can run.";
+                lblMembershipPolicyStatus.ForeColor = System.Drawing.Color.DarkOrange;
+                return;
+            }
+
             lblMembershipPolicyStatus.Text = _membershipAccess == null
                 ? "Expiry policy: loading..."
                 : _membershipAccess.DescribePolicyStatus();
@@ -223,8 +297,91 @@ namespace RenewalDeskBridge
             RunTestUserToggle(enabled: false);
         }
 
+        private void btnDiagnoseAccess_Click(object sender, EventArgs e)
+        {
+            // Intentionally left inert in the X990 stability build. This handler
+            // remains only because it is wired by the designer in older copies.
+            MessageBox.Show(
+                "Advanced access diagnostics are disabled for this terminal because its SDK crashes on " +
+                "those optional queries. No device setting was changed.",
+                "Diagnostic unavailable", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void LogAccessControlDiagnostic(AccessControlDiagnosticSnapshot diagnostic)
+        {
+            Log("ACCESS DIAGNOSTIC for user " + diagnostic.EnrollNumber +
+                " (read-only; no terminal settings were changed):");
+
+            if (!string.IsNullOrWhiteSpace(diagnostic.RequestError))
+            {
+                Log("  Diagnostic note: " + diagnostic.RequestError);
+                return;
+            }
+
+            Log("  User TZ (GetUserTZStr): " +
+                DescribeDiagnosticRead(diagnostic.UserTimeZonesRead, diagnostic.UserTimeZones,
+                                       diagnostic.UserTimeZonesErrorCode));
+            Log("  User access group (GetUserGroup): " +
+                DescribeDiagnosticRead(diagnostic.UserGroupRead,
+                                       diagnostic.UserGroup.ToString(),
+                                       diagnostic.UserGroupErrorCode));
+            Log("  Use group time zones (UseGroupTimeZone): " +
+                (diagnostic.UseGroupTimeZoneAvailable
+                    ? (diagnostic.UseGroupTimeZone ? "ON" : "OFF")
+                    : "NOT AVAILABLE (GetUserTZStr failed)"));
+            Log("  Access-control function (GetACFun): " +
+                DescribeDiagnosticRead(diagnostic.AccessControlFunctionRead,
+                                       diagnostic.AccessControlFunction.ToString(),
+                                       diagnostic.AccessControlFunctionErrorCode));
+            Log("  Unlock groups (GetUnlockGroups): " +
+                DescribeDiagnosticRead(diagnostic.UnlockGroupsRead, diagnostic.UnlockGroups,
+                                       diagnostic.UnlockGroupsErrorCode));
+
+            if (diagnostic.UserGroupRead)
+            {
+                Log("  Group " + diagnostic.UserGroup + " TZ (GetGroupTZStr): " +
+                    DescribeDiagnosticRead(diagnostic.GroupTimeZonesRead,
+                                           diagnostic.GroupTimeZones,
+                                           diagnostic.GroupTimeZonesErrorCode));
+                Log("  Group " + diagnostic.UserGroup + " TZ (SSR_GetGroupTZ): " +
+                    DescribeDiagnosticRead(
+                        diagnostic.LegacyGroupTimeZonesRead,
+                        diagnostic.LegacyGroupTimeZone1 + ":" +
+                        diagnostic.LegacyGroupTimeZone2 + ":" +
+                        diagnostic.LegacyGroupTimeZone3 + ":" +
+                        "ValidHoliday=" + diagnostic.LegacyGroupValidHoliday + ", " +
+                        "VerifyStyle=" + diagnostic.LegacyGroupVerifyStyle,
+                        diagnostic.LegacyGroupTimeZonesErrorCode));
+            }
+
+            if (diagnostic.UserGroupRead && diagnostic.UseGroupTimeZoneAvailable &&
+                diagnostic.UseGroupTimeZone)
+            {
+                Log("  Diagnostic hint: group time zones are ON, so this user's personal TZ may not control the door.");
+            }
+            else if (diagnostic.UserGroupRead && diagnostic.UseGroupTimeZoneAvailable)
+            {
+                Log("  Diagnostic hint: group time zones are OFF; compare the user TZ with access-control and unlock-group settings.");
+            }
+        }
+
+        private static string DescribeDiagnosticRead(bool readSucceeded, string value, int errorCode)
+        {
+            if (!readSucceeded)
+                return "FAILED (SDK error " + errorCode + ")";
+
+            return "'" + (value ?? string.Empty) + "'";
+        }
+
         private void btnPrepareDenyTimeZone_Click(object sender, EventArgs e)
         {
+            if (!_x990AccessTestMode)
+            {
+                MessageBox.Show("This action is available only from the supervised X990 access-test shortcut.",
+                                "Commissioning mode");
+                return;
+            }
+
             if (!_device.IsConnected)
             {
                 MessageBox.Show("Connect to the device first.", "Not connected");
@@ -257,6 +414,13 @@ namespace RenewalDeskBridge
 
         private void btnMarkPhysicalTestPassed_Click(object sender, EventArgs e)
         {
+            if (!_x990AccessTestMode)
+            {
+                MessageBox.Show("This action is available only from the supervised X990 access-test shortcut.",
+                                "Commissioning mode");
+                return;
+            }
+
             if (!_device.IsConnected)
             {
                 MessageBox.Show("Connect to the device first.", "Not connected");
@@ -278,6 +442,13 @@ namespace RenewalDeskBridge
 
         private void RunTestUserToggle(bool enabled)
         {
+            if (!_x990AccessTestMode)
+            {
+                MessageBox.Show("This action is available only from the supervised X990 access-test shortcut.",
+                                "Commissioning mode");
+                return;
+            }
+
             if (!_device.IsConnected)
             {
                 MessageBox.Show("Connect to the device first.", "Not connected");
@@ -373,23 +544,52 @@ namespace RenewalDeskBridge
 
         private void Device_OnAttendance(AttendanceEvent evt)
         {
-            // This fires on the COM thread - marshal to the UI thread before touching controls.
-            if (InvokeRequired)
-            {
-                Invoke(new Action<AttendanceEvent>(Device_OnAttendance), evt);
+            // This fires on a COM callback thread.  Do not use synchronous Invoke:
+            // a terminal event arriving while Windows is closing/repainting the form
+            // must not be able to take down the customer-side bridge process.
+            if (evt == null || IsDisposed || Disposing || !IsHandleCreated)
                 return;
+
+            try
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action<AttendanceEvent>(HandleAttendanceOnUi), evt);
+                }
+                else
+                {
+                    HandleAttendanceOnUi(evt);
+                }
             }
+            catch (Exception ex)
+            {
+                Program.WriteCrashLog("Could not marshal biometric attendance callback", ex);
+            }
+        }
 
-            Log($"SCAN: EnrollNumber={evt.EnrollNumber}, Time={evt.Timestamp:yyyy-MM-dd HH:mm:ss}, " +
-                $"VerifyMethod={evt.VerifyMethod}, Invalid={evt.IsInvalid}");
+        private void HandleAttendanceOnUi(AttendanceEvent evt)
+        {
+            if (evt == null || IsDisposed || Disposing) return;
 
-            // Buffer locally first - this is the step that makes attendance survive an
-            // internet outage. We attempt an immediate push after, but the buffer write
-            // happens regardless of whether that push succeeds.
-            _outbox.Enqueue(evt.EnrollNumber, evt.Timestamp, evt.VerifyMethod, evt.IsInvalid);
+            try
+            {
+                Log($"SCAN: EnrollNumber={evt.EnrollNumber}, Time={evt.Timestamp:yyyy-MM-dd HH:mm:ss}, " +
+                    $"VerifyMethod={evt.VerifyMethod}, Invalid={evt.IsInvalid}");
 
-            // Fire-and-forget immediate push attempt; the retry loop will catch it if this fails.
-            _ = TryPushSingleEventAsync();
+                // Buffer locally first - this is the step that makes attendance survive an
+                // internet outage. We attempt an immediate push after, but the buffer write
+                // happens regardless of whether that push succeeds.
+                _outbox.Enqueue(evt.EnrollNumber, evt.Timestamp, evt.VerifyMethod, evt.IsInvalid);
+
+                // Observe failures explicitly instead of allowing a faulted task to
+                // disappear without a diagnostic on the gym laptop.
+                ObserveBackgroundTask(TryPushSingleEventAsync(), "immediate attendance upload");
+            }
+            catch (Exception ex)
+            {
+                Program.WriteCrashLog("Could not process biometric attendance callback", ex);
+                Log("Attendance was not uploaded due to a local error. Details were saved in bridge-crash.log.");
+            }
         }
 
         private async Task TryPushSingleEventAsync()
@@ -399,7 +599,11 @@ namespace RenewalDeskBridge
 
         private async Task FlushAttendanceAsync(int limit)
         {
-            if (_api == null) return;
+            // Disconnect can clear _api while an attendance upload is waiting for
+            // the local SQLite gate. Retain one client instance for this flush so
+            // a normal reconnect cannot turn a scan into a NullReferenceException.
+            RenewalDeskClient api = _api;
+            if (api == null) return;
 
             await _attendanceFlushLock.WaitAsync();
             try
@@ -407,7 +611,7 @@ namespace RenewalDeskBridge
                 var unsent = _outbox.GetUnsent(limit);
                 foreach (var row in unsent)
                 {
-                    bool sent = await _api.SendAttendanceAsync(CreateAttendanceDto(row));
+                    bool sent = await api.SendAttendanceAsync(CreateAttendanceDto(row));
                     if (sent) _outbox.MarkSent(row.Id);
                 }
             }
@@ -434,17 +638,66 @@ namespace RenewalDeskBridge
 
         private void StartBackgroundLoops(CancellationToken token)
         {
-            _ = HeartbeatLoopAsync(token);
-            _ = CommandPollLoopAsync(token);
-            _ = RetryFlushLoopAsync(token);
+            ObserveBackgroundTask(HeartbeatLoopAsync(token), "Renewal Desk heartbeat loop");
+            if (CloudCommandPollingEnabled)
+            {
+                ObserveBackgroundTask(CommandPollLoopAsync(token), "Renewal Desk command poll loop");
+            }
+            if (_config.EnableLiveAttendanceEvents)
+            {
+                ObserveBackgroundTask(RetryFlushLoopAsync(token), "attendance retry loop");
+            }
+        }
+
+        private bool CloudCommandPollingEnabled
+        {
+            get { return _config != null && _config.EnableCloudCommandPolling && !_x990AccessTestMode; }
+        }
+
+        private void ObserveBackgroundTask(Task task, string operation)
+        {
+            if (task == null) return;
+            task.ContinueWith(t =>
+            {
+                try
+                {
+                    Exception error = t.Exception == null ? null : t.Exception.GetBaseException();
+                    Program.WriteCrashLog(operation + " stopped unexpectedly", error);
+                    RunOnUi(() => Log(operation + " stopped unexpectedly. Details were saved in bridge-crash.log."));
+                }
+                catch (Exception ex)
+                {
+                    Program.WriteCrashLog("Could not report a failed background task", ex);
+                }
+            }, CancellationToken.None,
+               TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+               TaskScheduler.Default);
         }
 
         private async Task HeartbeatLoopAsync(CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
-                bool ok = await _api.SendHeartbeatAsync(_device.IsConnected ? "online" : "device_disconnected");
-                RunOnUi(() => UpdateApiStatus(ok));
+                try
+                {
+                    RenewalDeskClient api = _api;
+                    if (api == null) return;
+
+                    bool ok = await api.SendHeartbeatAsync(_device.IsConnected ? "online" : "device_disconnected");
+                    RunOnUi(() =>
+                    {
+                        UpdateApiStatus(ok);
+                        if (!ok && !string.IsNullOrWhiteSpace(api.LastError))
+                        {
+                            Log($"Renewal Desk heartbeat failed: {api.LastError}");
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Program.WriteCrashLog("Renewal Desk heartbeat iteration failed", ex);
+                    RunOnUi(() => Log("Renewal Desk heartbeat error. Details were saved in bridge-crash.log."));
+                }
                 try { await Task.Delay(TimeSpan.FromSeconds(_config.HeartbeatIntervalSeconds), token); }
                 catch (TaskCanceledException) { break; }
             }
@@ -456,14 +709,17 @@ namespace RenewalDeskBridge
             {
                 try
                 {
-                    var commands = await _api.GetPendingCommandsAsync();
+                    RenewalDeskClient api = _api;
+                    if (api == null) return;
+                    var commands = await api.GetPendingCommandsAsync();
                     foreach (var cmd in commands)
                     {
-                        await ProcessPendingCommandAsync(cmd);
+                        await ProcessPendingCommandAsync(cmd, api);
                     }
                 }
                 catch (Exception ex)
                 {
+                    Program.WriteCrashLog("Renewal Desk command poll iteration failed", ex);
                     RunOnUi(() => Log($"Command poll error: {ex.Message}"));
                 }
 
@@ -472,7 +728,7 @@ namespace RenewalDeskBridge
             }
         }
 
-        private async Task ProcessPendingCommandAsync(PendingCommand cmd)
+        private async Task ProcessPendingCommandAsync(PendingCommand cmd, RenewalDeskClient api)
         {
             if (cmd == null)
             {
@@ -526,8 +782,8 @@ namespace RenewalDeskBridge
                 }
             }
 
-            bool acked = await _api.AckCommandAsync(cmd.Id, receipt.Status, receipt.ResultMessage,
-                                                     cmd.LeaseToken);
+            bool acked = await api.AckCommandAsync(cmd.Id, receipt.Status, receipt.ResultMessage,
+                                                   cmd.LeaseToken);
             RunOnUi(() =>
             {
                 string outcome = receipt.Status == "acked" ? "OK" : "FAILED";
@@ -545,7 +801,12 @@ namespace RenewalDeskBridge
             switch (cmd.CommandType)
             {
                 case "enable_user":
-                    return FromMembershipResult(_membershipAccess.RestoreMembershipAccess(cmd.EnrollNumber));
+                    // For a just-confirmed, already-active terminal user there
+                    // is no local deny backup yet.  The service acknowledges that
+                    // safe initial baseline without guessing or overwriting the
+                    // terminal's existing access schedule.
+                    return FromMembershipResult(_membershipAccess.RestoreMembershipAccess(
+                        cmd.EnrollNumber, allowInitialActiveNoOp: true));
                 case "disable_user":
                     return FromMembershipResult(_membershipAccess.DisableMembershipAccess(cmd.EnrollNumber,
                                                                                             allowUnverifiedTest: false));
@@ -586,6 +847,7 @@ namespace RenewalDeskBridge
                 }
                 catch (Exception ex)
                 {
+                    Program.WriteCrashLog("Attendance retry iteration failed", ex);
                     RunOnUi(() => Log($"Retry flush error: {ex.Message}"));
                 }
 
@@ -598,23 +860,60 @@ namespace RenewalDeskBridge
 
         private void Log(string message)
         {
-            if (InvokeRequired)
+            if (IsDisposed || Disposing || !IsHandleCreated) return;
+
+            try
             {
-                Invoke(new Action<string>(Log), message);
-                return;
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action<string>(Log), message);
+                    return;
+                }
+                txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
             }
-            txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+            catch (Exception ex)
+            {
+                Program.WriteCrashLog("Could not write to the Bridge live log", ex);
+            }
         }
 
         private void RunOnUi(Action action)
         {
-            if (InvokeRequired) Invoke(action);
-            else action();
+            if (action == null || IsDisposed || Disposing || !IsHandleCreated) return;
+
+            try
+            {
+                if (InvokeRequired)
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        if (IsDisposed || Disposing) return;
+                        try
+                        {
+                            action();
+                        }
+                        catch (Exception ex)
+                        {
+                            Program.WriteCrashLog("Bridge background UI update failed", ex);
+                        }
+                    }));
+                }
+                else action();
+            }
+            catch (Exception ex)
+            {
+                Program.WriteCrashLog("Could not marshal a Bridge background update to the window", ex);
+            }
         }
 
         private void BridgeForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             _cts?.Cancel();
+            if (_attendanceHandlerRegistered)
+            {
+                _device.OnAttendance -= Device_OnAttendance;
+                _attendanceHandlerRegistered = false;
+            }
             _device.Dispose();
         }
 

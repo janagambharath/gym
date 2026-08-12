@@ -18,11 +18,15 @@ namespace RenewalDeskBridge.Queue
     public class LocalOutbox
     {
         private readonly string _connectionString;
+        // The UI scan callback and background uploader share this one database.
+        // SQLite permits one writer at a time, so serialize their local operations
+        // rather than letting a legitimate scan race MarkSent and surface a lock.
+        private readonly object _databaseLock = new object();
 
         public LocalOutbox()
         {
             string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "outbox.db");
-            _connectionString = $"Data Source={dbPath};Version=3;";
+            _connectionString = $"Data Source={dbPath};Version=3;Default Timeout=5;";
             EnsureSchema();
         }
 
@@ -159,66 +163,75 @@ namespace RenewalDeskBridge.Queue
         /// </summary>
         public string Enqueue(string enrollNumber, DateTime eventTime, int verifyMethod, bool isInvalid)
         {
-            string eventId = Guid.NewGuid().ToString("D");
-            using (var conn = new SQLiteConnection(_connectionString))
+            lock (_databaseLock)
             {
-                conn.Open();
-                var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
+                string eventId = Guid.NewGuid().ToString("D");
+                using (var conn = new SQLiteConnection(_connectionString))
+                {
+                    conn.Open();
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
                     INSERT INTO attendance_outbox
                         (event_id, enroll_number, event_time, verify_method, is_invalid, created_at, sent)
                     VALUES (@eventId, @enroll, @time, @method, @invalid, @created, 0)";
-                cmd.Parameters.AddWithValue("@eventId", eventId);
-                cmd.Parameters.AddWithValue("@enroll", enrollNumber);
-                cmd.Parameters.AddWithValue("@time", eventTime.ToString("o", CultureInfo.InvariantCulture));
-                cmd.Parameters.AddWithValue("@method", verifyMethod);
-                cmd.Parameters.AddWithValue("@invalid", isInvalid ? 1 : 0);
-                cmd.Parameters.AddWithValue("@created", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
-                cmd.ExecuteNonQuery();
+                    cmd.Parameters.AddWithValue("@eventId", eventId);
+                    cmd.Parameters.AddWithValue("@enroll", enrollNumber);
+                    cmd.Parameters.AddWithValue("@time", eventTime.ToString("o", CultureInfo.InvariantCulture));
+                    cmd.Parameters.AddWithValue("@method", verifyMethod);
+                    cmd.Parameters.AddWithValue("@invalid", isInvalid ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@created", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+                    cmd.ExecuteNonQuery();
+                }
+                return eventId;
             }
-            return eventId;
         }
 
         public List<OutboxRow> GetUnsent(int limit = 50)
         {
-            var rows = new List<OutboxRow>();
-            using (var conn = new SQLiteConnection(_connectionString))
+            lock (_databaseLock)
             {
-                conn.Open();
-                var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT id, event_id, enroll_number, event_time, verify_method, is_invalid " +
-                                  "FROM attendance_outbox WHERE sent = 0 ORDER BY id ASC LIMIT @limit";
-                cmd.Parameters.AddWithValue("@limit", limit);
-
-                using (var reader = cmd.ExecuteReader())
+                var rows = new List<OutboxRow>();
+                using (var conn = new SQLiteConnection(_connectionString))
                 {
-                    while (reader.Read())
+                    conn.Open();
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT id, event_id, enroll_number, event_time, verify_method, is_invalid " +
+                                  "FROM attendance_outbox WHERE sent = 0 ORDER BY id ASC LIMIT @limit";
+                    cmd.Parameters.AddWithValue("@limit", limit);
+
+                    using (var reader = cmd.ExecuteReader())
                     {
-                        rows.Add(new OutboxRow
+                        while (reader.Read())
                         {
-                            Id = reader.GetInt32(0),
-                            EventId = reader.GetString(1),
-                            EnrollNumber = reader.GetString(2),
-                            EventTime = DateTime.Parse(reader.GetString(3), CultureInfo.InvariantCulture,
-                                                       DateTimeStyles.RoundtripKind),
-                            VerifyMethod = reader.GetInt32(4),
-                            IsInvalid = reader.GetInt32(5) == 1
-                        });
+                            rows.Add(new OutboxRow
+                            {
+                                Id = reader.GetInt32(0),
+                                EventId = reader.GetString(1),
+                                EnrollNumber = reader.GetString(2),
+                                EventTime = DateTime.Parse(reader.GetString(3), CultureInfo.InvariantCulture,
+                                                           DateTimeStyles.RoundtripKind),
+                                VerifyMethod = reader.GetInt32(4),
+                                IsInvalid = reader.GetInt32(5) == 1
+                            });
+                        }
                     }
                 }
+                return rows;
             }
-            return rows;
         }
 
         public void MarkSent(int id)
         {
-            using (var conn = new SQLiteConnection(_connectionString))
+            lock (_databaseLock)
             {
-                conn.Open();
-                var cmd = conn.CreateCommand();
-                cmd.CommandText = "UPDATE attendance_outbox SET sent = 1 WHERE id = @id";
-                cmd.Parameters.AddWithValue("@id", id);
-                cmd.ExecuteNonQuery();
+                using (var conn = new SQLiteConnection(_connectionString))
+                {
+                    conn.Open();
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = "UPDATE attendance_outbox SET sent = 1 WHERE id = @id";
+                    cmd.Parameters.AddWithValue("@id", id);
+                    cmd.ExecuteNonQuery();
+                }
             }
         }
 
@@ -232,34 +245,37 @@ namespace RenewalDeskBridge.Queue
             receipt = null;
             if (string.IsNullOrWhiteSpace(commandId)) return false;
 
-            using (var conn = new SQLiteConnection(_connectionString))
+            lock (_databaseLock)
             {
-                conn.Open();
-                var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
+                using (var conn = new SQLiteConnection(_connectionString))
+                {
+                    conn.Open();
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
                     SELECT command_id, command_type, enroll_number, status, result_message,
                            lease_token, completed_at
                     FROM command_receipts
                     WHERE command_id = @commandId
                     LIMIT 1";
-                cmd.Parameters.AddWithValue("@commandId", commandId);
+                    cmd.Parameters.AddWithValue("@commandId", commandId);
 
-                using (var reader = cmd.ExecuteReader())
-                {
-                    if (!reader.Read()) return false;
-
-                    receipt = new CommandReceipt
+                    using (var reader = cmd.ExecuteReader())
                     {
-                        CommandId = reader.GetString(0),
-                        CommandType = reader.IsDBNull(1) ? null : reader.GetString(1),
-                        EnrollNumber = reader.IsDBNull(2) ? null : reader.GetString(2),
-                        Status = reader.GetString(3),
-                        ResultMessage = reader.IsDBNull(4) ? null : reader.GetString(4),
-                        LeaseToken = reader.IsDBNull(5) ? null : reader.GetString(5),
-                        CompletedAtUtc = DateTime.Parse(reader.GetString(6), CultureInfo.InvariantCulture,
-                                                        DateTimeStyles.RoundtripKind)
-                    };
-                    return true;
+                        if (!reader.Read()) return false;
+
+                        receipt = new CommandReceipt
+                        {
+                            CommandId = reader.GetString(0),
+                            CommandType = reader.IsDBNull(1) ? null : reader.GetString(1),
+                            EnrollNumber = reader.IsDBNull(2) ? null : reader.GetString(2),
+                            Status = reader.GetString(3),
+                            ResultMessage = reader.IsDBNull(4) ? null : reader.GetString(4),
+                            LeaseToken = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            CompletedAtUtc = DateTime.Parse(reader.GetString(6), CultureInfo.InvariantCulture,
+                                                            DateTimeStyles.RoundtripKind)
+                        };
+                        return true;
+                    }
                 }
             }
         }
@@ -277,37 +293,43 @@ namespace RenewalDeskBridge.Queue
             if (string.IsNullOrWhiteSpace(receipt.Status))
                 throw new ArgumentException("A command receipt requires a status.", nameof(receipt));
 
-            using (var conn = new SQLiteConnection(_connectionString))
+            lock (_databaseLock)
             {
-                conn.Open();
-                var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
+                using (var conn = new SQLiteConnection(_connectionString))
+                {
+                    conn.Open();
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
                     INSERT OR IGNORE INTO command_receipts
                         (command_id, command_type, enroll_number, status, result_message,
                          lease_token, completed_at)
                     VALUES (@commandId, @commandType, @enrollNumber, @status, @resultMessage,
                             @leaseToken, @completedAt)";
-                cmd.Parameters.AddWithValue("@commandId", receipt.CommandId);
-                cmd.Parameters.AddWithValue("@commandType", (object)receipt.CommandType ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@enrollNumber", (object)receipt.EnrollNumber ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@status", receipt.Status);
-                cmd.Parameters.AddWithValue("@resultMessage", (object)receipt.ResultMessage ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@leaseToken", (object)receipt.LeaseToken ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@completedAt", receipt.CompletedAtUtc.ToString("o", CultureInfo.InvariantCulture));
-                return cmd.ExecuteNonQuery() == 1;
+                    cmd.Parameters.AddWithValue("@commandId", receipt.CommandId);
+                    cmd.Parameters.AddWithValue("@commandType", (object)receipt.CommandType ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@enrollNumber", (object)receipt.EnrollNumber ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@status", receipt.Status);
+                    cmd.Parameters.AddWithValue("@resultMessage", (object)receipt.ResultMessage ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@leaseToken", (object)receipt.LeaseToken ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@completedAt", receipt.CompletedAtUtc.ToString("o", CultureInfo.InvariantCulture));
+                    return cmd.ExecuteNonQuery() == 1;
+                }
             }
         }
 
         /// <summary>Housekeeping - call occasionally so the outbox.db file doesn't grow forever.</summary>
         public void PurgeSentOlderThan(TimeSpan age)
         {
-            using (var conn = new SQLiteConnection(_connectionString))
+            lock (_databaseLock)
             {
-                conn.Open();
-                var cmd = conn.CreateCommand();
-                cmd.CommandText = "DELETE FROM attendance_outbox WHERE sent = 1 AND created_at < @cutoff";
-                cmd.Parameters.AddWithValue("@cutoff", (DateTime.UtcNow - age).ToString("o", CultureInfo.InvariantCulture));
-                cmd.ExecuteNonQuery();
+                using (var conn = new SQLiteConnection(_connectionString))
+                {
+                    conn.Open();
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = "DELETE FROM attendance_outbox WHERE sent = 1 AND created_at < @cutoff";
+                    cmd.Parameters.AddWithValue("@cutoff", (DateTime.UtcNow - age).ToString("o", CultureInfo.InvariantCulture));
+                    cmd.ExecuteNonQuery();
+                }
             }
         }
     }

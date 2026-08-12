@@ -25,6 +25,7 @@ namespace RenewalDeskBridge.Device
         private readonly CZKEMClass _zk = new CZKEMClass();
         private int _machineNumber = 1;
         private bool _isConnected;
+        private bool _attendanceEventsSubscribed;
 
         public bool IsConnected => _isConnected;
 
@@ -36,14 +37,14 @@ namespace RenewalDeskBridge.Device
 
         public DeviceConnection()
         {
-            // Wire the real-time event exactly as the RTEvents demo does.
-            // NOTE: this handler fires on the COM apartment thread, not necessarily your
-            // UI thread or async context - if you touch UI controls or shared state from
-            // here, marshal appropriately (see BridgeForm.cs for the Invoke pattern used).
-            _zk.OnAttTransactionEx += Zk_OnAttTransactionEx;
+            // Deliberately do not attach an event sink here. Some X990 firmware
+            // builds terminate the hosting process while marshaling a real-time
+            // attendance event, even when the application does not call RegEvent.
+            // The sink is attached only for an explicit, tested opt-in connection.
         }
 
-        public bool Connect(string ip, int port, string commPassword, int machineNumber)
+        public bool Connect(string ip, int port, string commPassword, int machineNumber,
+                            bool registerLiveAttendanceEvents = false)
         {
             _machineNumber = machineNumber;
 
@@ -56,9 +57,19 @@ namespace RenewalDeskBridge.Device
 
             if (_isConnected)
             {
-                // 65535 registers ALL real-time event types, matching the demo's own comment:
-                // "registering all". We narrow this later if we only care about attendance.
-                _zk.RegEvent(_machineNumber, 65535);
+                if (registerLiveAttendanceEvents)
+                {
+                    if (!_attendanceEventsSubscribed)
+                    {
+                        _zk.OnAttTransactionEx += Zk_OnAttTransactionEx;
+                        _attendanceEventsSubscribed = true;
+                    }
+
+                    // 65535 registers ALL real-time event types, matching the demo's
+                    // own comment: "registering all". This is opt-in because some
+                    // older terminal firmware destabilises a .NET host on callbacks.
+                    _zk.RegEvent(_machineNumber, 65535);
+                }
             }
 
             return _isConnected;
@@ -66,6 +77,23 @@ namespace RenewalDeskBridge.Device
 
         public void Disconnect()
         {
+            if (_attendanceEventsSubscribed)
+            {
+                try
+                {
+                    _zk.OnAttTransactionEx -= Zk_OnAttTransactionEx;
+                }
+                catch
+                {
+                    // Disconnect must continue even if a broken COM connection
+                    // point rejects an event-sink removal.
+                }
+                finally
+                {
+                    _attendanceEventsSubscribed = false;
+                }
+            }
+
             if (_isConnected)
             {
                 _zk.Disconnect();
@@ -222,10 +250,50 @@ namespace RenewalDeskBridge.Device
         public bool TryGetUserTimeZones(string enrollNumber, out string timeZones)
         {
             timeZones = string.Empty;
+            if (!TryGetUserTimeZoneState(enrollNumber, out UserTimeZoneState state))
+                return false;
+
+            timeZones = state.RawTimeZones;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads the raw per-user time-zone BSTR and the terminal's semantic
+        /// group/personal selector as one indivisible SDK observation.  On the
+        /// X990, UseGroupTimeZone must be invoked immediately after
+        /// GetUserTZStr: later COM calls can make the result describe a different
+        /// access-control read.  Callers must use this method rather than trying
+        /// to infer group-vs-personal meaning from the raw BSTR alone.
+        /// </summary>
+        public bool TryGetUserTimeZoneState(string enrollNumber, out UserTimeZoneState state)
+        {
+            state = null;
             if (!_isConnected || !TryParseNumericDeviceUserId(enrollNumber, out int userId))
                 return false;
 
-            return _zk.GetUserTZStr(_machineNumber, userId, ref timeZones);
+            try
+            {
+                string rawTimeZones = string.Empty;
+                if (!_zk.GetUserTZStr(_machineNumber, userId, ref rawTimeZones))
+                    return false;
+
+                // Keep this as the immediately following COM call. In particular,
+                // do not insert GetLastError, GetUserGroup, or RefreshData here.
+                bool usesGroupTimeZone = _zk.UseGroupTimeZone();
+                state = new UserTimeZoneState
+                {
+                    RawTimeZones = rawTimeZones ?? string.Empty,
+                    UsesGroupTimeZone = usesGroupTimeZone
+                };
+                return true;
+            }
+            catch
+            {
+                // Firmware may not expose every access-control COM member. Treat
+                // this as an unreadable state; callers will make no mutation.
+                state = null;
+                return false;
+            }
         }
 
         /// <summary>
@@ -246,6 +314,104 @@ namespace RenewalDeskBridge.Device
             accessControlFunction = 0;
             if (!_isConnected) return false;
             return _zk.GetACFun(ref accessControlFunction);
+        }
+
+        /// <summary>
+        /// Reads the terminal's effective access-control inputs for one enrolled
+        /// person.  This is deliberately diagnostic-only: it invokes only SDK
+        /// Get* APIs and never calls Set*, RefreshData, ACUnlock, or any user
+        /// mutation API.  It helps determine whether a terminal is using the
+        /// person's individual schedule, their access group, or a separate
+        /// unlock-group rule.
+        /// </summary>
+        public AccessControlDiagnosticSnapshot ReadAccessControlDiagnostics(string enrollNumber)
+        {
+            var snapshot = new AccessControlDiagnosticSnapshot
+            {
+                EnrollNumber = enrollNumber ?? string.Empty
+            };
+
+            if (!_isConnected)
+            {
+                snapshot.RequestError = "Device is not connected.";
+                return snapshot;
+            }
+
+            if (!TryParseNumericDeviceUserId(enrollNumber, out int userId))
+            {
+                snapshot.RequestError = "Enroll Number must be a canonical positive numeric terminal user ID.";
+                return snapshot;
+            }
+
+            try
+            {
+                string userTimeZones = string.Empty;
+                snapshot.UserTimeZonesRead = _zk.GetUserTZStr(_machineNumber, userId, ref userTimeZones);
+                snapshot.UserTimeZones = userTimeZones ?? string.Empty;
+                if (!snapshot.UserTimeZonesRead)
+                    snapshot.UserTimeZonesErrorCode = GetLastErrorCode();
+                else
+                {
+                    // Keep this as the immediately following COM call. The X990
+                    // server exposes the selector as state associated with that
+                    // read, not as a standalone per-user query.
+                    snapshot.UseGroupTimeZone = _zk.UseGroupTimeZone();
+                    snapshot.UseGroupTimeZoneAvailable = true;
+                }
+
+                int userGroup = 0;
+                snapshot.UserGroupRead = _zk.GetUserGroup(_machineNumber, userId, ref userGroup);
+                snapshot.UserGroup = userGroup;
+                if (!snapshot.UserGroupRead)
+                    snapshot.UserGroupErrorCode = GetLastErrorCode();
+
+                int accessControlFunction = 0;
+                snapshot.AccessControlFunctionRead = _zk.GetACFun(ref accessControlFunction);
+                snapshot.AccessControlFunction = accessControlFunction;
+                if (!snapshot.AccessControlFunctionRead)
+                    snapshot.AccessControlFunctionErrorCode = GetLastErrorCode();
+
+                string unlockGroups = string.Empty;
+                snapshot.UnlockGroupsRead = _zk.GetUnlockGroups(_machineNumber, ref unlockGroups);
+                snapshot.UnlockGroups = unlockGroups ?? string.Empty;
+                if (!snapshot.UnlockGroupsRead)
+                    snapshot.UnlockGroupsErrorCode = GetLastErrorCode();
+
+                if (snapshot.UserGroupRead)
+                {
+                    string groupTimeZones = string.Empty;
+                    snapshot.GroupTimeZonesRead = _zk.GetGroupTZStr(_machineNumber, userGroup,
+                                                                      ref groupTimeZones);
+                    snapshot.GroupTimeZones = groupTimeZones ?? string.Empty;
+                    if (!snapshot.GroupTimeZonesRead)
+                        snapshot.GroupTimeZonesErrorCode = GetLastErrorCode();
+
+                    int timeZone1 = 0;
+                    int timeZone2 = 0;
+                    int timeZone3 = 0;
+                    int validHoliday = 0;
+                    int verifyStyle = 0;
+                    snapshot.LegacyGroupTimeZonesRead = _zk.SSR_GetGroupTZ(
+                        _machineNumber, userGroup, ref timeZone1, ref timeZone2,
+                        ref timeZone3, ref validHoliday, ref verifyStyle);
+                    snapshot.LegacyGroupTimeZone1 = timeZone1;
+                    snapshot.LegacyGroupTimeZone2 = timeZone2;
+                    snapshot.LegacyGroupTimeZone3 = timeZone3;
+                    snapshot.LegacyGroupValidHoliday = validHoliday;
+                    snapshot.LegacyGroupVerifyStyle = verifyStyle;
+                    if (!snapshot.LegacyGroupTimeZonesRead)
+                        snapshot.LegacyGroupTimeZonesErrorCode = GetLastErrorCode();
+                }
+            }
+            catch (Exception ex)
+            {
+                // A firmware can expose only part of the access-control API.  A
+                // diagnostic must not crash the bridge or change the terminal in
+                // that case; retain all values read before the exception.
+                snapshot.RequestError = "Read-only access diagnostic stopped: " + ex.Message;
+            }
+
+            return snapshot;
         }
 
         /// <summary>
@@ -287,17 +453,28 @@ namespace RenewalDeskBridge.Device
             int iVerifyMethod, int iYear, int iMonth, int iDay, int iHour, int iMinute, int iSecond,
             int iWorkCode)
         {
-            var evt = new AttendanceEvent
+            // Never let an application subscriber exception escape back through
+            // the vendor COM callback.  Some zkemkeeper builds terminate the host
+            // process when that happens.
+            try
             {
-                EnrollNumber = sEnrollNumber,
-                IsInvalid = iIsInValid != 0,
-                AttState = iAttState,
-                VerifyMethod = iVerifyMethod,
-                Timestamp = SafeMakeDateTime(iYear, iMonth, iDay, iHour, iMinute, iSecond),
-                WorkCode = iWorkCode
-            };
+                var evt = new AttendanceEvent
+                {
+                    EnrollNumber = sEnrollNumber,
+                    IsInvalid = iIsInValid != 0,
+                    AttState = iAttState,
+                    VerifyMethod = iVerifyMethod,
+                    Timestamp = SafeMakeDateTime(iYear, iMonth, iDay, iHour, iMinute, iSecond),
+                    WorkCode = iWorkCode
+                };
 
-            OnAttendance?.Invoke(evt);
+                Action<AttendanceEvent> handler = OnAttendance;
+                handler?.Invoke(evt);
+            }
+            catch (Exception ex)
+            {
+                RenewalDeskBridge.Program.WriteCrashLog("Biometric COM attendance callback failed", ex);
+            }
         }
 
         private static DateTime SafeMakeDateTime(int y, int mo, int d, int h, int mi, int s)
@@ -317,7 +494,6 @@ namespace RenewalDeskBridge.Device
 
         public void Dispose()
         {
-            _zk.OnAttTransactionEx -= Zk_OnAttTransactionEx;
             Disconnect();
         }
     }
@@ -337,5 +513,58 @@ namespace RenewalDeskBridge.Device
         public string Name { get; set; }
         public int Privilege { get; set; }
         public bool Enabled { get; set; }
+    }
+
+    /// <summary>
+    /// The terminal's per-user access-control state. RawTimeZones is retained
+    /// verbatim for forensic restore, while UsesGroupTimeZone is the semantic
+    /// selector that determines whether that raw per-user value is active.
+    /// </summary>
+    public sealed class UserTimeZoneState
+    {
+        public string RawTimeZones { get; set; }
+        public bool UsesGroupTimeZone { get; set; }
+    }
+
+    /// <summary>
+    /// Raw, read-only access-control values returned by the eSSL/ZKTeco COM
+    /// server.  Do not infer a physical-door decision from one field alone: a
+    /// terminal may be configured to use group time zones and/or unlock groups.
+    /// </summary>
+    public sealed class AccessControlDiagnosticSnapshot
+    {
+        public string EnrollNumber { get; set; }
+        public string RequestError { get; set; }
+
+        public bool UserTimeZonesRead { get; set; }
+        public string UserTimeZones { get; set; }
+        public int UserTimeZonesErrorCode { get; set; }
+
+        public bool UserGroupRead { get; set; }
+        public int UserGroup { get; set; }
+        public int UserGroupErrorCode { get; set; }
+
+        public bool UseGroupTimeZone { get; set; }
+        public bool UseGroupTimeZoneAvailable { get; set; }
+
+        public bool GroupTimeZonesRead { get; set; }
+        public string GroupTimeZones { get; set; }
+        public int GroupTimeZonesErrorCode { get; set; }
+
+        public bool LegacyGroupTimeZonesRead { get; set; }
+        public int LegacyGroupTimeZone1 { get; set; }
+        public int LegacyGroupTimeZone2 { get; set; }
+        public int LegacyGroupTimeZone3 { get; set; }
+        public int LegacyGroupValidHoliday { get; set; }
+        public int LegacyGroupVerifyStyle { get; set; }
+        public int LegacyGroupTimeZonesErrorCode { get; set; }
+
+        public bool AccessControlFunctionRead { get; set; }
+        public int AccessControlFunction { get; set; }
+        public int AccessControlFunctionErrorCode { get; set; }
+
+        public bool UnlockGroupsRead { get; set; }
+        public string UnlockGroups { get; set; }
+        public int UnlockGroupsErrorCode { get; set; }
     }
 }

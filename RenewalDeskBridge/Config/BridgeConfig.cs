@@ -30,6 +30,20 @@ namespace RenewalDeskBridge.Config
         public int CommandPollIntervalSeconds { get; set; } = 10;
         public int RetryFlushIntervalSeconds { get; set; } = 30;
 
+        // The particular X990 firmware currently being commissioned can terminate
+        // a WinForms host when it receives a real-time COM attendance callback.
+        // Keep the bridge stable for access-control commissioning by default. This
+        // affects scan upload only; it never changes the fingerprint device's
+        // access decision. Re-enable only after the terminal SDK event path has
+        // been proven stable on this hardware.
+        public bool EnableLiveAttendanceEvents { get; set; } = false;
+
+        // Keep the client in connection-only commissioning mode until the X990
+        // SDK's unstable optional access-control APIs have been replaced with a
+        // model-verified integration. Heartbeats remain enabled, but the bridge
+        // does not fetch or execute cloud commands in this mode.
+        public bool EnableCloudCommandPolling { get; set; } = false;
+
         // Membership expiry on the X990 is enforced through a dedicated, per-user
         // access-control time zone.  These values are deliberately off by default:
         // a person at the physical door must prove the rule before the bridge accepts
