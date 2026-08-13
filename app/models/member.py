@@ -58,6 +58,11 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     # This is the numeric Enroll Number stored on the gym's biometric terminal.
     # It is intentionally separate from member.id and any external CRM reference.
     device_enroll_number = db.Column(db.String(32), nullable=True)
+    # A gym operator can explicitly keep this member blocked even when their
+    # membership would otherwise be active.  The bridge translates this into a
+    # per-user terminal disable command; it never controls the physical door
+    # globally.
+    biometric_access_blocked = db.Column(db.Boolean, nullable=False, default=False)
     whatsapp_opted_in = db.Column(db.Boolean, nullable=False, default=False)
     whatsapp_opted_in_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_inbound_at = db.Column(db.DateTime(timezone=True), nullable=True)

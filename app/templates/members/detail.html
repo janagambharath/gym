@@ -24,6 +24,16 @@
                     <div class="text-secondary text-sm mt-1">Confirm it from the connected gym laptop after fingerprint enrollment.</div>
                     {% endif %}
                 </dd>
+                <dt>Biometric door access</dt>
+                <dd>
+                    {% if not member.device_enroll_number %}
+                    <span class="badge badge-inactive">Not enrolled</span>
+                    {% elif member.biometric_access_blocked %}
+                    <span class="badge status-expired">Manually blocked</span>
+                    {% else %}
+                    <span class="badge status-active">Follows membership status</span>
+                    {% endif %}
+                </dd>
                 <dt>WhatsApp session</dt>
                 <dd>
                     {% if member.has_open_whatsapp_session %}
@@ -38,6 +48,28 @@
                     {% endif %}
                 </dd>
             </dl>
+            {% if member.device_enroll_number and not member.is_deleted %}
+            <div class="border-top pt-3 mt-3">
+                <p class="small text-secondary mb-2">
+                    These actions affect only this member's biometric access. They do not unlock or lock the gym door globally.
+                </p>
+                {% if member.biometric_access_blocked %}
+                <form method="post" action="{{ url_for('members.restore_biometric_access', member_id=member.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-success w-100" type="submit" data-confirm="Restore this member's access according to their current membership status?">
+                        <i class="bi bi-unlock"></i> Restore membership access
+                    </button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ url_for('members.block_biometric_access', member_id=member.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-outline-danger w-100" type="submit" data-confirm="Block this member's biometric door access? Their fingerprint will be kept and can be restored later.">
+                        <i class="bi bi-lock"></i> Block biometric access
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+            {% endif %}
             {% if current_user.role == 'gym_owner' %}
             <form method="post" action="{{ url_for('members.delete', member_id=member.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

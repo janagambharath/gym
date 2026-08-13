@@ -44,6 +44,12 @@ def canonical_enroll_number(value: object) -> str:
 def desired_command_type(member: Member) -> str:
     """Translate the online membership state into a terminal access state."""
 
+    # An explicit dashboard block always wins over normal membership status.
+    # It stays in force through edits/renewals until a gym operator restores
+    # the member's access from the dashboard.
+    if member.biometric_access_blocked:
+        return "disable_user"
+
     gym_timezone = member.gym.timezone if member.gym else "Asia/Kolkata"
     try:
         local_today = datetime.now(zoneinfo.ZoneInfo(gym_timezone or "Asia/Kolkata")).date()

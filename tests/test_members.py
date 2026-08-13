@@ -1,14 +1,27 @@
 from datetime import date, timedelta
-from app.models import Member
+from app.models import BridgeCommand, BridgeInstallation, Member
 from app.extensions import db
 
 
-def test_member_crud_and_export(client, seed_gym):
-    # Log in
+def _login_owner(client) -> None:
     client.post(
         "/auth/login",
         data={"email": "owner@testgym.com", "password": "SecurePass123!"},
     )
+
+
+def _installation(seed_gym) -> BridgeInstallation:
+    installation, _api_key = BridgeInstallation.create_for_gym(
+        seed_gym["gym"].id, "Test bridge", "TEST-TERMINAL-SERIAL-01"
+    )
+    db.session.add(installation)
+    db.session.commit()
+    return installation
+
+
+def test_member_crud_and_export(client, seed_gym):
+    # Log in
+    _login_owner(client)
 
     # Add member
     res = client.post(
@@ -40,10 +53,7 @@ def test_member_crud_and_export(client, seed_gym):
 
 
 def test_member_limit_enforcement(client, seed_gym, app):
-    client.post(
-        "/auth/login",
-        data={"email": "owner@testgym.com", "password": "SecurePass123!"},
-    )
+    _login_owner(client)
 
     # Artificially set max_members to 1 for testing
     with app.app_context():
@@ -76,3 +86,79 @@ def test_member_limit_enforcement(client, seed_gym, app):
         follow_redirects=True,
     )
     assert b"reached the 1-member limit" in res.data
+
+
+def test_manual_biometric_block_queues_disable_and_persists(client, seed_gym, seed_member):
+    _login_owner(client)
+    _installation(seed_gym)
+    member = db.session.get(Member, seed_member.id)
+    member.device_enroll_number = "3667"
+    db.session.commit()
+
+    response = client.post(
+        f"/members/{member.id}/biometric-access/block", follow_redirects=True
+    )
+
+    member = db.session.get(Member, member.id)
+    command = BridgeCommand.query.filter_by(member_id=member.id).one()
+    assert response.status_code == 200
+    assert b"Biometric access block queued" in response.data
+    assert member.biometric_access_blocked is True
+    assert command.command_type == "disable_user"
+
+
+def test_manual_restore_queues_enable_only_for_active_members(client, seed_gym, seed_member):
+    _login_owner(client)
+    _installation(seed_gym)
+    member = db.session.get(Member, seed_member.id)
+    member.device_enroll_number = "3667"
+    member.biometric_access_blocked = True
+    db.session.commit()
+
+    response = client.post(
+        f"/members/{member.id}/biometric-access/restore", follow_redirects=True
+    )
+
+    member = db.session.get(Member, member.id)
+    command = BridgeCommand.query.filter_by(member_id=member.id).one()
+    assert response.status_code == 200
+    assert b"Membership access restore queued" in response.data
+    assert member.biometric_access_blocked is False
+    assert command.command_type == "enable_user"
+
+
+def test_manual_restore_keeps_expired_member_blocked(client, seed_gym, seed_member):
+    _login_owner(client)
+    _installation(seed_gym)
+    member = db.session.get(Member, seed_member.id)
+    member.device_enroll_number = "3667"
+    member.biometric_access_blocked = True
+    member.status = "expired"
+    member.membership_end = date.today() - timedelta(days=1)
+    db.session.commit()
+
+    response = client.post(
+        f"/members/{member.id}/biometric-access/restore", follow_redirects=True
+    )
+
+    member = db.session.get(Member, member.id)
+    command = BridgeCommand.query.filter_by(member_id=member.id).one()
+    assert response.status_code == 200
+    assert b"membership is not currently active" in response.data
+    assert member.biometric_access_blocked is False
+    assert command.command_type == "disable_user"
+
+
+def test_manual_block_requires_confirmed_biometric_enrollment(client, seed_gym, seed_member):
+    _login_owner(client)
+    _installation(seed_gym)
+    member = db.session.get(Member, seed_member.id)
+
+    response = client.post(
+        f"/members/{member.id}/biometric-access/block", follow_redirects=True
+    )
+
+    member = db.session.get(Member, member.id)
+    assert response.status_code == 200
+    assert member.biometric_access_blocked is False
+    assert BridgeCommand.query.count() == 0

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
@@ -246,6 +246,109 @@ def edit(member_id: int):
     return render_template("members/form.html", form=form, member=member)
 
 
+@members_bp.post("/<int:member_id>/biometric-access/block")
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def block_biometric_access(member_id: int):
+    """Queue a per-member terminal deny command from the dashboard.
+
+    This does not operate the physical lock directly and does not change any
+    other member.  The persisted flag also prevents later membership edits
+    from silently re-enabling a deliberately blocked member.
+    """
+
+    member = _locked_member(member_id)
+    if member.deleted_at:
+        flash("Deleted members cannot be changed. Restore the member record first.", "warning")
+        return redirect(url_for("members.detail", member_id=member.id))
+    if not member.device_enroll_number:
+        flash("Confirm this member's biometric enrollment before blocking access.", "warning")
+        return redirect(url_for("members.detail", member_id=member.id))
+
+    member.biometric_access_blocked = True
+    try:
+        command = queue_membership_command(member, force=True)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(f"Biometric access was not changed: {exc}", "danger")
+        return redirect(url_for("members.detail", member_id=member_id))
+
+    if command is None:
+        db.session.rollback()
+        flash("No active biometric bridge is available for this gym. Nothing was sent.", "danger")
+        return redirect(url_for("members.detail", member_id=member_id))
+
+    audit(
+        action="block_member_biometric_access",
+        resource_type="member",
+        resource_id=member.id,
+        metadata={
+            "device_enroll_number": member.device_enroll_number,
+            "bridge_command_id": command.id,
+            "command_type": command.command_type,
+        },
+    )
+    db.session.commit()
+    flash(
+        "Biometric access block queued for this member. It will apply when the connected gym laptop polls.",
+        "success",
+    )
+    return redirect(url_for("members.detail", member_id=member.id))
+
+
+@members_bp.post("/<int:member_id>/biometric-access/restore")
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def restore_biometric_access(member_id: int):
+    """Clear a manual block and queue the access state membership allows."""
+
+    member = _locked_member(member_id)
+    if member.deleted_at:
+        flash("Deleted members cannot be changed. Restore the member record first.", "warning")
+        return redirect(url_for("members.detail", member_id=member.id))
+    if not member.device_enroll_number:
+        flash("Confirm this member's biometric enrollment before restoring access.", "warning")
+        return redirect(url_for("members.detail", member_id=member.id))
+
+    member.biometric_access_blocked = False
+    try:
+        command = queue_membership_command(member, force=True)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(f"Biometric access was not changed: {exc}", "danger")
+        return redirect(url_for("members.detail", member_id=member_id))
+
+    if command is None:
+        db.session.rollback()
+        flash("No active biometric bridge is available for this gym. Nothing was sent.", "danger")
+        return redirect(url_for("members.detail", member_id=member_id))
+
+    audit(
+        action="restore_member_biometric_access",
+        resource_type="member",
+        resource_id=member.id,
+        metadata={
+            "device_enroll_number": member.device_enroll_number,
+            "bridge_command_id": command.id,
+            "command_type": command.command_type,
+        },
+    )
+    db.session.commit()
+    if command.command_type == "enable_user":
+        flash(
+            "Membership access restore queued. It will apply when the connected gym laptop polls.",
+            "success",
+        )
+    else:
+        flash(
+            "The manual block was cleared, but this membership is not currently active, so biometric access stays blocked.",
+            "warning",
+        )
+    return redirect(url_for("members.detail", member_id=member.id))
+
+
 @members_bp.post("/<int:member_id>/delete")
 @login_required
 @active_gym_required
@@ -349,6 +452,17 @@ def _parse_amount(raw_value: str | None) -> Decimal | None:
 
 def _locked_gym(gym_id: int) -> Gym:
     return db.session.execute(select(Gym).where(Gym.id == gym_id).with_for_update()).scalar_one()
+
+
+def _locked_member(member_id: int) -> Member:
+    member = db.session.execute(
+        select(Member)
+        .where(Member.id == member_id, Member.gym_id == current_user.gym_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if member is None:
+        abort(404)
+    return member
 
 
 def _gym_at_member_limit(gym: Gym) -> bool:
