@@ -18,16 +18,16 @@
         <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filter</button></div>
     </form>
     <div class="table-responsive">
-        <table class="table align-middle">
+        <table class="table align-middle mobile-card-table">
             <thead><tr><th>Member</th><th>Amount</th><th>Paid on</th><th>Status</th><th></th></tr></thead>
             <tbody>
             {% for payment in pagination.items %}
             <tr>
-                <td><a href="{{ url_for('members.detail', member_id=payment.member_id) }}">{{ payment.member.full_name }}</a></td>
-                <td>&#8377;{{ payment.amount }}</td>
-                <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '&mdash;'|safe }}</td>
-                <td><span class="badge status-{{ payment.status }}">{{ payment.status }}</span></td>
-                <td class="text-end">
+                <td data-label="Member"><a href="{{ url_for('members.detail', member_id=payment.member_id) }}">{{ payment.member.full_name }}</a></td>
+                <td data-label="Amount">&#8377;{{ payment.amount }}</td>
+                <td data-label="Paid on">{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '&mdash;'|safe }}</td>
+                <td data-label="Status"><span class="badge status-{{ payment.status }}">{{ payment.status }}</span></td>
+                <td class="text-end mobile-card-actions" data-label="Actions">
                     {% if payment.status == 'pending' %}
                     <form class="d-inline" method="post" action="{{ url_for('payments.verify', payment_id=payment.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -19,16 +19,16 @@
                 <a href="{{ url_for('members.index') }}">View all</a>
             </div>
             <div class="table-responsive">
-                <table class="table align-middle">
+            <table class="table align-middle mobile-card-table">
                     <thead><tr><th>Member</th><th>Phone</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
                     <tbody>
                     {% for member in expiring_members %}
                     <tr>
-                        <td><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
-                        <td>{{ member.phone }}</td>
-                        <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
-                        <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
-                        <td class="text-end">
+                        <td data-label="Member"><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
+                        <td data-label="Phone"><a href="tel:{{ member.phone }}">{{ member.phone }}</a></td>
+                        <td data-label="Expiry">{{ member.membership_end.strftime('%d %b %Y') }}</td>
+                        <td data-label="Status"><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                        <td class="text-end mobile-card-actions" data-label="Actions">
                             <form method="post" action="{{ url_for('reminders.send_test', member_id=member.id) }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button class="btn btn-sm btn-outline-primary" type="submit">

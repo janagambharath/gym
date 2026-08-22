@@ -17,7 +17,7 @@
             <div class="col-md-6">{{ form.membership_end.label(class="form-label") }}{{ form.membership_end(class="form-control") }}</div>
             <div class="col-12">{{ form.notes.label(class="form-label") }}{{ form.notes(class="form-control", rows="4") }}</div>
         </div>
-        <div class="d-flex justify-content-between mt-4">
+        <div class="d-flex justify-content-between gap-2 mt-4 flex-wrap">
             <a class="btn btn-outline-secondary" href="{{ url_for('members.index') }}">Cancel</a>
             {{ form.submit(class="btn btn-primary") }}
         </div>

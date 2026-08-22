@@ -12,7 +12,7 @@
             <h2>Profile</h2>
             <dl class="detail-list">
                 <dt>Renewal Desk Member ID</dt><dd>{{ member.id }}</dd>
-                <dt>Phone</dt><dd>{{ member.phone }}</dd>
+                <dt>Phone</dt><dd><a href="tel:{{ member.phone }}">{{ member.phone }}</a></dd>
                 <dt>Email</dt><dd>{{ member.email or '&mdash;'|safe }}</dd>
                 <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan' }}</dd>
                 <dt>Membership</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to {{ member.membership_end.strftime('%d %b %Y') }}</dd>

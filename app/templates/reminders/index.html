@@ -26,15 +26,15 @@
         <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filter</button></div>
     </form>
     <div class="table-responsive">
-        <table class="table align-middle">
+        <table class="table align-middle mobile-card-table">
             <thead><tr><th>Member</th><th>Stage</th><th>Cycle expiry</th><th>Status</th><th>Attempts</th><th></th></tr></thead>
             <tbody>
             {% for log in pagination.items %}
             <tr>
-                <td>{{ log.member.full_name }}</td>
-                <td>{{ log.reminder_stage.replace('_', ' ') }}</td>
-                <td>{{ log.cycle_end_date.strftime('%d %b %Y') }}</td>
-                <td>
+                <td data-label="Member">{{ log.member.full_name }}</td>
+                <td data-label="Stage">{{ log.reminder_stage.replace('_', ' ') }}</td>
+                <td data-label="Cycle expiry">{{ log.cycle_end_date.strftime('%d %b %Y') }}</td>
+                <td data-label="Status">
                     <span class="badge status-{{ log.status }}">{{ log.status }}</span>
                     {% if log.provider_message_id and log.provider_message_id.startswith('simulated') %}
                     <span class="badge badge-trial" title="WHATSAPP_ENABLED is off platform-wide; no real message was sent">TEST MODE</span>
@@ -52,8 +52,8 @@
                     {% endif %}
                     {% endif %}
                 </td>
-                <td>{{ log.attempts }}</td>
-                <td class="text-end">
+                <td data-label="Attempts">{{ log.attempts }}</td>
+                <td class="text-end mobile-card-actions" data-label="Actions">
                     {% if log.status != 'sent' %}
                     <form method="post" action="{{ url_for('reminders.resend', reminder_id=log.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

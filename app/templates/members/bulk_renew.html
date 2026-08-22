@@ -41,7 +41,7 @@
         </div>
 
         <div class="table-responsive">
-            <table class="table align-middle">
+            <table class="table align-middle mobile-card-table">
                 <thead>
                     <tr>
                         <th style="width:48px;">
@@ -57,14 +57,14 @@
                 <tbody>
                 {% for member in members %}
                 <tr>
-                    <td>
+                    <td data-label="Select">
                         <input class="form-check-input bulk-member-checkbox" name="member_ids" value="{{ member.id }}" type="checkbox" aria-label="Select {{ member.full_name }}">
                     </td>
-                    <td><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
-                    <td>{{ member.phone }}</td>
-                    <td>{{ member.plan.name if member.plan else 'No plan' }}</td>
-                    <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
-                    <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                    <td data-label="Name"><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
+                    <td data-label="Phone"><a href="tel:{{ member.phone }}">{{ member.phone }}</a></td>
+                    <td data-label="Plan">{{ member.plan.name if member.plan else 'No plan' }}</td>
+                    <td data-label="Current expiry">{{ member.membership_end.strftime('%d %b %Y') }}</td>
+                    <td data-label="Status"><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
                 </tr>
                 {% else %}
                 <tr><td colspan="6" class="text-secondary">No members found.</td></tr>

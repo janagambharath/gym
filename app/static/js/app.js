@@ -1,19 +1,26 @@
 document.addEventListener("DOMContentLoaded", () => {
   const sidebar = document.querySelector(".sidebar");
-  const toggle = document.querySelector("[data-sidebar-toggle]");
+  const toggles = document.querySelectorAll("[data-sidebar-toggle]");
   const overlay = document.querySelector("[data-sidebar-overlay]");
 
   const closeSidebar = () => {
     sidebar?.classList.remove("open");
     overlay?.classList.remove("visible");
+    toggles.forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
   };
 
-  toggle?.addEventListener("click", () => {
+  toggles.forEach((toggle) => toggle.addEventListener("click", () => {
     sidebar?.classList.toggle("open");
     overlay?.classList.toggle("visible");
-  });
+    const isOpen = sidebar?.classList.contains("open") || false;
+    toggles.forEach((item) => item.setAttribute("aria-expanded", String(isOpen)));
+  }));
 
   overlay?.addEventListener("click", closeSidebar);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeSidebar();
+  });
 
   document.querySelectorAll(".sidebar .nav-item").forEach((link) => {
     link.addEventListener("click", closeSidebar);
