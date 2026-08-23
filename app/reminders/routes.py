@@ -208,6 +208,12 @@ def send_test(member_id: int):
     if member.deleted_at is not None:
         flash("Cannot send a test reminder to a deleted member.", "warning")
         return redirect(request.referrer or url_for("reminders.index"))
+    if not member.whatsapp_opted_in:
+        flash(
+            "No WhatsApp consent is recorded for this member. Record consent before sending a reminder.",
+            "warning",
+        )
+        return redirect(request.referrer or url_for("reminders.index"))
     if not current_user.gym.whatsapp_enabled or not current_user.gym.phone_number_id:
         flash("Connect and enable this gym's WhatsApp Business number first.", "warning")
         return redirect(url_for("gym.whatsapp_settings"))

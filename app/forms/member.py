@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from flask_wtf import FlaskForm
-from wtforms import DateField, DecimalField, SelectField, StringField, SubmitField, TextAreaField
+from wtforms import BooleanField, DateField, DecimalField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional, ValidationError
 
 
@@ -37,6 +37,9 @@ class MemberForm(FlaskForm):
         validators=[DataRequired()],
     )
     notes = TextAreaField("Notes", validators=[Optional(), Length(max=2000)])
+    whatsapp_opted_in = BooleanField(
+        "This member has agreed to receive WhatsApp updates from this gym"
+    )
     submit = SubmitField("Save member")
 
     def validate_membership_end(self, field) -> None:

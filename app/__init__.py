@@ -523,6 +523,14 @@ def _register_cli(app: Flask) -> None:
         app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
         _record_reminders_heartbeat(app, totals)
 
+    @app.cli.command("run-announcements")
+    def run_announcements() -> None:
+        """Resume any persisted WhatsApp broadcasts after a worker restart."""
+        from app.services.announcement_service import resume_pending_announcements
+
+        resumed = resume_pending_announcements()
+        print(f"Resumed {resumed} WhatsApp announcement(s).")
+
     @app.cli.command("check-reminders-heartbeat")
     def check_reminders_heartbeat() -> None:
         """Exit non-zero if run-reminders has not completed in the last 25 hours."""

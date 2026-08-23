@@ -80,6 +80,9 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     )
     bridge_commands = db.relationship("BridgeCommand", back_populates="member")
     bridge_attendance = db.relationship("BridgeAttendance", back_populates="member")
+    announcement_deliveries = db.relationship(
+        "AnnouncementDelivery", back_populates="member", cascade="all, delete-orphan"
+    )
 
     @property
     def days_until_expiry(self) -> int:

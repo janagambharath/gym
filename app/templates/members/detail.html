@@ -47,6 +47,14 @@
                     <div class="text-secondary text-sm mt-1">{{ member.last_inbound_at.strftime('%d %b %Y %H:%M') }}</div>
                     {% endif %}
                 </dd>
+                <dt>WhatsApp updates</dt>
+                <dd>
+                    {% if member.whatsapp_opted_in %}
+                    <span class="badge status-active">Consent recorded</span>
+                    {% else %}
+                    <span class="badge badge-inactive">No consent recorded</span>
+                    {% endif %}
+                </dd>
             </dl>
             {% if member.device_enroll_number and not member.is_deleted %}
             <div class="border-top pt-3 mt-3">

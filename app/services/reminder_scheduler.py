@@ -125,22 +125,35 @@ def configure_scheduler(app: Flask) -> bool:
         _logger.info("Scheduler lock held by another worker; skipping scheduler start.")
         return False
 
-    job_id = "membership-renewal-reminders"
-    if scheduler.get_job(job_id):
-        return True
+    reminder_job_id = "membership-renewal-reminders"
+    if not scheduler.get_job(reminder_job_id):
+        scheduler.add_job(
+            id=reminder_job_id,
+            func=_scheduled_reminder_job,
+            trigger="interval",
+            minutes=app.config["REMINDER_JOB_MINUTES"],
+            kwargs={"app": app},
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+            next_run_time=datetime.now(scheduler.timezone),
+            replace_existing=True,
+        )
 
-    scheduler.add_job(
-        id=job_id,
-        func=_scheduled_reminder_job,
-        trigger="interval",
-        minutes=app.config["REMINDER_JOB_MINUTES"],
-        kwargs={"app": app},
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=300,
-        next_run_time=datetime.now(scheduler.timezone),
-        replace_existing=True,
-    )
+    announcement_job_id = "whatsapp-announcement-delivery"
+    if not scheduler.get_job(announcement_job_id):
+        scheduler.add_job(
+            id=announcement_job_id,
+            func=_scheduled_announcement_job,
+            trigger="interval",
+            minutes=max(1, app.config["ANNOUNCEMENT_DISPATCH_MINUTES"]),
+            kwargs={"app": app},
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+            next_run_time=datetime.now(scheduler.timezone),
+            replace_existing=True,
+        )
     _logger.info("Scheduler configured with Redis lock on pid=%s", os.getpid())
     return True
 
@@ -209,3 +222,18 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     pass
             finally:
                 db.session.expire_all()
+
+
+def _scheduled_announcement_job(app: Flask) -> None:
+    with app.app_context():
+        from app.services.announcement_service import resume_pending_announcements
+
+        try:
+            resumed = resume_pending_announcements()
+            if resumed:
+                app.logger.info("Resumed %s queued WhatsApp announcement(s)", resumed)
+        except Exception:
+            from app.extensions import db
+
+            db.session.rollback()
+            app.logger.exception("Could not resume queued WhatsApp announcements")

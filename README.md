@@ -154,9 +154,13 @@ WABA.
 Each gym can upload a QR image or provide a public QR URL. Authenticated users can view uploaded QR files through `/uploads`; WhatsApp delivery uses a signed 24-hour media URL or the configured public QR URL when available, and falls back to a text reminder when no fetchable QR is configured or image delivery fails.
 Meta inbound messages and delivery status callbacks are handled at `/webhook/whatsapp`.
 Inbound messages from known members refresh Meta's 24-hour normal-message window and trigger
-the configured welcome message on first contact. Scheduled renewal reminders scan all due
-active members; members without an open 24-hour window are sent through the approved Meta
-template when configured.
+the configured welcome message on first contact. Scheduled renewal reminders and dashboard
+announcements only target members with recorded WhatsApp consent. A normal message can be
+sent only while that member's 24-hour chat window is open. To contact a consented member
+outside that window, create and get the exact Meta template approved first, then select
+that template from the Festival & Announcements card on the dashboard. Always send one
+test before the confirmed broadcast; each recipient's result is persisted for audit and
+interrupted broadcasts are resumed by the scheduler.
 
 ## Tenant safety
 

@@ -9,12 +9,18 @@ from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.forms import (
+    AnnouncementForm,
     MembershipPlanForm,
     NotificationTemplateForm,
     QRSettingsForm,
     WhatsAppSettingsForm,
 )
-from app.models import Gym, Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
+from app.models import Announcement, Gym, Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
+from app.services.announcement_service import (
+    announcement_recipient_counts,
+    create_announcement,
+    start_announcement_dispatch,
+)
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
@@ -61,12 +67,88 @@ def dashboard():
         .limit(8)
         .all()
     )
+    announcement_form = _announcement_form() if current_user.role == "gym_owner" else None
+    recent_announcements = (
+        Announcement.query.filter_by(gym_id=gym_id)
+        .order_by(Announcement.created_at.desc())
+        .limit(5)
+        .all()
+        if current_user.role == "gym_owner"
+        else []
+    )
     return render_template(
         "dashboard/index.html",
         stats=stats,
         expiring_members=expiring_members,
         recent_payments=recent_payments,
+        announcement_form=announcement_form,
+        announcement_counts=(announcement_recipient_counts(gym_id) if announcement_form else None),
+        recent_announcements=recent_announcements,
     )
+
+
+@gym_bp.post("/dashboard/announcements")
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def send_announcement():
+    """Queue a consent-respecting WhatsApp festival/operational announcement."""
+
+    form = _announcement_form()
+    if not form.validate_on_submit():
+        for field_errors in form.errors.values():
+            for error in field_errors:
+                flash(error, "warning")
+        return redirect(url_for("gym.dashboard"))
+
+    is_test = bool(form.send_test.data)
+    if not is_test and not form.send_broadcast.data:
+        flash("Choose either Send one test or Send to all eligible members.", "warning")
+        return redirect(url_for("gym.dashboard"))
+
+    try:
+        announcement = create_announcement(
+            gym=current_user.gym,
+            actor_user_id=current_user.id,
+            title=form.title.data,
+            delivery_mode=form.delivery_mode.data,
+            message_body=form.message_body.data,
+            template_name=form.template_name.data,
+            template_language=form.template_language.data,
+            template_body_parameters=form.parsed_template_parameters(),
+            test_member_id=form.test_member_id.data if is_test else None,
+        )
+        audit(
+            action="send_whatsapp_announcement_test" if is_test else "send_whatsapp_announcement",
+            resource_type="announcement",
+            resource_id=announcement.id,
+            metadata={
+                "delivery_mode": announcement.delivery_mode,
+                "template_name": announcement.template_name,
+                "recipient_count": announcement.total_recipients,
+                "is_test": announcement.is_test,
+            },
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("gym.dashboard"))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Could not create WhatsApp announcement gym=%s", current_user.gym_id)
+        flash("The announcement was not created. Please try again.", "danger")
+        return redirect(url_for("gym.dashboard"))
+
+    start_announcement_dispatch(current_app._get_current_object(), announcement.id)
+    if is_test:
+        flash("Test announcement queued. Check the selected member's WhatsApp before sending to everyone.", "success")
+    else:
+        flash(
+            f"Announcement queued for {announcement.total_recipients} consented member(s). Delivery status is shown below.",
+            "success",
+        )
+    return redirect(url_for("gym.dashboard"))
 
 
 @gym_bp.route("/settings", methods=["GET", "POST"])
@@ -192,6 +274,27 @@ def _whatsapp_media_cache_url(qr_settings: QRSettings) -> str | None:
     if qr_settings.qr_image_path and qr_settings.qr_image_path.startswith(("http://", "https://")):
         return normalize_public_media_url(qr_settings.qr_image_path) or None
     return None
+
+
+def _announcement_form() -> AnnouncementForm:
+    form = AnnouncementForm()
+    consented_members = (
+        Member.query.filter(
+            Member.gym_id == current_user.gym_id,
+            Member.deleted_at.is_(None),
+            Member.whatsapp_opted_in.is_(True),
+        )
+        .order_by(Member.full_name.asc(), Member.id.asc())
+        .limit(500)
+        .all()
+    )
+    form.test_member_id.choices = [(0, "Choose a consented member")] + [
+        (member.id, f"{member.full_name} ({member.phone})") for member in consented_members
+    ]
+    if request.method == "GET":
+        form.delivery_mode.data = "session_message"
+        form.template_language.data = "en_US"
+    return form
 
 
 def _whatsapp_diagnostics(gym: Gym) -> list[dict[str, str | bool]]:

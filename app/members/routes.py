@@ -14,6 +14,7 @@ from app.models import Gym, Member, MembershipPlan, PaymentVerification, Renewal
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.models.mixins import utcnow
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.bridge_service import queue_membership_command
 from app.utils.decorators import active_gym_required, roles_required
@@ -199,7 +200,12 @@ def create():
         db.session.add(member)
         db.session.flush()
         queue_membership_command(member)
-        audit(action="create_member", resource_type="member", resource_id=member.id)
+        audit(
+            action="create_member",
+            resource_type="member",
+            resource_id=member.id,
+            metadata={"whatsapp_opted_in": member.whatsapp_opted_in},
+        )
         invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
         flash("Member added.", "success")
@@ -238,7 +244,12 @@ def edit(member_id: int):
     if form.validate_on_submit():
         _apply_member_form(member, form)
         queue_membership_command(member)
-        audit(action="update_member", resource_type="member", resource_id=member.id)
+        audit(
+            action="update_member",
+            resource_type="member",
+            resource_id=member.id,
+            metadata={"whatsapp_opted_in": member.whatsapp_opted_in},
+        )
         invalidate_dashboard_cache(current_user.gym_id)
         db.session.commit()
         flash("Member updated.", "success")
@@ -418,6 +429,11 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     if member.status == "active" and member.membership_end < today_for_gym(current_user.gym.timezone):
         member.status = "expired"
     member.notes = form.notes.data
+    member.whatsapp_opted_in = bool(form.whatsapp_opted_in.data)
+    if member.whatsapp_opted_in and member.whatsapp_opted_in_at is None:
+        member.whatsapp_opted_in_at = utcnow()
+    elif not member.whatsapp_opted_in:
+        member.whatsapp_opted_in_at = None
 
 
 def _selected_member_ids() -> list[int]:

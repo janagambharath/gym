@@ -46,6 +46,9 @@ class Config:
         if day.strip()
     ]
     REMINDER_JOB_MINUTES = int(os.getenv("REMINDER_JOB_MINUTES", "1440"))
+    ANNOUNCEMENT_DISPATCH_MINUTES = int(
+        os.getenv("ANNOUNCEMENT_DISPATCH_MINUTES", "5")
+    )
 
     # Command leases make delivery safe across laptop/network failures.  The
     # bridge polls outbound over HTTPS; no biometric terminal is exposed.

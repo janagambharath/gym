@@ -65,6 +65,7 @@ def _due_members_query(gym_id: int, days_before: int, gym_timezone: str):
     query = (
         Member.query.filter_by(gym_id=gym_id, status="active")
         .filter(Member.deleted_at.is_(None))
+        .filter(Member.whatsapp_opted_in.is_(True))
         .filter(Member.membership_end == target_date)
         .filter(~Member.id.in_(already_renewed))
         .filter(~Member.id.in_(already_paid))
@@ -318,7 +319,13 @@ def send_template_fallback_for_reengagement(
 
     member = log.member
     gym = Gym.query.filter_by(id=log.gym_id).first()
-    if not member or not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
+    if (
+        not member
+        or not member.whatsapp_opted_in
+        or not gym
+        or not gym.whatsapp_enabled
+        or not gym.phone_number_id
+    ):
         return False
 
     result = _send_template_message(
@@ -455,6 +462,12 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     member = log.member
     if member.gym_id != log.gym_id:
         raise ValueError("Reminder tenant does not match member tenant.")
+    if not member.whatsapp_opted_in:
+        log.status = "skipped"
+        log.error_message = "No WhatsApp consent is recorded for this member."
+        log.provider_message_id = None
+        invalidate_dashboard_cache(log.gym_id)
+        return log
     gym = Gym.query.filter_by(id=log.gym_id).first()
     if not gym or not gym.whatsapp_enabled or not gym.phone_number_id:
         raise ValueError("WhatsApp is not configured and enabled for this gym.")

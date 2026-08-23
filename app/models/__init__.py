@@ -1,4 +1,5 @@
 from app.extensions import db
+from app.models.announcement import Announcement, AnnouncementDelivery
 from app.models.audit_log import AuditLog
 from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallation
 from app.models.gym import Gym
@@ -11,6 +12,8 @@ from app.models.template import NotificationTemplate
 from app.models.user import User
 
 __all__ = [
+    "Announcement",
+    "AnnouncementDelivery",
     "AuditLog",
     "BridgeAttendance",
     "BridgeCommand",
