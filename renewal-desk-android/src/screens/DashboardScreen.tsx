@@ -13,31 +13,32 @@ import { StatusCard } from '../components/StatusCard';
 import { apiRequest, getCachedSession, logout } from '../services/apiClient';
 import { colors, radius, spacing } from '../theme/tokens';
 
+// Matches actual backend /api/mobile/v1/dashboard response (unwrapped)
 type DashboardData = {
-  total_members: number;
-  active_members: number;
-  expired_members: number;
+  total_active: number;
   expiring_soon: number;
-  total_revenue: number;
-  recent_payments: number;
+  expired: number;
+  pending_payments: number;
+  sent_reminders: number;
+  failed_reminders: number;
+  total_collected: string;
 };
 
 type DashboardScreenProps = {
   onLogout: () => void;
   onNavigateMembers: () => void;
+  onNavigatePayments?: () => void;
+  onNavigateRenewals?: () => void;
+  onNavigateSettings?: () => void;
 };
 
-async function loadDashboard(): Promise<
-  { ok: true; data: DashboardData } | { ok: false; message: string; status?: number }
-> {
-  const result = await apiRequest<DashboardData>('/api/mobile/v1/dashboard');
-  if (result.ok) {
-    return result;
-  }
-  return { ok: false, message: result.error.message, status: result.error.status };
-}
-
-export function DashboardScreen({ onLogout, onNavigateMembers }: DashboardScreenProps) {
+export function DashboardScreen({
+  onLogout,
+  onNavigateMembers,
+  onNavigatePayments,
+  onNavigateRenewals,
+  onNavigateSettings,
+}: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
@@ -49,17 +50,17 @@ export function DashboardScreen({ onLogout, onNavigateMembers }: DashboardScreen
   useEffect(() => {
     let cancelled = false;
 
-    loadDashboard().then((result) => {
+    apiRequest<DashboardData>('/api/mobile/v1/dashboard').then((result) => {
       if (cancelled) return;
       if (result.ok) {
         setData(result.data);
         setError(undefined);
       } else {
-        if (result.status === 401) {
+        if (result.error.status === 401) {
           onLogout();
           return;
         }
-        setError(result.message);
+        setError(result.error.message);
       }
       setLoading(false);
       setRefreshing(false);
@@ -125,31 +126,76 @@ export function DashboardScreen({ onLogout, onNavigateMembers }: DashboardScreen
 
         {data ? (
           <>
+            {/* Key metrics */}
             <View style={styles.statRow}>
-              <StatBox label="Total Members" value={data.total_members} />
-              <StatBox label="Active" value={data.active_members} color={colors.success} />
-            </View>
-            <View style={styles.statRow}>
-              <StatBox label="Expired" value={data.expired_members} color={colors.critical} />
+              <StatBox label="Active" value={data.total_active} color={colors.success} />
               <StatBox label="Expiring Soon" value={data.expiring_soon} color={colors.warning} />
             </View>
+            <View style={styles.statRow}>
+              <StatBox label="Expired" value={data.expired} color={colors.critical} />
+              <StatBox label="Pending Pay" value={data.pending_payments} color="#7C3AED" />
+            </View>
 
+            {/* Revenue */}
             <StatusCard
-              detail={`₹${data.total_revenue.toLocaleString('en-IN')} total revenue · ${data.recent_payments} recent payments`}
+              detail={`₹${Number(data.total_collected || 0).toLocaleString('en-IN')} collected`}
               title="Revenue"
               tone="success"
             />
 
+            {/* Reminders */}
+            {(data.sent_reminders > 0 || data.failed_reminders > 0) ? (
+              <StatusCard
+                detail={`${data.sent_reminders} sent · ${data.failed_reminders} failed`}
+                title="WhatsApp Reminders"
+                tone={data.failed_reminders > 0 ? 'warning' : 'success'}
+              />
+            ) : null}
+
+            {/* Quick actions */}
             <TouchableOpacity
               accessibilityRole="button"
               onPress={onNavigateMembers}
               style={styles.actionCard}
             >
-              <Text style={styles.actionTitle}>View Members →</Text>
+              <Text style={styles.actionTitle}>Members →</Text>
               <Text style={styles.actionDetail}>
                 Search, filter, and manage gym members
               </Text>
             </TouchableOpacity>
+
+            {onNavigateRenewals ? (
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={onNavigateRenewals}
+                style={[styles.actionCard, { backgroundColor: '#059669' }]}
+              >
+                <Text style={styles.actionTitle}>Renewals →</Text>
+                <Text style={styles.actionDetail}>Upcoming and expired memberships</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {onNavigatePayments ? (
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={onNavigatePayments}
+                style={[styles.actionCard, { backgroundColor: '#7C3AED' }]}
+              >
+                <Text style={styles.actionTitle}>Payments →</Text>
+                <Text style={styles.actionDetail}>Verify and manage payments</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {onNavigateSettings ? (
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={onNavigateSettings}
+                style={[styles.actionCard, { backgroundColor: colors.textSecondary }]}
+              >
+                <Text style={styles.actionTitle}>Settings →</Text>
+                <Text style={styles.actionDetail}>Gym settings and plans</Text>
+              </TouchableOpacity>
+            ) : null}
           </>
         ) : null}
 

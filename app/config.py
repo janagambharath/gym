@@ -79,6 +79,12 @@ class Config:
 
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+    # ── Mobile API ───────────────────────────────────────────────────────
+    MOBILE_API_ENABLED = os.getenv("MOBILE_API_ENABLED", "false").lower() == "true"
+    MOBILE_API_TOKEN_SECRET = os.getenv("MOBILE_API_TOKEN_SECRET", "")
+    MOBILE_API_ACCESS_TOKEN_MINUTES = int(os.getenv("MOBILE_API_ACCESS_TOKEN_MINUTES", "15"))
+    MOBILE_API_REFRESH_TOKEN_DAYS = int(os.getenv("MOBILE_API_REFRESH_TOKEN_DAYS", "30"))
+
 
 class DevelopmentConfig(Config):
     DEBUG = True

@@ -5,7 +5,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
+import { MemberDetailScreen } from './src/screens/MemberDetailScreen';
 import { MembersScreen } from './src/screens/MembersScreen';
+import type { Member } from './src/screens/MembersScreen';
+import { PaymentsScreen } from './src/screens/PaymentsScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import { restoreSession } from './src/services/apiClient';
 import { colors } from './src/theme/tokens';
 
@@ -13,6 +17,9 @@ type RootStackParamList = {
   Login: undefined;
   Dashboard: undefined;
   Members: undefined;
+  MemberDetail: { member: Member };
+  Payments: undefined;
+  Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -60,6 +67,8 @@ export default function App() {
                     {...props}
                     onLogout={handleLogout}
                     onNavigateMembers={() => props.navigation.navigate('Members')}
+                    onNavigatePayments={() => props.navigation.navigate('Payments')}
+                    onNavigateSettings={() => props.navigation.navigate('Settings')}
                   />
                 )}
               </Stack.Screen>
@@ -67,6 +76,35 @@ export default function App() {
                 {(props) => (
                   <MembersScreen
                     {...props}
+                    onBack={() => props.navigation.goBack()}
+                    onLogout={handleLogout}
+                    onSelectMember={(member) => props.navigation.navigate('MemberDetail', { member })}
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="MemberDetail">
+                {(props) => {
+                  const member = (props.route.params as { member: Member })?.member;
+                  return (
+                    <MemberDetailScreen
+                      member={member}
+                      onBack={() => props.navigation.goBack()}
+                      onLogout={handleLogout}
+                    />
+                  );
+                }}
+              </Stack.Screen>
+              <Stack.Screen name="Payments">
+                {(props) => (
+                  <PaymentsScreen
+                    onBack={() => props.navigation.goBack()}
+                    onLogout={handleLogout}
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="Settings">
+                {(props) => (
+                  <SettingsScreen
                     onBack={() => props.navigation.goBack()}
                     onLogout={handleLogout}
                   />

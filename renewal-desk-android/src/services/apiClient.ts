@@ -7,8 +7,8 @@ import { clearSession, loadSession, MobileSession, saveSession } from '../storag
 
 export type ApiError = {
   message: string;
+  code?: string;
   status?: number;
-  field?: string;
 };
 
 export type ApiResult<T> =
@@ -21,6 +21,16 @@ type RequestOptions = {
   /** Skip auth header (e.g. for login). */
   anonymous?: boolean;
   timeoutMs?: number;
+};
+
+// ---------------------------------------------------------------------------
+// Backend envelope — every response is { success, data?, error? }
+// ---------------------------------------------------------------------------
+
+type BackendEnvelope<T> = {
+  success: boolean;
+  data?: T;
+  error?: { code: string; message: string };
 };
 
 // ---------------------------------------------------------------------------
@@ -50,6 +60,11 @@ export async function restoreSession(): Promise<MobileSession | undefined> {
 // Token refresh
 // ---------------------------------------------------------------------------
 
+type RefreshResponse = {
+  access_token: string;
+  refresh_token: string;
+};
+
 async function attemptRefresh(baseUrl: string): Promise<MobileSession | undefined> {
   if (!cachedSession?.refreshToken) {
     return undefined;
@@ -72,11 +87,16 @@ async function attemptRefresh(baseUrl: string): Promise<MobileSession | undefine
       return undefined;
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
+    const envelope = (await response.json()) as BackendEnvelope<RefreshResponse>;
+    if (!envelope.success || !envelope.data) {
+      await clearSession();
+      cachedSession = undefined;
+      return undefined;
+    }
+
     const newSession: MobileSession = {
-      accessToken: data.access_token as string,
-      refreshToken: data.refresh_token as string,
-      expiresAt: typeof data.expires_at === 'string' ? data.expires_at : undefined,
+      accessToken: envelope.data.access_token,
+      refreshToken: envelope.data.refresh_token,
       tenantId: cachedSession.tenantId,
       tenantName: cachedSession.tenantName,
       userId: cachedSession.userId,
@@ -108,7 +128,7 @@ async function refreshOnce(baseUrl: string): Promise<MobileSession | undefined> 
 }
 
 // ---------------------------------------------------------------------------
-// Core request function
+// Core request function — unwraps { success, data } envelope
 // ---------------------------------------------------------------------------
 
 export async function apiRequest<T>(
@@ -165,23 +185,17 @@ export async function apiRequest<T>(
       }
     }
 
-    if (!response.ok) {
-      let message = `Request failed (${response.status}).`;
-      try {
-        const errorBody = (await response.json()) as Record<string, unknown>;
-        if (typeof errorBody.message === 'string') {
-          message = errorBody.message;
-        } else if (typeof errorBody.error === 'string') {
-          message = errorBody.error;
-        }
-      } catch {
-        // Use the default message.
-      }
-      return { ok: false, error: { message, status: response.status } };
+    // Parse the backend envelope.
+    const envelope = (await response.json()) as BackendEnvelope<T>;
+
+    if (!response.ok || !envelope.success) {
+      const message = envelope.error?.message ?? `Request failed (${response.status}).`;
+      const code = envelope.error?.code;
+      return { ok: false, error: { message, code, status: response.status } };
     }
 
-    const data = (await response.json()) as T;
-    return { ok: true, data };
+    // Unwrap: return envelope.data as T
+    return { ok: true, data: envelope.data as T };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       return { ok: false, error: { message: 'Request timed out. Please try again.' } };
@@ -194,25 +208,29 @@ export async function apiRequest<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Auth convenience functions
+// Auth convenience functions — match actual backend response shapes
 // ---------------------------------------------------------------------------
 
-export type LoginResponse = {
+export type LoginResponseData = {
   access_token: string;
   refresh_token: string;
-  expires_at?: string;
   user: {
-    id: string;
+    id: number;
     email: string;
     full_name: string;
     role: string;
-    gym_id: string;
-    gym_name: string;
+  };
+  gym: {
+    id: number;
+    name: string;
+    slug: string;
+    timezone: string;
+    whatsapp_enabled: boolean;
   };
 };
 
-export async function login(email: string, password: string): Promise<ApiResult<LoginResponse>> {
-  const result = await apiRequest<LoginResponse>('/api/mobile/v1/auth/login', {
+export async function login(email: string, password: string): Promise<ApiResult<LoginResponseData>> {
+  const result = await apiRequest<LoginResponseData>('/api/mobile/v1/auth/login', {
     method: 'POST',
     body: { email, password },
     anonymous: true,
@@ -223,10 +241,9 @@ export async function login(email: string, password: string): Promise<ApiResult<
     const session: MobileSession = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
-      expiresAt: data.expires_at,
-      tenantId: data.user.gym_id,
-      tenantName: data.user.gym_name,
-      userId: data.user.id,
+      tenantId: String(data.gym.id),
+      tenantName: data.gym.name,
+      userId: String(data.user.id),
       userName: data.user.full_name,
       userRole: data.user.role,
     };
@@ -239,8 +256,11 @@ export async function login(email: string, password: string): Promise<ApiResult<
 
 export async function logout(): Promise<void> {
   try {
-    // Best-effort server-side logout.
-    await apiRequest('/api/mobile/v1/auth/logout', { method: 'POST' });
+    const refreshToken = cachedSession?.refreshToken;
+    await apiRequest('/api/mobile/v1/auth/logout', {
+      method: 'POST',
+      body: refreshToken ? { refresh_token: refreshToken } : {},
+    });
   } catch {
     // Ignore — we clear the local session regardless.
   } finally {

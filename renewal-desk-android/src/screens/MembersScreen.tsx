@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -12,58 +12,47 @@ import {
 import { apiRequest } from '../services/apiClient';
 import { colors, radius, spacing } from '../theme/tokens';
 
+// Matches actual backend /api/mobile/v1/members response (unwrapped)
 type Member = {
   id: number;
   full_name: string;
   phone: string;
-  status: 'active' | 'expired' | 'inactive';
+  email: string | null;
+  gender: string | null;
+  status: 'active' | 'expired' | 'deleted';
+  membership_start: string | null;
   membership_end: string | null;
-  plan_name: string | null;
+  days_until_expiry: number | null;
+  plan: { id: number; name: string; duration_days: number; price: string } | null;
+  joined_on: string | null;
+  notes: string | null;
+  whatsapp_opted_in: boolean;
+  has_biometric: boolean;
 };
 
 type MembersResponse = {
   members: Member[];
-  total: number;
-  page: number;
-  pages: number;
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+  };
 };
 
 type MembersScreenProps = {
   onBack: () => void;
   onLogout: () => void;
+  onSelectMember?: (member: Member) => void;
 };
 
 const STATUS_COLORS: Record<string, string> = {
   active: colors.success,
   expired: colors.critical,
-  inactive: colors.muted,
+  deleted: colors.muted,
 };
 
-async function loadMembers(
-  pageNum: number,
-  searchQuery: string,
-  status: string,
-): Promise<
-  { ok: true; data: MembersResponse } | { ok: false; message: string; status?: number }
-> {
-  const params = new URLSearchParams({ page: String(pageNum), per_page: '20' });
-  if (searchQuery.trim()) {
-    params.set('search', searchQuery.trim());
-  }
-  if (status !== 'all') {
-    params.set('status', status);
-  }
-
-  const result = await apiRequest<MembersResponse>(
-    `/api/mobile/v1/members?${params.toString()}`,
-  );
-  if (result.ok) {
-    return result;
-  }
-  return { ok: false, message: result.error.message, status: result.error.status };
-}
-
-export function MembersScreen({ onBack, onLogout }: MembersScreenProps) {
+export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScreenProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -71,61 +60,102 @@ export function MembersScreen({ onBack, onLogout }: MembersScreenProps) {
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Debounce search input
+  const handleSearch = useCallback((text: string) => {
+    setSearch(text);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(text);
+      setPage(1);
+    }, 400);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
 
-    loadMembers(page, search, statusFilter).then((result) => {
+    const params = new URLSearchParams({ page: String(page), page_size: '20' });
+    if (debouncedSearch.trim()) {
+      params.set('q', debouncedSearch.trim());
+    }
+    if (statusFilter !== 'all') {
+      params.set('status', statusFilter);
+    }
+
+    apiRequest<MembersResponse>(`/api/mobile/v1/members?${params.toString()}`).then((result) => {
       if (cancelled) return;
       if (result.ok) {
         setMembers(result.data.members);
-        setPage(result.data.page);
-        setTotalPages(result.data.pages);
+        setTotalPages(result.data.pagination.total_pages);
         setError(undefined);
       } else {
-        if (result.status === 401) {
+        if (result.error.status === 401) {
           onLogout();
           return;
         }
-        setError(result.message);
+        setError(result.error.message);
       }
       setLoading(false);
     });
 
     return () => { cancelled = true; };
-  }, [page, search, statusFilter, onLogout]);
-
-  const handleSearch = useCallback((text: string) => {
-    setLoading(true);
-    setSearch(text);
-    setPage(1);
-  }, []);
+  }, [page, debouncedSearch, statusFilter, onLogout]);
 
   const handleStatusFilter = useCallback((status: string) => {
-    setLoading(true);
     setStatusFilter(status);
     setPage(1);
   }, []);
 
-  const renderMember = useCallback(({ item }: { item: Member }) => (
-    <View style={styles.memberCard}>
-      <View style={styles.memberHeader}>
-        <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
-        <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[item.status] ?? colors.muted }]}>
-          <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
+  const renderMember = useCallback(({ item }: { item: Member }) => {
+    const daysText = item.days_until_expiry !== null && item.days_until_expiry !== undefined
+      ? item.days_until_expiry > 0
+        ? `${item.days_until_expiry}d left`
+        : item.days_until_expiry === 0
+          ? 'Expires today'
+          : `${Math.abs(item.days_until_expiry)}d overdue`
+      : null;
+
+    return (
+      <TouchableOpacity
+        style={styles.memberCard}
+        onPress={() => onSelectMember?.(item)}
+        activeOpacity={onSelectMember ? 0.7 : 1}
+      >
+        <View style={styles.memberHeader}>
+          <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[item.status] ?? colors.muted }]}>
+            <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
+          </View>
         </View>
-      </View>
-      <Text style={styles.memberDetail}>{item.phone}</Text>
-      {item.plan_name ? (
-        <Text style={styles.memberDetail}>{item.plan_name}</Text>
-      ) : null}
-      {item.membership_end ? (
-        <Text style={styles.memberDetail}>
-          Expires: {new Date(item.membership_end).toLocaleDateString('en-IN')}
-        </Text>
-      ) : null}
-    </View>
-  ), []);
+        <Text style={styles.memberDetail}>📱 {item.phone}</Text>
+        {item.plan ? (
+          <Text style={styles.memberDetail}>📋 {item.plan.name} · ₹{item.plan.price}</Text>
+        ) : null}
+        {item.membership_end ? (
+          <View style={styles.expiryRow}>
+            <Text style={styles.memberDetail}>
+              📅 {new Date(item.membership_end).toLocaleDateString('en-IN')}
+            </Text>
+            {daysText ? (
+              <Text style={[
+                styles.daysTag,
+                item.days_until_expiry !== null && item.days_until_expiry <= 0
+                  ? { backgroundColor: colors.criticalSurface, color: colors.critical }
+                  : item.days_until_expiry !== null && item.days_until_expiry <= 7
+                    ? { backgroundColor: colors.warningSurface, color: colors.warning }
+                    : { backgroundColor: colors.successSurface, color: colors.success },
+              ]}>
+                {daysText}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  }, [onSelectMember]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -155,7 +185,7 @@ export function MembersScreen({ onBack, onLogout }: MembersScreenProps) {
       </View>
 
       <View style={styles.filterRow}>
-        {['all', 'active', 'expired', 'inactive'].map((status) => (
+        {['all', 'active', 'expired'].map((status) => (
           <TouchableOpacity
             key={status}
             onPress={() => handleStatusFilter(status)}
@@ -186,9 +216,13 @@ export function MembersScreen({ onBack, onLogout }: MembersScreenProps) {
       ) : error ? (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={() => setPage(1)} style={styles.retryButton}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
         </View>
       ) : members.length === 0 ? (
         <View style={styles.emptyContainer}>
+          <Text style={styles.emptyIcon}>👥</Text>
           <Text style={styles.emptyText}>
             {search ? 'No members found matching your search.' : 'No members yet.'}
           </Text>
@@ -199,6 +233,9 @@ export function MembersScreen({ onBack, onLogout }: MembersScreenProps) {
           data={members}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderMember}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
         />
       )}
 
@@ -227,6 +264,8 @@ export function MembersScreen({ onBack, onLogout }: MembersScreenProps) {
   );
 }
 
+export type { Member };
+
 const styles = StyleSheet.create({
   backButton: {
     minWidth: 60,
@@ -236,11 +275,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  daysTag: {
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: '700',
+    marginLeft: spacing.xs,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
   emptyContainer: {
     alignItems: 'center',
     flex: 1,
     justifyContent: 'center',
     padding: spacing.xl,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: spacing.sm,
   },
   emptyText: {
     color: colors.muted,
@@ -248,6 +299,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   errorContainer: {
+    alignItems: 'center',
     margin: spacing.md,
     padding: spacing.md,
     backgroundColor: colors.criticalSurface,
@@ -258,6 +310,11 @@ const styles = StyleSheet.create({
   errorText: {
     color: colors.critical,
     fontSize: 14,
+  },
+  expiryRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    marginTop: 2,
   },
   filterChip: {
     backgroundColor: colors.card,
@@ -341,6 +398,18 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     justifyContent: 'center',
     paddingVertical: spacing.sm,
+  },
+  retryButton: {
+    backgroundColor: colors.brand,
+    borderRadius: radius.sm,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   safeArea: {
     backgroundColor: colors.background,

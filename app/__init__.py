@@ -130,6 +130,14 @@ def _validate_config(app: Flask, selected_config: str) -> None:
                 "WHATSAPP_WEBHOOK_SECRET must be set to at least 16 characters "
                 "when WHATSAPP_ENABLED=true."
             )
+    if app.config.get("MOBILE_API_ENABLED"):
+        mobile_secret = app.config.get("MOBILE_API_TOKEN_SECRET", "")
+        if not mobile_secret or len(mobile_secret) < 32:
+            raise RuntimeError(
+                "MOBILE_API_TOKEN_SECRET must be set to at least 32 characters "
+                "when MOBILE_API_ENABLED=true. Generate one with: "
+                'python -c "import secrets; print(secrets.token_hex(32))"'
+            )
 
 
 def _ensure_runtime_dirs(app: Flask) -> None:
@@ -203,23 +211,44 @@ def _register_blueprints(app: Flask) -> None:
     csrf.exempt(bridge_bp)
     app.register_blueprint(bridge_bp)
 
+    # Mobile JSON API — uses Bearer tokens, no CSRF.
+    if app.config.get("MOBILE_API_ENABLED"):
+        from app.mobile_api import mobile_api_bp
+
+        csrf.exempt(mobile_api_bp)
+        app.register_blueprint(mobile_api_bp)
+        app.logger.info("Mobile API v1 enabled at /api/mobile/v1")
+    else:
+        app.logger.info("Mobile API v1 disabled (set MOBILE_API_ENABLED=true to enable)")
+
 
 def _register_error_handlers(app: Flask) -> None:
+    def _is_api_request():
+        return request.path.startswith("/api/")
+
     @app.errorhandler(403)
     def forbidden(error):
+        if _is_api_request():
+            return jsonify({"success": False, "error": {"code": "FORBIDDEN", "message": "Forbidden."}}), 403
         return render_template("errors/403.html"), 403
 
     @app.errorhandler(404)
     def not_found(error):
+        if _is_api_request():
+            return jsonify({"success": False, "error": {"code": "NOT_FOUND", "message": "Not found."}}), 404
         return render_template("errors/404.html"), 404
 
     @app.errorhandler(429)
     def too_many_requests(error):
+        if _is_api_request():
+            return jsonify({"success": False, "error": {"code": "RATE_LIMITED", "message": "Too many requests."}}), 429
         return render_template("errors/429.html"), 429
 
     @app.errorhandler(500)
     def server_error(error):
         app.logger.exception("Unhandled server error: %s", error)
+        if _is_api_request():
+            return jsonify({"success": False, "error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred."}}), 500
         return render_template("errors/500.html"), 500
 
 

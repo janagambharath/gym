@@ -3,6 +3,7 @@ from app.models.audit_log import AuditLog
 from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallation
 from app.models.gym import Gym
 from app.models.member import Member, MembershipPlan
+from app.models.mobile_token import MobileRefreshToken
 from app.models.payment_verification import PaymentVerification
 from app.models.qr_settings import QRSettings
 from app.models.reminder_log import ReminderLog
@@ -18,6 +19,7 @@ __all__ = [
     "Gym",
     "Member",
     "MembershipPlan",
+    "MobileRefreshToken",
     "NotificationTemplate",
     "PaymentVerification",
     "QRSettings",
@@ -26,3 +28,4 @@ __all__ = [
     "User",
     "db",
 ]
+
