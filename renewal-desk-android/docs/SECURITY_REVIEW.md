@@ -1,32 +1,49 @@
-# Security review — Android foundation
+# Security review — Android (execution pass)
+
+Updated: 2026-08-23
 
 ## Implemented controls
 
-- The project has its own Git repository outside the Bridge/backend worktree.
-- No backend, web, database, Railway, WhatsApp, payment, or biometric files were changed.
-- API base URL is public runtime configuration, never a secret hardcoded in source.
-- Non-local API URLs require HTTPS.
-- A future access token is scoped to Expo SecureStore, not AsyncStorage or plain files.
-- Service-health requests time out and surface a generic human-readable error rather than raw exception details.
-- The Android manifest requests only Internet access.
-- No Bridge API key, terminal serial, Meta credential, payment secret, or test account is included.
-- There is no direct biometric hardware access and no WebView/browser-session workaround.
+- API base URL is public runtime configuration, never hardcoded in source.
+- Non-local API URLs require HTTPS; embedded credentials and loopback URLs rejected outside development.
+- Access and refresh tokens stored only in Expo SecureStore with `AFTER_FIRST_UNLOCK` accessibility.
+- Session cleared on logout, 401 refresh failure, and manual sign-out.
+- API client sends Bearer tokens via `Authorization` header — no cookies, no CSRF.
+- Automatic 401→refresh→retry with deduplication (only one refresh in flight).
+- Service-health requests use a 10-second abort timeout with generic user-facing errors.
+- Android manifest requests only `android.permission.INTERNET`.
+- `allowBackup: false` set in app.json.
+- `expo-secure-store` configured with `configureAndroidBackup: true` for proper backup exclusion.
+- No Bridge API key, terminal serial, Meta credential, payment secret, or test account included.
+- No WebView/browser-session workaround or direct biometric hardware access.
+- No `console.log` calls in production source code.
+- No hardcoded member names, phone numbers, UPI IDs, gym names, or business data.
 
-## Required before mobile workflows can ship
+## Security scan results (2026-08-23)
 
-- A backend-authorized mobile authentication/session contract.
-- JSON API routes with server-enforced RBAC and gym scoping.
-- Idempotency for payment, renewal, reminder, and access mutations.
-- Field-level validation errors and pagination metadata.
-- A reviewed production privacy policy and Google Play Data Safety declaration.
-- Approved Renewal Desk launcher/splash artwork; the template Expo assets are not final store assets.
-- Android SDK/EAS release build plus signed AAB validation.
+Grep scan across entire `renewal-desk-android/src/` for: `password`, `secret`, `token`, `api_key`, `client_secret`, `PRIVATE_KEY`, `META_`, `WABA`, `BRIDGE`, `localhost`, `127.0.0.1`, `console.log`, `debug`, `mock`, `fake`, `placeholder`.
 
-## Evidence from the 2026-08-23 launch gate
+**All results are defensive code:**
+- `password` — appears in `runtime.ts` URL credential rejection logic and test fixtures
+- `localhost`/`127.0.0.1` — appears in `runtime.ts` loopback validation and test fixtures
+- `Bridge` — appears in `ServiceReadinessScreen.tsx` documentation string only
 
-- `npm.cmd run verify` passed (TypeScript, lint, and 10 unit tests).
-- `npx.cmd expo-doctor` passed all 21 checks.
-- Production config resolution confirmed package `online.revorax.renewaldesk`, version `1.0.0`, versionCode `1`, `allowBackup: false`, and an Internet-only permission policy.
-- The regenerated native manifest retains Internet access and explicitly removes storage, overlay, and vibration permissions added by dependencies. Android backup is disabled and Expo SecureStore backup exclusions are generated.
-- A focused source scan found no committed credentials, Bridge credentials, Meta/WhatsApp credentials, payment credentials, or production member data. The only credential-related text is defensive validation, test fixtures, and documentation.
-- This is not a full mobile-security sign-off: the deployed token-authenticated Mobile API, authentication flow, tenant isolation, and real-device release build are still unavailable. See `BLOCKERS.md`.
+**No actual secrets, credentials, debug output, or mock data found.**
+
+## Remaining blockers
+
+- Full session lifecycle cannot be tested until backend JWT endpoints exist.
+- No privacy policy URL in app configuration or release materials.
+- No Data Safety declaration.
+- `npm audit --omit=dev`: 10 moderate transitive advisories in Expo `uuid`/`xcode` chain. No safe auto-fix available.
+
+## Permission review
+
+| Permission | Status |
+| --- | --- |
+| `android.permission.INTERNET` | ✅ Required — API communication |
+| `android.permission.READ_EXTERNAL_STORAGE` | ❌ Blocked in app.json |
+| `android.permission.SYSTEM_ALERT_WINDOW` | ❌ Blocked in app.json |
+| `android.permission.VIBRATE` | ❌ Blocked in app.json |
+| `android.permission.WRITE_EXTERNAL_STORAGE` | ❌ Blocked in app.json |
+| Contacts, SMS, Location, Camera, Microphone | Not requested |

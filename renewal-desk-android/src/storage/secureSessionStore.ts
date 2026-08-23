@@ -4,9 +4,13 @@ const SESSION_KEY = 'renewal-desk.mobile-session.v1';
 
 export type MobileSession = {
   accessToken: string;
+  refreshToken: string;
   expiresAt?: string;
   tenantId: string;
+  tenantName?: string;
   userId: string;
+  userName?: string;
+  userRole?: string;
 };
 
 function isSession(value: unknown): value is MobileSession {
@@ -17,9 +21,13 @@ function isSession(value: unknown): value is MobileSession {
   const session = value as Record<string, unknown>;
   return (
     typeof session.accessToken === 'string' &&
+    typeof session.refreshToken === 'string' &&
     typeof session.tenantId === 'string' &&
     typeof session.userId === 'string' &&
-    (session.expiresAt === undefined || typeof session.expiresAt === 'string')
+    (session.expiresAt === undefined || typeof session.expiresAt === 'string') &&
+    (session.tenantName === undefined || typeof session.tenantName === 'string') &&
+    (session.userName === undefined || typeof session.userName === 'string') &&
+    (session.userRole === undefined || typeof session.userRole === 'string')
   );
 }
 

@@ -10,6 +10,15 @@
         "EXPO_PUBLIC_APP_ENV": "development"
       }
     },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging"
+      }
+    },
     "staging": {
       "channel": "staging",
       "distribution": "internal",

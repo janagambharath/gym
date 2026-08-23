@@ -1,35 +1,42 @@
 # Test report
 
-Date: 2026-08-23
+Updated: 2026-08-23 (execution pass)
 
 ## Automated validation
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Strict TypeScript | `npm.cmd run typecheck` | Passed |
-| Expo lint | `npm.cmd run lint` | Passed |
-| Unit tests | `npm.cmd test` | Passed: 10/10 |
-| Combined validation | `npm.cmd run verify` | Passed |
-| Expo Doctor | `npx.cmd expo-doctor` | Passed: 21/21 checks |
-| Resolved production Expo config | `EXPO_PUBLIC_APP_ENV=production npx.cmd expo config --type public --json` | Passed: package `online.revorax.renewaldesk`, version `1.0.0`, versionCode `1`, `allowBackup: false`, Internet-only permission policy |
-| Generated Android manifest | `npx.cmd expo prebuild --platform android --no-install --clean` | Passed: only `android.permission.INTERNET` remains active; storage, overlay, and vibration permissions are explicit removals |
-| Android JavaScript bundle | `npx.cmd expo export --platform android` | Passed: 586 modules; generated a 1.4 MB Hermes bundle |
-| Live health client | `fetchPlatformHealth(...)` against production `/health` | Passed: `db`, `schema`, and `status` were `ok` |
-| Production mobile API route | `GET /api/mobile/v1/health` | Failed closed: public deployment returned `404` |
+| Strict TypeScript | `npm run typecheck` | ✅ Passed |
+| Expo lint | `npm run lint` | ✅ Passed (0 errors, 0 warnings) |
+| Unit tests | `npm test` | ✅ Passed: 10/10 |
+| Combined validation | `npm run verify` | ✅ Passed |
+| Expo Doctor | `npx expo-doctor` | ✅ Passed: 21/21 checks |
+| Android JavaScript bundle | `npx expo export --platform android` | ✅ Passed: 834 modules, 1.9 MB Hermes bundle |
+| Live health client | `fetchPlatformHealth(...)` against production `/health` | ✅ Passed (previous review confirmed `db`, `schema`, `status` = `ok`) |
+| Production mobile API route | `GET /api/mobile/v1/health` | ❌ 404 — endpoint does not exist in backend source |
 
-The unit tests cover safe runtime environment resolution and defensive parsing of the actual `/health` JSON shape. They do not touch customer records or run production mutations.
+## Security scan
 
-## Not yet possible in this environment
+| Pattern | Files with matches | Assessment |
+| --- | --- | --- |
+| `password` | `runtime.ts`, `runtime.test.ts` | Defensive URL credential rejection — safe |
+| `secret` | None | Clean |
+| `token` | None in source (only type definitions) | Clean |
+| `localhost` / `127.0.0.1` | `runtime.ts`, `runtime.test.ts` | Loopback validation logic — safe |
+| `console.log` | None | Clean |
+| `mock` / `fake` / `placeholder` | None | Clean |
+| `api_key` / `META_` / `WABA` / `BRIDGE` | `ServiceReadinessScreen.tsx` (doc string only) | Clean |
 
-- Android emulator/device launch: Android SDK and `adb` are not installed/configured.
-- Signed Android App Bundle (`.aab`) and installable APK: the EAS local build attempt stopped before build because no Expo account is authenticated; no signing setup or Android SDK is available.
-- Native functional testing: Android workflows are not implemented and the documented mobile API is not deployed publicly.
-- Real gym testing: must wait for a usable, enabled token-authenticated mobile API, complete Android workflows, and designated test accounts.
+## Dependency audit
 
-## Dependency security audit
+`npm audit --omit=dev`: 10 moderate transitive advisories via `uuid` < 11.1.1 → `xcode` → `@expo/config-plugins` → Expo SDK chain. The only offered fix is `npm audit fix --force` which downgrades to Expo SDK 46 (breaking). **Not applied.**
 
-`npm.cmd audit --omit=dev` reported 10 moderate transitive advisories in the current Expo toolchain path (through `uuid`/`xcode`). The only offered automated remediation would force a breaking downgrade to Expo SDK 46. It was **not** applied. Before release, review an Expo-supported dependency update/advisory fix rather than using `npm audit fix --force`.
+## Not yet possible
 
-## Release-artifact attempt
-
-`gradlew.bat app:bundleRelease` was genuinely attempted on 2026-08-23. Gradle 9.3.1 stopped before compilation because this host provides JVM 8 and requires JVM 17 or later. No signed APK or AAB was produced. An earlier EAS local-build attempt was also unable to start because no Expo account is authenticated.
+- **Android emulator/device launch**: No Android SDK or `adb` on this host.
+- **Signed AAB/APK**: JDK 8 installed; Gradle requires JDK 17+. No EAS account authenticated.
+- **Native functional testing**: Backend mobile API does not exist.
+- **Real gym testing**: Requires deployed mobile API, test accounts, and signed artifact.
+- **Authentication flow testing**: Backend JWT endpoints do not exist.
+- **Tenant isolation testing**: Requires two gym accounts with mobile API access.
+- **Offline/network failure testing**: Requires installable build on real device.

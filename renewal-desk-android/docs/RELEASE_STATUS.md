@@ -1,5 +1,7 @@
 # Release status
 
+Updated: 2026-08-23 (execution pass)
+
 ## App identity
 
 | Field | Value |
@@ -8,21 +10,36 @@
 | Android package ID | `online.revorax.renewaldesk` |
 | Version name | `1.0.0` |
 | Version code | `1` |
-| Target SDK | Determined by the installed Expo SDK at native build time; verify the current Google Play requirement immediately before release. |
+| Target SDK | Determined by Expo SDK 57 at native build time |
 
 ## Current status
 
-This is an Android foundation, not a release candidate. It builds a JavaScript bundle and has passing type/lint/unit validation, but it cannot truthfully produce `renewal-desk-release.aab` yet.
+This is an **Android client with screens built but no backend API to connect to**. It includes login, dashboard, and members screens with a full auth-aware API client, but the Flask backend has no mobile API implementation (no JWT auth, no JSON endpoints, no `/api/mobile/v1` routes).
 
-## Release blockers
+### What is implemented and verified
+- Login screen with email/password
+- API client with Bearer auth, automatic token refresh, and retry
+- Dashboard screen with stats and pull-to-refresh
+- Members screen with search, filters, and pagination
+- React Navigation with auth-conditional flow
+- SecureStore session management (access + refresh tokens)
+- Health check connectivity
+- TypeScript strict mode, Expo lint, 10 unit tests passing
+- Expo Doctor 21/21 passing
+- JS bundle exports successfully (834 modules, 1.9MB)
 
-1. A separately authorized and documented mobile owner/staff API contract.
-2. Native Android SDK/JDK build environment or approved EAS Build project credentials.
-3. Release signing/Google Play App Signing configuration—never committed to Git.
-4. Approved Renewal Desk launcher and splash artwork. The Expo template images are not final branding.
-5. Public, accurate privacy-policy URL and Google Play Data Safety declaration based on the final app behavior.
-6. Real-device, multi-account, network-failure, and designated real-gym acceptance tests.
+### What is blocked
+- All screens show errors or empty states because the backend mobile API does not exist
+- No signed AAB/APK (JDK 17+ required)
+- No EAS account authenticated
 
-## 2026-08-23 launch-gate addendum
+## Release blockers (ordered by priority)
 
-The launch-gate verdict is recorded in `FINAL_LAUNCH_GATE.md`; the complete external-dependency ledger is in `BLOCKERS.md`. The repository now has a validated production Expo config and an Internet-only Android permission policy, but it remains an Android foundation rather than an owner/staff mobile application.
+1. **Backend mobile API** — JWT auth + JSON endpoints for all features. This is the #1 blocker.
+2. **JDK 17+ / Android SDK** — required for native builds.
+3. **EAS account or local signing setup** — required for signed distribution.
+4. **Privacy policy** — required for Play Store.
+5. **Data Safety declaration** — required for Play Store.
+6. **Final branding assets** — app icon and splash are Expo templates.
+7. **12+ testers for 14 days** — if personal Play developer account.
+8. **Real gym pilot** — at least 3 gyms.

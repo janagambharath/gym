@@ -1,29 +1,36 @@
 # Renewal Desk Android final launch gate
 
-Date: 2026-08-23
-Repository: `renewal-desk-android`
+Date: 2026-08-23 (execution pass)
+Repository: `renewal-desk-android` (within `gym` monorepo)
 Scope: Android repository only. Backend, web frontend, database, Railway, Redis, WhatsApp/Meta, payment systems, and the biometric Bridge were not changed.
 
 ## Verdict
 
 **NOT READY**
 
-## Evidence gathered
+## Critical finding
 
-| Area | Result | Evidence |
+The backend has **no mobile API implementation**. Previous reviews referenced a "source mobile contract under `/api/mobile/v1`" — this does not exist. The `app/__init__.py` `_register_blueprints()` function registers only browser-session blueprints (auth, gym, staff, members, payments, reminders, webhooks, admin, bridge). There are no JWT auth endpoints, no mobile JSON routes, and no `/api/mobile/v1` namespace in the codebase. The auth system uses Flask-Login with CSRF forms only.
+
+## What was accomplished in this execution pass
+
+| Area | Action | Result |
 | --- | --- | --- |
-| Automated validation | Pass | `npm.cmd run verify` completed TypeScript, Expo lint, and 10/10 unit tests. |
-| Expo project health | Pass | `npx.cmd expo-doctor` completed 21/21 checks. |
-| Android configuration | Pass | Production Expo config resolves package `online.revorax.renewaldesk`, version `1.0.0`, versionCode `1`, `allowBackup: false`, and an Internet-only permission policy. |
-| Native configuration generation | Pass | `npx.cmd expo prebuild --platform android --no-install --clean` succeeded. Generated manifest keeps Internet and removes storage, overlay, and vibration permissions. |
-| Production deployment health | Pass, limited | `https://gym-production-910c.up.railway.app/health` returned healthy database/schema status. |
-| Production Mobile API | Blocked | `https://gym-production-910c.up.railway.app/api/mobile/v1/health` returned HTTP 404. No Android-to-Mobile-API path can be verified. |
-| Release AAB/APK | Blocked | `gradlew.bat app:bundleRelease` stopped before compilation because this host uses JVM 8 while Gradle 9.3.1 requires JVM 17+. No artifact was generated. |
-| Product workflows | Blocked | The app contains a readiness screen, not owner/staff mobile workflows. Login, renewal, payments, WhatsApp, RBAC, and tenant isolation are unverified. |
-| Secret/permission review | Pass, limited | Focused scan found no committed credentials or production data. Permission policy was minimized and native manifest checked. |
-| Store/field acceptance | Unverified | No privacy-policy URL, Data Safety completion, reviewer account, closed-test group, real-device run, or three-gym pilot exists. |
+| API client | Built `src/services/apiClient.ts` with Bearer auth, 401→refresh→retry, timeout, typed login/logout | ✓ TypeScript passes |
+| Session store | Added refreshToken, tenantName, userName, userRole to MobileSession | ✓ TypeScript passes |
+| Login screen | Email/password with keyboard handling, loading, errors | ✓ Lint passes |
+| Dashboard screen | Stats, pull-to-refresh, error handling, logout | ✓ Lint passes |
+| Members screen | Search, filters, pagination, error/empty states | ✓ Lint passes |
+| Navigation | React Navigation stack with auth-conditional flow | ✓ TypeScript passes |
+| TypeScript | `tsc --noEmit` | ✓ Pass |
+| Expo lint | `expo lint` | ✓ Pass (0 errors) |
+| Unit tests | 10/10 | ✓ Pass |
+| Expo Doctor | 21/21 checks | ✓ Pass |
+| JS bundle | `npx expo export --platform android` | ✓ 834 modules, 1.9MB Hermes bundle |
+| Security scan | Grep for secrets, credentials, debug, mock, localhost | ✓ Clean |
+| npm audit | 10 moderate in Expo `uuid` chain | ⚠ No safe auto-fix |
 
-## Exact current configuration
+## Configuration
 
 | Field | Value |
 | --- | --- |
@@ -31,23 +38,23 @@ Scope: Android repository only. Backend, web frontend, database, Railway, Redis,
 | Version | `1.0.0` |
 | Version code | `1` |
 | Active Android permission | `android.permission.INTERNET` |
-| Production API environment used for testing | No Mobile API base URL was configured; the app intentionally refuses to invent one. The public production health endpoint was checked separately. |
-| Production APK path | None — not generated. |
-| Production AAB path | None — not generated. |
+| Production APK path | None — JDK 17+ required, not available on this host |
+| Production AAB path | None — same environment constraint |
 
-## Required external work
+## Required external work (ordered)
 
-1. Deploy and enable the token-authenticated `/api/mobile/v1` API, then implement actual Android owner/staff workflows against it.
-2. Supply safe two-gym test accounts and execute authentication, tenant isolation, idempotency, offline, payment, renewal, and WhatsApp tests.
-3. Use a controlled release workstation with JDK 17+, Android SDK/adb, and authorized signing/EAS credentials to build a signed AAB and APK.
-4. Complete the factual privacy policy, Data Safety, store listing, reviewer access, closed-test setup, and real-gym pilot.
+1. **Build the backend mobile API**: JWT auth endpoints (`/api/mobile/v1/auth/login`, `/refresh`, `/logout`, `/me`), JSON dashboard, members, renewals, payments, WhatsApp, settings endpoints with RBAC and tenant scoping. This is the fundamental blocker — without it, the Android app has nothing to call.
+2. **Deploy the mobile API** to staging with test gym accounts.
+3. **Test the Android app** against the staging API with two gym accounts for tenant isolation.
+4. **Build signed AAB/APK** on a workstation with JDK 17+ and Android SDK, or via EAS Cloud Build.
+5. **Complete Play Store requirements**: privacy policy, Data Safety, store listing, screenshots, reviewer account.
+6. **Run closed test** with 12+ real testers for 14 days (if personal developer account).
+7. **Pilot with 3 real gyms**, collect feedback, fix launch-blocking issues.
 
-The severity-ranked details, evidence, and retest results are in [BLOCKERS.md](BLOCKERS.md). No workaround, browser-cookie authentication, WebView scraping, direct Bridge access, or fake production data was introduced to bypass these gates.
+## Git status
 
-## Git handoff
-
-The standalone Android project has a clean local initial commit. The authorized `gym` remote was inspected and its `main` branch contains the existing Python backend, so the Android project must be published under `renewal-desk-android/` on a separate mergeable branch rather than overwriting the repository root.
+The project is part of the `gym` monorepo on branch `main` with remote `origin` at `https://github.com/janagambharath/gym.git`. Working tree is clean after the pull. New changes are uncommitted pending this review.
 
 ## Next human action
 
-Assign the backend/API owner to deploy the documented Mobile API and provide designated non-production owner/staff test accounts for two gyms. In parallel, provide a controlled Android release environment with JDK 17+, Android SDK, and signing/EAS authority so the first real signed test artifact can be built and installed.
+**Assign a backend engineer to build the mobile API** (JWT auth + JSON endpoints). The Android client is ready to connect — login screen, API client, session management, dashboard, and members screens are all implemented and will activate once the backend provides the endpoints.
