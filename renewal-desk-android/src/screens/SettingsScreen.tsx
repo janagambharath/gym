@@ -47,11 +47,14 @@ export function SettingsScreen({ onBack, onLogout }: SettingsScreenProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [refreshing, setRefreshing] = useState(false);
+  const [revision, setRevision] = useState(0);
   const session = getCachedSession();
 
-  const fetchSettings = useCallback(() => {
-    setLoading(true);
-    apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((result) => {
+  useEffect(() => {
+    let cancelled = false;
+
+    void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((result) => {
+      if (cancelled) return;
       if (result.ok) {
         setData(result.data);
         setError(undefined);
@@ -62,9 +65,9 @@ export function SettingsScreen({ onBack, onLogout }: SettingsScreenProps) {
       setLoading(false);
       setRefreshing(false);
     });
-  }, [onLogout]);
 
-  useEffect(() => { fetchSettings(); }, [fetchSettings]);
+    return () => { cancelled = true; };
+  }, [revision, onLogout]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -83,7 +86,7 @@ export function SettingsScreen({ onBack, onLogout }: SettingsScreenProps) {
 
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchSettings(); }} colors={[colors.brand]} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); setRevision((r) => r + 1); }} colors={[colors.brand]} />}
       >
         {loading && !refreshing ? (
           <ActivityIndicator color={colors.brand} size="large" style={styles.spinner} />

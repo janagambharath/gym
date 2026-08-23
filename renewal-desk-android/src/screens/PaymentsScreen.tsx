@@ -51,18 +51,18 @@ export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
   const [error, setError] = useState<string | undefined>();
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [revision, setRevision] = useState(0);
 
-  const fetchPayments = useCallback(() => {
-    setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
     const params = new URLSearchParams({ page: String(page), page_size: '20' });
     if (statusFilter !== 'all') params.set('status', statusFilter);
 
-    apiRequest<PaymentsResponse>(`/api/mobile/v1/payments?${params.toString()}`).then((result) => {
+    void apiRequest<PaymentsResponse>(`/api/mobile/v1/payments?${params.toString()}`).then((result) => {
+      if (cancelled) return;
       if (result.ok) {
         setPayments(result.data.payments);
-        setTotalPages(result.data.pagination.total_pages);
         setError(undefined);
       } else {
         if (result.error.status === 401) { onLogout(); return; }
@@ -71,33 +71,33 @@ export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
       setLoading(false);
       setRefreshing(false);
     });
-  }, [page, statusFilter, onLogout]);
 
-  useEffect(() => { fetchPayments(); }, [fetchPayments]);
+    return () => { cancelled = true; };
+  }, [page, statusFilter, revision, onLogout]);
 
   const handleVerify = useCallback(async (paymentId: number) => {
     setActionLoading(paymentId);
     const result = await apiRequest<{ message: string }>(`/api/mobile/v1/payments/${paymentId}/verify`, { method: 'POST' });
     if (result.ok) {
-      fetchPayments();
+      setRevision((r) => r + 1);
     } else {
       if (result.error.status === 401) { onLogout(); return; }
       setError(result.error.message);
     }
     setActionLoading(null);
-  }, [fetchPayments, onLogout]);
+  }, [onLogout]);
 
   const handleReject = useCallback(async (paymentId: number) => {
     setActionLoading(paymentId);
     const result = await apiRequest<{ message: string }>(`/api/mobile/v1/payments/${paymentId}/reject`, { method: 'POST' });
     if (result.ok) {
-      fetchPayments();
+      setRevision((r) => r + 1);
     } else {
       if (result.error.status === 401) { onLogout(); return; }
       setError(result.error.message);
     }
     setActionLoading(null);
-  }, [fetchPayments, onLogout]);
+  }, [onLogout]);
 
   const renderPayment = useCallback(({ item }: { item: Payment }) => {
     const style = STATUS_STYLES[item.status] ?? STATUS_STYLES.pending;
@@ -177,7 +177,7 @@ export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
           keyExtractor={(item) => String(item.id)}
           renderItem={renderPayment}
           contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchPayments(); }} colors={[colors.brand]} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); setRevision((r) => r + 1); }} colors={[colors.brand]} />}
         />
       )}
     </SafeAreaView>

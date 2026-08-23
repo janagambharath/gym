@@ -39,6 +39,12 @@
     ],
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7eef8559-b676-40bc-a7e0-faa9424765db"
+      }
+    },
+    "owner": "bharath1818"
   }
 }

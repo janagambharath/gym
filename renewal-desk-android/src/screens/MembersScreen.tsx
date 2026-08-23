@@ -75,7 +75,6 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
 
     const params = new URLSearchParams({ page: String(page), page_size: '20' });
     if (debouncedSearch.trim()) {
@@ -85,7 +84,7 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
       params.set('status', statusFilter);
     }
 
-    apiRequest<MembersResponse>(`/api/mobile/v1/members?${params.toString()}`).then((result) => {
+    void apiRequest<MembersResponse>(`/api/mobile/v1/members?${params.toString()}`).then((result) => {
       if (cancelled) return;
       if (result.ok) {
         setMembers(result.data.members);

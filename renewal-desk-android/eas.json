@@ -29,7 +29,7 @@
       }
     },
     "production": {
-      "autoIncrement": "versionCode",
+      "autoIncrement": true,
       "channel": "production",
       "android": {
         "buildType": "app-bundle"
