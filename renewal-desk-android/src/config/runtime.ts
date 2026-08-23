@@ -49,12 +49,20 @@ function resolveEnvironment(value: string | undefined): AppEnvironment {
 }
 
 export function getRuntimeConfiguration(
-  environment: EnvironmentInput = process.env,
+  environment?: EnvironmentInput,
 ): RuntimeConfiguration {
-  const appEnvironment = resolveEnvironment(environment.EXPO_PUBLIC_APP_ENV);
+  const appEnvRaw = environment
+    ? environment.EXPO_PUBLIC_APP_ENV
+    : process.env.EXPO_PUBLIC_APP_ENV;
+
+  const apiBaseUrlRaw = environment
+    ? environment.EXPO_PUBLIC_API_BASE_URL
+    : process.env.EXPO_PUBLIC_API_BASE_URL;
+
+  const appEnvironment = resolveEnvironment(appEnvRaw);
 
   return {
-    apiBaseUrl: normalizeBaseUrl(environment.EXPO_PUBLIC_API_BASE_URL, appEnvironment),
+    apiBaseUrl: normalizeBaseUrl(apiBaseUrlRaw, appEnvironment),
     environment: appEnvironment,
   };
 }
