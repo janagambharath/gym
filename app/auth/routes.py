@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
 from urllib.parse import urljoin, urlparse
 
@@ -47,7 +48,36 @@ def login():
 
     form = LoginForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data.lower().strip()).first()
+        submitted_email = form.email.data.lower().strip()
+        default_admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "").lower().strip()
+        default_admin_pass = os.getenv("DEFAULT_ADMIN_PASSWORD")
+
+        # Bootstrap or sync super admin directly from environment variables on login
+        if (
+            default_admin_email
+            and default_admin_pass
+            and submitted_email == default_admin_email
+            and form.password.data == default_admin_pass
+        ):
+            bootstrap_user = User.query.filter_by(email=default_admin_email).first()
+            if not bootstrap_user:
+                bootstrap_user = User(
+                    email=default_admin_email,
+                    full_name="Platform Admin",
+                    role="super_admin",
+                    is_active=True,
+                )
+                bootstrap_user.set_password(default_admin_pass)
+                db.session.add(bootstrap_user)
+            else:
+                bootstrap_user.set_password(default_admin_pass)
+                bootstrap_user.role = "super_admin"
+                bootstrap_user.is_active = True
+                bootstrap_user.failed_login_count = 0
+                bootstrap_user.locked_until = None
+            db.session.commit()
+
+        user = User.query.filter_by(email=submitted_email).first()
         if user and user.is_locked():
             flash(
                 "Account is temporarily locked due to too many failed attempts. "
