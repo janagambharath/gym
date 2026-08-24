@@ -200,6 +200,27 @@ def _process_message(gym: Gym, message: dict) -> bool:
         member.last_inbound_at = utcnow()
         if not member.whatsapp_opted_in_at:
             member.whatsapp_opted_in_at = member.last_inbound_at
+
+        # Route existing member messages through AI bot (if entitled)
+        if is_feature_enabled(gym, WHATSAPP_BOT_FEATURE):
+            message_text = ""
+            if message_type == "text":
+                message_text = message.get("text", {}).get("body", "")
+            elif message_type == "button":
+                message_text = message.get("button", {}).get("text", "")
+
+            if message_text.strip():
+                customer_name = (
+                    message.get("profile", {}).get("name")
+                    or member.full_name
+                )
+                bot_service = BotService(gym)
+                bot_service.handle_inbound_message(
+                    phone=whatsapp_phone,
+                    message_body=message_text,
+                    provider_message_id=message.get("id"),
+                    customer_name=customer_name,
+                )
         return True
 
     member.whatsapp_opted_in = True

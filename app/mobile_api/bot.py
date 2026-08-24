@@ -536,6 +536,90 @@ def register_bot_routes(bp):
             },
         })
 
+    # ─── FAQ Management ──────────────────────────────────────────────
+
+    @bp.route("/bot/faqs", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    @whatsapp_bot_entitlement_required
+    def create_faq():
+        data = request.get_json(silent=True) or {}
+        question = (data.get("question") or "").strip()
+        answer = (data.get("answer") or "").strip()
+
+        if not question or not answer:
+            return error_response("VALIDATION_ERROR", "Question and answer are required.", 400)
+        if len(question) > 500:
+            return error_response("VALIDATION_ERROR", "Question is too long (max 500 chars).", 400)
+        if len(answer) > 2000:
+            return error_response("VALIDATION_ERROR", "Answer is too long (max 2000 chars).", 400)
+
+        faq = BotFAQ(
+            gym_id=g.gym_id,
+            question=question,
+            answer=answer,
+            enabled=True,
+            priority=data.get("priority", 0),
+        )
+        db.session.add(faq)
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "id": faq.id,
+                "question": faq.question,
+                "answer": faq.answer,
+                "enabled": faq.enabled,
+            },
+        }), 201
+
+    @bp.route("/bot/faqs/<int:faq_id>", methods=["DELETE"])
+    @token_required
+    @roles_required("gym_owner")
+    @whatsapp_bot_entitlement_required
+    def delete_faq(faq_id: int):
+        faq = BotFAQ.query.filter_by(id=faq_id, gym_id=g.gym_id).first()
+        if faq is None:
+            return error_response("NOT_FOUND", "FAQ not found.", 404)
+        db.session.delete(faq)
+        db.session.commit()
+        return jsonify({"success": True, "data": {"message": "FAQ deleted."}})
+
+    @bp.route("/bot/faqs/<int:faq_id>", methods=["PATCH"])
+    @token_required
+    @roles_required("gym_owner")
+    @whatsapp_bot_entitlement_required
+    def update_faq(faq_id: int):
+        faq = BotFAQ.query.filter_by(id=faq_id, gym_id=g.gym_id).first()
+        if faq is None:
+            return error_response("NOT_FOUND", "FAQ not found.", 404)
+
+        data = request.get_json(silent=True) or {}
+        if "question" in data:
+            q = (data["question"] or "").strip()
+            if not q:
+                return error_response("VALIDATION_ERROR", "Question cannot be empty.", 400)
+            faq.question = q
+        if "answer" in data:
+            a = (data["answer"] or "").strip()
+            if not a:
+                return error_response("VALIDATION_ERROR", "Answer cannot be empty.", 400)
+            faq.answer = a
+        if "enabled" in data:
+            faq.enabled = bool(data["enabled"])
+
+        db.session.commit()
+        return jsonify({
+            "success": True,
+            "data": {
+                "id": faq.id,
+                "question": faq.question,
+                "answer": faq.answer,
+                "enabled": faq.enabled,
+            },
+        })
+
     # ─── Bot Testing Sandbox ──────────────────────────────────────────
 
     @bp.route("/bot/test", methods=["POST"])

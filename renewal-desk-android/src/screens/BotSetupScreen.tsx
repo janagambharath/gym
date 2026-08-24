@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
@@ -56,6 +57,11 @@ export function BotSetupScreen({ onBack, onLogout }: BotSetupScreenProps) {
   const [registrationLink, setRegistrationLink] = useState('');
   const [handoverEnabled, setHandoverEnabled] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [showAddFaq, setShowAddFaq] = useState(false);
+  const [newFaqQuestion, setNewFaqQuestion] = useState('');
+  const [newFaqAnswer, setNewFaqAnswer] = useState('');
+  const [faqSaving, setFaqSaving] = useState(false);
+  const [faqDeleting, setFaqDeleting] = useState<number | null>(null);
 
   const canEdit = getCachedSession()?.userRole === 'gym_owner';
 
@@ -330,12 +336,31 @@ export function BotSetupScreen({ onBack, onLogout }: BotSetupScreenProps) {
                 {faqs.map((faq) => (
                   <View key={faq.id} style={styles.faqItem}>
                     <View style={styles.faqQuestionRow}>
-                      <Text style={styles.faqQuestion}>{faq.question}</Text>
+                      <Text style={[styles.faqQuestion, { flex: 1 }]}>{faq.question}</Text>
                       <View style={[styles.faqStatus, { backgroundColor: faq.enabled ? colors.successSurface : colors.gray100 }]}>
                         <Text style={[styles.faqStatusText, { color: faq.enabled ? colors.successDark : colors.muted }]}>
                           {faq.enabled ? 'ON' : 'OFF'}
                         </Text>
                       </View>
+                      {canEdit ? (
+                        <TouchableOpacity
+                          disabled={faqDeleting === faq.id}
+                          onPress={async () => {
+                            setFaqDeleting(faq.id);
+                            const res = await apiRequest(`/api/mobile/v1/bot/faqs/${faq.id}`, { method: 'DELETE' });
+                            if (res.ok) {
+                              setFaqs((prev) => prev.filter((f) => f.id !== faq.id));
+                              setNotice({ kind: 'success', text: 'FAQ deleted.' });
+                            } else {
+                              setNotice({ kind: 'error', text: res.error?.message || 'Failed to delete FAQ.' });
+                            }
+                            setFaqDeleting(null);
+                          }}
+                          style={styles.faqDeleteBtn}
+                        >
+                          <Icon name="close" size={16} color={faqDeleting === faq.id ? colors.muted : colors.critical} />
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
                     <Text numberOfLines={3} style={styles.faqAnswer}>{faq.answer}</Text>
                   </View>
@@ -344,6 +369,69 @@ export function BotSetupScreen({ onBack, onLogout }: BotSetupScreenProps) {
             ) : (
               <Text style={styles.emptyFaqText}>No FAQs are configured for this bot yet.</Text>
             )}
+
+            {canEdit && !showAddFaq ? (
+              <TouchableOpacity
+                onPress={() => setShowAddFaq(true)}
+                style={styles.addFaqBtn}
+              >
+                <Icon name="add" size={18} color={colors.brand} />
+                <Text style={styles.addFaqBtnText}>Add FAQ</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {canEdit && showAddFaq ? (
+              <View style={styles.addFaqForm}>
+                <FormField
+                  label="Question"
+                  onChangeText={setNewFaqQuestion}
+                  placeholder="e.g. What are the gym timings?"
+                  value={newFaqQuestion}
+                />
+                <FormField
+                  label="Answer"
+                  multiline
+                  onChangeText={setNewFaqAnswer}
+                  placeholder="e.g. We are open from 5 AM to 10 PM every day."
+                  value={newFaqAnswer}
+                />
+                <View style={styles.addFaqActions}>
+                  <TouchableOpacity
+                    onPress={() => { setShowAddFaq(false); setNewFaqQuestion(''); setNewFaqAnswer(''); }}
+                    style={styles.addFaqCancelBtn}
+                  >
+                    <Text style={styles.addFaqCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={faqSaving || !newFaqQuestion.trim() || !newFaqAnswer.trim()}
+                    onPress={async () => {
+                      setFaqSaving(true);
+                      const res = await apiRequest<{ id: number; question: string; answer: string; enabled: boolean }>(
+                        '/api/mobile/v1/bot/faqs',
+                        { method: 'POST', body: { question: newFaqQuestion.trim(), answer: newFaqAnswer.trim() } },
+                      );
+                      if (res.ok) {
+                        setFaqs((prev) => [res.data, ...prev]);
+                        setNewFaqQuestion('');
+                        setNewFaqAnswer('');
+                        setShowAddFaq(false);
+                        setNotice({ kind: 'success', text: 'FAQ added!' });
+                      } else {
+                        setNotice({ kind: 'error', text: res.error?.message || 'Failed to add FAQ.' });
+                      }
+                      setFaqSaving(false);
+                    }}
+                    style={[
+                      styles.addFaqSaveBtn,
+                      (!newFaqQuestion.trim() || !newFaqAnswer.trim() || faqSaving) && { opacity: 0.5 },
+                    ]}
+                  >
+                    <Icon name="checkmark" size={16} color={colors.textInverse} />
+                    <Text style={styles.addFaqSaveText}>{faqSaving ? 'Saving...' : 'Add FAQ'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
           </View>
 
           <PrimaryButton
@@ -377,6 +465,70 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: fontSize.sm,
     marginTop: spacing.md,
+  },
+  addFaqBtn: {
+    alignItems: 'center',
+    borderColor: colors.brand,
+    borderRadius: radius.md,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  addFaqBtnText: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  addFaqForm: {
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    gap: spacing.md,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+  },
+  addFaqActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'flex-end',
+  },
+  addFaqCancelBtn: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  addFaqCancelText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+  addFaqSaveBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  addFaqSaveText: {
+    color: colors.textInverse,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  faqDeleteBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
+    padding: spacing.xs,
   },
   errorNotice: {
     backgroundColor: colors.criticalSurface,
