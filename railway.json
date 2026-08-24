@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "preDeployCommand": "flask --app app:create_app db upgrade",
+    "preDeployCommand": "flask --app app:create_app db upgrade && flask --app app:create_app create-admin",
     "startCommand": "gunicorn --config gunicorn.conf.py \"app:create_app()\"",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5,

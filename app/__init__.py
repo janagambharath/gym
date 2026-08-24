@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import sentry_sdk
 from flask import (
@@ -405,14 +408,20 @@ def _register_cli(app: Flask) -> None:
 
     @app.cli.command("create-admin")
     def create_admin() -> None:
-        email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com")
+        email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com").lower().strip()
         password = os.getenv("DEFAULT_ADMIN_PASSWORD")
         if not password:
             print("ERROR: Set DEFAULT_ADMIN_PASSWORD before running create-admin.")
             return
         user = User.query.filter_by(email=email).first()
         if user:
-            print(f"Admin already exists: {email}")
+            user.set_password(password)
+            user.role = "super_admin"
+            user.is_active = True
+            user.failed_login_count = 0
+            user.locked_until = None
+            db.session.commit()
+            print(f"Updated existing super admin credentials: {email}")
             return
 
         admin = User(
