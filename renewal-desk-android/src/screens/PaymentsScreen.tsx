@@ -16,12 +16,15 @@ import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Payment, PaymentsResponse } from '../types';
 import { formatCurrency, formatDate } from '../types';
 
 type PaymentsScreenProps = {
   onLogout: () => void;
+  onSelectPayment?: (paymentId: number) => void;
+  onRecordPayment?: () => void;
 };
 
 const FILTER_OPTIONS = [
@@ -31,7 +34,7 @@ const FILTER_OPTIONS = [
   { key: 'rejected', label: 'Rejected', dotColor: colors.statusRejected },
 ];
 
-export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
+export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment }: PaymentsScreenProps) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,7 +93,11 @@ export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
     const isPending = item.status === 'pending';
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => onSelectPayment?.(item.id)}
+        activeOpacity={0.7}
+      >
         <View style={styles.cardHeader}>
           <View style={styles.cardHeaderLeft}>
             <Avatar name={item.member_name ?? 'M'} size={40} />
@@ -135,7 +142,7 @@ export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
               }
               disabled={actionLoading === item.id}
             >
-              <Text style={styles.actionBtnText}>✓ Verify</Text>
+              <Text style={styles.actionBtnText}><Icon name="checkmark" size={14} color={colors.textInverse} /> Verify</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, styles.rejectBtn]}
@@ -149,11 +156,11 @@ export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
               }
               disabled={actionLoading === item.id}
             >
-              <Text style={styles.rejectBtnText}>✗ Reject</Text>
+              <Text style={styles.rejectBtnText}><Icon name="close" size={14} color={colors.critical} /> Reject</Text>
             </TouchableOpacity>
           </View>
         ) : null}
-      </View>
+      </TouchableOpacity>
     );
   }, [actionLoading]);
 
@@ -161,6 +168,9 @@ export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Payments</Text>
+        <TouchableOpacity style={styles.addBtn} onPress={onRecordPayment}>
+          <Icon name="add" size={20} color={colors.textInverse} />
+        </TouchableOpacity>
       </View>
 
       <FilterChips
@@ -179,9 +189,9 @@ export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
         <ErrorState message={error} onRetry={() => setRevision((r) => r + 1)} />
       ) : payments.length === 0 ? (
         <EmptyState
-          icon="💳"
+          icon={<Icon name="payments" size={40} color={colors.muted} />}
           title="No payments"
-          message={statusFilter !== 'all' ? `No ${statusFilter} payments found.` : 'No payment activity yet.'}
+          subtitle={statusFilter !== 'all' ? `No ${statusFilter} payments found.` : 'No payment activity yet.'}
         />
       ) : (
         <FlatList
@@ -291,10 +301,21 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: spacing.xs,
   },
+  addBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
   header: {
+    alignItems: 'center',
     backgroundColor: colors.surface,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
   },

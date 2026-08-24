@@ -11,6 +11,7 @@ from app.models import Gym, Member, ReminderLog
 from app.models.gym import DEFAULT_WHATSAPP_WELCOME_TEMPLATE
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
+from app.services.bot_service import BotService
 from app.services.reminder_service import send_template_fallback_for_reengagement
 from app.services.whatsapp_service import WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
@@ -135,13 +136,12 @@ def _process_message(gym: Gym, message: dict) -> bool:
         return False
 
     members = _matching_members_for_sender(gym.id, whatsapp_phone)
-    if len(members) != 1:
-        reason = "not found" if not members else "ambiguous"
+    if len(members) > 1:
         current_app.logger.warning(
-            "Ignored WhatsApp inbound: member phone %s in gym %s was %s",
+            "Ignored WhatsApp inbound: member phone %s in gym %s was ambiguous (%s matches)",
             _masked_phone(whatsapp_phone),
             gym.id,
-            reason,
+            len(members),
         )
         audit(
             action="whatsapp_inbound_ignored",
@@ -150,9 +150,31 @@ def _process_message(gym: Gym, message: dict) -> bool:
             metadata={
                 "provider_message_id": message.get("id"),
                 "sender": _masked_phone(whatsapp_phone),
-                "reason": reason,
+                "reason": "ambiguous",
                 "matches": len(members),
             },
+        )
+        return True
+
+    if len(members) == 0:
+        # Prospective lead / non-member -> Pass to WhatsApp AI Receptionist
+        message_text = ""
+        if message_type == "text":
+            message_text = message.get("text", {}).get("body", "")
+        elif message_type == "button":
+            message_text = message.get("button", {}).get("text", "")
+        
+        customer_name = (
+            message.get("profile", {}).get("name")
+            or message.get("sender_name")
+        )
+        
+        bot_service = BotService(gym)
+        bot_service.handle_inbound_message(
+            phone=whatsapp_phone,
+            message_body=message_text,
+            provider_message_id=message.get("id"),
+            customer_name=customer_name,
         )
         return True
 

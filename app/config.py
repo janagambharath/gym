@@ -85,6 +85,20 @@ class Config:
     MOBILE_API_ACCESS_TOKEN_MINUTES = int(os.getenv("MOBILE_API_ACCESS_TOKEN_MINUTES", "15"))
     MOBILE_API_REFRESH_TOKEN_DAYS = int(os.getenv("MOBILE_API_REFRESH_TOKEN_DAYS", "30"))
 
+    # ── WhatsApp AI Bot & OpenRouter Multi-Tier Configuration ────────────
+    BOT_AI_ENABLED = os.getenv("BOT_AI_ENABLED", "true").lower() == "true"
+    BOT_AI_PROVIDER = os.getenv("BOT_AI_PROVIDER", "openrouter")
+    BOT_AI_BASE_URL = os.getenv("BOT_AI_BASE_URL", "https://openrouter.ai/api/v1")
+    BOT_AI_API_KEY = os.getenv("BOT_AI_API_KEY", "")
+    BOT_AI_MODEL_PRIMARY = os.getenv("BOT_AI_MODEL_PRIMARY", "meta-llama/llama-3.3-70b-instruct:free")
+    BOT_AI_MODEL_FALLBACK_1 = os.getenv("BOT_AI_MODEL_FALLBACK_1", "google/gemini-2.0-flash-exp:free")
+    BOT_AI_MODEL_FALLBACK_2 = os.getenv("BOT_AI_MODEL_FALLBACK_2", "mistralai/mistral-7b-instruct:free")
+    BOT_AI_TIMEOUT_SECONDS = int(os.getenv("BOT_AI_TIMEOUT_SECONDS", "10"))
+    BOT_AI_MAX_TOKENS = int(os.getenv("BOT_AI_MAX_TOKENS", "450"))
+    BOT_SYSTEM_PROMPT_VERSION = "v1.2.0"
+    BOT_BEHAVIOR_VERSION = "2026.08"
+
+
 
 class DevelopmentConfig(Config):
     DEBUG = True
@@ -96,6 +110,7 @@ class TestingConfig(Config):
     TESTING = True
     WTF_CSRF_ENABLED = False
     ENABLE_SCHEDULER = False
+    MOBILE_API_ENABLED = True
     SQLALCHEMY_DATABASE_URI = os.getenv("TEST_DATABASE_URL", "sqlite:///:memory:")
 
 

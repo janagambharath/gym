@@ -34,6 +34,7 @@ def token_required(view):
             return error_response("GYM_INACTIVE", "Gym account is not active.", 403)
 
         g.current_user = user
+        g.user_id = user.id
         g.gym_id = user.gym_id
         return view(*args, **kwargs)
 

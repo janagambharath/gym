@@ -1,5 +1,16 @@
 from app.extensions import db
 from app.models.audit_log import AuditLog
+from app.models.bot import (
+    BotBookingRequest,
+    BotConversation,
+    BotFAQ,
+    BotFollowUp,
+    BotKnowledgeItem,
+    BotLead,
+    BotMessage,
+    FeatureEntitlement,
+    GymBotConfig,
+)
 from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallation
 from app.models.gym import Gym
 from app.models.member import Member, MembershipPlan
@@ -13,10 +24,19 @@ from app.models.user import User
 
 __all__ = [
     "AuditLog",
+    "BotBookingRequest",
+    "BotConversation",
+    "BotFAQ",
+    "BotFollowUp",
+    "BotKnowledgeItem",
+    "BotLead",
+    "BotMessage",
     "BridgeAttendance",
     "BridgeCommand",
     "BridgeInstallation",
+    "FeatureEntitlement",
     "Gym",
+    "GymBotConfig",
     "Member",
     "MembershipPlan",
     "MobileRefreshToken",

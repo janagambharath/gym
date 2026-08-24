@@ -11,6 +11,7 @@ type FormFieldProps = {
   secureTextEntry?: boolean;
   editable?: boolean;
   multiline?: boolean;
+  numberOfLines?: number;
   maxLength?: number;
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   returnKeyType?: 'done' | 'go' | 'next' | 'search' | 'send';
@@ -28,6 +29,7 @@ export function FormField({
   secureTextEntry,
   editable = true,
   multiline,
+  numberOfLines,
   maxLength,
   autoCapitalize,
   returnKeyType,
@@ -44,6 +46,7 @@ export function FormField({
         keyboardType={keyboardType}
         maxLength={maxLength}
         multiline={multiline}
+        numberOfLines={numberOfLines}
         onChangeText={onChangeText}
         onSubmitEditing={onSubmitEditing}
         placeholder={placeholder}

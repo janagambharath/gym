@@ -15,6 +15,7 @@ import { MetricCard } from '../components/MetricCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession, logout } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
 import { formatCurrency, formatDate, getMemberDisplayStatus } from '../types';
@@ -27,6 +28,8 @@ type DashboardScreenProps = {
   onNavigateSettings?: () => void;
   onNavigateMemberDetail?: (member: Member) => void;
   onNavigateAddMember?: () => void;
+  onNavigateRecordPayment?: () => void;
+  onNavigateWhatsApp?: () => void;
 };
 
 export function DashboardScreen({
@@ -37,6 +40,8 @@ export function DashboardScreen({
   onNavigateSettings,
   onNavigateMemberDetail,
   onNavigateAddMember,
+  onNavigateRecordPayment,
+  onNavigateWhatsApp,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
   const [upcoming, setUpcoming] = useState<Member[]>([]);
@@ -48,7 +53,6 @@ export function DashboardScreen({
 
   const session = getCachedSession();
 
-  // Greeting based on time of day
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';
@@ -104,9 +108,10 @@ export function DashboardScreen({
         <View style={styles.topBarLeft}>
           <Text style={styles.brandName}>Renewal Desk</Text>
           {session?.tenantName ? (
-            <TouchableOpacity style={styles.gymSelector}>
+            <View style={styles.gymSelector}>
+              <Icon name="fitness" size={14} color={colors.muted} />
               <Text style={styles.gymName} numberOfLines={1}>{session.tenantName}</Text>
-            </TouchableOpacity>
+            </View>
           ) : null}
         </View>
         <View style={styles.topBarRight}>
@@ -136,7 +141,7 @@ export function DashboardScreen({
             {/* Greeting */}
             <View style={styles.greeting}>
               <Text style={styles.greetingText}>
-                {getGreeting()}, {session?.userName?.split(' ')[0] ?? 'there'} 👋
+                {getGreeting()}, {session?.userName?.split(' ')[0] ?? 'there'}
               </Text>
               <Text style={styles.greetingSub}>
                 Here's what needs your attention today.
@@ -146,16 +151,14 @@ export function DashboardScreen({
             {/* Key Metrics */}
             <View style={styles.metricsRow}>
               <MetricCard
-                icon="👥"
+                icon={<Icon name="members" size={18} color={colors.brand} />}
                 iconBg={colors.brandSubtle}
-                iconColor={colors.brand}
                 label="Active Members"
                 value={data.total_active}
               />
               <MetricCard
-                icon="⏰"
+                icon={<Icon name="time" size={18} color={colors.statusExpiring} />}
                 iconBg={colors.statusExpiringSurface}
-                iconColor={colors.statusExpiring}
                 label="Expiring Soon"
                 value={data.expiring_soon}
                 subtext="Next 7 days"
@@ -164,18 +167,16 @@ export function DashboardScreen({
             </View>
             <View style={styles.metricsRow}>
               <MetricCard
-                icon="⚠"
+                icon={<Icon name="alert" size={18} color={colors.statusExpired} />}
                 iconBg={colors.statusExpiredSurface}
-                iconColor={colors.statusExpired}
                 label="Expired"
                 value={data.expired}
                 subtext="Need attention"
                 subtextColor={colors.statusExpired}
               />
               <MetricCard
-                icon="₹"
+                icon={<Icon name="wallet" size={18} color={colors.statusPending} />}
                 iconBg={colors.statusPendingSurface}
-                iconColor={colors.statusPending}
                 label="Pending Pay"
                 value={data.pending_payments}
               />
@@ -183,12 +184,24 @@ export function DashboardScreen({
 
             {/* Revenue */}
             <View style={styles.card}>
-              <SectionHeader title="Revenue Overview" icon="₹" />
-              <View style={styles.revenueRow}>
+              <SectionHeader title="Revenue Overview" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+              <View style={styles.revenueGrid}>
                 <View style={styles.revenueItem}>
-                  <Text style={styles.revenueLabel}>Total Collected</Text>
+                  <Text style={styles.revenueLabel}>Today</Text>
                   <Text style={styles.revenueValue}>
-                    {formatCurrency(data.total_collected)}
+                    {formatCurrency(data.revenue_today ?? '0')}
+                  </Text>
+                </View>
+                <View style={[styles.revenueItem, styles.revenueItemBorder]}>
+                  <Text style={styles.revenueLabel}>This Week</Text>
+                  <Text style={styles.revenueValue}>
+                    {formatCurrency(data.revenue_week ?? '0')}
+                  </Text>
+                </View>
+                <View style={[styles.revenueItem, styles.revenueItemBorder]}>
+                  <Text style={styles.revenueLabel}>This Month</Text>
+                  <Text style={styles.revenueValue}>
+                    {formatCurrency(data.revenue_month ?? '0')}
                   </Text>
                 </View>
               </View>
@@ -197,7 +210,7 @@ export function DashboardScreen({
             {/* Attention Required */}
             {(data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0) ? (
               <View style={styles.card}>
-                <SectionHeader title="Attention Required" icon="⊘" />
+                <SectionHeader title="Attention Required" icon={<Icon name="warning" size={18} color={colors.statusExpiring} />} />
                 <View style={styles.attentionRow}>
                   {data.expiring_soon > 0 ? (
                     <TouchableOpacity style={styles.attentionItem} onPress={onNavigateRenewals}>
@@ -205,6 +218,7 @@ export function DashboardScreen({
                         <Text style={styles.attentionDotText}>{data.expiring_soon}</Text>
                       </View>
                       <Text style={styles.attentionLabel}>Members expiring soon</Text>
+                      <Icon name="forward" size={16} color={colors.muted} />
                     </TouchableOpacity>
                   ) : null}
                   {data.pending_payments > 0 ? (
@@ -213,6 +227,7 @@ export function DashboardScreen({
                         <Text style={styles.attentionDotText}>{data.pending_payments}</Text>
                       </View>
                       <Text style={styles.attentionLabel}>Pending payments</Text>
+                      <Icon name="forward" size={16} color={colors.muted} />
                     </TouchableOpacity>
                   ) : null}
                   {data.expired > 0 ? (
@@ -221,6 +236,7 @@ export function DashboardScreen({
                         <Text style={styles.attentionDotText}>{data.expired}</Text>
                       </View>
                       <Text style={styles.attentionLabel}>Expired memberships</Text>
+                      <Icon name="forward" size={16} color={colors.muted} />
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -232,6 +248,7 @@ export function DashboardScreen({
               <View style={styles.card}>
                 <SectionHeader
                   title="Upcoming Renewals"
+                  icon={<Icon name="renewals" size={18} color={colors.brand} />}
                   actionLabel="View All"
                   onAction={onNavigateRenewals}
                 />
@@ -245,7 +262,7 @@ export function DashboardScreen({
                     <View style={styles.upcomingInfo}>
                       <Text style={styles.upcomingName} numberOfLines={1}>{m.full_name}</Text>
                       <Text style={styles.upcomingDetail}>
-                        {m.plan?.name ?? 'No plan'} · {m.plan?.duration_days ? `${m.plan.duration_days} days` : ''}
+                        {m.plan?.name ?? 'No plan'} · {m.plan?.duration_days ? `${m.plan.duration_days}d` : ''}
                       </Text>
                     </View>
                     <View style={styles.upcomingRight}>
@@ -262,6 +279,7 @@ export function DashboardScreen({
               <View style={styles.card}>
                 <SectionHeader
                   title="Recent Payments"
+                  icon={<Icon name="cash" size={18} color={colors.brand} />}
                   actionLabel="View All"
                   onAction={onNavigatePayments}
                 />
@@ -287,10 +305,10 @@ export function DashboardScreen({
 
             {/* Quick Actions */}
             <View style={styles.quickActions}>
-              <QuickAction icon="👤" label="Add Member" onPress={onNavigateAddMember} />
-              <QuickAction icon="🔄" label="Renew" onPress={onNavigateRenewals} />
-              <QuickAction icon="₹" label="Payment" onPress={onNavigatePayments} />
-              <QuickAction icon="💬" label="WhatsApp" onPress={onNavigateSettings} />
+              <QuickAction icon={<Icon name="personAdd" size={22} color={colors.brand} />} label="Add Member" onPress={onNavigateAddMember} />
+              <QuickAction icon={<Icon name="renewals" size={22} color={colors.brand} />} label="Renew" onPress={onNavigateRenewals} />
+              <QuickAction icon={<Icon name="receipt" size={22} color={colors.brand} />} label="Payment" onPress={onNavigateRecordPayment ?? onNavigatePayments} />
+              <QuickAction icon={<Icon name="whatsapp" size={22} color={colors.whatsapp} />} label="WhatsApp" onPress={onNavigateWhatsApp ?? onNavigateSettings} />
             </View>
           </>
         ) : null}
@@ -299,7 +317,7 @@ export function DashboardScreen({
   );
 }
 
-function QuickAction({ icon, label, onPress }: { icon: string; label: string; onPress?: () => void }) {
+function QuickAction({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress?: () => void }) {
   return (
     <TouchableOpacity
       accessibilityRole="button"
@@ -307,7 +325,7 @@ function QuickAction({ icon, label, onPress }: { icon: string; label: string; on
       style={styles.quickAction}
     >
       <View style={styles.quickActionIcon}>
-        <Text style={styles.quickActionIconText}>{icon}</Text>
+        {icon}
       </View>
       <Text style={styles.quickActionLabel}>{label}</Text>
     </TouchableOpacity>
@@ -344,10 +362,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   avatarButton: {
-    minHeight: 44,
-    minWidth: 44,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 44,
   },
   brandName: {
     color: colors.brand,
@@ -385,6 +403,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.md,
     fontWeight: fontWeight.medium,
+    marginLeft: spacing.xs,
   },
   gymSelector: {
     alignItems: 'center',
@@ -398,8 +417,8 @@ const styles = StyleSheet.create({
   paymentAmount: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
     fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.bold,
   },
   paymentDetail: {
     color: colors.muted,
@@ -440,9 +459,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 48,
   },
-  quickActionIconText: {
-    fontSize: 20,
-  },
   quickActionLabel: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
@@ -453,24 +469,29 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.sm,
   },
+  revenueGrid: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
   revenueItem: {
     flex: 1,
+  },
+  revenueItemBorder: {
+    borderLeftColor: colors.border,
+    borderLeftWidth: 1,
+    paddingLeft: spacing.sm,
   },
   revenueLabel: {
     color: colors.muted,
     fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
   },
-  revenueRow: {
-    flexDirection: 'row',
-    gap: spacing.lg,
-    marginTop: spacing.md,
-  },
   revenueValue: {
     color: colors.text,
-    fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontSize: fontSize.xl,
     fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
     marginTop: spacing.xxs,
   },
   safeArea: {

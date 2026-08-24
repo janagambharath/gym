@@ -14,6 +14,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Renewal } from '../types';
 import { formatCurrency, formatDate, getMemberDisplayStatus } from '../types';
@@ -124,7 +125,7 @@ export function RenewMemberScreen({
 
           {/* Payment Info */}
           <View style={styles.successCard}>
-            <SectionHeader title="Payment Information" icon="₹" />
+            <SectionHeader title="Payment Information" icon={<Icon name="currency" size={18} color={colors.brand} />} />
             <InfoRow label="Amount Paid" value={formatCurrency(renewalResult.amount)} />
             <InfoRow label="Payment Method" value={paymentMethod.charAt(0).toUpperCase() + paymentMethod.slice(1)} />
             <InfoRow label="Payment Date" value={formatDate(renewalResult.created_at)} />
@@ -148,14 +149,14 @@ export function RenewMemberScreen({
           {/* Actions */}
           <PrimaryButton
             label="View Member"
-            icon="👤"
+            icon={<Icon name="person" size={16} color={colors.brand} />}
             onPress={() => onViewMember?.(member)}
             variant="primary"
           />
 
           <PrimaryButton
             label="Send WhatsApp"
-            icon="💬"
+            icon={<Icon name="chatbubble" size={16} color={colors.whatsapp} />}
             onPress={() => void handleSendWhatsApp()}
             variant="outline"
           />
@@ -181,7 +182,7 @@ export function RenewMemberScreen({
 
         {/* Renewal Summary */}
         <View style={styles.card}>
-          <SectionHeader title="Renewal Summary" icon="📋" />
+          <SectionHeader title="Renewal Summary" icon={<Icon name="clipboard" size={18} color={colors.brand} />} />
           <InfoRow label="Current Expiry" value={formatDate(member.membership_end)} />
           <InfoRow label="Renewal Duration" value={`${renewalDays} days`} />
           <InfoRow label="Amount" value={formatCurrency(amount)} />
@@ -212,7 +213,7 @@ export function RenewMemberScreen({
 
         {/* Payment Method */}
         <View style={styles.card}>
-          <SectionHeader title="Payment Method" icon="💳" />
+          <SectionHeader title="Payment Method" icon={<Icon name="payments" size={18} color={colors.brand} />} />
           <View style={styles.methodRow}>
             {(['cash', 'upi', 'other'] as PaymentMethod[]).map((method) => (
               <TouchableOpacity
@@ -262,7 +263,7 @@ export function RenewMemberScreen({
         {/* Confirm Button */}
         <PrimaryButton
           label="Confirm Renewal"
-          icon="🔒"
+          icon={<Icon name="lock" size={16} color={colors.textInverse} />}
           onPress={() => void handleRenew()}
           disabled={!agreementChecked}
           loading={renewing}

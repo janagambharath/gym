@@ -1,26 +1,23 @@
+import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, fontSize, fontWeight, spacing } from '../theme/tokens';
 
 type SectionHeaderProps = {
   title: string;
+  icon?: React.ReactNode;
   actionLabel?: string;
   onAction?: () => void;
-  icon?: string;
 };
 
-export function SectionHeader({ title, actionLabel, onAction, icon }: SectionHeaderProps) {
+export function SectionHeader({ title, icon, actionLabel, onAction }: SectionHeaderProps) {
   return (
     <View style={styles.container}>
       <View style={styles.left}>
-        {icon ? <Text style={styles.icon}>{icon}</Text> : null}
+        {icon ? <View style={styles.iconWrap}>{icon}</View> : null}
         <Text style={styles.title}>{title}</Text>
       </View>
       {actionLabel && onAction ? (
-        <TouchableOpacity
-          accessibilityRole="button"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          onPress={onAction}
-        >
+        <TouchableOpacity onPress={onAction} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={styles.action}>{actionLabel}</Text>
         </TouchableOpacity>
       ) : null}
@@ -31,27 +28,24 @@ export function SectionHeader({ title, actionLabel, onAction, icon }: SectionHea
 const styles = StyleSheet.create({
   action: {
     color: colors.brand,
-    fontSize: fontSize.base,
+    fontSize: fontSize.md,
     fontWeight: fontWeight.semibold,
   },
   container: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
   },
-  icon: {
-    fontSize: fontSize.xl,
+  iconWrap: {
     marginRight: spacing.sm,
   },
   left: {
     alignItems: 'center',
     flexDirection: 'row',
-    flex: 1,
   },
   title: {
     color: colors.text,
-    fontSize: fontSize.lg,
+    fontSize: fontSize.xl,
     fontWeight: fontWeight.bold,
   },
 });

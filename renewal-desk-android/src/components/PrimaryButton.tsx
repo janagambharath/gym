@@ -1,17 +1,22 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'success' | 'whatsapp';
 
 type PrimaryButtonProps = {
   disabled?: boolean;
-  label: string;
+  /** Use `title` or `label` — both are accepted */
+  title?: string;
+  label?: string;
   loading?: boolean;
   onPress: () => void;
   variant?: ButtonVariant;
-  icon?: string;
+  /** React element (Icon component) or emoji string */
+  icon?: React.ReactNode;
   size?: 'sm' | 'md' | 'lg';
   fullWidth?: boolean;
+  style?: ViewStyle;
 };
 
 const variantStyles: Record<ButtonVariant, { bg: string; bgPressed: string; text: string; border?: string }> = {
@@ -25,6 +30,7 @@ const variantStyles: Record<ButtonVariant, { bg: string; bgPressed: string; text
 
 export function PrimaryButton({
   disabled = false,
+  title,
   label,
   loading = false,
   onPress,
@@ -32,36 +38,48 @@ export function PrimaryButton({
   icon,
   size = 'lg',
   fullWidth = true,
+  style,
 }: PrimaryButtonProps) {
   const vs = variantStyles[variant];
   const isDisabled = disabled || loading;
+  const displayLabel = title ?? label ?? '';
 
   const sizeStyle = size === 'sm' ? styles.sm : size === 'md' ? styles.md : styles.lg;
+  const textSize = size === 'sm' ? styles.textSm : size === 'md' ? styles.textMd : styles.textLg;
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={displayLabel}
       accessibilityState={{ disabled: isDisabled }}
       disabled={isDisabled}
       onPress={onPress}
       style={({ pressed }) => [
-        styles.button,
+        styles.base,
         sizeStyle,
         {
-          backgroundColor: isDisabled ? colors.gray300 : pressed ? vs.bgPressed : vs.bg,
+          backgroundColor: pressed ? vs.bgPressed : vs.bg,
           borderColor: vs.border ?? 'transparent',
           borderWidth: vs.border ? 1 : 0,
+          opacity: isDisabled ? 0.5 : 1,
         },
-        fullWidth && styles.fullWidth,
+        fullWidth ? styles.fullWidth : undefined,
+        style,
       ]}
     >
       {loading ? (
         <ActivityIndicator color={vs.text} size="small" />
       ) : (
-        <View style={styles.content}>
-          {icon ? <Text style={[styles.icon, { color: isDisabled ? colors.muted : vs.text }]}>{icon}</Text> : null}
-          <Text style={[styles.label, { color: isDisabled ? colors.muted : vs.text }, size === 'sm' && styles.labelSm]}>
-            {label}
+        <View style={styles.contentRow}>
+          {icon ? (
+            typeof icon === 'string' ? (
+              <Text style={[styles.icon, { color: vs.text }]}>{icon}</Text>
+            ) : (
+              <View style={styles.iconWrap}>{icon}</View>
+            )
+          ) : null}
+          <Text style={[textSize, { color: vs.text }]} numberOfLines={2}>
+            {displayLabel}
           </Text>
         </View>
       )}
@@ -70,40 +88,55 @@ export function PrimaryButton({
 }
 
 const styles = StyleSheet.create({
-  button: {
+  base: {
     alignItems: 'center',
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     justifyContent: 'center',
   },
-  content: {
+  contentRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
+    justifyContent: 'center',
   },
   fullWidth: {
-    width: '100%',
+    width: '100%' as unknown as number,
   },
   icon: {
-    fontSize: 16,
-  },
-  label: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
   },
-  labelSm: {
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.semibold,
+  iconWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lg: {
-    minHeight: 52,
+    minHeight: 48,
     paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
   },
   md: {
-    minHeight: 44,
-    paddingHorizontal: spacing.xl,
+    minHeight: 40,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   sm: {
-    minHeight: 36,
-    paddingHorizontal: spacing.lg,
+    minHeight: 32,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  textLg: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    textAlign: 'center' as const,
+  },
+  textMd: {
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+    textAlign: 'center' as const,
+  },
+  textSm: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    textAlign: 'center' as const,
   },
 });

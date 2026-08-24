@@ -6,14 +6,23 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
+import { BotTestScreen } from './src/screens/BotTestScreen';
+import { EditMemberScreen } from './src/screens/EditMemberScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { MemberDetailScreen } from './src/screens/MemberDetailScreen';
 import { MembersScreen } from './src/screens/MembersScreen';
+import { PaymentDetailScreen } from './src/screens/PaymentDetailScreen';
 import { PaymentsScreen } from './src/screens/PaymentsScreen';
+import { PlansScreen } from './src/screens/PlansScreen';
+import { RecordPaymentScreen } from './src/screens/RecordPaymentScreen';
 import { RenewalsScreen } from './src/screens/RenewalsScreen';
 import { RenewMemberScreen } from './src/screens/RenewMemberScreen';
+import { ReportsScreen } from './src/screens/ReportsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { StaffScreen } from './src/screens/StaffScreen';
+import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
 import { apiRequest, restoreSession } from './src/services/apiClient';
+import { Icon, TabIcon } from './src/theme/icons';
 import { colors, fontSize, fontWeight, spacing } from './src/theme/tokens';
 import type { Member, Plan, SettingsResponse } from './src/types';
 
@@ -24,6 +33,8 @@ type DashboardStackParamList = {
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
   AddMember: undefined;
+  RecordPayment: { memberId?: number };
+  WhatsApp: undefined;
 };
 
 type MembersStackParamList = {
@@ -31,6 +42,8 @@ type MembersStackParamList = {
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
   AddMember: undefined;
+  EditMember: { memberId: number };
+  RecordPayment: { memberId?: number };
 };
 
 type RenewalsStackParamList = {
@@ -41,10 +54,17 @@ type RenewalsStackParamList = {
 
 type PaymentsStackParamList = {
   PaymentsHome: undefined;
+  PaymentDetail: { paymentId: number };
+  RecordPayment: { memberId?: number };
 };
 
 type MoreStackParamList = {
   MoreHome: undefined;
+  WhatsApp: undefined;
+  BotTest: undefined;
+  Plans: undefined;
+  Staff: undefined;
+  Reports: undefined;
 };
 
 type AuthStackParamList = {
@@ -54,33 +74,19 @@ type AuthStackParamList = {
 // ─── Navigators ──────────────────────────────────────────────────────
 
 const Tab = createBottomTabNavigator();
-const DashboardStack = createNativeStackNavigator<DashboardStackParamList>();
-const MembersStack = createNativeStackNavigator<MembersStackParamList>();
-const RenewalsStack = createNativeStackNavigator<RenewalsStackParamList>();
-const PaymentsStack = createNativeStackNavigator<PaymentsStackParamList>();
-const MoreStack = createNativeStackNavigator<MoreStackParamList>();
-const AuthStack = createNativeStackNavigator<AuthStackParamList>();
-
-const TAB_ICONS: Record<string, { active: string; inactive: string }> = {
-  Dashboard: { active: '📊', inactive: '📊' },
-  Members: { active: '👥', inactive: '👥' },
-  Renewals: { active: '🔄', inactive: '🔄' },
-  Payments: { active: '💳', inactive: '💳' },
-  More: { active: '⚙', inactive: '⚙' },
-};
+const DashboardStackNav = createNativeStackNavigator<DashboardStackParamList>();
+const MembersStackNav = createNativeStackNavigator<MembersStackParamList>();
+const RenewalsStackNav = createNativeStackNavigator<RenewalsStackParamList>();
+const PaymentsStackNav = createNativeStackNavigator<PaymentsStackParamList>();
+const MoreStackNav = createNativeStackNavigator<MoreStackParamList>();
+const AuthStackNav = createNativeStackNavigator<AuthStackParamList>();
 
 // ─── Stack Screens ───────────────────────────────────────────────────
 
-function DashboardStackScreen({
-  onLogout,
-  plans,
-}: {
-  onLogout: () => void;
-  plans: Plan[];
-}) {
+function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Plan[] }) {
   return (
-    <DashboardStack.Navigator screenOptions={{ headerShown: false }}>
-      <DashboardStack.Screen name="DashboardHome">
+    <DashboardStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <DashboardStackNav.Screen name="DashboardHome">
         {(props) => (
           <DashboardScreen
             onLogout={onLogout}
@@ -92,10 +98,12 @@ function DashboardStackScreen({
               props.navigation.navigate('MemberDetail', { member })
             }
             onNavigateAddMember={() => props.navigation.navigate('AddMember')}
+            onNavigateRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
+            onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
           />
         )}
-      </DashboardStack.Screen>
-      <DashboardStack.Screen name="MemberDetail">
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="MemberDetail">
         {(props) => {
           const member = (props.route.params as { member: Member })?.member;
           return (
@@ -107,8 +115,8 @@ function DashboardStackScreen({
             />
           );
         }}
-      </DashboardStack.Screen>
-      <DashboardStack.Screen name="RenewMember">
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="RenewMember">
         {(props) => {
           const member = (props.route.params as { member: Member })?.member;
           return (
@@ -121,8 +129,8 @@ function DashboardStackScreen({
             />
           );
         }}
-      </DashboardStack.Screen>
-      <DashboardStack.Screen name="AddMember">
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="AddMember">
         {(props) => (
           <AddMemberScreen
             onBack={() => props.navigation.goBack()}
@@ -133,21 +141,31 @@ function DashboardStackScreen({
             }}
           />
         )}
-      </DashboardStack.Screen>
-    </DashboardStack.Navigator>
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="RecordPayment">
+        {(props) => {
+          const memberId = (props.route.params as { memberId?: number })?.memberId;
+          return (
+            <RecordPaymentScreen
+              onBack={() => props.navigation.goBack()}
+              preselectedMemberId={memberId}
+            />
+          );
+        }}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="WhatsApp">
+        {(props) => (
+          <WhatsAppScreen onBack={() => props.navigation.goBack()} />
+        )}
+      </DashboardStackNav.Screen>
+    </DashboardStackNav.Navigator>
   );
 }
 
-function MembersStackScreen({
-  onLogout,
-  plans,
-}: {
-  onLogout: () => void;
-  plans: Plan[];
-}) {
+function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Plan[] }) {
   return (
-    <MembersStack.Navigator screenOptions={{ headerShown: false }}>
-      <MembersStack.Screen name="MembersList">
+    <MembersStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <MembersStackNav.Screen name="MembersList">
         {(props) => (
           <MembersScreen
             onLogout={onLogout}
@@ -157,8 +175,8 @@ function MembersStackScreen({
             onAddMember={() => props.navigation.navigate('AddMember')}
           />
         )}
-      </MembersStack.Screen>
-      <MembersStack.Screen name="MemberDetail">
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="MemberDetail">
         {(props) => {
           const member = (props.route.params as { member: Member })?.member;
           return (
@@ -167,11 +185,24 @@ function MembersStackScreen({
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
               onRenew={(m) => props.navigation.navigate('RenewMember', { member: m })}
+              onEdit={(memberId) => props.navigation.navigate('EditMember', { memberId })}
+              onRecordPayment={(memberId) => props.navigation.navigate('RecordPayment', { memberId })}
             />
           );
         }}
-      </MembersStack.Screen>
-      <MembersStack.Screen name="RenewMember">
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="EditMember">
+        {(props) => {
+          const memberId = (props.route.params as { memberId: number })?.memberId;
+          return (
+            <EditMemberScreen
+              memberId={memberId}
+              onBack={() => props.navigation.goBack()}
+            />
+          );
+        }}
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="RenewMember">
         {(props) => {
           const member = (props.route.params as { member: Member })?.member;
           return (
@@ -184,8 +215,8 @@ function MembersStackScreen({
             />
           );
         }}
-      </MembersStack.Screen>
-      <MembersStack.Screen name="AddMember">
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="AddMember">
         {(props) => (
           <AddMemberScreen
             onBack={() => props.navigation.goBack()}
@@ -196,15 +227,26 @@ function MembersStackScreen({
             }}
           />
         )}
-      </MembersStack.Screen>
-    </MembersStack.Navigator>
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="RecordPayment">
+        {(props) => {
+          const memberId = (props.route.params as { memberId?: number })?.memberId;
+          return (
+            <RecordPaymentScreen
+              onBack={() => props.navigation.goBack()}
+              preselectedMemberId={memberId}
+            />
+          );
+        }}
+      </MembersStackNav.Screen>
+    </MembersStackNav.Navigator>
   );
 }
 
 function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
   return (
-    <RenewalsStack.Navigator screenOptions={{ headerShown: false }}>
-      <RenewalsStack.Screen name="RenewalsHome">
+    <RenewalsStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <RenewalsStackNav.Screen name="RenewalsHome">
         {(props) => (
           <RenewalsScreen
             onLogout={onLogout}
@@ -216,8 +258,8 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
             }
           />
         )}
-      </RenewalsStack.Screen>
-      <RenewalsStack.Screen name="MemberDetail">
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="MemberDetail">
         {(props) => {
           const member = (props.route.params as { member: Member })?.member;
           return (
@@ -229,8 +271,8 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
             />
           );
         }}
-      </RenewalsStack.Screen>
-      <RenewalsStack.Screen name="RenewMember">
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="RenewMember">
         {(props) => {
           const member = (props.route.params as { member: Member })?.member;
           return (
@@ -243,28 +285,80 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
             />
           );
         }}
-      </RenewalsStack.Screen>
-    </RenewalsStack.Navigator>
+      </RenewalsStackNav.Screen>
+    </RenewalsStackNav.Navigator>
   );
 }
 
 function PaymentsStackScreen({ onLogout }: { onLogout: () => void }) {
   return (
-    <PaymentsStack.Navigator screenOptions={{ headerShown: false }}>
-      <PaymentsStack.Screen name="PaymentsHome">
-        {() => <PaymentsScreen onLogout={onLogout} />}
-      </PaymentsStack.Screen>
-    </PaymentsStack.Navigator>
+    <PaymentsStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <PaymentsStackNav.Screen name="PaymentsHome">
+        {(props) => (
+          <PaymentsScreen
+            onLogout={onLogout}
+            onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
+            onRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
+          />
+        )}
+      </PaymentsStackNav.Screen>
+      <PaymentsStackNav.Screen name="PaymentDetail">
+        {(props) => {
+          const paymentId = (props.route.params as { paymentId: number })?.paymentId;
+          return (
+            <PaymentDetailScreen
+              paymentId={paymentId}
+              onBack={() => props.navigation.goBack()}
+            />
+          );
+        }}
+      </PaymentsStackNav.Screen>
+      <PaymentsStackNav.Screen name="RecordPayment">
+        {(props) => {
+          const memberId = (props.route.params as { memberId?: number })?.memberId;
+          return (
+            <RecordPaymentScreen
+              onBack={() => props.navigation.goBack()}
+              preselectedMemberId={memberId}
+            />
+          );
+        }}
+      </PaymentsStackNav.Screen>
+    </PaymentsStackNav.Navigator>
   );
 }
 
 function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
   return (
-    <MoreStack.Navigator screenOptions={{ headerShown: false }}>
-      <MoreStack.Screen name="MoreHome">
-        {() => <SettingsScreen onLogout={onLogout} />}
-      </MoreStack.Screen>
-    </MoreStack.Navigator>
+    <MoreStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <MoreStackNav.Screen name="MoreHome">
+        {(props) => (
+          <SettingsScreen
+            onLogout={onLogout}
+            onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
+            onNavigateBotTest={() => props.navigation.navigate('BotTest')}
+            onNavigatePlans={() => props.navigation.navigate('Plans')}
+            onNavigateStaff={() => props.navigation.navigate('Staff')}
+            onNavigateReports={() => props.navigation.navigate('Reports')}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="WhatsApp">
+        {(props) => <WhatsAppScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotTest">
+        {(props) => <BotTestScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="Plans">
+        {(props) => <PlansScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="Staff">
+        {(props) => <StaffScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="Reports">
+        {(props) => <ReportsScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+    </MoreStackNav.Navigator>
   );
 }
 
@@ -284,7 +378,7 @@ export default function App() {
     void bootstrap();
   }, []);
 
-  // Fetch plans for the Add Member form once authenticated
+  // Fetch plans once authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((res) => {
@@ -306,7 +400,7 @@ export default function App() {
       <View style={styles.splash}>
         <StatusBar style="dark" />
         <View style={styles.splashContent}>
-          <Text style={styles.splashIcon}>📋</Text>
+          <Icon name="fitness" size={48} color={colors.brand} />
           <Text style={styles.splashTitle}>Renewal Desk</Text>
           <ActivityIndicator color={colors.brand} size="large" style={styles.splashLoader} />
         </View>
@@ -319,11 +413,11 @@ export default function App() {
       <>
         <StatusBar style="dark" />
         <NavigationContainer>
-          <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-            <AuthStack.Screen name="Login">
+          <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
+            <AuthStackNav.Screen name="Login">
               {() => <LoginScreen onLogin={handleLoginSuccess} />}
-            </AuthStack.Screen>
-          </AuthStack.Navigator>
+            </AuthStackNav.Screen>
+          </AuthStackNav.Navigator>
         </NavigationContainer>
       </>
     );
@@ -351,13 +445,16 @@ export default function App() {
               paddingBottom: 6,
               paddingTop: 6,
             },
-            tabBarIcon: ({ focused }) => {
-              const icons = TAB_ICONS[route.name] ?? { active: '•', inactive: '•' };
-              return (
-                <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>
-                  {focused ? icons.active : icons.inactive}
-                </Text>
-              );
+            tabBarIcon: ({ focused, color }) => {
+              const iconMap: Record<string, 'dashboard' | 'members' | 'renewals' | 'payments' | 'more'> = {
+                Dashboard: 'dashboard',
+                Members: 'members',
+                Renewals: 'renewals',
+                Payments: 'payments',
+                More: 'more',
+              };
+              const iconName = iconMap[route.name] ?? 'more';
+              return <TabIcon name={iconName} focused={focused} color={color} size={22} />;
             },
           })}
         >
@@ -391,10 +488,7 @@ const styles = StyleSheet.create({
   },
   splashContent: {
     alignItems: 'center',
-  },
-  splashIcon: {
-    fontSize: 48,
-    marginBottom: spacing.lg,
+    gap: spacing.lg,
   },
   splashLoader: {
     marginTop: spacing.xxl,

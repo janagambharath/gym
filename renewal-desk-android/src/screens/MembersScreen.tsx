@@ -15,6 +15,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { SearchBar } from '../components/SearchBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 import type { Member, MembersResponse } from '../types';
 import { formatDate, getDaysText, getMemberDisplayStatus } from '../types';
@@ -178,9 +179,9 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember }: Members
         <ErrorState message={error} onRetry={() => { setPage(1); setLoading(true); }} />
       ) : members.length === 0 ? (
         <EmptyState
-          icon="👥"
+          icon={<Icon name="members" size={40} color={colors.muted} />}
           title={search ? 'No results' : 'No members yet'}
-          message={search ? 'No members found matching your search.' : 'Add your first member to get started.'}
+          subtitle={search ? 'No members found matching your search.' : 'Add your first member to get started.'}
           actionLabel={search ? undefined : 'Add Member'}
           onAction={onAddMember}
         />

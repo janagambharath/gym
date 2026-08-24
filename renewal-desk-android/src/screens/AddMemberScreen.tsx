@@ -12,6 +12,7 @@ import { AppHeader } from '../components/AppHeader';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Plan } from '../types';
 
@@ -165,7 +166,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans = [] 
           {/* Submit */}
           <PrimaryButton
             label="Add Member"
-            icon="+"
+            icon={<Icon name="personAdd" size={18} color={colors.textInverse} />}
             onPress={() => void handleSubmit()}
             loading={loading}
             disabled={!fullName.trim() || !phone.trim()}

@@ -1,36 +1,33 @@
+import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 
 type MetricCardProps = {
-  icon: string;
-  iconColor?: string;
+  icon: React.ReactNode;
   iconBg?: string;
   label: string;
-  value: string | number;
+  value: number | string;
   subtext?: string;
   subtextColor?: string;
 };
 
 export function MetricCard({
   icon,
-  iconColor = colors.brand,
-  iconBg = colors.brandSubtle,
+  iconBg = colors.gray100,
   label,
   value,
   subtext,
-  subtextColor = colors.muted,
+  subtextColor,
 }: MetricCardProps) {
   return (
-    <View style={styles.card}>
+    <View style={styles.container}>
       <View style={[styles.iconContainer, { backgroundColor: iconBg }]}>
-        <Text style={[styles.icon, { color: iconColor }]}>{icon}</Text>
+        {icon}
       </View>
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value}>
-        {typeof value === 'number' ? value.toLocaleString('en-IN') : value}
-      </Text>
+      <Text style={styles.label} numberOfLines={1}>{label}</Text>
+      <Text style={styles.value}>{value}</Text>
       {subtext ? (
-        <Text style={[styles.subtext, { color: subtextColor }]} numberOfLines={1}>
+        <Text style={[styles.subtext, subtextColor ? { color: subtextColor } : undefined]}>
           {subtext}
         </Text>
       ) : null}
@@ -39,41 +36,38 @@ export function MetricCard({
 }
 
 const styles = StyleSheet.create({
-  card: {
+  container: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderRadius: radius.lg,
     borderWidth: 1,
     flex: 1,
-    padding: spacing.md,
+    padding: spacing.lg,
     ...shadows.sm,
-  },
-  icon: {
-    fontSize: 18,
   },
   iconContainer: {
     alignItems: 'center',
     borderRadius: radius.md,
-    height: 32,
+    height: 36,
     justifyContent: 'center',
     marginBottom: spacing.sm,
-    width: 32,
+    width: 36,
   },
   label: {
-    color: colors.textSecondary,
+    color: colors.muted,
     fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
-    marginBottom: spacing.xxs,
   },
   subtext: {
+    color: colors.muted,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.medium,
     marginTop: spacing.xxs,
   },
   value: {
     color: colors.text,
-    fontSize: fontSize['4xl'],
+    fontSize: fontSize['3xl'],
+    fontVariant: ['tabular-nums'],
     fontWeight: fontWeight.extrabold,
-    lineHeight: 30,
+    marginTop: spacing.xxs,
   },
 });

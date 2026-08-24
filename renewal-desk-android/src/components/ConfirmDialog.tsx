@@ -8,6 +8,8 @@ type ConfirmDialogProps = {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Use confirmVariant or destructive (legacy). confirmVariant takes precedence. */
+  confirmVariant?: 'primary' | 'danger' | 'success';
   destructive?: boolean;
   loading?: boolean;
   onConfirm: () => void;
@@ -20,11 +22,13 @@ export function ConfirmDialog({
   message,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  confirmVariant,
   destructive = false,
   loading = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const variant = confirmVariant ?? (destructive ? 'danger' : 'primary');
   return (
     <Modal
       animationType="fade"
@@ -50,7 +54,7 @@ export function ConfirmDialog({
               <PrimaryButton
                 label={confirmLabel}
                 onPress={onConfirm}
-                variant={destructive ? 'danger' : 'primary'}
+                variant={variant}
                 size="md"
                 loading={loading}
               />

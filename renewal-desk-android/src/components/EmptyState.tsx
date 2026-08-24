@@ -1,20 +1,31 @@
+import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 
 type EmptyStateProps = {
-  icon?: string;
+  /** React element (Icon component) or emoji string */
+  icon?: React.ReactNode;
   title: string;
-  message: string;
+  /** Use `subtitle` or `message` — both accepted */
+  subtitle?: string;
+  message?: string;
   actionLabel?: string;
   onAction?: () => void;
 };
 
-export function EmptyState({ icon, title, message, actionLabel, onAction }: EmptyStateProps) {
+export function EmptyState({ icon, title, subtitle, message, actionLabel, onAction }: EmptyStateProps) {
+  const desc = subtitle ?? message;
   return (
     <View style={styles.container}>
-      {icon ? <Text style={styles.icon}>{icon}</Text> : null}
+      {icon ? (
+        typeof icon === 'string' ? (
+          <Text style={styles.iconText}>{icon}</Text>
+        ) : (
+          <View style={styles.iconWrap}>{icon}</View>
+        )
+      ) : null}
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.message}>{message}</Text>
+      {desc ? <Text style={styles.message}>{desc}</Text> : null}
       {actionLabel && onAction ? (
         <TouchableOpacity
           accessibilityRole="button"
@@ -48,10 +59,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xxxl,
     paddingVertical: spacing.section,
   },
-  icon: {
+  iconText: {
     fontSize: 48,
     marginBottom: spacing.lg,
     opacity: 0.4,
+  },
+  iconWrap: {
+    marginBottom: spacing.lg,
+    opacity: 0.6,
   },
   message: {
     color: colors.muted,

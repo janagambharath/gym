@@ -7,19 +7,33 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Avatar } from '../components/Avatar';
 import { InfoRow } from '../components/InfoRow';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession, logout } from '../services/apiClient';
+import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { GymSettings, Plan, SettingsResponse } from '../types';
 
 type SettingsScreenProps = {
   onLogout: () => void;
+  onNavigateWhatsApp?: () => void;
+  onNavigatePlans?: () => void;
+  onNavigateStaff?: () => void;
+  onNavigateReports?: () => void;
+  onNavigateBotTest?: () => void;
 };
 
-export function SettingsScreen({ onLogout }: SettingsScreenProps) {
+export function SettingsScreen({
+  onLogout,
+  onNavigateWhatsApp,
+  onNavigatePlans,
+  onNavigateStaff,
+  onNavigateReports,
+  onNavigateBotTest,
+}: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,24 +69,36 @@ export function SettingsScreen({ onLogout }: SettingsScreenProps) {
       >
         {/* Account */}
         <View style={styles.card}>
-          <SectionHeader title="Account" icon="👤" />
+          <SectionHeader title="Account" icon={<Icon name="person" size={18} color={colors.brand} />} />
           <View style={styles.accountInfo}>
-            <View style={styles.avatarCircle}>
-              <Text style={styles.avatarInitial}>
-                {session?.userName?.charAt(0)?.toUpperCase() ?? 'U'}
-              </Text>
-            </View>
+            <Avatar name={session?.userName ?? 'U'} size={56} />
             <View style={styles.accountDetails}>
               <Text style={styles.accountName}>{session?.userName ?? 'User'}</Text>
-              <Text style={styles.accountRole}>Gym Owner</Text>
+              <Text style={styles.accountRole}>
+                {session?.userRole === 'gym_owner' ? 'Gym Owner' : 'Staff'}
+              </Text>
             </View>
+          </View>
+        </View>
+
+        {/* Quick Navigation */}
+        <View style={styles.card}>
+          <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
+          <View style={styles.menuList}>
+            <MenuItem icon="whatsapp" label="WhatsApp & AI Leads" onPress={onNavigateWhatsApp} />
+            <MenuItem icon="chatbubble" label="AI Bot Sandbox" onPress={onNavigateBotTest} />
+            <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
+            {session?.userRole === 'gym_owner' ? (
+              <MenuItem icon="staff" label="Staff" onPress={onNavigateStaff} />
+            ) : null}
+            <MenuItem icon="analytics" label="Reports" onPress={onNavigateReports} />
           </View>
         </View>
 
         {/* Gym Information */}
         {gym ? (
           <View style={styles.card}>
-            <SectionHeader title="Gym Information" icon="🏢" />
+            <SectionHeader title="Gym Information" icon={<Icon name="business" size={18} color={colors.brand} />} />
             <View style={styles.infoList}>
               <InfoRow label="Name" value={gym.name} />
               <InfoRow label="Email" value={gym.email ?? '—'} />
@@ -86,7 +112,7 @@ export function SettingsScreen({ onLogout }: SettingsScreenProps) {
         {/* Subscription */}
         {gym ? (
           <View style={styles.card}>
-            <SectionHeader title="Subscription" icon="📋" />
+            <SectionHeader title="Subscription" icon={<Icon name="shield" size={18} color={colors.brand} />} />
             <View style={styles.subscriptionRow}>
               <Text style={styles.subscriptionLabel}>Status</Text>
               <StatusBadge
@@ -102,51 +128,47 @@ export function SettingsScreen({ onLogout }: SettingsScreenProps) {
 
         {/* WhatsApp */}
         {gym ? (
-          <View style={styles.card}>
-            <SectionHeader title="WhatsApp" icon="💬" />
+          <TouchableOpacity style={styles.card} onPress={onNavigateWhatsApp} activeOpacity={0.7}>
+            <SectionHeader title="WhatsApp" icon={<Icon name="whatsapp" size={18} color={colors.whatsapp} />} />
             <View style={styles.whatsappRow}>
               <View style={[styles.whatsappDot, { backgroundColor: gym.whatsapp_enabled ? colors.whatsapp : colors.gray300 }]} />
               <Text style={styles.whatsappStatus}>
                 {gym.whatsapp_enabled ? 'Connected & Active' : 'Not Configured'}
               </Text>
+              <View style={styles.flex} />
+              <Icon name="forward" size={16} color={colors.muted} />
             </View>
-          </View>
-        ) : null}
-
-        {/* Membership Plans */}
-        {plans.length > 0 ? (
-          <View style={styles.card}>
-            <SectionHeader title="Membership Plans" icon="⭐" />
-            <View style={styles.planList}>
-              {plans.map((plan) => (
-                <View key={plan.id} style={styles.planItem}>
-                  <View>
-                    <Text style={styles.planName}>{plan.name}</Text>
-                    <Text style={styles.planDuration}>{plan.duration_days} days</Text>
-                  </View>
-                  <Text style={styles.planPrice}>₹{plan.price}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
+          </TouchableOpacity>
         ) : null}
 
         {/* About */}
         <View style={styles.card}>
-          <SectionHeader title="About" icon="ℹ" />
+          <SectionHeader title="About" icon={<Icon name="info" size={18} color={colors.brand} />} />
           <InfoRow label="Version" value="1.0.0" />
           <InfoRow label="Build" value="Preview" />
         </View>
 
         {/* Logout */}
         <PrimaryButton
-          label="Sign Out"
-          icon="🚪"
+          title="Sign Out"
+          icon={<Icon name="logout" size={18} color={colors.textInverse} />}
           onPress={() => void handleLogout()}
           variant="danger"
         />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function MenuItem({ icon, label, onPress }: { icon: IconName; label: string; onPress?: () => void }) {
+  return (
+    <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.6}>
+      <View style={styles.menuIconWrap}>
+        <Icon name={icon} size={18} color={colors.brand} />
+      </View>
+      <Text style={styles.menuLabel}>{label}</Text>
+      <Icon name="forward" size={16} color={colors.muted} />
+    </TouchableOpacity>
   );
 }
 
@@ -169,19 +191,6 @@ const styles = StyleSheet.create({
     fontSize: fontSize.base,
     marginTop: spacing.xxs,
   },
-  avatarCircle: {
-    alignItems: 'center',
-    backgroundColor: colors.brand,
-    borderRadius: 28,
-    height: 56,
-    justifyContent: 'center',
-    width: 56,
-  },
-  avatarInitial: {
-    color: colors.textInverse,
-    fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
-  },
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,
@@ -195,6 +204,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     paddingBottom: spacing.section,
   },
+  flex: { flex: 1 },
   header: {
     backgroundColor: colors.surface,
     borderBottomColor: colors.border,
@@ -210,32 +220,30 @@ const styles = StyleSheet.create({
   infoList: {
     marginTop: spacing.sm,
   },
-  planDuration: {
-    color: colors.muted,
-    fontSize: fontSize.sm,
-    marginTop: 1,
+  menuIconWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.md,
+    height: 36,
+    justifyContent: 'center',
+    marginRight: spacing.md,
+    width: 36,
   },
-  planItem: {
+  menuItem: {
     alignItems: 'center',
     borderTopColor: colors.borderLight,
     borderTopWidth: 1,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     paddingVertical: spacing.md,
   },
-  planList: {
-    marginTop: spacing.xs,
-  },
-  planName: {
+  menuLabel: {
     color: colors.text,
+    flex: 1,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.semibold,
+    fontWeight: fontWeight.medium,
   },
-  planPrice: {
-    color: colors.brand,
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-    fontVariant: ['tabular-nums'],
+  menuList: {
+    marginTop: spacing.xs,
   },
   safeArea: {
     backgroundColor: colors.background,

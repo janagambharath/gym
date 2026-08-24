@@ -15,6 +15,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member } from '../types';
 import { formatDate, getDaysText, getMemberDisplayStatus } from '../types';
@@ -161,9 +162,9 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew }: RenewalsSc
           <Text style={styles.headerTitle}>Renewals</Text>
         </View>
         <EmptyState
-          icon="✅"
+          icon={<Icon name="checkmark" size={40} color={colors.success} />}
           title="All caught up!"
-          message="No upcoming renewals or expired memberships at the moment."
+          subtitle="No upcoming renewals or expired memberships at the moment."
         />
       </SafeAreaView>
     );

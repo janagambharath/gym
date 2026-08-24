@@ -11,11 +11,13 @@ import {
 } from 'react-native';
 import { AppHeader } from '../components/AppHeader';
 import { Avatar } from '../components/Avatar';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { InfoRow } from '../components/InfoRow';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Renewal, Payment } from '../types';
 import { formatCurrency, formatDate, getMemberDisplayStatus, getDaysText } from '../types';
@@ -25,6 +27,8 @@ type MemberDetailScreenProps = {
   onBack: () => void;
   onLogout: () => void;
   onRenew?: (member: Member) => void;
+  onEdit?: (memberId: number) => void;
+  onRecordPayment?: (memberId: number) => void;
   onMemberUpdated?: () => void;
 };
 
@@ -33,6 +37,8 @@ export function MemberDetailScreen({
   onBack,
   onLogout,
   onRenew,
+  onEdit,
+  onRecordPayment,
   onMemberUpdated,
 }: MemberDetailScreenProps) {
   const [member, setMember] = useState(initialMember);
@@ -42,6 +48,9 @@ export function MemberDetailScreen({
   const [message, setMessage] = useState<string | undefined>();
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
   const [refreshing, setRefreshing] = useState(false);
+  const [showDeactivate, setShowDeactivate] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const session = getCachedSession();
 
   const displayStatus = getMemberDisplayStatus(member);
   const daysText = getDaysText(member.days_until_expiry);
@@ -150,7 +159,7 @@ export function MemberDetailScreen({
 
         {/* Membership Card */}
         <View style={styles.card}>
-          <SectionHeader title="Membership" icon="⭐" />
+          <SectionHeader title="Membership" icon={<Icon name="star" size={18} color={colors.brand} />} />
           <View style={styles.membershipGrid}>
             <View style={styles.membershipItem}>
               <Text style={styles.membershipLabel}>Plan</Text>
@@ -171,7 +180,7 @@ export function MemberDetailScreen({
           {member.days_until_expiry !== null ? (
             <View style={styles.daysBar}>
               <View style={styles.daysBarLeft}>
-                <Text style={styles.daysBarIcon}>⏱</Text>
+                <Icon name="time" size={16} color={colors.textSecondary} />
                 <Text style={[
                   styles.daysBarText,
                   {
@@ -194,7 +203,7 @@ export function MemberDetailScreen({
 
         {/* Financial Summary */}
         <View style={styles.card}>
-          <SectionHeader title="Financial Summary" icon="₹" />
+          <SectionHeader title="Financial Summary" icon={<Icon name="currency" size={18} color={colors.brand} />} />
           <View style={styles.financialGrid}>
             <View style={styles.financialItem}>
               <Text style={styles.financialLabel}>Membership Amount</Text>
@@ -224,27 +233,27 @@ export function MemberDetailScreen({
 
         {/* Activity */}
         <View style={styles.card}>
-          <SectionHeader title="Activity" icon="⚡" />
+          <SectionHeader title="Activity" icon={<Icon name="flash" size={18} color={colors.brand} />} />
           <TouchableOpacity style={styles.activityRow}>
             <View>
               <Text style={styles.activityTitle}>Renewal History</Text>
               <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="forward" size={16} color={colors.muted} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.activityRow}>
             <View>
               <Text style={styles.activityTitle}>Payment History</Text>
               <Text style={styles.activitySub}>{payments.length} payment{payments.length !== 1 ? 's' : ''}</Text>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Icon name="forward" size={16} color={colors.muted} />
           </TouchableOpacity>
         </View>
 
         {/* Primary CTA */}
         <PrimaryButton
-          label="Renew Membership"
-          icon="🔄"
+          title="Renew Membership"
+          icon={<Icon name="renewals" size={18} color={colors.textInverse} />}
           onPress={() => onRenew?.(member)}
           variant="primary"
         />
@@ -253,8 +262,8 @@ export function MemberDetailScreen({
         <View style={styles.secondaryActions}>
           <View style={styles.secondaryButton}>
             <PrimaryButton
-              label="Send WhatsApp"
-              icon="💬"
+              title="WhatsApp"
+              icon={<Icon name="whatsapp" size={16} color={colors.whatsapp} />}
               onPress={() => void handleSendReminder()}
               variant="outline"
               size="md"
@@ -263,9 +272,18 @@ export function MemberDetailScreen({
           </View>
           <View style={styles.secondaryButton}>
             <PrimaryButton
-              label="Record Payment"
-              icon="₹"
-              onPress={() => {}}
+              title="Payment"
+              icon={<Icon name="cash" size={16} color={colors.brand} />}
+              onPress={() => onRecordPayment?.(member.id)}
+              variant="outline"
+              size="md"
+            />
+          </View>
+          <View style={styles.secondaryButton}>
+            <PrimaryButton
+              title="Edit"
+              icon={<Icon name="edit" size={16} color={colors.brand} />}
+              onPress={() => onEdit?.(member.id)}
               variant="outline"
               size="md"
             />
@@ -275,11 +293,44 @@ export function MemberDetailScreen({
         {/* Notes */}
         {member.notes ? (
           <View style={styles.card}>
-            <SectionHeader title="Notes" />
+            <SectionHeader title="Notes" icon={<Icon name="document" size={16} color={colors.muted} />} />
             <Text style={styles.notesText}>{member.notes}</Text>
           </View>
         ) : null}
+
+        {/* Deactivate (Owner only) */}
+        {session?.userRole === 'gym_owner' && member.status !== 'deleted' ? (
+          <PrimaryButton
+            title="Deactivate Member"
+            icon={<Icon name="delete" size={16} color={colors.textInverse} />}
+            onPress={() => setShowDeactivate(true)}
+            variant="danger"
+            size="md"
+          />
+        ) : null}
       </ScrollView>
+
+      <ConfirmDialog
+        visible={showDeactivate}
+        title="Deactivate Member?"
+        message={`This will deactivate ${member.full_name}. They will be removed from active member lists.`}
+        confirmLabel="Deactivate"
+        confirmVariant="danger"
+        loading={deactivating}
+        onConfirm={async () => {
+          setDeactivating(true);
+          const res = await apiRequest(`/api/mobile/v1/members/${member.id}/deactivate`, { method: 'POST' });
+          setDeactivating(false);
+          setShowDeactivate(false);
+          if (res.ok) {
+            onMemberUpdated?.();
+            onBack();
+          } else {
+            showMessage(res.error.message, 'error');
+          }
+        }}
+        onCancel={() => setShowDeactivate(false)}
+      />
     </SafeAreaView>
   );
 }
