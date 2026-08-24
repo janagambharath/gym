@@ -52,6 +52,9 @@
                 <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('reminders.') else '' }}" href="{{ url_for('reminders.index') }}">
                     <i class="bi bi-whatsapp nav-icon"></i> Reminders
                 </a>
+                <a class="nav-item {{ 'active' if request.endpoint == 'gym.announcements' else '' }}" href="{{ url_for('gym.announcements') }}">
+                    <i class="bi bi-megaphone nav-icon"></i> Announcements
+                </a>
                 {% if current_user.role == 'gym_owner' %}
                 <a class="nav-item {{ 'active' if request.endpoint == 'gym.plans' else '' }}" href="{{ url_for('gym.plans') }}">
                     <i class="bi bi-calendar2-check nav-icon"></i> Plans

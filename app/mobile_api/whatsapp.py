@@ -151,3 +151,64 @@ def register_whatsapp_routes(bp):
                 },
             },
         })
+
+    @bp.route("/whatsapp/broadcast/stats", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def broadcast_stats():
+        """Return audience counts for announcement broadcasts."""
+        from datetime import date, timedelta
+        from app.services.broadcast_service import get_target_members
+
+        gym = g.current_user.gym
+        today = date.today()
+        seven_days = today + timedelta(days=7)
+
+        active_count = len(get_target_members(gym.id, "active"))
+        expired_count = len(get_target_members(gym.id, "expired"))
+        all_count = len(get_target_members(gym.id, "all"))
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "whatsapp_enabled": bool(gym.whatsapp_enabled and gym.phone_number_id),
+                "business_phone_number": gym.business_phone_number or gym.phone or "",
+                "counts": {
+                    "active": active_count,
+                    "expired": expired_count,
+                    "all": all_count,
+                },
+            },
+        })
+
+    @bp.route("/whatsapp/broadcast", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    @limiter.limit("5 per minute")
+    def send_broadcast():
+        """Send a bulk announcement or festival broadcast."""
+        from app.services.broadcast_service import send_broadcast_announcement
+
+        gym = g.current_user.gym
+        if not gym.whatsapp_enabled or not gym.phone_number_id:
+            return error_response(
+                "WHATSAPP_NOT_CONFIGURED",
+                "WhatsApp Business is not configured for this gym.",
+                400,
+            )
+
+        data = request.get_json(silent=True) or {}
+        message = (data.get("message") or "").strip()
+        audience = data.get("audience", "active")
+
+        if not message:
+            return error_response("VALIDATION_ERROR", "Announcement message cannot be empty.", 400)
+
+        result = send_broadcast_announcement(gym, announcement_text=message, audience=audience)
+        if not result.get("success"):
+            return error_response("BROADCAST_FAILED", result.get("error", "Broadcast failed"), 400)
+
+        return jsonify({
+            "success": True,
+            "data": result,
+        })

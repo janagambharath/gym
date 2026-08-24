@@ -164,6 +164,55 @@ def whatsapp_settings():
     )
 
 
+@gym_bp.route("/announcements", methods=["GET", "POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def announcements():
+    from app.models.audit_log import AuditLog
+    from app.services.broadcast_service import get_target_members, send_broadcast_announcement
+
+    gym = current_user.gym
+    if request.method == "POST":
+        message = (request.form.get("message") or "").strip()
+        audience = request.form.get("audience", "active")
+        if not message:
+            flash("Please enter an announcement message to broadcast.", "danger")
+            return redirect(url_for("gym.announcements"))
+
+        result = send_broadcast_announcement(gym, announcement_text=message, audience=audience)
+        if result.get("success"):
+            flash(
+                f"Announcement broadcast sent to {result.get('sent', 0)} of {result.get('total', 0)} members!",
+                "success",
+            )
+        else:
+            flash(result.get("error", "Broadcast failed to send."), "danger")
+        return redirect(url_for("gym.announcements"))
+
+    # Audience counts
+    counts = {
+        "active": len(get_target_members(gym.id, "active")),
+        "expired": len(get_target_members(gym.id, "expired")),
+        "all": len(get_target_members(gym.id, "all")),
+    }
+
+    # Recent broadcasts from AuditLog
+    recent_broadcasts = (
+        AuditLog.query.filter_by(gym_id=gym.id, action="whatsapp_broadcast_announcement")
+        .order_by(AuditLog.created_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    return render_template(
+        "gym/announcements.html",
+        gym=gym,
+        counts=counts,
+        recent_broadcasts=recent_broadcasts,
+    )
+
+
 @gym_bp.post("/settings/qr/remove")
 @login_required
 @active_gym_required
