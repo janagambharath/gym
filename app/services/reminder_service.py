@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone as tz
 import logging
 import time
-import zoneinfo
 
 from flask import current_app
 from sqlalchemy import select
@@ -24,6 +23,7 @@ from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.bridge_service import queue_membership_command
+from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
 from app.utils.helpers import normalize_public_media_url, phone_to_whatsapp, signed_upload_url
@@ -31,15 +31,6 @@ from app.utils.helpers import normalize_public_media_url, phone_to_whatsapp, sig
 
 MAX_REMINDER_ATTEMPTS = 5
 _logger = logging.getLogger(__name__)
-
-
-def today_for_gym(gym_timezone: str) -> date:
-    """Return the current calendar date in the gym's local timezone."""
-    try:
-        zone = zoneinfo.ZoneInfo(gym_timezone)
-    except Exception:
-        zone = zoneinfo.ZoneInfo("Asia/Kolkata")
-    return datetime.now(tz=zone).date()
 
 
 def stage_for_days(days_before: int) -> str:

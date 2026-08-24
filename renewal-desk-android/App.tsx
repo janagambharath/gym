@@ -5,6 +5,12 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
+import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
+import { BotConversationsScreen } from './src/screens/BotConversationsScreen';
+import { BotLeadDetailScreen } from './src/screens/BotLeadDetailScreen';
+import { BotLeadsScreen } from './src/screens/BotLeadsScreen';
+import { BotOverviewScreen } from './src/screens/BotOverviewScreen';
+import { BotSetupScreen } from './src/screens/BotSetupScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { BotTestScreen } from './src/screens/BotTestScreen';
 import { EditMemberScreen } from './src/screens/EditMemberScreen';
@@ -24,7 +30,7 @@ import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
 import { apiRequest, restoreSession } from './src/services/apiClient';
 import { Icon, TabIcon } from './src/theme/icons';
 import { colors, fontSize, fontWeight, spacing } from './src/theme/tokens';
-import type { Member, Plan, SettingsResponse } from './src/types';
+import type { BotConversation, Member, Plan, SettingsResponse } from './src/types';
 
 // ─── Navigation Types ────────────────────────────────────────────────
 
@@ -33,6 +39,7 @@ type DashboardStackParamList = {
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
   AddMember: undefined;
+  EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
   WhatsApp: undefined;
 };
@@ -50,6 +57,8 @@ type RenewalsStackParamList = {
   RenewalsHome: undefined;
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
+  EditMember: { memberId: number };
+  RecordPayment: { memberId?: number };
 };
 
 type PaymentsStackParamList = {
@@ -61,6 +70,12 @@ type PaymentsStackParamList = {
 type MoreStackParamList = {
   MoreHome: undefined;
   WhatsApp: undefined;
+  BotOverview: undefined;
+  BotConversations: undefined;
+  BotConversationDetail: { conversation: BotConversation };
+  BotLeads: undefined;
+  BotLeadDetail: { leadId: number };
+  BotSetup: undefined;
   BotTest: undefined;
   Plans: undefined;
   Staff: undefined;
@@ -81,25 +96,51 @@ const PaymentsStackNav = createNativeStackNavigator<PaymentsStackParamList>();
 const MoreStackNav = createNativeStackNavigator<MoreStackParamList>();
 const AuthStackNav = createNativeStackNavigator<AuthStackParamList>();
 
+function useRefreshToken() {
+  const [refreshToken, setRefreshToken] = useState(0);
+  const refresh = useCallback(() => {
+    setRefreshToken((token) => token + 1);
+  }, []);
+
+  return { refresh, refreshToken };
+}
+
 // ─── Stack Screens ───────────────────────────────────────────────────
 
-function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Plan[] }) {
+function DashboardStackScreen({
+  onLogout,
+  plans,
+  onNavigateMembers,
+  onNavigatePayments,
+  onNavigateRenewals,
+  onNavigateSettings,
+}: {
+  onLogout: () => void;
+  plans: Plan[];
+  onNavigateMembers: () => void;
+  onNavigatePayments: () => void;
+  onNavigateRenewals: () => void;
+  onNavigateSettings: () => void;
+}) {
+  const { refresh, refreshToken } = useRefreshToken();
+
   return (
     <DashboardStackNav.Navigator screenOptions={{ headerShown: false }}>
       <DashboardStackNav.Screen name="DashboardHome">
         {(props) => (
           <DashboardScreen
             onLogout={onLogout}
-            onNavigateMembers={() => {}}
-            onNavigatePayments={() => {}}
-            onNavigateRenewals={() => {}}
-            onNavigateSettings={() => {}}
+            onNavigateMembers={onNavigateMembers}
+            onNavigatePayments={onNavigatePayments}
+            onNavigateRenewals={onNavigateRenewals}
+            onNavigateSettings={onNavigateSettings}
             onNavigateMemberDetail={(member) =>
               props.navigation.navigate('MemberDetail', { member })
             }
             onNavigateAddMember={() => props.navigation.navigate('AddMember')}
             onNavigateRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
             onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
+            refreshToken={refreshToken}
           />
         )}
       </DashboardStackNav.Screen>
@@ -112,6 +153,22 @@ function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
               onRenew={(m) => props.navigation.navigate('RenewMember', { member: m })}
+              onEdit={(memberId) => props.navigation.navigate('EditMember', { memberId })}
+              onRecordPayment={(memberId) => props.navigation.navigate('RecordPayment', { memberId })}
+              onMemberUpdated={refresh}
+              refreshToken={refreshToken}
+            />
+          );
+        }}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="EditMember">
+        {(props) => {
+          const memberId = (props.route.params as { memberId: number })?.memberId;
+          return (
+            <EditMemberScreen
+              memberId={memberId}
+              onBack={() => props.navigation.goBack()}
+              onSaved={() => refresh()}
             />
           );
         }}
@@ -124,8 +181,10 @@ function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
-              onViewMember={() => props.navigation.goBack()}
-              onComplete={() => {}}
+              onViewMember={(updatedMember) =>
+                props.navigation.navigate('MemberDetail', { member: updatedMember })
+              }
+              onComplete={() => refresh()}
             />
           );
         }}
@@ -137,6 +196,7 @@ function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans
             onLogout={onLogout}
             plans={plans}
             onMemberCreated={(member) => {
+              refresh();
               props.navigation.replace('MemberDetail', { member });
             }}
           />
@@ -149,6 +209,7 @@ function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans
             <RecordPaymentScreen
               onBack={() => props.navigation.goBack()}
               preselectedMemberId={memberId}
+              onCreated={() => refresh()}
             />
           );
         }}
@@ -163,6 +224,8 @@ function DashboardStackScreen({ onLogout, plans }: { onLogout: () => void; plans
 }
 
 function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Plan[] }) {
+  const { refresh, refreshToken } = useRefreshToken();
+
   return (
     <MembersStackNav.Navigator screenOptions={{ headerShown: false }}>
       <MembersStackNav.Screen name="MembersList">
@@ -173,6 +236,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
               props.navigation.navigate('MemberDetail', { member })
             }
             onAddMember={() => props.navigation.navigate('AddMember')}
+            refreshToken={refreshToken}
           />
         )}
       </MembersStackNav.Screen>
@@ -187,6 +251,8 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
               onRenew={(m) => props.navigation.navigate('RenewMember', { member: m })}
               onEdit={(memberId) => props.navigation.navigate('EditMember', { memberId })}
               onRecordPayment={(memberId) => props.navigation.navigate('RecordPayment', { memberId })}
+              onMemberUpdated={refresh}
+              refreshToken={refreshToken}
             />
           );
         }}
@@ -198,6 +264,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
             <EditMemberScreen
               memberId={memberId}
               onBack={() => props.navigation.goBack()}
+              onSaved={() => refresh()}
             />
           );
         }}
@@ -210,8 +277,10 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
-              onViewMember={() => props.navigation.goBack()}
-              onComplete={() => {}}
+              onViewMember={(updatedMember) =>
+                props.navigation.navigate('MemberDetail', { member: updatedMember })
+              }
+              onComplete={() => refresh()}
             />
           );
         }}
@@ -223,6 +292,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
             onLogout={onLogout}
             plans={plans}
             onMemberCreated={(member) => {
+              refresh();
               props.navigation.replace('MemberDetail', { member });
             }}
           />
@@ -235,6 +305,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
             <RecordPaymentScreen
               onBack={() => props.navigation.goBack()}
               preselectedMemberId={memberId}
+              onCreated={() => refresh()}
             />
           );
         }}
@@ -244,6 +315,8 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
 }
 
 function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
+  const { refresh, refreshToken } = useRefreshToken();
+
   return (
     <RenewalsStackNav.Navigator screenOptions={{ headerShown: false }}>
       <RenewalsStackNav.Screen name="RenewalsHome">
@@ -256,6 +329,7 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
             onRenew={(member) =>
               props.navigation.navigate('RenewMember', { member })
             }
+            refreshToken={refreshToken}
           />
         )}
       </RenewalsStackNav.Screen>
@@ -268,6 +342,22 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
               onRenew={(m) => props.navigation.navigate('RenewMember', { member: m })}
+              onEdit={(memberId) => props.navigation.navigate('EditMember', { memberId })}
+              onRecordPayment={(memberId) => props.navigation.navigate('RecordPayment', { memberId })}
+              onMemberUpdated={refresh}
+              refreshToken={refreshToken}
+            />
+          );
+        }}
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="EditMember">
+        {(props) => {
+          const memberId = (props.route.params as { memberId: number })?.memberId;
+          return (
+            <EditMemberScreen
+              memberId={memberId}
+              onBack={() => props.navigation.goBack()}
+              onSaved={() => refresh()}
             />
           );
         }}
@@ -280,8 +370,22 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
-              onViewMember={() => props.navigation.goBack()}
-              onComplete={() => {}}
+              onViewMember={(updatedMember) =>
+                props.navigation.navigate('MemberDetail', { member: updatedMember })
+              }
+              onComplete={() => refresh()}
+            />
+          );
+        }}
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="RecordPayment">
+        {(props) => {
+          const memberId = (props.route.params as { memberId?: number })?.memberId;
+          return (
+            <RecordPaymentScreen
+              onBack={() => props.navigation.goBack()}
+              preselectedMemberId={memberId}
+              onCreated={() => refresh()}
             />
           );
         }}
@@ -291,6 +395,8 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
 }
 
 function PaymentsStackScreen({ onLogout }: { onLogout: () => void }) {
+  const { refresh, refreshToken } = useRefreshToken();
+
   return (
     <PaymentsStackNav.Navigator screenOptions={{ headerShown: false }}>
       <PaymentsStackNav.Screen name="PaymentsHome">
@@ -299,6 +405,7 @@ function PaymentsStackScreen({ onLogout }: { onLogout: () => void }) {
             onLogout={onLogout}
             onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
             onRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
+            refreshToken={refreshToken}
           />
         )}
       </PaymentsStackNav.Screen>
@@ -320,6 +427,7 @@ function PaymentsStackScreen({ onLogout }: { onLogout: () => void }) {
             <RecordPaymentScreen
               onBack={() => props.navigation.goBack()}
               preselectedMemberId={memberId}
+              onCreated={() => refresh()}
             />
           );
         }}
@@ -336,6 +444,7 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
           <SettingsScreen
             onLogout={onLogout}
             onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
+            onNavigateBot={() => props.navigation.navigate('BotOverview')}
             onNavigateBotTest={() => props.navigation.navigate('BotTest')}
             onNavigatePlans={() => props.navigation.navigate('Plans')}
             onNavigateStaff={() => props.navigation.navigate('Staff')}
@@ -345,6 +454,57 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="WhatsApp">
         {(props) => <WhatsAppScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotOverview">
+        {(props) => (
+          <BotOverviewScreen
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onOpenConversations={() => props.navigation.navigate('BotConversations')}
+            onOpenLeads={() => props.navigation.navigate('BotLeads')}
+            onOpenSetup={() => props.navigation.navigate('BotSetup')}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotConversations">
+        {(props) => (
+          <BotConversationsScreen
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onSelectConversation={(conversation) => props.navigation.navigate('BotConversationDetail', { conversation })}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotConversationDetail">
+        {(props) => (
+          <BotConversationDetailScreen
+            conversation={props.route.params.conversation}
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onOpenLead={(lead) => props.navigation.navigate('BotLeadDetail', { leadId: lead.id })}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotLeads">
+        {(props) => (
+          <BotLeadsScreen
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onSelectLead={(lead) => props.navigation.navigate('BotLeadDetail', { leadId: lead.id })}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotLeadDetail">
+        {(props) => (
+          <BotLeadDetailScreen
+            leadId={props.route.params.leadId}
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="BotSetup">
+        {(props) => <BotSetupScreen onBack={() => props.navigation.goBack()} onLogout={onLogout} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="BotTest">
         {(props) => <BotTestScreen onBack={() => props.navigation.goBack()} />}
@@ -459,7 +619,16 @@ export default function App() {
           })}
         >
           <Tab.Screen name="Dashboard">
-            {() => <DashboardStackScreen onLogout={handleLogout} plans={plans} />}
+            {(props) => (
+              <DashboardStackScreen
+                onLogout={handleLogout}
+                plans={plans}
+                onNavigateMembers={() => props.navigation.navigate('Members')}
+                onNavigatePayments={() => props.navigation.navigate('Payments')}
+                onNavigateRenewals={() => props.navigation.navigate('Renewals')}
+                onNavigateSettings={() => props.navigation.navigate('More')}
+              />
+            )}
           </Tab.Screen>
           <Tab.Screen name="Members">
             {() => <MembersStackScreen onLogout={handleLogout} plans={plans} />}

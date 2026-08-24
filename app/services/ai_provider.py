@@ -110,16 +110,6 @@ class OpenRouterProvider:
             content = choices[0].get("message", {}).get("content", "").strip()
             parsed = self._parse_structured_json(content)
             if not parsed:
-                # If JSON object extraction failed, wrap raw text if reasonable
-                if content and len(content) > 5 and not content.startswith("{"):
-                    return AIProviderResult(
-                        ok=True,
-                        text=content,
-                        intent="general",
-                        confidence=0.7,
-                        model_used=model,
-                        latency_ms=latency_ms,
-                    )
                 return AIProviderResult(
                     ok=False,
                     model_used=model,
@@ -128,14 +118,33 @@ class OpenRouterProvider:
                     error_message="Could not parse valid JSON from model response.",
                 )
 
+            response_text = (
+                parsed.get("response")
+                or parsed.get("message")
+                or parsed.get("text")
+            )
+            if not isinstance(response_text, str) or len(response_text.strip()) < 5:
+                return AIProviderResult(
+                    ok=False,
+                    model_used=model,
+                    latency_ms=latency_ms,
+                    error_type="MALFORMED_OUTPUT",
+                    error_message="Model response did not contain a valid text response.",
+                )
+
+            try:
+                confidence = float(parsed.get("confidence", 0.9))
+            except (TypeError, ValueError):
+                confidence = 0.0
+
             return AIProviderResult(
                 ok=True,
-                text=parsed.get("response") or parsed.get("message") or parsed.get("text"),
-                intent=parsed.get("intent", "general"),
-                confidence=float(parsed.get("confidence", 0.9)),
+                text=response_text,
+                intent=parsed.get("intent") if isinstance(parsed.get("intent"), str) else "general",
+                confidence=max(0.0, min(1.0, confidence)),
                 lead_data=parsed.get("lead_data") if isinstance(parsed.get("lead_data"), dict) else None,
-                action=parsed.get("action"),
-                handover=bool(parsed.get("handover", False)),
+                action=parsed.get("action") if isinstance(parsed.get("action"), str) else None,
+                handover=parsed.get("handover") is True,
                 model_used=model,
                 latency_ms=latency_ms,
             )

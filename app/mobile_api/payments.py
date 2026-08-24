@@ -5,15 +5,18 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from flask import g, jsonify, request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Member, PaymentVerification
+from app.models import Member, MobileIdempotencyKey, PaymentVerification
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
+from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
 from app.services.payment_service import reject_payment, verify_payment
+from app.services.timezone_service import today_for_gym
 
 
 def _serialize_payment(p: PaymentVerification) -> dict:
@@ -80,6 +83,28 @@ def register_payments_routes(bp):
     @roles_required("gym_owner", "staff")
     def create_payment():
         data = request.get_json(silent=True) or {}
+        idempotency_key = valid_key(request.headers.get("Idempotency-Key"))
+        if idempotency_key == "":
+            return error_response("VALIDATION_ERROR", "Idempotency-Key is too long.", 400)
+
+        request_hash = request_fingerprint(data)
+        if idempotency_key:
+            existing, matches_request = find_replay(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if existing:
+                if not matches_request:
+                    return error_response(
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "This idempotency key was already used for a different payment request.",
+                        409,
+                    )
+                return jsonify(existing.response_body), existing.status_code
+
         member_id = data.get("member_id")
         if not member_id:
             return error_response("VALIDATION_ERROR", "member_id is required.", 400)
@@ -108,7 +133,11 @@ def register_payments_routes(bp):
 
         paid_on_str = data.get("paid_on")
         try:
-            paid_on = date.fromisoformat(paid_on_str) if paid_on_str else date.today()
+            paid_on = (
+                date.fromisoformat(paid_on_str)
+                if paid_on_str
+                else today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
+            )
         except (ValueError, TypeError):
             return error_response("VALIDATION_ERROR", "Invalid paid_on date.", 400)
 
@@ -128,10 +157,40 @@ def register_payments_routes(bp):
         audit(action="create_payment", resource_type="payment_verification", resource_id=payment.id,
               gym_id=g.gym_id, actor_id=g.current_user.id)
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
+        response_body = {"success": True, "data": _serialize_payment(payment)}
+        if idempotency_key:
+            db.session.add(
+                MobileIdempotencyKey(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="create_payment",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                    status_code=201,
+                    response_body=response_body,
+                )
+            )
 
-        db.session.refresh(payment)
-        return jsonify({"success": True, "data": _serialize_payment(payment)}), 201
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            # A concurrent retry may have won the unique-key race. Its entire
+            # transaction includes the payment, so replay its stored response
+            # instead of creating a second financial record.
+            if idempotency_key:
+                existing, matches_request = find_replay(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="create_payment",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if existing and matches_request:
+                    return jsonify(existing.response_body), existing.status_code
+            raise
+
+        return jsonify(response_body), 201
 
     @bp.route("/payments/<int:payment_id>/verify", methods=["POST"])
     @token_required

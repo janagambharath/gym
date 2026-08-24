@@ -89,6 +89,13 @@ class AIRouter:
             logger.info("Bot Level 1: Deterministic fastpath triggered intent=%s gym=%s", intent, self.gym.id)
             return text, intent, handover
 
+        # Commercial and operational facts must always come from tenant-owned
+        # records. The LLM remains useful for general conversation, but it is
+        # never the authority for these mutable business facts.
+        if self._requires_database_grounding(lower):
+            logger.info("Bot Level 1: Grounded responder selected gym=%s", self.gym.id)
+            return self._conversational_fallback(clean_text, conversation, lead)
+
         # Check if AI provider is enabled and configured
         ai_enabled = current_app.config.get("BOT_AI_ENABLED", True)
         if not ai_enabled or not self.provider.is_configured():
@@ -149,12 +156,74 @@ class AIRouter:
         self, lower: str, conversation: BotConversation, lead: BotLead
     ) -> tuple[str, str, bool] | None:
         """Instant exact-intent matcher."""
+        # Payment state changes are privileged financial operations. Never ask
+        # a model to decide whether to change or verify one.
+        if any(
+            phrase in lower
+            for phrase in (
+                "mark my payment",
+                "mark payment",
+                "verify my payment",
+                "verify payment",
+                "change payment status",
+                "update payment status",
+                "payment as paid",
+            )
+        ):
+            conversation.handover_status = "human_requested"
+            return (
+                "I cannot verify, change, or mark a payment as paid. "
+                "I have asked our front desk team to review it through the official payment process.",
+                "payment_safety",
+                True,
+            )
+
+        # This channel does not have calendar availability authority, so a
+        # conversation can request a visit but can never confirm one.
+        if any(
+            phrase in lower
+            for phrase in ("book me", "confirm booking", "confirm appointment", "schedule me")
+        ):
+            conversation.handover_status = "human_requested"
+            return (
+                "I can pass your preferred visit time to our team, but I cannot confirm a booking here. "
+                "A staff member will check availability and reply to you.",
+                "booking_request",
+                True,
+            )
+
+        # Keep customer, staff, prompt, and provider information private even
+        # if a model provider is enabled or reconfigured later.
+        if any(
+            phrase in lower
+            for phrase in (
+                "another customer",
+                "other customer",
+                "member phone number",
+                "staff phone number",
+                "system prompt",
+                "api key",
+                "secret prompt",
+                "show your instructions",
+                "show me your prompt",
+                "ignore your instructions",
+                "developer mode",
+                "jailbreak",
+            )
+        ):
+            return (
+                f"I'm here to help with membership questions about *{self.gym.name}*. "
+                "I can't share private or internal information.",
+                "privacy_or_injection_blocked",
+                False,
+            )
+
         # 1. Human handover request
         if any(kw in lower for kw in ["talk to human", "speak to human", "speak to staff", "call me", "connect me with someone", "human", "receptionist", "owner", "manager"]):
             conversation.handover_status = "human_requested"
             lead.status = "contacted"
             return (
-                f"I've notified our front desk team at *{self.gym.name}*. "
+                f"I've marked this chat for our front desk team at *{self.gym.name}*. "
                 "A staff member will take over this chat shortly! 🙋‍♂️\n\n"
                 "In the meantime, let me know if you'd like our location or plans.",
                 "human_handover",
@@ -164,8 +233,8 @@ class AIRouter:
         # 2. Prompt injection defense
         if any(kw in lower for kw in ["ignore your instructions", "system prompt", "api key", "secret prompt", "show your instructions", "developer mode"]):
             return (
-                f"I'm here exclusively to help you with membership, workout trials, and questions about *{self.gym.name}*! 💪\n\n"
-                "How can I assist you with your fitness goals today?",
+                f"I'm here exclusively to help with membership questions about *{self.gym.name}*. 💪\n\n"
+                "How can I assist you today?",
                 "injection_blocked",
                 False,
             )
@@ -173,21 +242,80 @@ class AIRouter:
         # 3. Exact greeting
         if lower in {"hi", "hello", "hey", "namaste", "start"}:
             greeting = self.config.greeting_message if self.config and self.config.greeting_message else f"Welcome to *{self.gym.name}*! 💪"
-            hours_text = f"\n⏰ *Hours:* {self.config.opening_hours}" if self.config and self.config.opening_hours else ""
-            address_text = f"\n📍 *Location:* {self.gym.address}" if self.gym.address else ""
+            configured_topics = []
+            if MembershipPlan.query.filter_by(gym_id=self.gym.id, is_active=True).first():
+                configured_topics.append("membership plans")
+            if self.config and self.config.opening_hours:
+                configured_topics.append("opening hours")
+            if self.gym.address or (self.config and self.config.map_link):
+                configured_topics.append("location")
+            if self.config and self.config.trial_enabled:
+                configured_topics.append("trial visits")
+            if BotKnowledgeItem.query.filter_by(gym_id=self.gym.id, enabled=True).first():
+                configured_topics.append("facility information")
+            if not configured_topics:
+                return (
+                    f"{greeting}\n\n"
+                    "I can connect you with our team if you have a question.",
+                    "greeting",
+                    False,
+                )
             return (
                 f"{greeting}\n\n"
-                f"How can I help you today? You can ask about:{hours_text}{address_text}\n"
-                "1️⃣ *Membership Plans & Pricing*\n"
-                "2️⃣ *Free Trial / Day Pass*\n"
-                "3️⃣ *Gym Facilities & Equipment*\n"
-                "4️⃣ *Speak with Staff / Owner*\n\n"
-                "Reply with a number or type your question!",
+                f"How can I help you today? You can ask about {self._join_topics(configured_topics)}, "
+                "or ask to speak with our team.",
                 "greeting",
                 False,
             )
 
         return None
+
+    @staticmethod
+    def _requires_database_grounding(lower: str) -> bool:
+        """Return true when an answer must come from tenant-owned records."""
+
+        phrases = ("day pass", "guest pass")
+        terms = {
+            "plan",
+            "plans",
+            "price",
+            "pricing",
+            "cost",
+            "fee",
+            "fees",
+            "membership",
+            "trial",
+            "visit",
+            "time",
+            "timing",
+            "timings",
+            "hours",
+            "open",
+            "close",
+            "sunday",
+            "location",
+            "address",
+            "map",
+            "directions",
+            "facility",
+            "facilities",
+            "equipment",
+            "amenities",
+            "trainer",
+            "trainers",
+        }
+        return any(phrase in lower for phrase in phrases) or bool(
+            set(re.findall(r"[a-z]+", lower)) & terms
+        )
+
+    @staticmethod
+    def _join_topics(topics: list[str]) -> str:
+        """Format a small list of known bot topics for a greeting."""
+        if len(topics) == 1:
+            return topics[0]
+        if len(topics) == 2:
+            return f"{topics[0]} and {topics[1]}"
+        return f"{', '.join(topics[:-1])}, and {topics[-1]}"
 
     def _conversational_fallback(
         self, text: str, conversation: BotConversation, lead: BotLead
@@ -202,9 +330,8 @@ class AIRouter:
             ).first()
             if plan:
                 return (
-                    f"Our *{plan.name}* is ₹{plan.price:,.0f} for {plan.duration_days} days. "
-                    "It's one of our most popular choices for steady fitness progress! 🏋️\n\n"
-                    "Would you like to book a trial workout first or join directly?",
+                    f"Our *{plan.name}* is ₹{plan.price:,.0f} for {plan.duration_days} days.\n\n"
+                    "Would you like me to connect you with our team about this plan?",
                     "plan_details",
                     False,
                 )
@@ -215,9 +342,8 @@ class AIRouter:
             ).first()
             if plan:
                 return (
-                    f"Our *{plan.name}* is ₹{plan.price:,.0f} for {plan.duration_days} days. "
-                    "It offers our highest overall value with complete facility access! 🌟\n\n"
-                    "Would you like to visit today to check out the gym floor?",
+                    f"Our *{plan.name}* is ₹{plan.price:,.0f} for {plan.duration_days} days.\n\n"
+                    "Would you like me to connect you with our team about this plan?",
                     "plan_details",
                     False,
                 )
@@ -232,7 +358,7 @@ class AIRouter:
                 return (
                     f"📋 *Membership Options at {self.gym.name}:*\n\n"
                     f"{plans_text}{reg_link}\n\n"
-                    "If you tell me how many days a week you train, I can recommend the best plan for you! Or type *TRIAL* for a guest pass.",
+                    "Would you like help choosing a plan, or would you like me to connect you with our team?",
                     "pricing",
                     False,
                 )
@@ -241,57 +367,84 @@ class AIRouter:
         if any(kw in lower for kw in ["trial", "free trial", "visit", "day pass", "guest pass", "workout", "demo", "2", "2️⃣"]):
             lead.status = "trial_requested"
             lead.trial_requested = True
-            trial_info = "free 1-day workout trial"
-            if self.config and self.config.trial_enabled and self.config.trial_price:
-                trial_info = f"{self.config.trial_duration_days or 1}-day trial for ₹{self.config.trial_price:,.0f}"
+            if self.config and self.config.trial_enabled:
+                trial_details = []
+                if self.config.trial_duration_days is not None:
+                    trial_details.append(
+                        f"Duration: {self.config.trial_duration_days} day(s)."
+                    )
+                if self.config.trial_price is not None:
+                    trial_details.append(f"Price: ₹{self.config.trial_price:,.0f}.")
+                details_text = f"\n{' '.join(trial_details)}" if trial_details else ""
+                return (
+                    f"I can pass your trial or visit request to the team at *{self.gym.name}*."
+                    f"{details_text}\n\n"
+                    "What day and time works best for you? Our team will confirm availability.",
+                    "trial",
+                    False,
+                )
 
             return (
-                f"🔥 We'd love to host you for a *{trial_info}* at *{self.gym.name}*!\n\n"
-                "What day and time works best for you? (e.g. *Tomorrow 6 PM* or *Saturday morning*)",
+                "I don't have a configured trial or visit offer on hand. "
+                "Would you like me to connect you with our team?",
                 "trial",
-                False,
+                True,
             )
 
         # Hours / Timings
         if any(kw in lower for kw in ["time", "timing", "timings", "hours", "open", "close", "opening", "closing", "sunday"]):
-            hours = self.config.opening_hours if self.config and self.config.opening_hours else "6:00 AM - 10:00 PM (Mon-Sat), 7:00 AM - 1:00 PM (Sun)"
+            if self.config and self.config.opening_hours:
+                return (
+                    f"⏰ *Operating Hours for {self.gym.name}:*\n{self.config.opening_hours}",
+                    "timings",
+                    False,
+                )
             return (
-                f"⏰ *Operating Hours for {self.gym.name}:*\n{hours}\n\n"
-                "Would you like directions or details on our membership plans?",
+                "I don't have the operating hours on hand. "
+                "Would you like me to connect you with our team?",
                 "timings",
-                False,
+                True,
             )
 
         # Location / Address
         if any(kw in lower for kw in ["location", "address", "where", "map", "directions", "locate"]):
-            addr = self.gym.address or "Please contact our front desk for full directions."
-            map_str = f"\n🗺️ *Google Maps:* {self.config.map_link}" if self.config and self.config.map_link else ""
+            location_lines = [f"*{self.gym.name}*"]
+            if self.gym.address:
+                location_lines.append(self.gym.address)
+            if self.config and self.config.map_link:
+                location_lines.append(f"Google Maps: {self.config.map_link}")
+            if len(location_lines) > 1:
+                return (
+                    "📍 *Find Us:*\n" + "\n".join(location_lines),
+                    "location",
+                    False,
+                )
             return (
-                f"📍 *Find Us:*\n*{self.gym.name}*\n{addr}{map_str}\n\n"
-                "Drop in during open hours to tour our facility!",
+                "I don't have the location details on hand. "
+                "Would you like me to connect you with our team?",
                 "location",
-                False,
+                True,
             )
 
         # Facilities
         if any(kw in lower for kw in ["facility", "facilities", "equipment", "amenities", "trainer", "trainers", "3", "3️⃣"]):
             items = BotKnowledgeItem.query.filter_by(gym_id=self.gym.id, enabled=True).all()
             if items:
-                lines = [f"• *{item.name}*: {item.description or ''}" for item in items]
+                lines = [
+                    f"• *{item.name}*{': ' + item.description if item.description else ''}"
+                    for item in items
+                ]
                 facilities_text = "\n".join(lines)
-            else:
-                facilities_text = (
-                    "• *Cardio & Strength Zone*: Modern treadmills, ellipticals, free weights & power racks\n"
-                    "• *Certified Personal Coaching*: Customized workout & nutrition plans\n"
-                    "• *Locker & Changing Rooms*: Clean and sanitized amenities\n"
-                    "• *Climate Controlled*: Full air conditioning"
+                return (
+                    f"🏋️ *Configured information from {self.gym.name}:*\n\n{facilities_text}",
+                    "facilities",
+                    False,
                 )
             return (
-                f"🏋️ *Facilities & Amenities at {self.gym.name}:*\n\n"
-                f"{facilities_text}\n\n"
-                "Type *TRIAL* to experience the facility firsthand!",
+                "I don't have facility details on hand. "
+                "Would you like me to connect you with our team?",
                 "facilities",
-                False,
+                True,
             )
 
         # FAQ DB lookup
@@ -304,14 +457,10 @@ class AIRouter:
 
         # Fallback helpful response
         return (
-            f"Thanks for reaching out to *{self.gym.name}*! 🙏\n\n"
-            "I can assist you with:\n"
-            "• *PLANS* — Current pricing and membership options\n"
-            "• *TRIAL* — Book a guest workout pass\n"
-            "• *HOURS* — Operating schedule\n"
-            "• *HUMAN* — Speak directly with our staff",
+            f"Thanks for reaching out to *{self.gym.name}*. "
+            "I don't have that information on hand. Would you like me to connect you with our team?",
             "general_help",
-            False,
+            True,
         )
 
     # ─── Quality Gate & Guardrails ────────────────────────────────────
@@ -363,15 +512,24 @@ class AIRouter:
         faqs = BotFAQ.query.filter_by(gym_id=self.gym.id, enabled=True).order_by(BotFAQ.priority.desc()).limit(8).all()
         faqs_info = [f"Q: {faq.question} A: {faq.answer}" for faq in faqs]
 
+        trial_info = None
+        if self.config and self.config.trial_enabled:
+            trial_info = {
+                "duration_days": self.config.trial_duration_days,
+                "price": str(self.config.trial_price)
+                if self.config.trial_price is not None
+                else None,
+            }
+
         context_dict = {
             "gym_name": self.gym.name,
-            "address": self.gym.address or "Address available upon request",
-            "opening_hours": self.config.opening_hours if self.config and self.config.opening_hours else "6:00 AM - 10:00 PM (Mon-Sat)",
+            "address": self.gym.address or None,
+            "opening_hours": self.config.opening_hours if self.config and self.config.opening_hours else None,
             "map_link": self.config.map_link if self.config and self.config.map_link else None,
             "plans": plans_info,
             "facilities": facilities_info,
             "faqs": faqs_info,
-            "trial_info": f"Price: Rs.{self.config.trial_price or 0}, Duration: {self.config.trial_duration_days or 1} days" if self.config and self.config.trial_enabled else "Free 1-day pass",
+            "trial_info": trial_info,
             "registration_link": self.config.registration_link if self.config else None,
         }
 

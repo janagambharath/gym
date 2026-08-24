@@ -15,7 +15,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession, logout } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { GymSettings, Plan, SettingsResponse } from '../types';
+import type { GymSettings, SettingsResponse } from '../types';
 
 type SettingsScreenProps = {
   onLogout: () => void;
@@ -23,6 +23,7 @@ type SettingsScreenProps = {
   onNavigatePlans?: () => void;
   onNavigateStaff?: () => void;
   onNavigateReports?: () => void;
+  onNavigateBot?: () => void;
   onNavigateBotTest?: () => void;
 };
 
@@ -32,23 +33,19 @@ export function SettingsScreen({
   onNavigatePlans,
   onNavigateStaff,
   onNavigateReports,
+  onNavigateBot,
   onNavigateBotTest,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [loading, setLoading] = useState(true);
-
   const session = getCachedSession();
 
   useEffect(() => {
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((result) => {
       if (result.ok) {
         setGym(result.data.gym);
-        setPlans(result.data.plans);
       } else if (result.error.status === 401) {
         onLogout();
       }
-      setLoading(false);
     });
   }, [onLogout]);
 
@@ -85,8 +82,9 @@ export function SettingsScreen({
         <View style={styles.card}>
           <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
-            <MenuItem icon="whatsapp" label="WhatsApp & AI Leads" onPress={onNavigateWhatsApp} />
-            <MenuItem icon="chatbubble" label="AI Bot Sandbox" onPress={onNavigateBotTest} />
+            <MenuItem icon="whatsapp" label="WhatsApp reminders" onPress={onNavigateWhatsApp} />
+            <MenuItem icon="robot" label="WhatsApp Bot" onPress={onNavigateBot} />
+            <MenuItem icon="testTube" label="Bot test sandbox" onPress={onNavigateBotTest} />
             <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
             {session?.userRole === 'gym_owner' ? (
               <MenuItem icon="staff" label="Staff" onPress={onNavigateStaff} />

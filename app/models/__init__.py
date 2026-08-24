@@ -3,6 +3,7 @@ from app.models.audit_log import AuditLog
 from app.models.bot import (
     BotBookingRequest,
     BotConversation,
+    BotEvent,
     BotFAQ,
     BotFollowUp,
     BotKnowledgeItem,
@@ -15,6 +16,7 @@ from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallatio
 from app.models.gym import Gym
 from app.models.member import Member, MembershipPlan
 from app.models.mobile_token import MobileRefreshToken
+from app.models.mobile_idempotency import MobileIdempotencyKey
 from app.models.payment_verification import PaymentVerification
 from app.models.qr_settings import QRSettings
 from app.models.reminder_log import ReminderLog
@@ -26,6 +28,7 @@ __all__ = [
     "AuditLog",
     "BotBookingRequest",
     "BotConversation",
+    "BotEvent",
     "BotFAQ",
     "BotFollowUp",
     "BotKnowledgeItem",
@@ -40,6 +43,7 @@ __all__ = [
     "Member",
     "MembershipPlan",
     "MobileRefreshToken",
+    "MobileIdempotencyKey",
     "NotificationTemplate",
     "PaymentVerification",
     "QRSettings",

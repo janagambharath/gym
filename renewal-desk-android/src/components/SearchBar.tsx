@@ -1,5 +1,5 @@
 import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, radius, spacing } from '../theme/tokens';
 
 type SearchBarProps = {
   placeholder?: string;

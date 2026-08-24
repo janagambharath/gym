@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -16,7 +16,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { Member, Renewal } from '../types';
+import type { Member, Payment } from '../types';
 import { formatCurrency, formatDate, getMemberDisplayStatus } from '../types';
 
 type RenewMemberScreenProps = {
@@ -29,6 +29,10 @@ type RenewMemberScreenProps = {
 
 type PaymentMethod = 'cash' | 'upi' | 'other';
 
+function createPaymentRequestKey(): string {
+  return `payment-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export function RenewMemberScreen({
   member,
   onBack,
@@ -36,48 +40,51 @@ export function RenewMemberScreen({
   onViewMember,
   onComplete,
 }: RenewMemberScreenProps) {
-  const [confirmed, setConfirmed] = useState(false);
   const [renewing, setRenewing] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [renewalResult, setRenewalResult] = useState<Renewal | null>(null);
+  const [paymentResult, setPaymentResult] = useState<Payment | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [agreementChecked, setAgreementChecked] = useState(false);
+  const paymentRequestKeyRef = useRef<string | undefined>(undefined);
 
   const renewalDays = member.plan?.duration_days ?? 30;
   const amount = member.plan?.price ?? '0';
   const displayStatus = getMemberDisplayStatus(member);
-
-  // Calculate new expiry
-  const currentExpiry = member.membership_end ? new Date(member.membership_end) : new Date();
-  const today = new Date();
-  const newStartDate = currentExpiry > today
-    ? new Date(currentExpiry.getTime() + 86400000) // day after expiry
-    : today;
-  const newExpiry = new Date(newStartDate.getTime() + (renewalDays - 1) * 86400000);
-  const newExpiryStr = newExpiry.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
   const handleRenew = useCallback(async () => {
     if (renewing) return; // Prevent double tap
 
     setRenewing(true);
     setError(undefined);
+    const idempotencyKey = paymentRequestKeyRef.current ?? createPaymentRequestKey();
+    paymentRequestKeyRef.current = idempotencyKey;
 
-    const result = await apiRequest<Renewal>(`/api/mobile/v1/renewals/${member.id}`, {
+    const result = await apiRequest<Payment>('/api/mobile/v1/payments', {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: {
+        member_id: member.id,
         renewal_days: renewalDays,
         amount,
-        notes: `Renewed via mobile app · ${paymentMethod.toUpperCase()}`,
+        method: paymentMethod,
+        notes: 'Renewal payment recorded from the mobile app.',
       },
     });
 
     if (result.ok) {
-      setRenewalResult(result.data);
+      paymentRequestKeyRef.current = undefined;
+      setPaymentResult(result.data);
       setSuccess(true);
       onComplete?.();
     } else {
       if (result.error.status === 401) { onLogout(); return; }
+      // Retain the key after an uncertain network/server failure so retrying
+      // the same payment cannot create a duplicate. Reset it for a definite
+      // client-side validation/conflict error instead.
+      if (result.error.status && result.error.status < 500) {
+        paymentRequestKeyRef.current = undefined;
+      }
       setError(result.error.message);
     }
     setRenewing(false);
@@ -90,7 +97,7 @@ export function RenewMemberScreen({
     });
   }, [member.id]);
 
-  if (success && renewalResult) {
+  if (success && paymentResult) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <AppHeader title="Renew Membership" onBack={onBack} />
@@ -100,9 +107,9 @@ export function RenewMemberScreen({
             <Text style={styles.successCheckmark}>✓</Text>
           </View>
 
-          <Text style={styles.successTitle}>Membership Renewed!</Text>
+          <Text style={styles.successTitle}>Payment Recorded</Text>
           <Text style={styles.successSubtitle}>
-            The membership has been renewed successfully.
+            Membership will be extended after this payment is verified.
           </Text>
 
           {/* Member Info */}
@@ -116,22 +123,22 @@ export function RenewMemberScreen({
             </View>
           </View>
 
-          {/* New Expiry */}
+          {/* Renewal status */}
           <View style={styles.successCard}>
-            <Text style={styles.successLabel}>New Expiry Date</Text>
-            <Text style={styles.successExpiry}>{formatDate(renewalResult.new_end)}</Text>
-            <StatusBadge status="active" size="md" />
+            <Text style={styles.successLabel}>Renewal status</Text>
+            <Text style={styles.successExpiry}>Awaiting verification</Text>
+            <StatusBadge status={paymentResult.status} size="md" />
           </View>
 
           {/* Payment Info */}
           <View style={styles.successCard}>
             <SectionHeader title="Payment Information" icon={<Icon name="currency" size={18} color={colors.brand} />} />
-            <InfoRow label="Amount Paid" value={formatCurrency(renewalResult.amount)} />
-            <InfoRow label="Payment Method" value={paymentMethod.charAt(0).toUpperCase() + paymentMethod.slice(1)} />
-            <InfoRow label="Payment Date" value={formatDate(renewalResult.created_at)} />
+            <InfoRow label="Amount recorded" value={formatCurrency(paymentResult.amount)} />
+            <InfoRow label="Payment method" value={paymentResult.method} />
+            <InfoRow label="Recorded on" value={formatDate(paymentResult.created_at)} />
             <View style={styles.successPaymentStatus}>
               <Text style={styles.successPaymentLabel}>Payment Status</Text>
-              <StatusBadge status="pending" size="md" />
+              <StatusBadge status={paymentResult.status} size="md" />
             </View>
           </View>
 
@@ -141,7 +148,7 @@ export function RenewMemberScreen({
             <View style={styles.secureTextContainer}>
               <Text style={styles.secureTitle}>Secure & Recorded</Text>
               <Text style={styles.secureText}>
-                This renewal and payment have been recorded securely.
+                The payment is recorded securely and will be reviewed before access is extended.
               </Text>
             </View>
           </View>
@@ -186,7 +193,7 @@ export function RenewMemberScreen({
           <InfoRow label="Current Expiry" value={formatDate(member.membership_end)} />
           <InfoRow label="Renewal Duration" value={`${renewalDays} days`} />
           <InfoRow label="Amount" value={formatCurrency(amount)} />
-          <InfoRow label="New Expiry" value={newExpiryStr} valueColor={colors.brand} />
+          <InfoRow label="Extension after verification" value={`${renewalDays} days`} valueColor={colors.brand} />
         </View>
 
         {/* Payment Status */}
@@ -195,16 +202,16 @@ export function RenewMemberScreen({
           <View>
             <Text style={styles.paymentStatusTitle}>Payment Status: PENDING</Text>
             <Text style={styles.paymentStatusText}>
-              Renewal will be activated after payment is received.
+              Membership will be extended only after payment verification.
             </Text>
           </View>
         </View>
 
         {/* Payment Information */}
         <View style={styles.card}>
-          <SectionHeader title="Payment Information" icon="₹" />
-          <InfoRow label="Membership Amount" value={formatCurrency(amount)} />
-          <InfoRow label="Discount" value="₹0" />
+          <SectionHeader title="Payment Information" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+          <InfoRow label="Renewal amount" value={formatCurrency(amount)} />
+          <InfoRow label="Verification" value="Required before renewal" />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total Amount</Text>
             <Text style={styles.totalValue}>{formatCurrency(amount)}</Text>
@@ -219,7 +226,10 @@ export function RenewMemberScreen({
               <TouchableOpacity
                 key={method}
                 style={[styles.methodChip, paymentMethod === method && styles.methodChipActive]}
-                onPress={() => setPaymentMethod(method)}
+                onPress={() => {
+                  paymentRequestKeyRef.current = undefined;
+                  setPaymentMethod(method);
+                }}
               >
                 <Text style={[styles.methodText, paymentMethod === method && styles.methodTextActive]}>
                   {method.charAt(0).toUpperCase() + method.slice(1)}
@@ -235,7 +245,7 @@ export function RenewMemberScreen({
           <View style={styles.secureTextContainer}>
             <Text style={styles.secureTitle}>Secure & Accurate</Text>
             <Text style={styles.secureText}>
-              This renewal will be recorded securely. You can review it in the member's activity anytime.
+              This payment record will be sent for verification. Membership access is not extended until it is approved.
             </Text>
           </View>
         </View>
@@ -249,7 +259,7 @@ export function RenewMemberScreen({
             {agreementChecked ? <Text style={styles.checkboxIcon}>✓</Text> : null}
           </View>
           <Text style={styles.agreementText}>
-            I confirm the details above are correct and want to proceed with this renewal.
+            I confirm the amount and payment method are correct and want to record this payment for verification.
           </Text>
         </TouchableOpacity>
 
@@ -262,7 +272,7 @@ export function RenewMemberScreen({
 
         {/* Confirm Button */}
         <PrimaryButton
-          label="Confirm Renewal"
+          label="Record Payment for Renewal"
           icon={<Icon name="lock" size={16} color={colors.textInverse} />}
           onPress={() => void handleRenew()}
           disabled={!agreementChecked}
@@ -273,13 +283,13 @@ export function RenewMemberScreen({
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
 
-        {/* Duplicate Protection Notice */}
+        {/* Review reminder */}
         <View style={styles.duplicateNotice}>
-          <Text style={styles.duplicateIcon}>🛡</Text>
+          <Icon name="info" size={20} color={colors.brand} />
           <View>
-            <Text style={styles.duplicateTitle}>Duplicate Protection</Text>
+            <Text style={styles.duplicateTitle}>Review before submitting</Text>
             <Text style={styles.duplicateText}>
-              This action is protected to prevent accidental duplicate renewals. Please confirm only once.
+              A payment record is created for this renewal and remains pending until it is verified.
             </Text>
           </View>
         </View>
@@ -340,10 +350,6 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     padding: spacing.lg,
     paddingBottom: spacing.section,
-  },
-  duplicateIcon: {
-    fontSize: 20,
-    marginRight: spacing.md,
   },
   duplicateNotice: {
     alignItems: 'flex-start',

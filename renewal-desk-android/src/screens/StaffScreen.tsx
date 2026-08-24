@@ -29,9 +29,7 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
-  const fetchStaff = useCallback(async () => {
-    setLoading(true);
-    const res = await apiRequest<{ staff: StaffMember[] }>('/api/mobile/v1/staff');
+  const fetchStaff = useCallback(() => apiRequest<{ staff: StaffMember[] }>('/api/mobile/v1/staff').then((res) => {
     if (res.ok) {
       setStaff(res.data.staff);
       setError(undefined);
@@ -39,9 +37,14 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
       setError(res.error.message);
     }
     setLoading(false);
-  }, []);
+  }), []);
 
   useEffect(() => {
+    void fetchStaff();
+  }, [fetchStaff]);
+
+  const handleRetry = useCallback(() => {
+    setLoading(true);
     void fetchStaff();
   }, [fetchStaff]);
 
@@ -80,7 +83,7 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
           <CardSkeleton />
         </View>
       ) : error ? (
-        <ErrorState message={error} onRetry={fetchStaff} />
+        <ErrorState message={error} onRetry={handleRetry} />
       ) : staff.length === 0 ? (
         <EmptyState
           icon={<Icon name="staff" size={40} color={colors.muted} />}

@@ -24,6 +24,7 @@ type MembersScreenProps = {
   onLogout: () => void;
   onSelectMember?: (member: Member) => void;
   onAddMember?: () => void;
+  refreshToken?: number;
 };
 
 const FILTER_OPTIONS = [
@@ -33,17 +34,20 @@ const FILTER_OPTIONS = [
   { key: 'expired', label: 'Expired', dotColor: colors.statusExpired },
 ];
 
-export function MembersScreen({ onLogout, onSelectMember, onAddMember }: MembersScreenProps) {
+export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshToken }: MembersScreenProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [requestRevision, setRequestRevision] = useState(0);
+  const [completedRequestKey, setCompletedRequestKey] = useState<string | undefined>();
+  const requestKey = `${page}:${debouncedSearch}:${statusFilter}:${refreshToken ?? ''}:${requestRevision}`;
+  const loading = completedRequestKey !== requestKey;
 
   const handleSearch = useCallback((text: string) => {
     setSearch(text);
@@ -57,7 +61,6 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember }: Members
   useEffect(() => {
     let cancelled = false;
 
-    setLoading(true);
     const params = new URLSearchParams({ page: String(page), page_size: '20' });
     if (debouncedSearch.trim()) {
       params.set('q', debouncedSearch.trim());
@@ -84,11 +87,11 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember }: Members
         if (result.error.status === 401) { onLogout(); return; }
         setError(result.error.message);
       }
-      setLoading(false);
+      setCompletedRequestKey(requestKey);
     });
 
     return () => { cancelled = true; };
-  }, [page, debouncedSearch, statusFilter, onLogout]);
+  }, [page, debouncedSearch, statusFilter, refreshToken, requestKey, onLogout]);
 
   const renderMember = useCallback(({ item }: { item: Member }) => {
     const displayStatus = getMemberDisplayStatus(item);
@@ -176,7 +179,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember }: Members
           <CardSkeleton />
         </View>
       ) : error ? (
-        <ErrorState message={error} onRetry={() => { setPage(1); setLoading(true); }} />
+        <ErrorState message={error} onRetry={() => { setPage(1); setRequestRevision((revision) => revision + 1); }} />
       ) : members.length === 0 ? (
         <EmptyState
           icon={<Icon name="members" size={40} color={colors.muted} />}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
@@ -9,6 +9,7 @@ from app.models import Member, PaymentVerification, RenewalHistory
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.bridge_service import queue_membership_command
+from app.services.timezone_service import today_for_gym
 
 
 def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal_days: int) -> RenewalHistory:
@@ -40,7 +41,10 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         )
 
     previous_end = member.membership_end
-    new_start = max(date.today(), previous_end + timedelta(days=1))
+    gym_timezone = (
+        member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
+    )
+    new_start = max(today_for_gym(gym_timezone), previous_end + timedelta(days=1))
     new_end = new_start + timedelta(days=renewal_days - 1)
 
     locked_payment.status = "verified"

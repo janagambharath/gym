@@ -12,6 +12,7 @@ from app.models.gym import DEFAULT_WHATSAPP_WELCOME_TEMPLATE
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.bot_service import BotService
+from app.services.entitlement_service import WHATSAPP_BOT_FEATURE, is_feature_enabled
 from app.services.reminder_service import send_template_fallback_for_reengagement
 from app.services.whatsapp_service import WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
@@ -158,6 +159,17 @@ def _process_message(gym: Gym, message: dict) -> bool:
 
     if len(members) == 0:
         # Prospective lead / non-member -> Pass to WhatsApp AI Receptionist
+        # Do not allow an unentitled gym to create bot conversations, leads,
+        # or outbound replies. This deliberately sits only in the unknown
+        # sender branch: known-member opt-in and welcome processing remains
+        # part of the existing WhatsApp workflow regardless of bot access.
+        if not is_feature_enabled(gym, WHATSAPP_BOT_FEATURE):
+            current_app.logger.info(
+                "Ignored prospective WhatsApp message because bot is not entitled for gym %s",
+                gym.id,
+            )
+            return False
+
         message_text = ""
         if message_type == "text":
             message_text = message.get("text", {}).get("body", "")

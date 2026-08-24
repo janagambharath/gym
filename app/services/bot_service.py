@@ -19,6 +19,7 @@ from app.extensions import db
 from app.models.bot import (
     BotBookingRequest,
     BotConversation,
+    BotEvent,
     BotLead,
     BotMessage,
     GymBotConfig,
@@ -103,11 +104,23 @@ class BotService:
             db.session.add(lead)
             db.session.flush()
 
+        self._record_event(
+            event_type="inbound_message_received",
+            conversation=conversation,
+            lead=lead,
+            provider_message_id=provider_message_id,
+        )
+
         # 3. Check for human handover status
         if conversation.handover_status == "human_active":
             if clean_text.lower() in {"#bot", "#start", "start bot", "restart"}:
                 conversation.handover_status = "bot_active"
                 conversation.state = "new"
+                self._record_event(
+                    event_type="bot_reactivated",
+                    conversation=conversation,
+                    lead=lead,
+                )
                 reply = f"🤖 AI Receptionist reactivated for *{self.gym.name}*! How can I help you today?"
                 self._send_reply(conversation, reply)
                 return True
@@ -135,6 +148,12 @@ class BotService:
 
         if is_handover:
             conversation.handover_status = "human_requested"
+            self._record_event(
+                event_type="human_handover_requested",
+                conversation=conversation,
+                lead=lead,
+                payload={"intent": intent},
+            )
 
         if reply_text:
             self._send_reply(conversation, reply_text)
@@ -179,15 +198,56 @@ class BotService:
             },
         }
 
-    def _send_reply(self, conversation: BotConversation, text: str) -> None:
-        """Send outbound text to user via WhatsApp and record it in database."""
-        res = self.whatsapp.send_text(to=conversation.phone, body=text)
-        provider_id = res.provider_message_id if res.ok else None
+    def _record_event(
+        self,
+        *,
+        event_type: str,
+        conversation: BotConversation,
+        lead: BotLead | None = None,
+        provider_message_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Append a tenant-scoped audit event without retaining message content."""
 
-        outbound_msg = BotMessage(
-            conversation_id=conversation.id,
-            sender="bot",
-            body=text,
-            provider_message_id=provider_id,
+        db.session.add(
+            BotEvent(
+                gym_id=self.gym.id,
+                conversation_id=conversation.id,
+                lead_id=lead.id if lead else None,
+                event_type=event_type,
+                provider_message_id=provider_message_id,
+                payload=payload,
+            )
         )
-        db.session.add(outbound_msg)
+
+    def _send_reply(self, conversation: BotConversation, text: str) -> bool:
+        """Send outbound text and add it to history only after provider acceptance."""
+
+        res = self.whatsapp.send_text(to=conversation.phone, body=text)
+        if not res.ok:
+            logger.warning(
+                "Could not send bot WhatsApp response gym=%s conversation=%s: %s",
+                self.gym.id,
+                conversation.id,
+                res.error or "unknown provider error",
+            )
+            self._record_event(
+                event_type="bot_reply_failed",
+                conversation=conversation,
+            )
+            return False
+
+        db.session.add(
+            BotMessage(
+                conversation_id=conversation.id,
+                sender="bot",
+                body=text,
+                provider_message_id=res.provider_message_id,
+            )
+        )
+        self._record_event(
+            event_type="bot_reply_sent",
+            conversation=conversation,
+            provider_message_id=res.provider_message_id,
+        )
+        return True

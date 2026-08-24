@@ -32,9 +32,7 @@ export function ReportsScreen({ onBack }: ReportsScreenProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
-  const fetchReport = useCallback(async (p: string) => {
-    setLoading(true);
-    const res = await apiRequest<ReportData>(`/api/mobile/v1/reports/summary?period=${p}`);
+  const fetchReport = useCallback((p: string) => apiRequest<ReportData>(`/api/mobile/v1/reports/summary?period=${p}`).then((res) => {
     if (res.ok) {
       setData(res.data);
       setError(undefined);
@@ -42,11 +40,22 @@ export function ReportsScreen({ onBack }: ReportsScreenProps) {
       setError(res.error.message);
     }
     setLoading(false);
-  }, []);
+  }), []);
 
   useEffect(() => {
     void fetchReport(period);
   }, [period, fetchReport]);
+
+  const handlePeriodChange = useCallback((nextPeriod: string) => {
+    if (nextPeriod === period) return;
+    setLoading(true);
+    setPeriod(nextPeriod);
+  }, [period]);
+
+  const handleRetry = useCallback(() => {
+    setLoading(true);
+    void fetchReport(period);
+  }, [fetchReport, period]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -58,7 +67,7 @@ export function ReportsScreen({ onBack }: ReportsScreenProps) {
             <TouchableOpacity
               key={p.key}
               style={[styles.periodChip, period === p.key && styles.periodChipActive]}
-              onPress={() => setPeriod(p.key)}
+              onPress={() => handlePeriodChange(p.key)}
             >
               <Text style={[styles.periodText, period === p.key && styles.periodTextActive]}>
                 {p.label}
@@ -70,7 +79,7 @@ export function ReportsScreen({ onBack }: ReportsScreenProps) {
         {loading ? (
           <LoadingSkeleton lines={8} height={18} />
         ) : error ? (
-          <ErrorState message={error} onRetry={() => void fetchReport(period)} />
+          <ErrorState message={error} onRetry={handleRetry} />
         ) : data ? (
           <>
             {/* Members */}

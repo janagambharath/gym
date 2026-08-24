@@ -7,7 +7,8 @@ from flask import current_app
 from sqlalchemy import case, func
 
 from app.extensions import db
-from app.models import Member, PaymentVerification, ReminderLog
+from app.models import Gym, Member, PaymentVerification, ReminderLog
+from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
 def _cache_key(gym_id: int) -> str:
@@ -23,8 +24,16 @@ def _redis_client():
     return _redis.from_url(redis_url, socket_connect_timeout=2)
 
 
-def _fetch_stats(gym_id: int) -> dict:
-    today = date.today()
+def _timezone_for_gym(gym_id: int, gym_timezone: str | None = None) -> str:
+    """Return a gym timezone without ever falling back to the host timezone."""
+    if gym_timezone:
+        return gym_timezone
+    gym = db.session.get(Gym, gym_id)
+    return gym.timezone if gym and gym.timezone else "Asia/Kolkata"
+
+
+def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
+    today = today_for_gym(_timezone_for_gym(gym_id, gym_timezone))
     soon = today + timedelta(days=7)
 
     member_stats = (
@@ -84,7 +93,7 @@ def _fetch_stats(gym_id: int) -> dict:
     }
 
 
-def gym_dashboard_stats(gym_id: int) -> dict:
+def gym_dashboard_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
     try:
         redis_client = _redis_client()
         if redis_client:
@@ -94,7 +103,7 @@ def gym_dashboard_stats(gym_id: int) -> dict:
     except Exception:
         current_app.logger.exception("Dashboard cache read failed")
 
-    stats = _fetch_stats(gym_id)
+    stats = _fetch_stats(gym_id, gym_timezone)
     try:
         redis_client = _redis_client()
         if redis_client:
@@ -113,13 +122,15 @@ def invalidate_dashboard_cache(gym_id: int) -> None:
         current_app.logger.exception("Dashboard cache invalidation failed")
 
 
-def gym_revenue_breakdown(gym_id: int) -> dict:
+def gym_revenue_breakdown(gym_id: int, gym_timezone: str | None = None) -> dict:
     """Return verified payment totals for today, this week, and this month."""
-    today = date.today()
+    timezone_name = _timezone_for_gym(gym_id, gym_timezone)
+    today = today_for_gym(timezone_name)
     week_start = today - timedelta(days=today.weekday())  # Monday
     month_start = today.replace(day=1)
 
     def _sum_verified(start_date: date) -> str:
+        start_at = utc_start_of_gym_day(timezone_name, local_date=start_date)
         result = (
             db.session.query(
                 func.coalesce(
@@ -137,7 +148,7 @@ def gym_revenue_breakdown(gym_id: int) -> dict:
             )
             .filter(
                 PaymentVerification.gym_id == gym_id,
-                PaymentVerification.verified_at >= start_date,
+                PaymentVerification.verified_at >= start_at,
             )
             .scalar()
         )

@@ -25,6 +25,7 @@ type PaymentsScreenProps = {
   onLogout: () => void;
   onSelectPayment?: (paymentId: number) => void;
   onRecordPayment?: () => void;
+  refreshToken?: number;
 };
 
 const FILTER_OPTIONS = [
@@ -34,7 +35,7 @@ const FILTER_OPTIONS = [
   { key: 'rejected', label: 'Rejected', dotColor: colors.statusRejected },
 ];
 
-export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment }: PaymentsScreenProps) {
+export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, refreshToken }: PaymentsScreenProps) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -71,7 +72,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment }: P
     });
 
     return () => { cancelled = true; };
-  }, [page, statusFilter, revision, onLogout]);
+  }, [page, statusFilter, revision, refreshToken, onLogout]);
 
   const executeAction = useCallback(async (action: 'verify' | 'reject', paymentId: number) => {
     setActionLoading(paymentId);
@@ -162,7 +163,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment }: P
         ) : null}
       </TouchableOpacity>
     );
-  }, [actionLoading]);
+  }, [actionLoading, onSelectPayment]);
 
   return (
     <SafeAreaView style={styles.safeArea}>

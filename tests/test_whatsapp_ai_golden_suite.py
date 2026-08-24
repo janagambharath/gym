@@ -161,7 +161,7 @@ def test_ai_multi_tier_failover_hierarchy(client, seed_gym):
         text, intent, handover = router.route_and_generate(
             conversation=conv,
             lead=lead,
-            incoming_text="Which membership is best for a student?",
+            incoming_text="How can a beginner get started at the gym?",
             recent_messages=[],
         )
 

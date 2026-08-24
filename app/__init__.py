@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import sentry_sdk
 from flask import (
@@ -352,7 +352,10 @@ def _register_template_helpers(app: Flask) -> None:
             args["page"] = page
             return url_for(request.endpoint, **(request.view_args or {}), **args)
 
-        return {"page_url": page_url, "current_year": datetime.utcnow().year}
+        return {
+            "page_url": page_url,
+            "current_year": datetime.now(timezone.utc).year,
+        }
 
 
 def _record_reminders_heartbeat(app: Flask, totals: dict) -> None:

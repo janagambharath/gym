@@ -131,6 +131,113 @@ export type SettingsResponse = {
   plans: Plan[];
 };
 
+// ---------------------------------------------------------------------------
+// WhatsApp Bot
+// ---------------------------------------------------------------------------
+
+/** Tenant-scoped operational counters returned by GET /bot/stats. */
+export type BotStats = {
+  total_conversations: number;
+  total_leads: number;
+  trial_requests: number;
+  contacted_leads: number;
+  converted_leads: number;
+  handover_requested: number;
+};
+
+/** Safe, owner-managed bot settings returned by GET /bot/config. */
+export type BotConfig = {
+  greeting_message: string | null;
+  opening_hours: string | null;
+  map_link: string | null;
+  trial_enabled: boolean;
+  trial_price: string | null;
+  trial_duration_days: number | null;
+  registration_link: string | null;
+  handover_enabled: boolean;
+};
+
+export type BotFAQ = {
+  id: number;
+  question: string;
+  answer: string;
+  enabled: boolean;
+};
+
+export type BotConfigResponse = {
+  config: BotConfig;
+  faqs: BotFAQ[];
+};
+
+export type BotConfigUpdate = Partial<BotConfig>;
+
+export type BotConversation = {
+  id: number;
+  phone: string;
+  customer_name: string | null;
+  state: string;
+  handover_status: string;
+  last_message_at: string | null;
+};
+
+export type BotConversationsResponse = {
+  conversations: BotConversation[];
+};
+
+export type BotMessage = {
+  id: number;
+  sender: string;
+  body: string;
+  created_at: string | null;
+};
+
+export type BotLead = {
+  id: number;
+  name: string | null;
+  phone: string;
+  source: string;
+  intent: string | null;
+  status: string;
+  interested_plan: string | null;
+  trial_requested: boolean;
+  notes: string | null;
+  created_at: string | null;
+  conversation_id: number | null;
+};
+
+/** Read-only lead context included with a conversation history. */
+export type BotLeadSummary = Pick<
+  BotLead,
+  | 'id'
+  | 'name'
+  | 'phone'
+  | 'source'
+  | 'intent'
+  | 'status'
+  | 'interested_plan'
+  | 'trial_requested'
+  | 'created_at'
+>;
+
+/** Bounded transcript returned by GET /bot/conversations/:id. */
+export type BotConversationDetailResponse = {
+  conversation: BotConversation;
+  messages: BotMessage[];
+  lead: BotLeadSummary | null;
+};
+
+export type BotLeadsResponse = {
+  leads: BotLead[];
+  pagination: Pagination;
+};
+
+export type BotLeadDetailResponse = {
+  lead: BotLead;
+  messages: BotMessage[];
+};
+
+export type BotLeadUpdate = Pick<BotLead, 'status' | 'notes' | 'name'>;
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 /** Derive the display status for a member (active/expiring/expired). */

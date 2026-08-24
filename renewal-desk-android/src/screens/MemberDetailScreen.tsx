@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -12,7 +11,6 @@ import {
 import { AppHeader } from '../components/AppHeader';
 import { Avatar } from '../components/Avatar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { InfoRow } from '../components/InfoRow';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
@@ -30,6 +28,7 @@ type MemberDetailScreenProps = {
   onEdit?: (memberId: number) => void;
   onRecordPayment?: (memberId: number) => void;
   onMemberUpdated?: () => void;
+  refreshToken?: number;
 };
 
 export function MemberDetailScreen({
@@ -40,6 +39,7 @@ export function MemberDetailScreen({
   onEdit,
   onRecordPayment,
   onMemberUpdated,
+  refreshToken,
 }: MemberDetailScreenProps) {
   const [member, setMember] = useState(initialMember);
   const [renewals, setRenewals] = useState<Renewal[]>([]);
@@ -61,12 +61,11 @@ export function MemberDetailScreen({
     setTimeout(() => setMessage(undefined), 4000);
   };
 
-  const fetchMemberData = useCallback(async () => {
-    const [memberRes, renewalRes, paymentRes] = await Promise.all([
+  const fetchMemberData = useCallback(() => Promise.all([
       apiRequest<Member>(`/api/mobile/v1/members/${member.id}`),
       apiRequest<{ renewals: Renewal[] }>(`/api/mobile/v1/renewals?member_id=${member.id}&page_size=5`),
       apiRequest<{ payments: Payment[] }>(`/api/mobile/v1/payments?page_size=50`),
-    ]);
+    ]).then(([memberRes, renewalRes, paymentRes]) => {
 
     if (memberRes.ok) setMember(memberRes.data);
     else if (memberRes.error.status === 401) { onLogout(); return; }
@@ -77,11 +76,11 @@ export function MemberDetailScreen({
       setPayments(paymentRes.data.payments.filter((p) => p.member_id === member.id));
     }
     setRefreshing(false);
-  }, [member.id, onLogout]);
+  }), [member.id, onLogout]);
 
   useEffect(() => {
     void fetchMemberData();
-  }, [fetchMemberData]);
+  }, [fetchMemberData, refreshToken]);
 
   const handleSendReminder = useCallback(async () => {
     setSendingReminder(true);

@@ -7,6 +7,7 @@ from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin, utcnow
+from app.services.timezone_service import today_for_gym
 
 
 class MembershipPlan(TenantMixin, TimestampMixin, db.Model):
@@ -78,11 +79,13 @@ class Member(TenantMixin, TimestampMixin, db.Model):
 
     @property
     def days_until_expiry(self) -> int:
-        return (self.membership_end - date.today()).days
+        gym_timezone = self.gym.timezone if self.gym else "Asia/Kolkata"
+        return (self.membership_end - today_for_gym(gym_timezone)).days
 
     @property
     def is_expired(self) -> bool:
-        return self.membership_end < date.today()
+        gym_timezone = self.gym.timezone if self.gym else "Asia/Kolkata"
+        return self.membership_end < today_for_gym(gym_timezone)
 
     @property
     def is_deleted(self) -> bool:

@@ -35,14 +35,14 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans = [] 
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId);
 
-  const validate = (): boolean => {
+  const validate = useCallback((): boolean => {
     const newErrors: Record<string, string> = {};
     if (!fullName.trim()) newErrors.fullName = 'Name is required.';
     if (!phone.trim()) newErrors.phone = 'Phone number is required.';
     else if (phone.trim().length < 10) newErrors.phone = 'Phone number must be at least 10 digits.';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [fullName, phone]);
 
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
@@ -75,7 +75,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans = [] 
       setError(result.error.message);
     }
     setLoading(false);
-  }, [fullName, phone, email, selectedPlanId, notes, loading, onLogout, onMemberCreated, selectedPlan]);
+  }, [fullName, phone, email, selectedPlanId, notes, loading, onLogout, onMemberCreated, selectedPlan, validate]);
 
   return (
     <SafeAreaView style={styles.safeArea}>

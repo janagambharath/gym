@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { colors, radius, spacing } from '../theme/tokens';
 
@@ -9,7 +9,7 @@ type LoadingSkeletonProps = {
 };
 
 function SkeletonLine({ width, height }: { width: `${number}%` | number; height: number }) {
-  const opacity = useRef(new Animated.Value(0.3)).current;
+  const [opacity] = useState(() => new Animated.Value(0.3));
 
   useEffect(() => {
     const animation = Animated.loop(

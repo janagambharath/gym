@@ -17,7 +17,6 @@ import { EmptyState } from '../components/EmptyState';
 import { ErrorState } from '../components/ErrorState';
 import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
-import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
@@ -82,8 +81,6 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [remindersLoading, setRemindersLoading] = useState(true);
   const [remindersRefreshing, setRemindersRefreshing] = useState(false);
   const [remindersError, setRemindersError] = useState<string | undefined>();
-  const [reminderPage, setReminderPage] = useState(1);
-  const [reminderTotalPages, setReminderTotalPages] = useState(1);
   const [reminderFilter, setReminderFilter] = useState('');
   const [sentToday, setSentToday] = useState(0);
   const [failedToday, setFailedToday] = useState(0);
@@ -112,70 +109,93 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   }, []);
 
   // Fetch reminders
-  const fetchReminders = useCallback(async (p: number, filter: string, isRefresh = false) => {
-    if (isRefresh) setRemindersRefreshing(true);
-    else setRemindersLoading(true);
-
+  const fetchReminders = useCallback((p: number, filter: string) => {
     const qs = new URLSearchParams({ page: String(p), page_size: '20' });
     if (filter) qs.set('status', filter);
 
-    const res = await apiRequest<{ reminders: ReminderLog[]; pagination: { page: number; total_pages: number; total: number } }>(
+    return apiRequest<{ reminders: ReminderLog[]; pagination: { page: number; total_pages: number; total: number } }>(
       `/api/mobile/v1/whatsapp/reminders?${qs.toString()}`
-    );
+    ).then((res) => {
 
-    if (res.ok) {
-      setReminders(res.data.reminders);
-      setReminderTotalPages(res.data.pagination.total_pages);
-      setRemindersError(undefined);
+      if (res.ok) {
+        setReminders(res.data.reminders);
+        setRemindersError(undefined);
 
-      if (p === 1) {
-        const today = new Date().toISOString().slice(0, 10);
-        let sent = 0;
-        let failed = 0;
-        for (const r of res.data.reminders) {
-          if (r.created_at?.startsWith(today)) {
-            if (r.status === 'sent') sent++;
-            else if (r.status === 'failed') failed++;
+        if (p === 1) {
+          const today = new Date().toISOString().slice(0, 10);
+          let sent = 0;
+          let failed = 0;
+          for (const r of res.data.reminders) {
+            if (r.created_at?.startsWith(today)) {
+              if (r.status === 'sent') sent++;
+              else if (r.status === 'failed') failed++;
+            }
           }
+          setSentToday(sent);
+          setFailedToday(failed);
         }
-        setSentToday(sent);
-        setFailedToday(failed);
+      } else {
+        setRemindersError(res.error.message);
       }
-    } else {
-      setRemindersError(res.error.message);
-    }
 
-    setRemindersLoading(false);
-    setRemindersRefreshing(false);
+      setRemindersLoading(false);
+      setRemindersRefreshing(false);
+    });
   }, []);
 
   // Fetch leads
-  const fetchLeads = useCallback(async (filter: string, isRefresh = false) => {
-    if (isRefresh) setLeadsRefreshing(true);
-    else setLeadsLoading(true);
-
+  const fetchLeads = useCallback((filter: string) => {
     const qs = new URLSearchParams({ page_size: '50' });
     if (filter) qs.set('status', filter);
 
-    const res = await apiRequest<{ leads: BotLead[] }>(`/api/mobile/v1/bot/leads?${qs.toString()}`);
-    if (res.ok) {
-      setLeads(res.data.leads);
-      setLeadsError(undefined);
-    } else {
-      setLeadsError(res.error.message);
-    }
-    setLeadsLoading(false);
-    setLeadsRefreshing(false);
+    return apiRequest<{ leads: BotLead[] }>(`/api/mobile/v1/bot/leads?${qs.toString()}`).then((res) => {
+      if (res.ok) {
+        setLeads(res.data.leads);
+        setLeadsError(undefined);
+      } else {
+        setLeadsError(res.error.message);
+      }
+      setLeadsLoading(false);
+      setLeadsRefreshing(false);
+    });
   }, []);
 
   useEffect(() => {
     if (activeTab === 'reminders') {
-      setReminderPage(1);
       void fetchReminders(1, reminderFilter);
     } else {
       void fetchLeads(leadFilter);
     }
   }, [activeTab, reminderFilter, leadFilter, fetchReminders, fetchLeads]);
+
+  const handleTabChange = useCallback((tab: 'reminders' | 'leads') => {
+    if (tab === activeTab) return;
+    if (tab === 'reminders') setRemindersLoading(true);
+    else setLeadsLoading(true);
+    setActiveTab(tab);
+  }, [activeTab]);
+
+  const handleReminderFilterChange = useCallback((filter: string) => {
+    if (filter === reminderFilter) return;
+    setRemindersLoading(true);
+    setReminderFilter(filter);
+  }, [reminderFilter]);
+
+  const handleLeadFilterChange = useCallback((filter: string) => {
+    if (filter === leadFilter) return;
+    setLeadsLoading(true);
+    setLeadFilter(filter);
+  }, [leadFilter]);
+
+  const refreshReminders = useCallback(() => {
+    setRemindersRefreshing(true);
+    void fetchReminders(1, reminderFilter);
+  }, [fetchReminders, reminderFilter]);
+
+  const refreshLeads = useCallback(() => {
+    setLeadsRefreshing(true);
+    void fetchLeads(leadFilter);
+  }, [fetchLeads, leadFilter]);
 
   const openLeadDetail = async (lead: BotLead) => {
     setSelectedLead(lead);
@@ -210,7 +230,8 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
     });
     if (res.ok) {
       setSelectedLead((prev) => (prev ? { ...prev, status: newStatus } : null));
-      void fetchLeads(leadFilter, true);
+      setLeadsRefreshing(true);
+      void fetchLeads(leadFilter);
     }
   };
 
@@ -296,7 +317,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
         <View style={styles.tabToggle}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'reminders' && styles.tabButtonActive]}
-            onPress={() => setActiveTab('reminders')}
+            onPress={() => handleTabChange('reminders')}
           >
             <Text style={[styles.tabText, activeTab === 'reminders' && styles.tabTextActive]}>
               Reminders
@@ -304,7 +325,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'leads' && styles.tabButtonActive]}
-            onPress={() => setActiveTab('leads')}
+            onPress={() => handleTabChange('leads')}
           >
             <Text style={[styles.tabText, activeTab === 'leads' && styles.tabTextActive]}>
               AI Leads & Inquiries
@@ -331,7 +352,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
             <FilterChips
               options={REMINDER_FILTERS}
               selected={reminderFilter}
-              onSelect={(key) => setReminderFilter(key)}
+              onSelect={handleReminderFilterChange}
             />
 
             {remindersLoading && !remindersRefreshing ? (
@@ -340,7 +361,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
                 <CardSkeleton />
               </View>
             ) : remindersError ? (
-              <ErrorState message={remindersError} onRetry={() => void fetchReminders(1, reminderFilter, true)} />
+              <ErrorState message={remindersError} onRetry={refreshReminders} />
             ) : reminders.length === 0 ? (
               <EmptyState
                 icon={<Icon name="whatsapp" size={40} color={colors.muted} />}
@@ -353,7 +374,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderReminder}
                 contentContainerStyle={styles.listContent}
-                refreshControl={<RefreshControl onRefresh={() => void fetchReminders(1, reminderFilter, true)} refreshing={remindersRefreshing} colors={[colors.brand]} />}
+                refreshControl={<RefreshControl onRefresh={refreshReminders} refreshing={remindersRefreshing} colors={[colors.brand]} />}
                 showsVerticalScrollIndicator={false}
               />
             )}
@@ -363,7 +384,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
             <FilterChips
               options={LEAD_FILTERS}
               selected={leadFilter}
-              onSelect={(key) => setLeadFilter(key)}
+              onSelect={handleLeadFilterChange}
             />
 
             {leadsLoading && !leadsRefreshing ? (
@@ -372,7 +393,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
                 <CardSkeleton />
               </View>
             ) : leadsError ? (
-              <ErrorState message={leadsError} onRetry={() => void fetchLeads(leadFilter, true)} />
+              <ErrorState message={leadsError} onRetry={refreshLeads} />
             ) : leads.length === 0 ? (
               <EmptyState
                 icon={<Icon name="members" size={40} color={colors.muted} />}
@@ -385,7 +406,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
                 keyExtractor={(item) => String(item.id)}
                 renderItem={renderLead}
                 contentContainerStyle={styles.listContent}
-                refreshControl={<RefreshControl onRefresh={() => void fetchLeads(leadFilter, true)} refreshing={leadsRefreshing} colors={[colors.brand]} />}
+                refreshControl={<RefreshControl onRefresh={refreshLeads} refreshing={leadsRefreshing} colors={[colors.brand]} />}
                 showsVerticalScrollIndicator={false}
               />
             )}

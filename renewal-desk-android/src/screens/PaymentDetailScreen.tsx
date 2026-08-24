@@ -35,8 +35,7 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
   const [showReject, setShowReject] = useState(false);
   const [acting, setActing] = useState(false);
 
-  const fetchPayment = useCallback(async () => {
-    const res = await apiRequest<Payment>(`/api/mobile/v1/payments/${paymentId}`);
+  const fetchPayment = useCallback(() => apiRequest<Payment>(`/api/mobile/v1/payments/${paymentId}`).then((res) => {
     if (res.ok) {
       setPayment(res.data);
       setError(undefined);
@@ -44,7 +43,7 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
       setError(res.error.message);
     }
     setLoading(false);
-  }, [paymentId]);
+  }), [paymentId]);
 
   useEffect(() => {
     void fetchPayment();

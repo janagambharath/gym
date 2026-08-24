@@ -26,6 +26,29 @@ function getStatusStyle(status: string): BadgeStyle {
       return { bg: colors.statusFailedSurface, text: colors.statusFailed, label: status.toUpperCase() };
     case 'deleted':
       return { bg: colors.gray100, text: colors.muted, label: 'DELETED' };
+    case 'new':
+      return { bg: colors.infoSurface, text: colors.info, label: 'NEW' };
+    case 'contacted':
+      return { bg: colors.statusPendingSurface, text: colors.statusPending, label: 'CONTACTED' };
+    case 'interested':
+      return { bg: colors.warningSurface, text: colors.warning, label: 'INTERESTED' };
+    case 'trial_requested':
+      return { bg: colors.warningSurface, text: colors.warning, label: 'TRIAL' };
+    case 'booked':
+      return { bg: colors.infoSurface, text: colors.info, label: 'BOOKED' };
+    case 'converted':
+      return { bg: colors.successSurface, text: colors.success, label: 'CONVERTED' };
+    case 'lost':
+      return { bg: colors.criticalSurface, text: colors.critical, label: 'LOST' };
+    case 'closed':
+      return { bg: colors.gray100, text: colors.muted, label: 'CLOSED' };
+    case 'bot_active':
+    case 'bot_resumed':
+      return { bg: colors.infoSurface, text: colors.info, label: 'BOT ACTIVE' };
+    case 'human_requested':
+      return { bg: colors.warningSurface, text: colors.warning, label: 'HANDOVER' };
+    case 'human_active':
+      return { bg: colors.statusPendingSurface, text: colors.statusPending, label: 'STAFF ACTIVE' };
     default:
       return { bg: colors.gray100, text: colors.muted, label: status.toUpperCase() };
   }

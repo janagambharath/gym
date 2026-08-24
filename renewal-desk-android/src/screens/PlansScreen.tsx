@@ -18,9 +18,7 @@ export function PlansScreen({ onBack }: PlansScreenProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
-  const fetchPlans = useCallback(async () => {
-    setLoading(true);
-    const res = await apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings');
+  const fetchPlans = useCallback(() => apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings').then((res) => {
     if (res.ok) {
       setPlans(res.data.plans);
       setError(undefined);
@@ -28,9 +26,14 @@ export function PlansScreen({ onBack }: PlansScreenProps) {
       setError(res.error.message);
     }
     setLoading(false);
-  }, []);
+  }), []);
 
   useEffect(() => {
+    void fetchPlans();
+  }, [fetchPlans]);
+
+  const handleRetry = useCallback(() => {
+    setLoading(true);
     void fetchPlans();
   }, [fetchPlans]);
 
@@ -55,7 +58,7 @@ export function PlansScreen({ onBack }: PlansScreenProps) {
       {loading ? (
         <View style={styles.loadingWrap}><CardSkeleton /><CardSkeleton /></View>
       ) : error ? (
-        <ErrorState message={error} onRetry={fetchPlans} />
+        <ErrorState message={error} onRetry={handleRetry} />
       ) : plans.length === 0 ? (
         <EmptyState
           icon={<Icon name="plan" size={40} color={colors.muted} />}

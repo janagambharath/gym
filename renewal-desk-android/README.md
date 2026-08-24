@@ -2,29 +2,24 @@
 
 Native Android foundation for Renewal Desk, built as an isolated Expo + TypeScript project.
 
-## Important current status
+## Current capability and safety boundary
 
-The protected Renewal Desk backend source includes a versioned `/api/mobile/v1`
-contract, but the currently deployed production service does **not** expose that
-namespace. The backend's own mobile API documentation also keeps financial,
-renewal, and broadcast writes behind a durable-idempotency release gate.
+The Android app is a native, authenticated client of the versioned
+`/api/mobile/v1` backend. It supports real member operations, pending payment
+recording and verification, renewals, WhatsApp reminders, reports, and the
+entitlement-gated WhatsApp Bot operations workspace.
 
-For that reason, this project deliberately does not:
+It deliberately does not:
 
-- scrape browser forms or persist browser cookies;
-- load the website in a WebView and call it a native app;
-- use the biometric Bridge API/key/device serial;
-- substitute an unavailable production API with invented endpoints, payloads,
-  token formats, or business rules;
-- show mock members, payments, or fake successes.
+- scrape browser forms or reuse browser cookies;
+- load the web product in a WebView;
+- access biometric Bridge credentials or terminal hardware;
+- expose provider/API credentials to the app;
+- invent member, payment, WhatsApp, or bot data.
 
-The app currently provides a secure, tested native foundation and an actual
-`/health` connectivity check. Core workflows remain blocked until the existing
-mobile contract is made safely available in a separate staging/prod deployment
-after its documented durable-write release gate is closed. See
-[docs/BLOCKERS.md](docs/BLOCKERS.md),
-[docs/API_CAPABILITY_MAP.md](docs/API_CAPABILITY_MAP.md), and
-[docs/FEATURE_PARITY.md](docs/FEATURE_PARITY.md).
+Production availability remains a deployment responsibility. Test preview and
+staging builds against a separately configured backend first; do not point
+those builds at production by default.
 
 ## Stack decision
 
@@ -71,22 +66,27 @@ An Android emulator/device launch requires an Android SDK; `npm.cmd run android`
 
 ## Required backend deployment work
 
-The backend source has a documented owner/staff mobile contract with tenant and
-RBAC controls, but it must be enabled only through its approved deployment path.
-The documented database-backed idempotency ledger/outbox prerequisite must be
-implemented and reviewed before public financial, renewal, or broadcast writes
-are enabled. This work is outside this repository and requires separate
-authorization.
+The backend includes owner/staff mobile API contracts, tenant/RBAC controls,
+database-backed idempotency records for payment and direct-renewal retries, and
+Alembic migrations for the bot, entitlements, and idempotency ledger. Those
+migrations must still follow the approved deployment sequence: backup, staging
+upgrade, smoke test, review, then production upgrade. The app does not run
+migrations automatically.
 
-## Future build profiles
+## EAS build profiles
 
-`eas.json` defines non-secret `development`, `staging`, and `production` build
-profiles. The production profile explicitly builds an Android App Bundle and
-sets the production environment label, but it intentionally does not embed an
-unverified production mobile API URL. An Expo account/project plus an approved
-backend deployment are still required before running an EAS build. Do not
-commit signing keys or use an unreviewed production API URL.
+`eas.json` maps `development`, `preview`, and `production` build profiles to
+their corresponding EAS environments. It intentionally does **not** hard-code
+an API URL. Configure the public `EXPO_PUBLIC_API_BASE_URL` separately in EAS
+for each environment, using an isolated staging service for the `preview`
+environment and the reviewed service URL only for `production`.
+
+The production profile builds an Android App Bundle. An Expo account/project,
+approved backend deployment, and signing approval are still required before
+running an EAS build. Never commit signing keys or app credentials.
 
 ## Release status
 
-No production AAB is produced yet. A signed AAB, final icon/splash assets, a public privacy-policy URL, and Google Play Data Safety answers cannot be truthfully prepared until the mobile API and final production behavior exist.
+No production AAB is produced by this repository. A signed AAB, physical-device
+test, gym pilot, privacy policy, and Play Console data-safety review remain
+external release gates.

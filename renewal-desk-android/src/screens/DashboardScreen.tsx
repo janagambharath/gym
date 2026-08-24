@@ -30,6 +30,7 @@ type DashboardScreenProps = {
   onNavigateAddMember?: () => void;
   onNavigateRecordPayment?: () => void;
   onNavigateWhatsApp?: () => void;
+  refreshToken?: number;
 };
 
 export function DashboardScreen({
@@ -42,6 +43,7 @@ export function DashboardScreen({
   onNavigateAddMember,
   onNavigateRecordPayment,
   onNavigateWhatsApp,
+  refreshToken,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
   const [upcoming, setUpcoming] = useState<Member[]>([]);
@@ -89,7 +91,7 @@ export function DashboardScreen({
 
     void fetchAll();
     return () => { cancelled = true; };
-  }, [revision, onLogout]);
+  }, [revision, refreshToken, onLogout]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -144,7 +146,7 @@ export function DashboardScreen({
                 {getGreeting()}, {session?.userName?.split(' ')[0] ?? 'there'}
               </Text>
               <Text style={styles.greetingSub}>
-                Here's what needs your attention today.
+                Here&apos;s what needs your attention today.
               </Text>
             </View>
 

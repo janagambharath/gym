@@ -12,7 +12,6 @@ import { Avatar } from '../components/Avatar';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorState } from '../components/ErrorState';
 import { CardSkeleton } from '../components/LoadingSkeleton';
-import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
@@ -24,9 +23,10 @@ type RenewalsScreenProps = {
   onLogout: () => void;
   onSelectMember?: (member: Member) => void;
   onRenew?: (member: Member) => void;
+  refreshToken?: number;
 };
 
-export function RenewalsScreen({ onLogout, onSelectMember, onRenew }: RenewalsScreenProps) {
+export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken }: RenewalsScreenProps) {
   const [upcoming, setUpcoming] = useState<Member[]>([]);
   const [expired, setExpired] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +68,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew }: RenewalsSc
 
     void fetchData();
     return () => { cancelled = true; };
-  }, [revision, onLogout]);
+  }, [revision, refreshToken, onLogout]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);

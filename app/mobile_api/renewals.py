@@ -6,15 +6,18 @@ from decimal import Decimal, InvalidOperation
 
 from flask import g, jsonify, request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Member, RenewalHistory
+from app.models import Member, MobileIdempotencyKey, RenewalHistory
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
+from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
+from app.services.timezone_service import today_for_gym
 
 
 def _serialize_renewal(r: RenewalHistory) -> dict:
@@ -31,6 +34,15 @@ def _serialize_renewal(r: RenewalHistory) -> dict:
         "renewed_by": r.renewed_by.full_name if r.renewed_by else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
+
+
+def _serialize_member_for_gym(member: Member, today: date) -> dict:
+    """Use the gym-local date for a renewal list's days-remaining field."""
+    from app.mobile_api.members import _serialize_member
+
+    payload = _serialize_member(member)
+    payload["days_until_expiry"] = (member.membership_end - today).days
+    return payload
 
 
 def register_renewals_routes(bp):
@@ -65,7 +77,7 @@ def register_renewals_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def upcoming_renewals():
-        today = date.today()
+        today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
         soon = today + timedelta(days=7)
         members = (
             Member.query.filter_by(gym_id=g.gym_id, status="active")
@@ -76,14 +88,13 @@ def register_renewals_routes(bp):
             .limit(100)
             .all()
         )
-        from app.mobile_api.members import _serialize_member
-        return jsonify({"success": True, "data": {"members": [_serialize_member(m) for m in members]}})
+        return jsonify({"success": True, "data": {"members": [_serialize_member_for_gym(m, today) for m in members]}})
 
     @bp.route("/renewals/expired", methods=["GET"])
     @token_required
     @roles_required("gym_owner", "staff")
     def expired_renewals():
-        today = date.today()
+        today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
         members = (
             Member.query.filter_by(gym_id=g.gym_id, status="expired")
             .filter(Member.deleted_at.is_(None))
@@ -93,14 +104,37 @@ def register_renewals_routes(bp):
             .limit(100)
             .all()
         )
-        from app.mobile_api.members import _serialize_member
-        return jsonify({"success": True, "data": {"members": [_serialize_member(m) for m in members]}})
+        return jsonify({"success": True, "data": {"members": [_serialize_member_for_gym(m, today) for m in members]}})
 
     @bp.route("/renewals/<int:member_id>", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
     def renew_member(member_id: int):
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return error_response("VALIDATION_ERROR", "Renewal must be a JSON object.", 400)
+
+        idempotency_key = valid_key(request.headers.get("Idempotency-Key"))
+        if idempotency_key == "":
+            return error_response("VALIDATION_ERROR", "Idempotency-Key is too long.", 400)
+
+        request_hash = request_fingerprint({"member_id": member_id, **data})
+        if idempotency_key:
+            existing, matches_request = find_replay(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="direct_renewal",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if existing:
+                if not matches_request:
+                    return error_response(
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "This idempotency key was already used for a different renewal request.",
+                        409,
+                    )
+                return jsonify(existing.response_body), existing.status_code
 
         # Validate renewal_days.
         try:
@@ -133,7 +167,7 @@ def register_renewals_routes(bp):
             return error_response("NOT_FOUND", "Member not found.", 404)
 
         previous_end = member.membership_end
-        today = date.today()
+        today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
         new_start = max(today, previous_end + timedelta(days=1))
         new_end = new_start + timedelta(days=renewal_days - 1)
 
@@ -154,6 +188,7 @@ def register_renewals_routes(bp):
             notes=notes or f"Renewed for {renewal_days} days via mobile.",
         )
         db.session.add(renewal)
+        db.session.flush()
         audit(
             action="renew_member",
             resource_type="member",
@@ -163,7 +198,34 @@ def register_renewals_routes(bp):
             metadata={"renewal_days": renewal_days, "new_end": new_end.isoformat()},
         )
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
+        response_body = {"success": True, "data": _serialize_renewal(renewal)}
+        if idempotency_key:
+            db.session.add(
+                MobileIdempotencyKey(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="direct_renewal",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                    status_code=201,
+                    response_body=response_body,
+                )
+            )
 
-        db.session.refresh(renewal)
-        return jsonify({"success": True, "data": _serialize_renewal(renewal)}), 201
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            if idempotency_key:
+                existing, matches_request = find_replay(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="direct_renewal",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if existing and matches_request:
+                    return jsonify(existing.response_body), existing.status_code
+            raise
+
+        return jsonify(response_body), 201

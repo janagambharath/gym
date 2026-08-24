@@ -145,7 +145,10 @@ Currently expired members.
 
 ### POST /renewals/:member_id
 
-Renew a member's membership.
+Legacy immediate renewal for an authorized owner/staff workflow. Prefer the
+pending-payment and verification workflow below for ordinary mobile renewals.
+Supports an optional `Idempotency-Key` request header; a matching retry returns
+the original response and a key reused with another payload returns 409.
 
 **Request:**
 ```json
@@ -170,7 +173,9 @@ Payment detail.
 
 ### POST /payments
 
-Create a pending payment.
+Create a pending payment. Supports an optional `Idempotency-Key` request
+header; a matching retry returns the original response and a key reused with
+another payload returns 409.
 
 **Request:**
 ```json
@@ -225,6 +230,76 @@ Update gym settings. **Owner only.**
 
 ---
 
+## Staff and reports
+
+### GET /staff
+
+Returns staff for the authenticated gym. **Owner only.**
+
+### GET /reports/summary
+
+Returns tenant-scoped member and revenue summaries. Query parameter:
+`?period=today`, `7d`, or `30d`. Calendar boundaries use the gym's configured
+timezone.
+
+---
+
+## WhatsApp Bot
+
+All Bot endpoints require an active server-side `whatsapp_bot` entitlement for
+the authenticated gym. Otherwise they return 403 `FEATURE_NOT_ENABLED`.
+
+### GET /bot/stats
+
+Returns counts for conversations, leads, trials, handovers, and conversions.
+
+### GET /bot/conversations
+
+Returns tenant-scoped conversations. `?handover=human_requested` may filter
+for conversations needing staff attention.
+
+### GET /bot/conversations/:id
+
+Returns a tenant-scoped conversation, its newest 100 messages in chronological
+order, and a safe linked-lead summary. It never returns another gym's thread.
+
+### POST /bot/conversations/:id/handover
+
+Takes ownership of, or returns, a conversation to the bot.
+
+```json
+{"action": "take_over"}
+```
+
+Allowed actions are `take_over` and `resume_bot`.
+
+### POST /bot/conversations/:id/message
+
+Sends a manual WhatsApp message. The message appears in conversation history
+only after the provider accepts it. Failed delivery submission returns
+`WHATSAPP_SEND_FAILED`.
+
+```json
+{"body": "A staff member will call you shortly."}
+```
+
+### GET /bot/leads and GET /bot/leads/:id
+
+Returns tenant-scoped lead records. `PATCH /bot/leads/:id` updates supported
+lead status and staff notes.
+
+### GET /bot/config and PATCH /bot/config
+
+Returns and updates bot setup. GET does not create a configuration row. PATCH
+is **owner only** and validates strict booleans, bounded text, HTTPS links,
+trial price, and trial duration.
+
+### POST /bot/test
+
+Runs the bot response simulator without sending a WhatsApp message.
+
+---
+
 ## Error Format
 
 All errors follow:
@@ -251,8 +326,10 @@ All errors follow:
 | CONFLICT | 409 | Duplicate or state conflict |
 | RATE_LIMITED | 429 | Too many requests |
 | MEMBER_LIMIT | 409 | Gym at member limit |
+| IDEMPOTENCY_KEY_REUSED | 409 | Retry key was used for a different request |
+| FEATURE_NOT_ENABLED | 403 | Server-side feature entitlement is missing or inactive |
 | WHATSAPP_NOT_CONFIGURED | 400 | WhatsApp not set up |
-| SEND_FAILED | 500 | WhatsApp send failed |
+| WHATSAPP_SEND_FAILED | 502 | WhatsApp provider did not accept a manual bot message |
 
 ## Pagination
 

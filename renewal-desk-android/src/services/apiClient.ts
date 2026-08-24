@@ -18,6 +18,8 @@ export type ApiResult<T> =
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: Record<string, unknown>;
+  /** Additional non-sensitive request headers, such as Idempotency-Key. */
+  headers?: Record<string, string>;
   /** Skip auth header (e.g. for login). */
   anonymous?: boolean;
   timeoutMs?: number;
@@ -140,7 +142,7 @@ export async function apiRequest<T>(
     return { ok: false, error: { message: 'API base URL is not configured.' } };
   }
 
-  const { method = 'GET', body, anonymous = false, timeoutMs = 15_000 } = options;
+  const { method = 'GET', body, headers: extraHeaders, anonymous = false, timeoutMs = 15_000 } = options;
 
   const makeRequest = async (token?: string): Promise<Response> => {
     const controller = new AbortController();
@@ -148,6 +150,7 @@ export async function apiRequest<T>(
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
+      ...extraHeaders,
     };
     if (body) {
       headers['Content-Type'] = 'application/json';

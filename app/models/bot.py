@@ -34,7 +34,13 @@ class FeatureEntitlement(TimestampMixin, db.Model):
     def is_active(self) -> bool:
         if not self.enabled:
             return False
-        if self.expires_at and _utcnow() > self.expires_at:
+        expires_at = self.expires_at
+        # SQLite does not round-trip timezone information. Treat a legacy
+        # naive timestamp as UTC so an otherwise valid entitlement does not
+        # raise a comparison error at request time.
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at and _utcnow() > expires_at:
             return False
         return True
 
@@ -226,3 +232,34 @@ class BotBookingRequest(TimestampMixin, db.Model):
 
     gym = db.relationship("Gym", backref=db.backref("bot_bookings", cascade="all, delete-orphan"))
     lead = db.relationship("BotLead", backref=db.backref("booking_requests", cascade="all, delete-orphan"))
+
+
+# â”€â”€â”€ Bot Events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+class BotEvent(TimestampMixin, db.Model):
+    """Tenant-scoped audit/event trail for bot processing and handovers."""
+    __tablename__ = "bot_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    gym_id = db.Column(
+        db.Integer, db.ForeignKey("gyms.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    conversation_id = db.Column(
+        db.Integer,
+        db.ForeignKey("bot_conversations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    lead_id = db.Column(
+        db.Integer,
+        db.ForeignKey("bot_leads.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    event_type = db.Column(db.String(64), nullable=False, index=True)
+    provider_message_id = db.Column(db.String(128), nullable=True, index=True)
+    payload = db.Column(db.JSON, nullable=True)
+
+    gym = db.relationship("Gym", backref=db.backref("bot_events", cascade="all, delete-orphan"))
+    conversation = db.relationship("BotConversation", backref=db.backref("events"))
+    lead = db.relationship("BotLead", backref=db.backref("events"))

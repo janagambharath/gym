@@ -1,7 +1,7 @@
 """Mobile API reports endpoint."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 from flask import g, jsonify, request
 from sqlalchemy import case, func
@@ -9,15 +9,19 @@ from sqlalchemy import case, func
 from app.extensions import db
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member, PaymentVerification, ReminderLog, RenewalHistory
+from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
-def _parse_period(period: str) -> date:
-    today = date.today()
+def _parse_period(period: str, gym_timezone: str | None = None) -> datetime:
+    """Return the UTC timestamp at the selected gym-local reporting boundary."""
+    today = today_for_gym(gym_timezone)
     if period == "7d":
-        return today - timedelta(days=7)
-    if period == "30d":
-        return today - timedelta(days=30)
-    return today  # "today"
+        start_date = today - timedelta(days=7)
+    elif period == "30d":
+        start_date = today - timedelta(days=30)
+    else:
+        start_date = today  # "today"
+    return utc_start_of_gym_day(gym_timezone, local_date=start_date)
 
 
 def register_reports_routes(bp):
@@ -26,7 +30,8 @@ def register_reports_routes(bp):
     @roles_required("gym_owner", "staff")
     def reports_summary():
         period = request.args.get("period", "30d").strip()
-        start_date = _parse_period(period)
+        gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
+        start_at = _parse_period(period, gym_timezone)
         gym_id = g.gym_id
 
         # Members
@@ -50,7 +55,7 @@ def register_reports_routes(bp):
             .filter(
                 Member.gym_id == gym_id,
                 Member.deleted_at.is_(None),
-                Member.created_at >= start_date,
+                Member.created_at >= start_at,
             )
             .scalar() or 0
         )
@@ -70,7 +75,7 @@ def register_reports_routes(bp):
             )
             .filter(
                 PaymentVerification.gym_id == gym_id,
-                PaymentVerification.verified_at >= start_date,
+                PaymentVerification.verified_at >= start_at,
             )
             .scalar()
         )
@@ -95,7 +100,7 @@ def register_reports_routes(bp):
             db.session.query(func.count(RenewalHistory.id))
             .filter(
                 RenewalHistory.gym_id == gym_id,
-                RenewalHistory.created_at >= start_date,
+                RenewalHistory.created_at >= start_at,
             )
             .scalar() or 0
         )
@@ -106,7 +111,7 @@ def register_reports_routes(bp):
             .filter(
                 ReminderLog.gym_id == gym_id,
                 ReminderLog.status == "sent",
-                ReminderLog.created_at >= start_date,
+                ReminderLog.created_at >= start_at,
             )
             .scalar() or 0
         )
@@ -115,7 +120,7 @@ def register_reports_routes(bp):
             .filter(
                 ReminderLog.gym_id == gym_id,
                 ReminderLog.status == "failed",
-                ReminderLog.created_at >= start_date,
+                ReminderLog.created_at >= start_at,
             )
             .scalar() or 0
         )

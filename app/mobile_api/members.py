@@ -120,8 +120,9 @@ def register_members_routes(bp):
             if plan is None:
                 return error_response("VALIDATION_ERROR", "Invalid plan_id.", 400)
 
-        membership_start = _parse_date(data.get("membership_start")) or date.today()
-        membership_end = _parse_date(data.get("membership_end")) or date.today()
+        local_today = today_for_gym(gym.timezone or "Asia/Kolkata")
+        membership_start = _parse_date(data.get("membership_start")) or local_today
+        membership_end = _parse_date(data.get("membership_end")) or local_today
 
         member = Member(
             gym_id=g.gym_id,
@@ -130,9 +131,10 @@ def register_members_routes(bp):
             email=(data.get("email") or "").strip() or None,
             gender=(data.get("gender") or "").strip() or None,
             plan_id=plan_id if plan_id else None,
+            joined_on=local_today,
             membership_start=membership_start,
             membership_end=membership_end,
-            status="active" if membership_end >= date.today() else "expired",
+            status="active" if membership_end >= local_today else "expired",
             notes=(data.get("notes") or "").strip() or None,
         )
         db.session.add(member)

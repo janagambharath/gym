@@ -7,7 +7,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -64,7 +63,6 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
   // Search members
   useEffect(() => {
     if (!searchQuery.trim() || selectedMember) {
-      setSearchResults([]);
       return;
     }
     const timer = setTimeout(async () => {
@@ -155,7 +153,10 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
               <>
                 <SearchBar
                   value={searchQuery}
-                  onChangeText={setSearchQuery}
+                  onChangeText={(text) => {
+                    setSearchQuery(text);
+                    if (!text.trim()) setSearchResults([]);
+                  }}
                   placeholder="Search member by name or phone..."
                 />
                 {searching ? (
@@ -244,7 +245,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
           <View style={styles.notice}>
             <Icon name="shield" size={16} color={colors.muted} />
             <Text style={styles.noticeText}>
-              Payment will be recorded as "pending" and requires verification.
+              Payment will be recorded as &quot;pending&quot; and requires verification.
             </Text>
           </View>
 

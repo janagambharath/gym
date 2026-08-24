@@ -1,14 +1,13 @@
 """Mobile API dashboard endpoint."""
 from __future__ import annotations
 
-from datetime import date, timedelta
-
 from flask import g, jsonify
 
 from app.extensions import db, limiter
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
 from app.services.analytics_service import gym_dashboard_stats, gym_revenue_breakdown
+from app.services.timezone_service import today_for_gym
 from sqlalchemy import text
 
 
@@ -26,7 +25,8 @@ def register_dashboard_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def dashboard():
-        stats = gym_dashboard_stats(g.gym_id)
+        gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
+        stats = gym_dashboard_stats(g.gym_id, gym_timezone)
         # Ensure Decimal values are serialized as strings for JSON safety.
         collected = stats.get("collected", 0)
         if hasattr(collected, "is_finite"):
@@ -36,12 +36,12 @@ def register_dashboard_routes(bp):
 
         # Revenue breakdown (today / week / month).
         try:
-            revenue = gym_revenue_breakdown(g.gym_id)
+            revenue = gym_revenue_breakdown(g.gym_id, gym_timezone)
         except Exception:
             revenue = {"revenue_today": "0", "revenue_week": "0", "revenue_month": "0"}
 
         # Expiring today count.
-        today = date.today()
+        today = today_for_gym(gym_timezone)
         try:
             expiring_today = (
                 Member.query.filter_by(gym_id=g.gym_id, status="active")

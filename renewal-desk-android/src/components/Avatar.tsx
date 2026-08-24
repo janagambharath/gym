@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, fontSize, fontWeight, spacing } from '../theme/tokens';
+import { colors, fontWeight } from '../theme/tokens';
 
 type AvatarProps = {
   name: string;
