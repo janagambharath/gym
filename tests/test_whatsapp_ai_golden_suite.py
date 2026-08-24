@@ -106,6 +106,38 @@ def test_ai_golden_human_handover(client, seed_gym):
     assert "team" in res["response"].lower() or "staff" in res["response"].lower()
 
 
+def test_ai_golden_human_handover_yes_connect(client, seed_gym):
+    gym = _setup_test_gym("Connect Gym", "connect-gym")
+    svc = BotService(gym)
+    res = svc.test_generate_response("Yes connect")
+
+    assert res["handover"] is True
+    assert "connecting" in res["response"].lower() or "staff" in res["response"].lower()
+
+
+def test_ai_golden_human_handover_multi_turn_affirmation(client, seed_gym):
+    gym = _setup_test_gym("Prompt Gym", "prompt-gym")
+    router = AIRouter(gym)
+    conv = BotConversation(gym_id=gym.id, phone="919876000099", state="new")
+    lead = BotLead(gym_id=gym.id, phone="919876000099")
+
+    # Turn 1: bot asked if user wants to connect with team
+    # Turn 2: user says "yes" or "sure"
+    text, intent, handover = router.route_and_generate(
+        conversation=conv,
+        lead=lead,
+        incoming_text="yes",
+        recent_messages=[
+            {"sender": "customer", "body": "Do you have crossfit?"},
+            {"sender": "bot", "body": "I don't have that information on hand. Would you like me to connect you with our team?"},
+        ],
+    )
+
+    assert handover is True
+    assert "connecting" in text.lower()
+    assert intent == "human_handover"
+
+
 def test_ai_golden_multi_turn_resolution(client, seed_gym):
     gym = _setup_test_gym("Iron Works", "iron-works")
     router = AIRouter(gym)

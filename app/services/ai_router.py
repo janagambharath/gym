@@ -83,7 +83,9 @@ class AIRouter:
         lower = clean_text.lower()
 
         # ─── LEVEL 1: Deterministic Fast-Path Matcher ─────────────────
-        deterministic_result = self._check_deterministic_fastpath(lower, conversation, lead)
+        deterministic_result = self._check_deterministic_fastpath(
+            lower, conversation, lead, recent_messages=recent_messages
+        )
         if deterministic_result:
             text, intent, handover = deterministic_result
             logger.info("Bot Level 1: Deterministic fastpath triggered intent=%s gym=%s", intent, self.gym.id)
@@ -153,7 +155,11 @@ class AIRouter:
     # ─── Deterministic Rules & Fallbacks ──────────────────────────────
 
     def _check_deterministic_fastpath(
-        self, lower: str, conversation: BotConversation, lead: BotLead
+        self,
+        lower: str,
+        conversation: BotConversation,
+        lead: BotLead,
+        recent_messages: list[dict[str, str]] | None = None,
     ) -> tuple[str, str, bool] | None:
         """Instant exact-intent matcher."""
         # Payment state changes are privileged financial operations. Never ask
@@ -218,14 +224,48 @@ class AIRouter:
                 False,
             )
 
-        # 1. Human handover request
-        if any(kw in lower for kw in ["talk to human", "speak to human", "speak to staff", "call me", "connect me with someone", "human", "receptionist", "owner", "manager"]):
+        # 1. Human handover / connection request
+        handover_phrases = (
+            "talk to human", "speak to human", "speak to staff", "talk to staff",
+            "speak to team", "talk to team", "call me", "connect me with someone",
+            "connect me", "connect with team", "connect to team", "connect team",
+            "connect with staff", "connect to staff", "connect to admin", "connect with admin",
+            "contact staff", "contact team", "yes connect", "please connect", "ok connect",
+            "sure connect", "human", "receptionist", "owner", "manager", "staff",
+        )
+        is_explicit_handover = lower in {"connect", "yes connect", "connect me", "connect team"} or any(kw in lower for kw in handover_phrases)
+
+        # Check if replying affirmatively to a previous connection offer
+        last_bot_msg = ""
+        for m in reversed(recent_messages or []):
+            if m.get("sender") in {"bot", "assistant"}:
+                last_bot_msg = (m.get("body") or "").lower()
+                break
+
+        is_replying_to_connect_offer = any(
+            phrase in last_bot_msg
+            for phrase in (
+                "connect you with our team",
+                "connect you with our front desk team",
+                "connect with our team",
+                "speak with our team",
+                "speak to our team",
+                "connect you with someone",
+            )
+        )
+        is_affirmative = (
+            lower in {"yes", "sure", "ok", "okay", "yep", "yeah", "please", "yes please", "do that", "please do", "y", "ha", "haa", "yes do that"}
+            or lower.startswith("yes")
+            or lower.startswith("sure")
+            or lower.startswith("ok")
+        )
+
+        if is_explicit_handover or (is_replying_to_connect_offer and is_affirmative):
             conversation.handover_status = "human_requested"
             lead.status = "contacted"
             return (
-                f"I've marked this chat for our front desk team at *{self.gym.name}*. "
-                "A staff member will take over this chat shortly! 🙋‍♂️\n\n"
-                "In the meantime, let me know if you'd like our location or plans.",
+                f"Connecting you with our team right away! A staff member from *{self.gym.name}* will be with you shortly. 🙋‍♂️\n\n"
+                "Please wait a moment while we connect you.",
                 "human_handover",
                 True,
             )
@@ -460,7 +500,7 @@ class AIRouter:
             f"Thanks for reaching out to *{self.gym.name}*. "
             "I don't have that information on hand. Would you like me to connect you with our team?",
             "general_help",
-            True,
+            False,
         )
 
     # ─── Quality Gate & Guardrails ────────────────────────────────────
