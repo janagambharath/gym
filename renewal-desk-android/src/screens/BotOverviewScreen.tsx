@@ -10,15 +10,14 @@ import {
 } from 'react-native';
 import { BotAccessState } from '../components/BotAccessState';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
-import { MetricCard } from '../components/MetricCard';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { AppHeader } from '../components/AppHeader';
 import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
-import { Icon } from '../theme/icons';
+import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { BotConfig, BotConfigResponse, BotStats } from '../types';
+import type { BotConfig, BotConfigResponse, BotFAQ, BotStats } from '../types';
 
 type BotOverviewScreenProps = {
   onBack?: () => void;
@@ -28,16 +27,45 @@ type BotOverviewScreenProps = {
   onLogout?: () => void;
 };
 
-type SetupItem = {
+type KnowledgeItem = {
+  icon: IconName;
   label: string;
+  detail: string;
   ready: boolean;
 };
 
-function setupItemsFor(config: BotConfig): SetupItem[] {
+type MetricTone = {
+  color: string;
+  surface: string;
+};
+
+function knowledgeItemsFor(config: BotConfig, faqs: BotFAQ[]): KnowledgeItem[] {
+  const enabledFaqs = faqs.filter((faq) => faq.enabled).length;
   return [
-    { label: 'Greeting message', ready: Boolean(config.greeting_message?.trim()) },
-    { label: 'Opening hours', ready: Boolean(config.opening_hours?.trim()) },
-    { label: 'Handover settings', ready: config.handover_enabled },
+    {
+      icon: 'chatbubble',
+      label: 'Welcome message',
+      detail: config.greeting_message?.trim() ? 'Configured' : 'Add a greeting',
+      ready: Boolean(config.greeting_message?.trim()),
+    },
+    {
+      icon: 'time',
+      label: 'Opening hours',
+      detail: config.opening_hours?.trim() ? 'Configured' : 'Add your hours',
+      ready: Boolean(config.opening_hours?.trim()),
+    },
+    {
+      icon: 'location',
+      label: 'Location details',
+      detail: config.map_link?.trim() ? 'Configured' : 'Add a map link',
+      ready: Boolean(config.map_link?.trim()),
+    },
+    {
+      icon: 'help',
+      label: 'FAQ answers',
+      detail: enabledFaqs ? `${enabledFaqs} active` : 'No active FAQs',
+      ready: enabledFaqs > 0,
+    },
   ];
 }
 
@@ -50,6 +78,7 @@ export function BotOverviewScreen({
 }: BotOverviewScreenProps) {
   const [stats, setStats] = useState<BotStats>();
   const [config, setConfig] = useState<BotConfig>();
+  const [faqs, setFaqs] = useState<BotFAQ[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<ApiError>();
@@ -78,6 +107,7 @@ export function BotOverviewScreen({
     } else if (statsResult.ok && configResult.ok) {
       setStats(statsResult.data);
       setConfig(configResult.data.config);
+      setFaqs(configResult.data.faqs ?? []);
       setError(undefined);
     }
 
@@ -92,8 +122,11 @@ export function BotOverviewScreen({
     return () => clearTimeout(initialLoad);
   }, [load]);
 
-  const setupItems = useMemo(() => (config ? setupItemsFor(config) : []), [config]);
-  const configuredCount = setupItems.filter((item) => item.ready).length;
+  const knowledgeItems = useMemo(
+    () => (config ? knowledgeItemsFor(config, faqs) : []),
+    [config, faqs],
+  );
+  const configuredCount = knowledgeItems.filter((item) => item.ready).length;
 
   if (loading && !stats) {
     return (
@@ -113,11 +146,12 @@ export function BotOverviewScreen({
     );
   }
 
+  const botReady = config.handover_enabled;
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <AppHeader
         title="WhatsApp Bot"
-        subtitle="Operations"
         onBack={onBack}
         rightAction={(
           <TouchableOpacity
@@ -142,63 +176,44 @@ export function BotOverviewScreen({
         )}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.heroCard}>
-          <View style={styles.heroIcon}>
-            <Icon name="robot" size={28} color={colors.brand} />
-          </View>
-          <View style={styles.heroBody}>
-            <Text style={styles.heroTitle}>AI receptionist</Text>
-            <Text style={styles.heroSubtitle}>
-              {config.handover_enabled
-                ? 'Human handover is available for active conversations.'
-                : 'Human handover is currently turned off in bot settings.'}
-            </Text>
-          </View>
-          <View style={[styles.livePill, config.handover_enabled ? styles.livePillOn : styles.livePillOff]}>
-            <View style={[styles.liveDot, { backgroundColor: config.handover_enabled ? colors.success : colors.muted }]} />
-            <Text style={[styles.liveText, { color: config.handover_enabled ? colors.successDark : colors.textSecondary }]}>
-              {config.handover_enabled ? 'READY' : 'SETUP'}
-            </Text>
-          </View>
+        <View style={styles.statusRow}>
+          <View style={[styles.statusDot, { backgroundColor: botReady ? colors.success : colors.warning }]} />
+          <Text style={[styles.statusText, { color: botReady ? colors.successDark : colors.warningDark }]}>
+            {botReady ? 'Staff handover enabled' : 'Setup needs attention'}
+          </Text>
         </View>
+        <Text style={styles.introText}>Monitor membership enquiries, configure bot knowledge, and route real leads to your team.</Text>
 
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCell}>
-            <MetricCard
-              icon={<Icon name="chatbubble" size={19} color={colors.brand} />}
-              iconBg={colors.brandSubtle}
-              label="Conversations"
-              value={stats.total_conversations}
-            />
-          </View>
-          <View style={styles.metricCell}>
-            <MetricCard
-              icon={<Icon name="lead" size={19} color={colors.success} />}
-              iconBg={colors.successSurface}
-              label="New leads"
-              value={stats.total_leads}
-            />
-          </View>
-          <View style={styles.metricCell}>
-            <MetricCard
-              icon={<Icon name="star" size={19} color={colors.warning} />}
-              iconBg={colors.warningSurface}
-              label="Trial requests"
-              value={stats.trial_requests}
-            />
-          </View>
-          <View style={styles.metricCell}>
-            <MetricCard
-              icon={<Icon name="messageReply" size={19} color={colors.statusPending} />}
-              iconBg={colors.statusPendingSurface}
-              label="Need staff"
-              value={stats.handover_requested}
-            />
-          </View>
+        <View style={styles.metricsRow}>
+          <BotMetric
+            icon="chatbubble"
+            label="Conversations"
+            tone={{ color: colors.brand, surface: colors.brandSubtle }}
+            value={stats.total_conversations}
+          />
+          <BotMetric
+            icon="lead"
+            label="Leads"
+            tone={{ color: colors.success, surface: colors.successSurface }}
+            value={stats.total_leads}
+          />
+          <BotMetric
+            icon="handshake"
+            label="Contacted"
+            tone={{ color: colors.warning, surface: colors.warningSurface }}
+            value={stats.contacted_leads}
+          />
+          <BotMetric
+            icon="calendar"
+            label="Trials"
+            tone={{ color: colors.statusPending, surface: colors.statusPendingSurface }}
+            value={stats.trial_requests}
+          />
         </View>
 
         {stats.handover_requested > 0 ? (
           <TouchableOpacity
+            accessibilityLabel="Open conversations waiting for staff handover"
             accessibilityRole="button"
             onPress={onOpenConversations}
             style={styles.attentionCard}
@@ -216,100 +231,210 @@ export function BotOverviewScreen({
           </TouchableOpacity>
         ) : null}
 
-        <View style={styles.actionsCard}>
-          <SectionHeader title="Operations" icon={<Icon name="stats" size={19} color={colors.brand} />} />
-          <View style={styles.actionRow}>
-            <OperationAction
-              icon="chatbubble"
-              label="Conversations"
-              detail="Take over or reply"
-              onPress={onOpenConversations}
-            />
-            <OperationAction
-              icon="lead"
-              label="Leads"
-              detail="Follow up on enquiries"
-              onPress={onOpenLeads}
-            />
+        <View style={styles.sectionCard}>
+          <SectionHeader
+            actionLabel="Manage"
+            icon={<Icon name="brain" size={18} color={colors.brand} />}
+            onAction={onOpenSetup}
+            title="BOT KNOWLEDGE"
+          />
+          <Text style={styles.sectionHint}>{configuredCount} of {knowledgeItems.length} essentials configured</Text>
+          <View style={styles.knowledgeList}>
+            {knowledgeItems.map((item, index) => (
+              <KnowledgeRow
+                key={item.label}
+                item={item}
+                isLast={index === knowledgeItems.length - 1}
+                onPress={onOpenSetup}
+              />
+            ))}
           </View>
         </View>
 
-        <View style={styles.setupCard}>
-          <View style={styles.setupHeader}>
-            <View>
-              <Text style={styles.setupTitle}>Bot setup</Text>
-              <Text style={styles.setupSubtitle}>{configuredCount} of {setupItems.length} core items configured</Text>
-            </View>
-            <TouchableOpacity accessibilityRole="button" onPress={onOpenSetup}>
-              <Text style={styles.setupAction}>Manage</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.setupList}>
-            {setupItems.map((item) => (
-              <View key={item.label} style={styles.setupItem}>
-                <Icon
-                  name={item.ready ? 'checkmark' : 'warning'}
-                  size={17}
-                  color={item.ready ? colors.success : colors.warning}
-                />
-                <Text style={styles.setupItemText}>{item.label}</Text>
-                <Text style={[styles.setupValue, { color: item.ready ? colors.successDark : colors.warningDark }]}>
-                  {item.ready ? 'Ready' : 'Needs setup'}
-                </Text>
-              </View>
-            ))}
-          </View>
-          <PrimaryButton
-            icon={<Icon name="settings" size={17} color={colors.brand} />}
-            onPress={onOpenSetup}
-            size="md"
-            title="Open bot setup"
-            variant="outline"
+        <View style={styles.sectionCard}>
+          <SectionHeader
+            actionLabel="Manage"
+            icon={<Icon name="lead" size={18} color={colors.brand} />}
+            onAction={onOpenLeads}
+            title="LEAD CAPTURE"
           />
+          <View style={styles.captureRow}>
+            <CaptureStat icon="lead" label="Leads" value={stats.total_leads} />
+            <CaptureStat icon="messageReply" label="Contacted" value={stats.contacted_leads} />
+            <CaptureStat icon="star" label="Converted" value={stats.converted_leads} />
+            <CaptureStat icon="calendar" label="Trials" value={stats.trial_requests} />
+          </View>
+        </View>
+
+        <View style={styles.operationGrid}>
+          <OperationCard
+            detail={stats.contacted_leads > 0
+              ? `${stats.contacted_leads} lead${stats.contacted_leads === 1 ? '' : 's'} contacted`
+              : 'Track every lead'}
+            icon="lead"
+            label="Lead follow-up"
+            onPress={onOpenLeads}
+            tone="brand"
+          />
+          <OperationCard
+            detail={botReady ? 'Staff takeover enabled' : 'Enable in bot setup'}
+            icon="handshake"
+            label="Human handover"
+            onPress={onOpenSetup}
+            tone={botReady ? 'success' : 'warning'}
+          />
+        </View>
+
+        <View style={styles.inboxCard}>
+          <View style={styles.inboxIcon}>
+            <Icon name="chatbubble" size={20} color={colors.brand} />
+          </View>
+          <View style={styles.inboxCopy}>
+            <Text style={styles.inboxTitle}>Conversation inbox</Text>
+            <Text style={styles.inboxText}>
+              {stats.total_conversations > 0
+                ? `${stats.total_conversations} recorded conversation${stats.total_conversations === 1 ? '' : 's'} available to review.`
+                : 'New customer conversations will appear here.'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            accessibilityLabel="Open WhatsApp Bot conversations"
+            accessibilityRole="button"
+            onPress={onOpenConversations}
+            style={styles.inboxAction}
+          >
+            <Text style={styles.inboxActionText}>View all</Text>
+            <Icon name="forward" size={16} color={colors.brand} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.bottomActions}>
+          <View style={styles.bottomActionCell}>
+            <PrimaryButton
+              icon={<Icon name="settings" size={17} color={colors.brand} />}
+              onPress={onOpenSetup}
+              size="md"
+              title="Customize bot"
+              variant="outline"
+            />
+          </View>
+          <View style={styles.bottomActionCell}>
+            <PrimaryButton
+              icon={<Icon name="chatbubble" size={17} color={colors.textInverse} />}
+              onPress={onOpenConversations}
+              size="md"
+              title="Open inbox"
+            />
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function OperationAction({
+function BotMetric({
   icon,
   label,
-  detail,
+  tone,
+  value,
+}: {
+  icon: IconName;
+  label: string;
+  tone: MetricTone;
+  value: number;
+}) {
+  return (
+    <View style={styles.metricCard}>
+      <View style={[styles.metricIcon, { backgroundColor: tone.surface }]}>
+        <Icon name={icon} size={17} color={tone.color} />
+      </View>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text numberOfLines={2} style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function KnowledgeRow({
+  item,
+  isLast,
   onPress,
 }: {
-  icon: 'chatbubble' | 'lead';
-  label: string;
-  detail: string;
+  item: KnowledgeItem;
+  isLast: boolean;
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.operationAction}>
-      <View style={styles.operationIcon}>
-        <Icon name={icon} size={21} color={colors.brand} />
+    <TouchableOpacity
+      accessibilityLabel={`Manage ${item.label}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[styles.knowledgeRow, !isLast && styles.knowledgeRowBorder]}
+    >
+      <View style={[styles.knowledgeIcon, { backgroundColor: item.ready ? colors.brandSubtle : colors.gray100 }]}>
+        <Icon name={item.icon} size={18} color={item.ready ? colors.brand : colors.gray500} />
       </View>
-      <Text style={styles.operationLabel}>{label}</Text>
-      <Text style={styles.operationDetail}>{detail}</Text>
-      <Icon name="forward" size={16} color={colors.muted} />
+      <View style={styles.knowledgeCopy}>
+        <Text style={styles.knowledgeTitle}>{item.label}</Text>
+        <Text style={styles.knowledgeDetail}>{item.detail}</Text>
+      </View>
+      <Icon name="forward" size={17} color={colors.gray400} />
+    </TouchableOpacity>
+  );
+}
+
+function CaptureStat({
+  icon,
+  label,
+  value,
+}: {
+  icon: IconName;
+  label: string;
+  value: number;
+}) {
+  return (
+    <View style={styles.captureStat}>
+      <View style={styles.captureIcon}>
+        <Icon name={icon} size={17} color={colors.brand} />
+      </View>
+      <Text style={styles.captureValue}>{value}</Text>
+      <Text numberOfLines={1} style={styles.captureLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function OperationCard({
+  detail,
+  icon,
+  label,
+  onPress,
+  tone,
+}: {
+  detail: string;
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  tone: 'brand' | 'success' | 'warning';
+}) {
+  const toneMap = {
+    brand: { color: colors.brand, surface: colors.brandSubtle },
+    success: { color: colors.success, surface: colors.successSurface },
+    warning: { color: colors.warning, surface: colors.warningSurface },
+  } as const;
+  const selectedTone = toneMap[tone];
+
+  return (
+    <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.operationCard}>
+      <View style={[styles.operationIcon, { backgroundColor: selectedTone.surface }]}>
+        <Icon name={icon} size={19} color={selectedTone.color} />
+      </View>
+      <Text style={styles.operationTitle}>{label}</Text>
+      <Text numberOfLines={2} style={styles.operationDetail}>{detail}</Text>
+      <View style={[styles.operationState, { backgroundColor: selectedTone.color }]} />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  actionRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  actionsCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    padding: spacing.lg,
-    ...shadows.sm,
-  },
   attentionBody: {
     flex: 1,
   },
@@ -325,7 +450,7 @@ const styles = StyleSheet.create({
   },
   attentionIcon: {
     alignItems: 'center',
-    backgroundColor: colors.warningBorder,
+    backgroundColor: '#FEF3C7',
     borderRadius: radius.md,
     height: 38,
     justifyContent: 'center',
@@ -334,6 +459,7 @@ const styles = StyleSheet.create({
   attentionText: {
     color: colors.warningDark,
     fontSize: fontSize.sm,
+    lineHeight: 18,
     marginTop: spacing.xxs,
   },
   attentionTitle: {
@@ -341,107 +467,210 @@ const styles = StyleSheet.create({
     fontSize: fontSize.base,
     fontWeight: fontWeight.bold,
   },
+  bottomActionCell: {
+    flex: 1,
+  },
+  bottomActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  captureIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.full,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  captureLabel: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    marginTop: spacing.xxs,
+    textAlign: 'center',
+  },
+  captureRow: {
+    flexDirection: 'row',
+    marginTop: spacing.lg,
+  },
+  captureStat: {
+    alignItems: 'center',
+    borderRightColor: colors.borderLight,
+    borderRightWidth: 1,
+    flex: 1,
+    gap: spacing.xxs,
+    paddingHorizontal: spacing.xs,
+  },
+  captureValue: {
+    color: colors.text,
+    fontSize: fontSize.xl,
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.bold,
+  },
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
     paddingBottom: spacing.section,
   },
-  heroBody: {
-    flex: 1,
+  inboxAction: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xxs,
+    paddingLeft: spacing.sm,
   },
-  heroCard: {
+  inboxActionText: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  inboxCard: {
     alignItems: 'center',
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderRadius: radius.lg,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: spacing.md,
-    padding: spacing.lg,
+    padding: spacing.md,
     ...shadows.sm,
   },
-  heroIcon: {
-    alignItems: 'center',
-    backgroundColor: colors.brandSubtle,
-    borderRadius: radius.lg,
-    height: 48,
-    justifyContent: 'center',
-    width: 48,
-  },
-  heroSubtitle: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    lineHeight: 18,
-    marginTop: spacing.xxs,
-  },
-  heroTitle: {
-    color: colors.text,
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
-  },
-  liveDot: {
-    borderRadius: radius.full,
-    height: 6,
-    width: 6,
-  },
-  livePill: {
-    alignItems: 'center',
-    borderRadius: radius.full,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  livePillOff: {
-    backgroundColor: colors.gray100,
-  },
-  livePillOn: {
-    backgroundColor: colors.successSurface,
-  },
-  liveText: {
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
-    letterSpacing: 0.3,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  metricCell: {
-    width: '48%',
-  },
-  operationAction: {
-    alignItems: 'center',
-    backgroundColor: colors.gray50,
-    borderColor: colors.borderLight,
-    borderRadius: radius.md,
-    borderWidth: 1,
+  inboxCopy: {
     flex: 1,
-    minHeight: 136,
-    padding: spacing.md,
+    marginLeft: spacing.sm,
   },
-  operationDetail: {
-    color: colors.muted,
-    fontSize: fontSize.xs,
-    lineHeight: 16,
-    marginTop: spacing.xxs,
-    textAlign: 'center',
-  },
-  operationIcon: {
+  inboxIcon: {
     alignItems: 'center',
     backgroundColor: colors.brandSubtle,
     borderRadius: radius.md,
     height: 38,
     justifyContent: 'center',
-    marginBottom: spacing.sm,
     width: 38,
   },
-  operationLabel: {
+  inboxText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
+    marginTop: spacing.xxs,
+  },
+  inboxTitle: {
     color: colors.text,
     fontSize: fontSize.base,
     fontWeight: fontWeight.bold,
+  },
+  introText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.base,
+    lineHeight: 20,
+    marginTop: -spacing.sm,
+  },
+  knowledgeCopy: {
+    flex: 1,
+  },
+  knowledgeDetail: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xxs,
+  },
+  knowledgeIcon: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  knowledgeList: {
+    marginTop: spacing.sm,
+  },
+  knowledgeRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 64,
+  },
+  knowledgeRowBorder: {
+    borderBottomColor: colors.borderLight,
+    borderBottomWidth: 1,
+  },
+  knowledgeTitle: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  metricCard: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 114,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.md,
+    ...shadows.sm,
+  },
+  metricIcon: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  metricLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    lineHeight: 14,
+    marginTop: spacing.xxs,
     textAlign: 'center',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  metricValue: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
+    marginTop: spacing.sm,
+  },
+  operationCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 142,
+    padding: spacing.md,
+    ...shadows.sm,
+  },
+  operationDetail: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 17,
+    marginTop: spacing.xxs,
+  },
+  operationGrid: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  operationIcon: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    height: 36,
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+    width: 36,
+  },
+  operationState: {
+    borderRadius: radius.full,
+    bottom: spacing.md,
+    height: 7,
+    position: 'absolute',
+    right: spacing.md,
+    width: 7,
+  },
+  operationTitle: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
   },
   refreshButton: {
     alignItems: 'center',
@@ -453,12 +682,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flex: 1,
   },
-  setupAction: {
-    color: colors.brand,
-    fontSize: fontSize.base,
-    fontWeight: fontWeight.semibold,
-  },
-  setupCard: {
+  sectionCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderRadius: radius.lg,
@@ -466,38 +690,22 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     ...shadows.sm,
   },
-  setupHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  setupItem: {
-    alignItems: 'center',
-    borderTopColor: colors.borderLight,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-  },
-  setupItemText: {
-    color: colors.textSecondary,
-    flex: 1,
-    fontSize: fontSize.base,
-  },
-  setupList: {
-    marginVertical: spacing.md,
-  },
-  setupSubtitle: {
+  sectionHint: {
     color: colors.muted,
     fontSize: fontSize.sm,
-    marginTop: spacing.xxs,
+    marginTop: spacing.xs,
   },
-  setupTitle: {
-    color: colors.text,
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+  statusDot: {
+    borderRadius: radius.full,
+    height: 8,
+    width: 8,
   },
-  setupValue: {
+  statusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  statusText: {
     fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
   },

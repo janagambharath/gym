@@ -5,6 +5,7 @@ type AvatarProps = {
   name: string;
   size?: number;
   color?: string;
+  textColor?: string;
 };
 
 const AVATAR_COLORS = [
@@ -28,7 +29,7 @@ function getInitials(name: string): string {
   return (parts[0]?.[0] ?? '?').toUpperCase();
 }
 
-export function Avatar({ name, size = 40, color }: AvatarProps) {
+export function Avatar({ name, size = 40, color, textColor = colors.textInverse }: AvatarProps) {
   const bgColor = color ?? getColorForName(name);
   const initials = getInitials(name);
   const textSize = size * 0.4;
@@ -46,7 +47,7 @@ export function Avatar({ name, size = 40, color }: AvatarProps) {
         },
       ]}
     >
-      <Text style={[styles.text, { fontSize: textSize }]}>{initials}</Text>
+      <Text style={[styles.text, { color: textColor, fontSize: textSize }]}>{initials}</Text>
     </View>
   );
 }
@@ -57,7 +58,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   text: {
-    color: colors.textInverse,
     fontWeight: fontWeight.bold,
   },
 });

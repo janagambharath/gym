@@ -1,22 +1,27 @@
-# Feature parity status
+# Renewal Desk mobile feature coverage
 
-Updated: 2026-08-23 (execution pass)
+Updated: 2026-08-24
 
-| Feature | Web support | Android support | Status |
-| --- | --- | --- | --- |
-| Production environment configuration | Yes | Yes | ✅ Implemented — HTTPS enforcement, env-only URL config |
-| Safe service health check | Yes (`/health`) | Yes | ✅ Implemented and tested |
-| Secure native session storage | N/A | Yes | ✅ Implemented — access + refresh tokens in SecureStore |
-| Login screen | Browser session | Yes | ✅ Implemented — email/password, error handling, keyboard support. Awaiting backend JWT endpoint. |
-| API client with auth | Browser session | Yes | ✅ Implemented — Bearer token, 401→refresh→retry, timeout. Awaiting backend JWT endpoint. |
-| Navigation with auth guard | Browser redirects | Yes | ✅ Implemented — React Navigation with conditional auth flow |
-| Dashboard | Yes (HTML) | Yes (screen built) | ⚠️ Screen implemented but awaiting backend `/api/mobile/v1/dashboard` endpoint |
-| Members list/search/filter | Yes (HTML) | Yes (screen built) | ⚠️ Screen implemented but awaiting backend `/api/mobile/v1/members` endpoint |
-| Member detail/create/edit | Yes (HTML) | No | ❌ Screens not built; backend endpoint does not exist |
-| Renewals/bulk renew | Yes (HTML) | No | ❌ Not implemented; backend endpoint does not exist |
-| Payments | Yes (HTML) | No | ❌ Not implemented; backend endpoint does not exist |
-| WhatsApp reminders/announcements | Yes (HTML) | No | ❌ Not implemented; backend endpoint does not exist |
-| Settings/staff/plans | Yes (HTML) | No | ❌ Not implemented; backend endpoint does not exist |
-| Biometric status/actions | Partial (web/Bridge) | No | ❌ Must remain backend-proxied; direct Bridge access prohibited |
+| Feature | Mobile support | Status |
+| --- | --- | --- |
+| Environment configuration | HTTPS-only public API URL by build environment | Implemented |
+| Secure session | Login, rotating refresh token, logout, SecureStore | Implemented |
+| Dashboard | Live statistics, revenue overview, renewals, payments, quick actions | Implemented |
+| Members | Search, filters, pagination, detail, add, edit, deactivate | Implemented |
+| Renewals | Upcoming/expired lists and payment-first renewal | Implemented |
+| Payments | Record, inspect, verify, reject, retry-safe creation | Implemented |
+| WhatsApp | Renewal reminders, history, controlled sending | Implemented; real provider test required before launch |
+| Settings, plans, staff, reports | Live API-backed owner/staff workflows | Implemented |
+| WhatsApp Bot | Entitlement-aware overview, leads, conversations, handover, setup, test | Implemented |
+| Bot follow-up scheduling / booking management | Backend models exist but no complete management workflow | Product gap |
+| Push notification inbox | No dedicated API or native inbox | Product gap |
+| Biometric terminal control | Remains a separate backend/PC Bridge concern | Deliberately out of scope |
 
-No screen uses mock member, payment, or renewal data. The app does not scrape web HTML/forms or load the browser UI in a WebView.
+All operational content is API-backed. The app does not use mock member,
+payment, renewal, or bot data and does not use a WebView or browser cookies.
+
+## Launch caveat
+
+"Implemented" means the source and automated tests support the workflow. It
+does not replace the required staging, installed-device, WhatsApp-provider,
+and gym pilot verification listed in [FINAL_LAUNCH_GATE.md](FINAL_LAUNCH_GATE.md).

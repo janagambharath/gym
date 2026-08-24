@@ -1,60 +1,72 @@
-# Renewal Desk Android final launch gate
+# Renewal Desk Android launch gate
 
-Date: 2026-08-23 (execution pass)
-Repository: `renewal-desk-android` (within `gym` monorepo)
-Scope: Android repository only. Backend, web frontend, database, Railway, Redis, WhatsApp/Meta, payment systems, and the biometric Bridge were not changed.
+Updated: 2026-08-24
 
 ## Verdict
 
-**NOT READY**
+**NOT READY FOR A PUBLIC PRODUCTION LAUNCH YET.**
 
-## Critical finding
+The source code is feature-complete for the supported mobile workflows and has
+passed its automated checks. A public launch still requires configuration,
+staging migration validation, an installed-device test, and real provider
+verification. This is a release gate, not a statement that the app lacks the
+implemented features below.
 
-The backend has **no mobile API implementation**. Previous reviews referenced a "source mobile contract under `/api/mobile/v1`" — this does not exist. The `app/__init__.py` `_register_blueprints()` function registers only browser-session blueprints (auth, gym, staff, members, payments, reminders, webhooks, admin, bridge). There are no JWT auth endpoints, no mobile JSON routes, and no `/api/mobile/v1` namespace in the codebase. The auth system uses Flask-Login with CSRF forms only.
+## What is implemented
 
-## What was accomplished in this execution pass
+- Secure native login, refresh-token rotation, logout, and authenticated API
+  requests.
+- Live dashboard, members, member detail, add/edit/deactivate, search, status
+  filters, and pagination.
+- Renewal and payment workflows. The primary mobile renewal flow records a
+  **pending** payment and extends membership only after payment verification;
+  it never shows a pending payment as paid.
+- WhatsApp reminder history and sending, plans, staff, settings, and reports.
+- Entitlement-gated WhatsApp Bot overview, conversations, leads, handover,
+  owner configuration, and test flow. Bot access is denied server-side unless
+  the gym has an enabled entitlement.
+- Native visual hierarchy aligned to the Renewal Desk dashboard, member,
+  renewal, and bot reference flows. All screen content is sourced from APIs;
+  no demonstration member or payment data is embedded in the client.
 
-| Area | Action | Result |
-| --- | --- | --- |
-| API client | Built `src/services/apiClient.ts` with Bearer auth, 401→refresh→retry, timeout, typed login/logout | ✓ TypeScript passes |
-| Session store | Added refreshToken, tenantName, userName, userRole to MobileSession | ✓ TypeScript passes |
-| Login screen | Email/password with keyboard handling, loading, errors | ✓ Lint passes |
-| Dashboard screen | Stats, pull-to-refresh, error handling, logout | ✓ Lint passes |
-| Members screen | Search, filters, pagination, error/empty states | ✓ Lint passes |
-| Navigation | React Navigation stack with auth-conditional flow | ✓ TypeScript passes |
-| TypeScript | `tsc --noEmit` | ✓ Pass |
-| Expo lint | `expo lint` | ✓ Pass (0 errors) |
-| Unit tests | 10/10 | ✓ Pass |
-| Expo Doctor | 21/21 checks | ✓ Pass |
-| JS bundle | `npx expo export --platform android` | ✓ 834 modules, 1.9MB Hermes bundle |
-| Security scan | Grep for secrets, credentials, debug, mock, localhost | ✓ Clean |
-| npm audit | 10 moderate in Expo `uuid` chain | ⚠ No safe auto-fix |
+## Code gate evidence
 
-## Configuration
-
-| Field | Value |
+| Check | Result |
 | --- | --- |
-| Application ID | `online.revorax.renewaldesk` |
-| Version | `1.0.0` |
-| Version code | `1` |
-| Active Android permission | `android.permission.INTERNET` |
-| Production APK path | None — JDK 17+ required, not available on this host |
-| Production AAB path | None — same environment constraint |
+| Backend test suite | `103 passed` |
+| Android type checking, lint, and runtime tests | `npm run verify` passed (10 runtime tests) |
+| Expo dependency/configuration audit | `expo-doctor` passed 21/21 checks |
+| Android JavaScript bundle | `expo export --platform android` passed |
+| Database migration topology | One Alembic head: `1e5f6a7b8c9d` |
+| Mobile payment retry safety | Idempotency-key coverage passed |
 
-## Required external work (ordered)
+## Required launch work, in order
 
-1. **Build the backend mobile API**: JWT auth endpoints (`/api/mobile/v1/auth/login`, `/refresh`, `/logout`, `/me`), JSON dashboard, members, renewals, payments, WhatsApp, settings endpoints with RBAC and tenant scoping. This is the fundamental blocker — without it, the Android app has nothing to call.
-2. **Deploy the mobile API** to staging with test gym accounts.
-3. **Test the Android app** against the staging API with two gym accounts for tenant isolation.
-4. **Build signed AAB/APK** on a workstation with JDK 17+ and Android SDK, or via EAS Cloud Build.
-5. **Complete Play Store requirements**: privacy policy, Data Safety, store listing, screenshots, reviewer account.
-6. **Run closed test** with 12+ real testers for 14 days (if personal developer account).
-7. **Pilot with 3 real gyms**, collect feedback, fix launch-blocking issues.
+1. Set `EXPO_PUBLIC_API_BASE_URL` for the EAS `preview` environment and the
+   approved HTTPS production API URL for `production`. Do not put secrets in
+   these public build variables.
+2. In staging and production, set `MOBILE_API_ENABLED=true` and a distinct
+   production-strength `MOBILE_API_TOKEN_SECRET` (at least 32 characters),
+   then verify the protected mobile routes are registered. The local runtime
+   currently reports the mobile API as disabled, which is the safe default.
+3. Back up and apply the two new Alembic migrations in staging, then smoke-test
+   login, tenant isolation, member changes, payment verification, and bot
+   entitlement behavior.
+4. Build and install a preview APK on a physical Android device. Test owner and
+   staff accounts, slow/offline network behavior, logout/account switching,
+   and every mobile mutation.
+5. Run a consented real WhatsApp reminder and bot handover test with the
+   provider configuration used for launch.
+6. Complete the gym-owner pilot, Play Console listing/policy/Data Safety
+   materials, support and reviewer access, then build the signed production
+   AAB.
+7. Formally accept or resolve the current 10 moderate Expo transitive audit
+   findings with an Expo-compatible upgrade plan. Do not force the incompatible
+   automatic Expo downgrade.
 
-## Git status
+## Deliberate boundaries
 
-The project is part of the `gym` monorepo on branch `main` with remote `origin` at `https://github.com/janagambharath/gym.git`. Working tree is clean after the pull. New changes are uncommitted pending this review.
-
-## Next human action
-
-**Assign a backend engineer to build the mobile API** (JWT auth + JSON endpoints). The Android client is ready to connect — login screen, API client, session management, dashboard, and members screens are all implemented and will activate once the backend provides the endpoints.
+The Android app does not embed payment, Meta/WhatsApp, AI-provider, or Bridge
+secrets. The separate biometric PC Bridge remains outside the mobile client;
+the backend is the authority for tenant data, membership state, payments, and
+provider delivery.

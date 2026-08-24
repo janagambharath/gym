@@ -33,6 +33,12 @@ function createPaymentRequestKey(): string {
   return `payment-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+function formatPaymentMethod(method: string): string {
+  return method === 'upi'
+    ? 'UPI'
+    : method.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function RenewMemberScreen({
   member,
   onBack,
@@ -46,6 +52,11 @@ export function RenewMemberScreen({
   const [paymentResult, setPaymentResult] = useState<Payment | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [agreementChecked, setAgreementChecked] = useState(false);
+  const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
+  const [whatsAppFeedback, setWhatsAppFeedback] = useState<{
+    message: string;
+    type: 'error' | 'success';
+  }>();
   const paymentRequestKeyRef = useRef<string | undefined>(undefined);
 
   const renewalDays = member.plan?.duration_days ?? 30;
@@ -91,11 +102,27 @@ export function RenewMemberScreen({
   }, [member.id, renewalDays, amount, paymentMethod, renewing, onLogout, onComplete]);
 
   const handleSendWhatsApp = useCallback(async () => {
-    await apiRequest('/api/mobile/v1/whatsapp/send-reminder', {
+    if (sendingWhatsApp) return;
+
+    setSendingWhatsApp(true);
+    setWhatsAppFeedback(undefined);
+    const result = await apiRequest<{ message: string; status: string }>('/api/mobile/v1/whatsapp/send-reminder', {
       method: 'POST',
       body: { member_id: member.id },
     });
-  }, [member.id]);
+
+    if (result.ok) {
+      setWhatsAppFeedback({
+        message: result.data.message || 'WhatsApp reminder sent.',
+        type: 'success',
+      });
+    } else if (result.error.status === 401) {
+      onLogout();
+    } else {
+      setWhatsAppFeedback({ message: result.error.message, type: 'error' });
+    }
+    setSendingWhatsApp(false);
+  }, [member.id, onLogout, sendingWhatsApp]);
 
   if (success && paymentResult) {
     return (
@@ -104,7 +131,7 @@ export function RenewMemberScreen({
         <ScrollView contentContainerStyle={styles.successContent}>
           {/* Success Icon */}
           <View style={styles.successIcon}>
-            <Text style={styles.successCheckmark}>✓</Text>
+            <Icon name="checkmark" size={48} color={colors.textInverse} />
           </View>
 
           <Text style={styles.successTitle}>Payment Recorded</Text>
@@ -115,18 +142,27 @@ export function RenewMemberScreen({
           {/* Member Info */}
           <View style={styles.successCard}>
             <View style={styles.successMemberRow}>
-              <Avatar name={member.full_name} size={48} />
+              <Avatar
+                name={member.full_name}
+                size={50}
+                color={colors.brandSubtle}
+                textColor={colors.brand}
+              />
               <View style={styles.successMemberInfo}>
-                <Text style={styles.successMemberName}>{member.full_name}</Text>
+                <Text style={styles.successMemberName} numberOfLines={1}>{member.full_name}</Text>
                 <Text style={styles.successMemberPlan}>{member.plan?.name ?? 'Standard Plan'}</Text>
               </View>
             </View>
           </View>
 
           {/* Renewal status */}
-          <View style={styles.successCard}>
-            <Text style={styles.successLabel}>Renewal status</Text>
+          <View style={[styles.successCard, styles.renewalStatusCard]}>
+            <View style={styles.renewalStatusIcon}>
+              <Icon name="time" size={22} color={colors.statusPending} />
+            </View>
+            <Text style={styles.successLabel}>Renewal activation</Text>
             <Text style={styles.successExpiry}>Awaiting verification</Text>
+            <Text style={styles.renewalStatusHint}>Access is unchanged until the payment is approved.</Text>
             <StatusBadge status={paymentResult.status} size="md" />
           </View>
 
@@ -134,7 +170,7 @@ export function RenewMemberScreen({
           <View style={styles.successCard}>
             <SectionHeader title="Payment Information" icon={<Icon name="currency" size={18} color={colors.brand} />} />
             <InfoRow label="Amount recorded" value={formatCurrency(paymentResult.amount)} />
-            <InfoRow label="Payment method" value={paymentResult.method} />
+            <InfoRow label="Payment method" value={formatPaymentMethod(paymentResult.method)} />
             <InfoRow label="Recorded on" value={formatDate(paymentResult.created_at)} />
             <View style={styles.successPaymentStatus}>
               <Text style={styles.successPaymentLabel}>Payment Status</Text>
@@ -144,7 +180,7 @@ export function RenewMemberScreen({
 
           {/* Security Notice */}
           <View style={styles.secureNotice}>
-            <Text style={styles.secureIcon}>✓</Text>
+            <Icon name="shield" size={19} color={colors.success} />
             <View style={styles.secureTextContainer}>
               <Text style={styles.secureTitle}>Secure & Recorded</Text>
               <Text style={styles.secureText}>
@@ -161,12 +197,30 @@ export function RenewMemberScreen({
             variant="primary"
           />
 
-          <PrimaryButton
-            label="Send WhatsApp"
-            icon={<Icon name="chatbubble" size={16} color={colors.whatsapp} />}
+          {whatsAppFeedback ? (
+            <View style={[
+              styles.whatsAppFeedback,
+              whatsAppFeedback.type === 'error' ? styles.whatsAppFeedbackError : styles.whatsAppFeedbackSuccess,
+            ]}>
+              <Text style={[
+                styles.whatsAppFeedbackText,
+                { color: whatsAppFeedback.type === 'error' ? colors.critical : colors.successDark },
+              ]}>
+                {whatsAppFeedback.message}
+              </Text>
+            </View>
+          ) : null}
+
+          <TouchableOpacity
+            accessibilityLabel="Send WhatsApp reminder"
+            accessibilityRole="button"
+            disabled={sendingWhatsApp}
             onPress={() => void handleSendWhatsApp()}
-            variant="outline"
-          />
+            style={[styles.successWhatsAppButton, sendingWhatsApp ? styles.successWhatsAppButtonDisabled : undefined]}
+          >
+            <Icon name="whatsapp" size={19} color={colors.whatsappDark} />
+            <Text style={styles.successWhatsAppText}>{sendingWhatsApp ? 'Sending...' : 'Send WhatsApp'}</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
@@ -179,9 +233,14 @@ export function RenewMemberScreen({
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Member Identity */}
         <View style={styles.memberCard}>
-          <Avatar name={member.full_name} size={44} />
+          <Avatar
+            name={member.full_name}
+            size={46}
+            color={colors.brandSubtle}
+            textColor={colors.brand}
+          />
           <View style={styles.memberCardInfo}>
-            <Text style={styles.memberCardName}>{member.full_name}</Text>
+            <Text style={styles.memberCardName} numberOfLines={1}>{member.full_name}</Text>
             <Text style={styles.memberCardPlan}>{member.plan?.name ?? 'No plan'}</Text>
           </View>
           <StatusBadge status={displayStatus} size="md" />
@@ -193,12 +252,20 @@ export function RenewMemberScreen({
           <InfoRow label="Current Expiry" value={formatDate(member.membership_end)} />
           <InfoRow label="Renewal Duration" value={`${renewalDays} days`} />
           <InfoRow label="Amount" value={formatCurrency(amount)} />
-          <InfoRow label="Extension after verification" value={`${renewalDays} days`} valueColor={colors.brand} />
+          <View style={styles.summaryHighlight}>
+            <InfoRow
+              label="Extension after verification"
+              value={`${renewalDays} days`}
+              valueColor={colors.brand}
+            />
+          </View>
         </View>
 
         {/* Payment Status */}
         <View style={styles.paymentStatusCard}>
-          <Text style={styles.paymentStatusIcon}>⊙</Text>
+          <View style={styles.paymentStatusIconWrap}>
+            <Icon name="time" size={20} color={colors.statusExpiring} />
+          </View>
           <View>
             <Text style={styles.paymentStatusTitle}>Payment Status: PENDING</Text>
             <Text style={styles.paymentStatusText}>
@@ -240,8 +307,8 @@ export function RenewMemberScreen({
         </View>
 
         {/* Security Notice */}
-        <View style={styles.secureNotice}>
-          <Text style={styles.secureIcon}>🔒</Text>
+        <View style={[styles.secureNotice, styles.verificationNotice]}>
+          <Icon name="shield" size={19} color={colors.info} />
           <View style={styles.secureTextContainer}>
             <Text style={styles.secureTitle}>Secure & Accurate</Text>
             <Text style={styles.secureText}>
@@ -256,7 +323,7 @@ export function RenewMemberScreen({
           onPress={() => setAgreementChecked(!agreementChecked)}
         >
           <View style={[styles.checkbox, agreementChecked && styles.checkboxChecked]}>
-            {agreementChecked ? <Text style={styles.checkboxIcon}>✓</Text> : null}
+            {agreementChecked ? <Icon name="checkmark" size={15} color={colors.textInverse} /> : null}
           </View>
           <Text style={styles.agreementText}>
             I confirm the amount and payment method are correct and want to record this payment for verification.
@@ -312,6 +379,10 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
     paddingVertical: spacing.md,
   },
   cancelText: {
@@ -341,21 +412,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand,
     borderColor: colors.brand,
   },
-  checkboxIcon: {
-    color: colors.textInverse,
-    fontSize: 14,
-    fontWeight: fontWeight.bold,
-  },
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.xxxl,
   },
   duplicateNotice: {
     alignItems: 'flex-start',
-    backgroundColor: colors.gray50,
+    backgroundColor: colors.infoSurface,
+    borderColor: colors.infoBorder,
     borderRadius: radius.lg,
+    borderWidth: 1,
     flexDirection: 'row',
+    gap: spacing.md,
     padding: spacing.lg,
   },
   duplicateText: {
@@ -387,7 +456,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     borderWidth: 1,
     flexDirection: 'row',
-    padding: spacing.lg,
+    padding: spacing.xl,
     ...shadows.sm,
   },
   memberCardInfo: {
@@ -439,10 +508,13 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.lg,
   },
-  paymentStatusIcon: {
-    color: colors.statusExpiring,
-    fontSize: 20,
-    marginTop: 2,
+  paymentStatusIconWrap: {
+    alignItems: 'center',
+    backgroundColor: colors.warningSurface,
+    borderRadius: radius.full,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
   },
   paymentStatusText: {
     color: colors.textSecondary,
@@ -457,12 +529,6 @@ const styles = StyleSheet.create({
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
-  },
-  secureIcon: {
-    fontSize: 16,
-    marginRight: spacing.md,
-    marginTop: 2,
-    color: colors.success,
   },
   secureNotice: {
     alignItems: 'flex-start',
@@ -496,20 +562,15 @@ const styles = StyleSheet.create({
     padding: spacing.xxl,
     ...shadows.sm,
   },
-  successCheckmark: {
-    color: colors.textInverse,
-    fontSize: 36,
-    fontWeight: fontWeight.bold,
-  },
   successContent: {
     alignItems: 'stretch',
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.xxxl,
   },
   successExpiry: {
-    color: colors.text,
-    fontSize: fontSize['4xl'],
+    color: colors.statusPending,
+    fontSize: fontSize['3xl'],
     fontWeight: fontWeight.extrabold,
     marginBottom: spacing.sm,
     marginTop: spacing.sm,
@@ -519,9 +580,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     backgroundColor: colors.success,
     borderRadius: 40,
-    height: 80,
+    height: 84,
     justifyContent: 'center',
-    width: 80,
+    width: 84,
   },
   successLabel: {
     color: colors.muted,
@@ -559,6 +620,44 @@ const styles = StyleSheet.create({
     borderTopColor: colors.borderLight,
     borderTopWidth: 1,
   },
+  successWhatsAppButton: {
+    alignItems: 'center',
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
+  },
+  successWhatsAppButtonDisabled: {
+    opacity: 0.6,
+  },
+  successWhatsAppText: {
+    color: colors.whatsappDark,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.semibold,
+  },
+  whatsAppFeedback: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  whatsAppFeedbackError: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+  },
+  whatsAppFeedbackSuccess: {
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+  },
+  whatsAppFeedbackText: {
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.medium,
+    textAlign: 'center',
+  },
   successSubtitle: {
     color: colors.textSecondary,
     fontSize: fontSize.lg,
@@ -589,5 +688,34 @@ const styles = StyleSheet.create({
     fontSize: fontSize['2xl'],
     fontWeight: fontWeight.extrabold,
     fontVariant: ['tabular-nums'],
+  },
+  renewalStatusCard: {
+    backgroundColor: colors.statusPendingSurface,
+  },
+  renewalStatusHint: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+    lineHeight: 18,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+  },
+  renewalStatusIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.full,
+    height: 40,
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+    width: 40,
+  },
+  summaryHighlight: {
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.sm,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.sm,
+  },
+  verificationNotice: {
+    backgroundColor: colors.infoSurface,
+    borderColor: colors.infoBorder,
   },
 });

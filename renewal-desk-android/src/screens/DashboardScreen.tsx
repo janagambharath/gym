@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   RefreshControl,
   SafeAreaView,
@@ -11,14 +11,13 @@ import {
 import { Avatar } from '../components/Avatar';
 import { ErrorState } from '../components/ErrorState';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
-import { MetricCard } from '../components/MetricCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession, logout } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
-import { formatCurrency, formatDate, getMemberDisplayStatus } from '../types';
+import { formatCurrency, formatDate, getDaysText, getMemberDisplayStatus } from '../types';
 
 type DashboardScreenProps = {
   onLogout: () => void;
@@ -54,6 +53,9 @@ export function DashboardScreen({
   const [revision, setRevision] = useState(0);
 
   const session = getCachedSession();
+  const hasAttention = Boolean(
+    data && (data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0),
+  );
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -107,16 +109,25 @@ export function DashboardScreen({
     <SafeAreaView style={styles.safeArea}>
       {/* Top Bar */}
       <View style={styles.topBar}>
-        <View style={styles.topBarLeft}>
+        <View style={styles.brandBlock}>
+          <BrandMark />
           <Text style={styles.brandName}>Renewal Desk</Text>
-          {session?.tenantName ? (
-            <View style={styles.gymSelector}>
-              <Icon name="fitness" size={14} color={colors.muted} />
-              <Text style={styles.gymName} numberOfLines={1}>{session.tenantName}</Text>
-            </View>
-          ) : null}
         </View>
+        {session?.tenantName ? (
+          <View style={styles.gymSelector}>
+            <Icon name="fitness" size={14} color={colors.textSecondary} />
+            <Text style={styles.gymName} numberOfLines={1}>{session.tenantName}</Text>
+            <Icon name="forward" size={13} color={colors.muted} />
+          </View>
+        ) : <View style={styles.topBarSpacer} />}
         <View style={styles.topBarRight}>
+          <View
+            accessibilityLabel={hasAttention ? 'Attention items are waiting' : 'No attention items'}
+            style={styles.notificationButton}
+          >
+            <Icon name="notifications" size={21} color={colors.text} />
+            {hasAttention ? <View style={styles.notificationDot} /> : null}
+          </View>
           <TouchableOpacity
             accessibilityLabel="Sign out"
             onPress={() => void handleLogout()}
@@ -146,47 +157,53 @@ export function DashboardScreen({
                 {getGreeting()}, {session?.userName?.split(' ')[0] ?? 'there'}
               </Text>
               <Text style={styles.greetingSub}>
-                Here&apos;s what needs your attention today.
+                Here&apos;s the live view of what needs your attention today.
               </Text>
             </View>
 
             {/* Key Metrics */}
-            <View style={styles.metricsRow}>
-              <MetricCard
+            <View style={styles.metricsGrid}>
+              <DashboardMetric
                 icon={<Icon name="members" size={18} color={colors.brand} />}
                 iconBg={colors.brandSubtle}
                 label="Active Members"
                 value={data.total_active}
+                detail="Current total"
               />
-              <MetricCard
+              <DashboardMetric
                 icon={<Icon name="time" size={18} color={colors.statusExpiring} />}
                 iconBg={colors.statusExpiringSurface}
                 label="Expiring Soon"
                 value={data.expiring_soon}
-                subtext="Next 7 days"
-                subtextColor={colors.statusExpiring}
+                detail={data.expiring_today ? `${data.expiring_today} today` : 'Next 7 days'}
+                detailColor={colors.statusExpiring}
               />
-            </View>
-            <View style={styles.metricsRow}>
-              <MetricCard
+              <DashboardMetric
                 icon={<Icon name="alert" size={18} color={colors.statusExpired} />}
                 iconBg={colors.statusExpiredSurface}
                 label="Expired"
                 value={data.expired}
-                subtext="Need attention"
-                subtextColor={colors.statusExpired}
+                detail="Need attention"
+                detailColor={colors.statusExpired}
               />
-              <MetricCard
+              <DashboardMetric
                 icon={<Icon name="wallet" size={18} color={colors.statusPending} />}
                 iconBg={colors.statusPendingSurface}
-                label="Pending Pay"
+                label="Pending Payments"
                 value={data.pending_payments}
+                detail="Awaiting review"
+                detailColor={colors.statusPending}
               />
             </View>
 
             {/* Revenue */}
             <View style={styles.card}>
-              <SectionHeader title="Revenue Overview" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+              <View style={styles.revenueHeading}>
+                <SectionHeader title="Revenue Overview" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+                <View style={styles.periodPill}>
+                  <Text style={styles.periodPillText}>Live totals</Text>
+                </View>
+              </View>
               <View style={styles.revenueGrid}>
                 <View style={styles.revenueItem}>
                   <Text style={styles.revenueLabel}>Today</Text>
@@ -212,34 +229,36 @@ export function DashboardScreen({
             {/* Attention Required */}
             {(data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0) ? (
               <View style={styles.card}>
-                <SectionHeader title="Attention Required" icon={<Icon name="warning" size={18} color={colors.statusExpiring} />} />
-                <View style={styles.attentionRow}>
+                <SectionHeader
+                  title="Attention Required"
+                  icon={<Icon name="warning" size={18} color={colors.statusExpiring} />}
+                  actionLabel="View all"
+                  onAction={onNavigateRenewals}
+                />
+                <View style={styles.attentionGrid}>
                   {data.expiring_soon > 0 ? (
-                    <TouchableOpacity style={styles.attentionItem} onPress={onNavigateRenewals}>
-                      <View style={[styles.attentionDot, { backgroundColor: colors.statusExpiring }]}>
-                        <Text style={styles.attentionDotText}>{data.expiring_soon}</Text>
-                      </View>
-                      <Text style={styles.attentionLabel}>Members expiring soon</Text>
-                      <Icon name="forward" size={16} color={colors.muted} />
-                    </TouchableOpacity>
+                    <AttentionTile
+                      color={colors.statusExpiring}
+                      label="Expiring soon"
+                      onPress={onNavigateRenewals}
+                      value={data.expiring_soon}
+                    />
                   ) : null}
                   {data.pending_payments > 0 ? (
-                    <TouchableOpacity style={styles.attentionItem} onPress={onNavigatePayments}>
-                      <View style={[styles.attentionDot, { backgroundColor: colors.statusPending }]}>
-                        <Text style={styles.attentionDotText}>{data.pending_payments}</Text>
-                      </View>
-                      <Text style={styles.attentionLabel}>Pending payments</Text>
-                      <Icon name="forward" size={16} color={colors.muted} />
-                    </TouchableOpacity>
+                    <AttentionTile
+                      color={colors.statusPending}
+                      label="Pending payments"
+                      onPress={onNavigatePayments}
+                      value={data.pending_payments}
+                    />
                   ) : null}
                   {data.expired > 0 ? (
-                    <TouchableOpacity style={styles.attentionItem} onPress={onNavigateRenewals}>
-                      <View style={[styles.attentionDot, { backgroundColor: colors.statusExpired }]}>
-                        <Text style={styles.attentionDotText}>{data.expired}</Text>
-                      </View>
-                      <Text style={styles.attentionLabel}>Expired memberships</Text>
-                      <Icon name="forward" size={16} color={colors.muted} />
-                    </TouchableOpacity>
+                    <AttentionTile
+                      color={colors.statusExpired}
+                      label="Expired members"
+                      onPress={onNavigateRenewals}
+                      value={data.expired}
+                    />
                   ) : null}
                 </View>
               </View>
@@ -254,13 +273,15 @@ export function DashboardScreen({
                   actionLabel="View All"
                   onAction={onNavigateRenewals}
                 />
-                {upcoming.map((m) => (
-                  <TouchableOpacity
+                {upcoming.map((m) => {
+                  const daysText = getDaysText(m.days_until_expiry);
+                  return (
+                    <TouchableOpacity
                     key={m.id}
                     style={styles.upcomingRow}
                     onPress={() => onNavigateMemberDetail?.(m)}
                   >
-                    <Avatar name={m.full_name} size={36} />
+                    <Avatar name={m.full_name} size={38} />
                     <View style={styles.upcomingInfo}>
                       <Text style={styles.upcomingName} numberOfLines={1}>{m.full_name}</Text>
                       <Text style={styles.upcomingDetail}>
@@ -269,10 +290,12 @@ export function DashboardScreen({
                     </View>
                     <View style={styles.upcomingRight}>
                       <Text style={styles.upcomingDate}>{formatDate(m.membership_end)}</Text>
+                      {daysText ? <Text style={styles.upcomingDays}>{daysText}</Text> : null}
                       <StatusBadge status={getMemberDisplayStatus(m)} />
                     </View>
-                  </TouchableOpacity>
-                ))}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             ) : null}
 
@@ -306,11 +329,13 @@ export function DashboardScreen({
             ) : null}
 
             {/* Quick Actions */}
-            <View style={styles.quickActions}>
-              <QuickAction icon={<Icon name="personAdd" size={22} color={colors.brand} />} label="Add Member" onPress={onNavigateAddMember} />
-              <QuickAction icon={<Icon name="renewals" size={22} color={colors.brand} />} label="Renew" onPress={onNavigateRenewals} />
-              <QuickAction icon={<Icon name="receipt" size={22} color={colors.brand} />} label="Payment" onPress={onNavigateRecordPayment ?? onNavigatePayments} />
-              <QuickAction icon={<Icon name="whatsapp" size={22} color={colors.whatsapp} />} label="WhatsApp" onPress={onNavigateWhatsApp ?? onNavigateSettings} />
+            <View style={styles.quickActionsCard}>
+              <View style={styles.quickActions}>
+                <QuickAction icon={<Icon name="personAdd" size={21} color={colors.brand} />} label="Add Member" onPress={onNavigateAddMember} />
+                <QuickAction icon={<Icon name="renewals" size={21} color={colors.brand} />} label="Renew" onPress={onNavigateRenewals} />
+                <QuickAction icon={<Icon name="receipt" size={21} color={colors.brand} />} label="Payment" onPress={onNavigateRecordPayment ?? onNavigatePayments} />
+                <QuickAction icon={<Icon name="whatsapp" size={21} color={colors.whatsapp} />} label="WhatsApp" onPress={onNavigateWhatsApp ?? onNavigateSettings} />
+              </View>
             </View>
           </>
         ) : null}
@@ -319,7 +344,57 @@ export function DashboardScreen({
   );
 }
 
-function QuickAction({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress?: () => void }) {
+type DashboardMetricProps = {
+  icon: ReactNode;
+  iconBg: string;
+  label: string;
+  value: number | string;
+  detail: string;
+  detailColor?: string;
+};
+
+function DashboardMetric({ icon, iconBg, label, value, detail, detailColor }: DashboardMetricProps) {
+  return (
+    <View accessibilityLabel={`${label}: ${value}`} style={styles.metricCard}>
+      <View style={[styles.metricIcon, { backgroundColor: iconBg }]}>{icon}</View>
+      <Text numberOfLines={2} style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text numberOfLines={1} style={[styles.metricDetail, detailColor ? { color: detailColor } : undefined]}>
+        {detail}
+      </Text>
+    </View>
+  );
+}
+
+function AttentionTile({
+  color,
+  label,
+  onPress,
+  value,
+}: {
+  color: string;
+  label: string;
+  onPress?: () => void;
+  value: number;
+}) {
+  return (
+    <TouchableOpacity disabled={!onPress} onPress={onPress} style={styles.attentionTile}>
+      <Text style={[styles.attentionValue, { color }]}>{value}</Text>
+      <Text numberOfLines={2} style={styles.attentionLabel}>{label}</Text>
+      <Icon name="forward" size={13} color={colors.muted} />
+    </TouchableOpacity>
+  );
+}
+
+function BrandMark() {
+  return (
+    <View accessibilityLabel="Renewal Desk" style={styles.brandMark}>
+      <Text style={styles.brandGlyph}>R</Text>
+    </View>
+  );
+}
+
+function QuickAction({ icon, label, onPress }: { icon: ReactNode; label: string; onPress?: () => void }) {
   return (
     <TouchableOpacity
       accessibilityRole="button"
@@ -335,50 +410,67 @@ function QuickAction({ icon, label, onPress }: { icon: React.ReactNode; label: s
 }
 
 const styles = StyleSheet.create({
-  attentionDot: {
-    alignItems: 'center',
-    borderRadius: 14,
-    height: 28,
-    justifyContent: 'center',
-    marginRight: spacing.md,
-    minWidth: 28,
-    paddingHorizontal: spacing.xs,
-  },
-  attentionDotText: {
-    color: colors.textInverse,
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
-  },
-  attentionItem: {
-    alignItems: 'center',
+  attentionGrid: {
     flexDirection: 'row',
-    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   attentionLabel: {
     color: colors.textSecondary,
-    flex: 1,
-    fontSize: fontSize.base,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+    lineHeight: 15,
+    marginTop: spacing.xxs,
   },
-  attentionRow: {
-    gap: spacing.xs,
-    marginTop: spacing.sm,
+  attentionTile: {
+    backgroundColor: colors.gray50,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 78,
+    padding: spacing.sm,
+  },
+  attentionValue: {
+    fontSize: fontSize['2xl'],
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
   },
   avatarButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
-    minWidth: 44,
+    minHeight: 40,
+    minWidth: 40,
+  },
+  brandBlock: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 1,
+    gap: spacing.sm,
+  },
+  brandGlyph: {
+    color: colors.brand,
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.extrabold,
+  },
+  brandMark: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.md,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
   },
   brandName: {
-    color: colors.brand,
-    fontSize: fontSize['2xl'],
+    color: colors.text,
+    fontSize: fontSize.xl,
     fontWeight: fontWeight.extrabold,
-    letterSpacing: -0.5,
+    letterSpacing: -0.2,
   },
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     borderWidth: 1,
     padding: spacing.lg,
     ...shadows.sm,
@@ -389,32 +481,98 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.section,
   },
   greeting: {
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.xs,
   },
   greetingSub: {
     color: colors.textSecondary,
-    fontSize: fontSize.lg,
-    marginTop: spacing.xxs,
+    fontSize: fontSize.base,
+    lineHeight: 20,
+    marginTop: spacing.xs,
   },
   greetingText: {
     color: colors.text,
-    fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontSize: fontSize['4xl'],
+    fontWeight: fontWeight.extrabold,
   },
   gymName: {
     color: colors.textSecondary,
-    fontSize: fontSize.md,
+    flexShrink: 1,
+    fontSize: fontSize.xs,
     fontWeight: fontWeight.medium,
-    marginLeft: spacing.xs,
   },
   gymSelector: {
     alignItems: 'center',
+    backgroundColor: colors.gray50,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
     flexDirection: 'row',
+    gap: spacing.xxs,
+    marginHorizontal: spacing.xs,
+    maxWidth: 126,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 7,
+  },
+  metricCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 116,
+    minWidth: 0,
+    padding: spacing.sm,
+    ...shadows.sm,
+  },
+  metricDetail: {
+    color: colors.muted,
+    fontSize: 10,
     marginTop: spacing.xxs,
   },
-  metricsRow: {
+  metricIcon: {
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    height: 30,
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+    width: 30,
+  },
+  metricLabel: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+    lineHeight: 14,
+    minHeight: 28,
+  },
+  metricValue: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
+    marginTop: spacing.xxs,
+  },
+  metricsGrid: {
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.sm,
+  },
+  notificationButton: {
+    alignItems: 'center',
+    height: 36,
+    justifyContent: 'center',
+    position: 'relative',
+    width: 36,
+  },
+  notificationDot: {
+    backgroundColor: colors.critical,
+    borderColor: colors.surface,
+    borderRadius: 5,
+    borderWidth: 1,
+    height: 9,
+    position: 'absolute',
+    right: 5,
+    top: 4,
+    width: 9,
   },
   paymentAmount: {
     color: colors.text,
@@ -455,11 +613,11 @@ const styles = StyleSheet.create({
   },
   quickActionIcon: {
     alignItems: 'center',
-    backgroundColor: colors.gray100,
+    backgroundColor: colors.brandSubtle,
     borderRadius: radius.lg,
-    height: 48,
+    height: 44,
     justifyContent: 'center',
-    width: 48,
+    width: 44,
   },
   quickActionLabel: {
     color: colors.textSecondary,
@@ -469,7 +627,27 @@ const styles = StyleSheet.create({
   quickActions: {
     flexDirection: 'row',
     gap: spacing.sm,
-    paddingVertical: spacing.sm,
+  },
+  quickActionsCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    padding: spacing.md,
+    ...shadows.sm,
+  },
+  periodPill: {
+    backgroundColor: colors.gray50,
+    borderColor: colors.borderLight,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  periodPillText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
   },
   revenueGrid: {
     flexDirection: 'row',
@@ -496,6 +674,11 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.extrabold,
     marginTop: spacing.xxs,
   },
+  revenueHeading: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
@@ -506,22 +689,27 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: spacing.xs,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  topBarLeft: {
-    flex: 1,
+    paddingVertical: spacing.sm,
   },
   topBarRight: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.xxs,
+  },
+  topBarSpacer: {
+    flex: 1,
   },
   upcomingDate: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
     fontVariant: ['tabular-nums'],
+  },
+  upcomingDays: {
+    color: colors.statusExpiring,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
   },
   upcomingDetail: {
     color: colors.muted,
@@ -546,7 +734,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.borderLight,
     borderTopWidth: 1,
     flexDirection: 'row',
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
     paddingTop: spacing.md,
   },
 });

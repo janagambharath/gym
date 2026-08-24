@@ -210,6 +210,9 @@ or actual gym workflow usability.
    deployment team's backup and rollback procedure.
 3. Configure/verify staging backend secrets and service connectivity for mobile
    JWT, Redis, Meta WhatsApp, and any intentionally enabled OpenRouter bot.
+   Set `MOBILE_API_ENABLED=true` plus a distinct production-strength
+   `MOBILE_API_TOKEN_SECRET`; the local runtime currently reports the mobile
+   routes as disabled, which is the safe default.
 4. Submit a preview EAS APK only after item 1; install it on a physical Android
    device and test login, offline/slow-network behavior, member mutations,
    payment recording and verification, reminders, bot handover, logout, and

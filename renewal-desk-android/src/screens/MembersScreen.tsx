@@ -16,7 +16,7 @@ import { SearchBar } from '../components/SearchBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, MembersResponse } from '../types';
 import { formatDate, getDaysText, getMemberDisplayStatus } from '../types';
 
@@ -38,6 +38,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [filtersVisible, setFiltersVisible] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -103,7 +104,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
         onPress={() => onSelectMember?.(item)}
         activeOpacity={0.6}
       >
-        <Avatar name={item.full_name} size={40} />
+        <Avatar name={item.full_name} size={42} />
         <View style={styles.memberInfo}>
           <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
           <Text style={styles.memberPhone}>{item.phone}</Text>
@@ -141,35 +142,54 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Members</Text>
-          <Text style={styles.headerSubtitle}>{totalCount} members</Text>
+          <Text style={styles.headerSubtitle}>{totalCount.toLocaleString('en-IN')} members</Text>
         </View>
-        {onAddMember ? (
-          <TouchableOpacity
-            accessibilityLabel="Add member"
-            accessibilityRole="button"
-            onPress={onAddMember}
-            style={styles.addButton}
-          >
-            <Text style={styles.addButtonText}>+ Add Member</Text>
-          </TouchableOpacity>
-        ) : null}
+        <View style={styles.headerActions}>
+          <View accessibilityLabel="Notifications" style={styles.notificationButton}>
+            <Icon name="notifications" size={21} color={colors.text} />
+          </View>
+          {onAddMember ? (
+            <TouchableOpacity
+              accessibilityLabel="Add member"
+              accessibilityRole="button"
+              onPress={onAddMember}
+              style={styles.addButton}
+            >
+              <Icon name="add" size={18} color={colors.textInverse} />
+              <Text style={styles.addButtonText}>Add Member</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
 
       {/* Search */}
       <View style={styles.searchContainer}>
-        <SearchBar
-          value={search}
-          onChangeText={handleSearch}
-          placeholder="Search name, phone or member ID"
-        />
+        <View style={styles.searchField}>
+          <SearchBar
+            value={search}
+            onChangeText={handleSearch}
+            placeholder="Search name, phone or member ID"
+          />
+        </View>
+        <TouchableOpacity
+          accessibilityLabel={filtersVisible ? 'Hide member filters' : 'Show member filters'}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: filtersVisible }}
+          onPress={() => setFiltersVisible((visible) => !visible)}
+          style={[styles.filterButton, filtersVisible && styles.filterButtonActive]}
+        >
+          <Icon name="filter" size={20} color={filtersVisible ? colors.brand : colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
       {/* Filters */}
-      <FilterChips
-        options={FILTER_OPTIONS}
-        selected={statusFilter}
-        onSelect={(key) => { setStatusFilter(key); setPage(1); }}
-      />
+      {filtersVisible ? (
+        <FilterChips
+          options={FILTER_OPTIONS}
+          selected={statusFilter}
+          onSelect={(key) => { setStatusFilter(key); setPage(1); }}
+        />
+      ) : null}
 
       {/* List */}
       {loading ? (
@@ -192,6 +212,12 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
         <FlatList
           contentContainerStyle={styles.listContent}
           data={members}
+          ListHeaderComponent={
+            <View style={styles.listHeader}>
+              <Text style={[styles.listHeaderText, styles.listHeaderMember]}>Member</Text>
+              <Text style={[styles.listHeaderText, styles.listHeaderExpiry]}>Expiry & status</Text>
+            </View>
+          }
           keyExtractor={(item) => String(item.id)}
           renderItem={renderMember}
           initialNumToRender={10}
@@ -231,10 +257,14 @@ export type { Member };
 
 const styles = StyleSheet.create({
   addButton: {
+    alignItems: 'center',
     backgroundColor: colors.brand,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minHeight: 42,
+    paddingHorizontal: spacing.md,
+    ...shadows.sm,
   },
   addButtonText: {
     color: colors.textInverse,
@@ -249,7 +279,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
   },
   headerSubtitle: {
     color: colors.muted,
@@ -261,9 +296,45 @@ const styles = StyleSheet.create({
     fontSize: fontSize['4xl'],
     fontWeight: fontWeight.extrabold,
   },
+  filterButton: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    height: 46,
+    justifyContent: 'center',
+    width: 46,
+  },
+  filterButtonActive: {
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.infoBorder,
+  },
+  listHeader: {
+    alignItems: 'center',
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.xs,
+  },
+  listHeaderExpiry: {
+    textAlign: 'right',
+    width: 88,
+  },
+  listHeaderMember: {
+    flex: 1,
+  },
+  listHeaderText: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
   listContent: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingBottom: spacing.sm,
   },
   memberDays: {
     fontSize: fontSize.sm,
@@ -278,6 +349,7 @@ const styles = StyleSheet.create({
   memberInfo: {
     flex: 1,
     marginLeft: spacing.md,
+    minWidth: 0,
   },
   memberName: {
     color: colors.text,
@@ -298,10 +370,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: spacing.xxs,
     marginLeft: spacing.sm,
+    width: 88,
   },
   memberRow: {
     alignItems: 'center',
     flexDirection: 'row',
+    minHeight: 88,
     paddingVertical: spacing.md,
   },
   pageButton: {
@@ -334,13 +408,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: spacing.md,
   },
+  notificationButton: {
+    alignItems: 'center',
+    height: 40,
+    justifyContent: 'center',
+    width: 36,
+  },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
   },
   searchContainer: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
+  },
+  searchField: {
+    flex: 1,
   },
   separator: {
     backgroundColor: colors.borderLight,

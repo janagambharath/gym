@@ -12,7 +12,6 @@ import { AppHeader } from '../components/AppHeader';
 import { Avatar } from '../components/Avatar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
@@ -98,6 +97,22 @@ export function MemberDetailScreen({
     setSendingReminder(false);
   }, [member.id, member.full_name, onLogout]);
 
+  const verifiedPaidAmount = payments
+    .filter((payment) => ['verified', 'paid'].includes(payment.status.toLowerCase()))
+    .reduce((total, payment) => total + (Number(payment.amount) || 0), 0);
+  const pendingPaymentCount = payments.filter(
+    (payment) => payment.status.toLowerCase() === 'pending',
+  ).length;
+  const hasExpiringMembership = member.days_until_expiry !== null
+    && member.days_until_expiry > 0
+    && member.days_until_expiry <= 7;
+  const hasExpiredMembership = member.days_until_expiry !== null && member.days_until_expiry <= 0;
+  const expiryTone = hasExpiredMembership
+    ? { backgroundColor: colors.statusExpiredSurface, color: colors.statusExpired }
+    : hasExpiringMembership
+      ? { backgroundColor: colors.statusExpiringSurface, color: colors.statusExpiring }
+      : { backgroundColor: colors.statusActiveSurface, color: colors.statusActive };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <AppHeader title="Member Details" onBack={onBack} />
@@ -120,12 +135,17 @@ export function MemberDetailScreen({
           </View>
         ) : null}
 
-        {/* Identity Card */}
-        <View style={styles.card}>
+        {/* Member profile */}
+        <View style={[styles.card, styles.profileCard]}>
           <View style={styles.identityRow}>
-            <Avatar name={member.full_name} size={56} />
+            <Avatar
+              name={member.full_name}
+              size={58}
+              color={colors.brandSubtle}
+              textColor={colors.brand}
+            />
             <View style={styles.identityInfo}>
-              <Text style={styles.memberName}>{member.full_name}</Text>
+              <Text style={styles.memberName} numberOfLines={1}>{member.full_name}</Text>
               <Text style={styles.memberPhone}>{member.phone}</Text>
               <Text style={styles.memberId}>ID: MBR{member.id}</Text>
               {member.plan ? (
@@ -139,13 +159,7 @@ export function MemberDetailScreen({
               {daysText ? (
                 <Text style={[
                   styles.daysText,
-                  {
-                    color: member.days_until_expiry !== null && member.days_until_expiry <= 0
-                      ? colors.statusExpired
-                      : member.days_until_expiry !== null && member.days_until_expiry <= 7
-                        ? colors.statusExpiring
-                        : colors.statusActive,
-                  },
+                  { color: expiryTone.color },
                 ]}>
                   {member.days_until_expiry !== null && member.days_until_expiry >= 0
                     ? `${member.days_until_expiry} days remaining`
@@ -158,7 +172,12 @@ export function MemberDetailScreen({
 
         {/* Membership Card */}
         <View style={styles.card}>
-          <SectionHeader title="Membership" icon={<Icon name="star" size={18} color={colors.brand} />} />
+          <View style={styles.sectionTitleRow}>
+            <View style={[styles.sectionIcon, styles.membershipIcon]}>
+              <Icon name="star" size={17} color={colors.statusExpiring} />
+            </View>
+            <Text style={styles.sectionTitle}>Membership</Text>
+          </View>
           <View style={styles.membershipGrid}>
             <View style={styles.membershipItem}>
               <Text style={styles.membershipLabel}>Plan</Text>
@@ -177,18 +196,12 @@ export function MemberDetailScreen({
 
           {/* Days remaining bar */}
           {member.days_until_expiry !== null ? (
-            <View style={styles.daysBar}>
+            <View style={[styles.daysBar, { backgroundColor: expiryTone.backgroundColor }]}>
               <View style={styles.daysBarLeft}>
-                <Icon name="time" size={16} color={colors.textSecondary} />
+                <Icon name="time" size={16} color={expiryTone.color} />
                 <Text style={[
                   styles.daysBarText,
-                  {
-                    color: member.days_until_expiry <= 0
-                      ? colors.statusExpired
-                      : member.days_until_expiry <= 7
-                        ? colors.statusExpiring
-                        : colors.statusActive,
-                  },
+                  { color: expiryTone.color },
                 ]}>
                   {member.days_until_expiry >= 0
                     ? `${member.days_until_expiry} days remaining`
@@ -202,7 +215,12 @@ export function MemberDetailScreen({
 
         {/* Financial Summary */}
         <View style={styles.card}>
-          <SectionHeader title="Financial Summary" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+          <View style={styles.sectionTitleRow}>
+            <View style={[styles.sectionIcon, styles.financialIcon]}>
+              <Icon name="currency" size={17} color={colors.statusActive} />
+            </View>
+            <Text style={styles.sectionTitle}>Financial Summary</Text>
+          </View>
           <View style={styles.financialGrid}>
             <View style={styles.financialItem}>
               <Text style={styles.financialLabel}>Membership Amount</Text>
@@ -211,42 +229,74 @@ export function MemberDetailScreen({
               </Text>
             </View>
             <View style={[styles.financialItem, styles.financialItemBorder]}>
-              <Text style={styles.financialLabel}>Payments</Text>
+              <Text style={styles.financialLabel}>Verified Paid</Text>
               <Text style={[styles.financialValue, { color: colors.statusActive }]}>
-                {payments.length > 0
-                  ? formatCurrency(
-                      payments
-                        .filter((p) => p.status === 'verified')
-                        .reduce((sum, p) => sum + Number(p.amount), 0),
-                    )
-                  : '₹0'}
+                {formatCurrency(verifiedPaidAmount)}
               </Text>
-              {payments.some((p) => p.status === 'verified') ? (
+              {verifiedPaidAmount > 0 ? (
                 <View style={[styles.smallBadge, { backgroundColor: colors.statusPaidSurface }]}>
-                  <Text style={[styles.smallBadgeText, { color: colors.statusPaid }]}>PAID</Text>
+                  <Text style={[styles.smallBadgeText, { color: colors.statusPaid }]}>VERIFIED</Text>
+                </View>
+              ) : pendingPaymentCount > 0 ? (
+                <View style={[styles.smallBadge, { backgroundColor: colors.statusPendingSurface }]}>
+                  <Text style={[styles.smallBadgeText, { color: colors.statusPending }]}>PENDING</Text>
                 </View>
               ) : null}
+            </View>
+            <View style={[styles.financialItem, styles.financialItemBorder]}>
+              <Text style={styles.financialLabel}>Pending Review</Text>
+              <Text style={[
+                styles.financialValue,
+                { color: pendingPaymentCount > 0 ? colors.statusPending : colors.statusActive },
+              ]}>
+                {pendingPaymentCount}
+              </Text>
+              <View style={[
+                styles.smallBadge,
+                { backgroundColor: pendingPaymentCount > 0 ? colors.statusPendingSurface : colors.successSurface },
+              ]}>
+                <Text style={[
+                  styles.smallBadgeText,
+                  { color: pendingPaymentCount > 0 ? colors.statusPending : colors.success },
+                ]}>
+                  {pendingPaymentCount > 0 ? 'PENDING' : 'CLEAR'}
+                </Text>
+              </View>
             </View>
           </View>
         </View>
 
         {/* Activity */}
         <View style={styles.card}>
-          <SectionHeader title="Activity" icon={<Icon name="flash" size={18} color={colors.brand} />} />
-          <TouchableOpacity style={styles.activityRow}>
+          <View style={styles.sectionTitleRow}>
+            <View style={[styles.sectionIcon, styles.activityIcon]}>
+              <Icon name="flash" size={17} color={colors.statusPending} />
+            </View>
+            <Text style={styles.sectionTitle}>Activity</Text>
+          </View>
+          <View style={styles.activityRow}>
             <View>
               <Text style={styles.activityTitle}>Renewal History</Text>
               <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
             </View>
             <Icon name="forward" size={16} color={colors.muted} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.activityRow}>
+          </View>
+          <View style={styles.activityRow}>
             <View>
               <Text style={styles.activityTitle}>Payment History</Text>
               <Text style={styles.activitySub}>{payments.length} payment{payments.length !== 1 ? 's' : ''}</Text>
             </View>
             <Icon name="forward" size={16} color={colors.muted} />
-          </TouchableOpacity>
+          </View>
+          <View style={styles.activityRow}>
+            <View>
+              <Text style={styles.activityTitle}>WhatsApp Reminders</Text>
+              <Text style={styles.activitySub}>
+                {member.whatsapp_opted_in ? 'Reminders enabled' : 'Not opted in'}
+              </Text>
+            </View>
+            <Icon name="whatsapp" size={17} color={member.whatsapp_opted_in ? colors.whatsapp : colors.muted} />
+          </View>
         </View>
 
         {/* Primary CTA */}
@@ -259,40 +309,53 @@ export function MemberDetailScreen({
 
         {/* Secondary Actions */}
         <View style={styles.secondaryActions}>
-          <View style={styles.secondaryButton}>
-            <PrimaryButton
-              title="WhatsApp"
-              icon={<Icon name="whatsapp" size={16} color={colors.whatsapp} />}
-              onPress={() => void handleSendReminder()}
-              variant="outline"
-              size="md"
-              loading={sendingReminder}
-            />
-          </View>
-          <View style={styles.secondaryButton}>
-            <PrimaryButton
-              title="Payment"
-              icon={<Icon name="cash" size={16} color={colors.brand} />}
-              onPress={() => onRecordPayment?.(member.id)}
-              variant="outline"
-              size="md"
-            />
-          </View>
-          <View style={styles.secondaryButton}>
-            <PrimaryButton
-              title="Edit"
-              icon={<Icon name="edit" size={16} color={colors.brand} />}
-              onPress={() => onEdit?.(member.id)}
-              variant="outline"
-              size="md"
-            />
-          </View>
+          <TouchableOpacity
+            accessibilityLabel="Send WhatsApp reminder"
+            accessibilityRole="button"
+            disabled={sendingReminder}
+            onPress={() => void handleSendReminder()}
+            style={[
+              styles.memberAction,
+              styles.memberActionWhatsApp,
+              sendingReminder ? styles.memberActionDisabled : undefined,
+            ]}
+          >
+            <Icon name="whatsapp" size={18} color={colors.whatsappDark} />
+            <Text style={[styles.memberActionLabel, { color: colors.whatsappDark }]}>
+              {sendingReminder ? 'Sending...' : 'Send WhatsApp'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityLabel="Record payment"
+            accessibilityRole="button"
+            disabled={!onRecordPayment}
+            onPress={() => onRecordPayment?.(member.id)}
+            style={[styles.memberAction, styles.memberActionPayment, !onRecordPayment ? styles.memberActionDisabled : undefined]}
+          >
+            <Icon name="cash" size={18} color={colors.statusPending} />
+            <Text style={[styles.memberActionLabel, { color: colors.statusPending }]}>Record Payment</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityLabel="Edit member"
+            accessibilityRole="button"
+            disabled={!onEdit}
+            onPress={() => onEdit?.(member.id)}
+            style={[styles.memberAction, styles.memberActionEdit, !onEdit ? styles.memberActionDisabled : undefined]}
+          >
+            <Icon name="edit" size={18} color={colors.brand} />
+            <Text style={[styles.memberActionLabel, { color: colors.brand }]}>Edit Member</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Notes */}
         {member.notes ? (
           <View style={styles.card}>
-            <SectionHeader title="Notes" icon={<Icon name="document" size={16} color={colors.muted} />} />
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionIcon, styles.notesIcon]}>
+                <Icon name="document" size={16} color={colors.muted} />
+              </View>
+              <Text style={styles.sectionTitle}>Notes</Text>
+            </View>
             <Text style={styles.notesText}>{member.notes}</Text>
           </View>
         ) : null}
@@ -369,7 +432,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.xxxl,
   },
   daysBar: {
     alignItems: 'center',
@@ -409,7 +472,7 @@ const styles = StyleSheet.create({
   },
   financialGrid: {
     flexDirection: 'row',
-    gap: spacing.lg,
+    gap: 0,
     marginTop: spacing.md,
   },
   financialItem: {
@@ -418,7 +481,7 @@ const styles = StyleSheet.create({
   financialItemBorder: {
     borderLeftColor: colors.border,
     borderLeftWidth: 1,
-    paddingLeft: spacing.lg,
+    paddingLeft: spacing.sm,
   },
   financialLabel: {
     color: colors.muted,
@@ -426,7 +489,7 @@ const styles = StyleSheet.create({
   },
   financialValue: {
     color: colors.text,
-    fontSize: fontSize['3xl'],
+    fontSize: fontSize['2xl'],
     fontWeight: fontWeight.extrabold,
     fontVariant: ['tabular-nums'],
     marginTop: spacing.xs,
@@ -438,6 +501,8 @@ const styles = StyleSheet.create({
   identityRight: {
     alignItems: 'flex-end',
     gap: spacing.xs,
+    marginLeft: spacing.sm,
+    maxWidth: 90,
   },
   identityRow: {
     flexDirection: 'row',
@@ -459,7 +524,7 @@ const styles = StyleSheet.create({
   },
   membershipGrid: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: 0,
     marginTop: spacing.md,
   },
   membershipItem: {
@@ -468,7 +533,7 @@ const styles = StyleSheet.create({
   membershipItemBorder: {
     borderLeftColor: colors.border,
     borderLeftWidth: 1,
-    paddingLeft: spacing.sm,
+    paddingLeft: spacing.xs,
   },
   membershipLabel: {
     color: colors.muted,
@@ -481,7 +546,7 @@ const styles = StyleSheet.create({
   },
   membershipValue: {
     color: colors.text,
-    fontSize: fontSize.base,
+    fontSize: fontSize.md,
     fontWeight: fontWeight.bold,
     marginTop: spacing.xxs,
   },
@@ -496,6 +561,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: spacing.sm,
   },
+  notesIcon: {
+    backgroundColor: colors.gray100,
+  },
   planBadge: {
     alignSelf: 'flex-start',
     backgroundColor: colors.brandSubtle,
@@ -509,16 +577,69 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
   },
+  profileCard: {
+    paddingVertical: spacing.xl,
+  },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
   },
   secondaryActions: {
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.sm,
   },
-  secondaryButton: {
+  memberAction: {
+    alignItems: 'center',
+    borderRadius: radius.md,
     flex: 1,
+    gap: spacing.xs,
+    justifyContent: 'center',
+    minHeight: 72,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  memberActionDisabled: {
+    opacity: 0.5,
+  },
+  memberActionEdit: {
+    backgroundColor: colors.brandSubtle,
+  },
+  memberActionLabel: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+    textAlign: 'center',
+  },
+  memberActionPayment: {
+    backgroundColor: colors.statusPendingSurface,
+  },
+  memberActionWhatsApp: {
+    backgroundColor: colors.successSurface,
+  },
+  sectionIcon: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+  },
+  sectionTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  membershipIcon: {
+    backgroundColor: colors.warningSurface,
+  },
+  financialIcon: {
+    backgroundColor: colors.successSurface,
+  },
+  activityIcon: {
+    backgroundColor: colors.statusPendingSurface,
   },
   smallBadge: {
     alignSelf: 'flex-start',
