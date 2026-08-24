@@ -35,3 +35,6 @@ dotnet-install.ps1
 /gym-live-source/
 Thumbs.db
 Desktop.ini
+*.apk
+*.aab
+
