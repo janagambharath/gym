@@ -59,7 +59,32 @@ def register_whatsapp_routes(bp):
                 template,
                 gym_timezone=gym.timezone or "Asia/Kolkata",
             )
-            send_reminder(log, force=True)
+            # Prioritize official Meta approved template message for mobile app trigger
+            template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
+            whatsapp = WhatsAppService(gym)
+            template_sent = False
+            if template_name:
+                from app.models.mixins import utcnow
+                from app.services.reminder_service import _send_template_message, _template_context
+                t_result = _send_template_message(
+                    whatsapp,
+                    to=log.phone_snapshot,
+                    template_context=_template_context(gym, member),
+                )
+                if t_result.ok:
+                    log.status = "sent"
+                    log.sent_at = utcnow()
+                    log.provider_message_id = t_result.provider_message_id
+                    log.error_message = None
+                    template_sent = True
+                else:
+                    current_app.logger.warning(
+                        "Mobile template reminder failed: %s, falling back to session reminder",
+                        t_result.error,
+                    )
+            if not template_sent:
+                send_reminder(log, force=True)
+
             audit(
                 action="mobile_send_reminder",
                 resource_type="reminder_log",
