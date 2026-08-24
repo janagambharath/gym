@@ -72,27 +72,30 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [category, setCategory] = useState('all');
+  const [revision, setRevision] = useState(0);
 
-  const fetchNotifications = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
     const params = new URLSearchParams({ page: '1', page_size: '50' });
     if (category !== 'all') params.set('category', category);
 
-    const res = await apiRequest<NotificationsResponse>(`/api/mobile/v1/notifications?${params.toString()}`);
-    if (res.ok) {
-      setNotifications(res.data.notifications);
-      setUnreadCount(res.data.unread_count);
-      setError(undefined);
-    } else {
-      setError(res.error.message);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, [category]);
+    void apiRequest<NotificationsResponse>(`/api/mobile/v1/notifications?${params.toString()}`).then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setNotifications(res.data.notifications);
+        setUnreadCount(res.data.unread_count);
+        setError(undefined);
+      } else {
+        setError(res.error.message);
+      }
+      setLoading(false);
+      setRefreshing(false);
+    });
 
-  useEffect(() => {
-    setLoading(true);
-    void fetchNotifications();
-  }, [fetchNotifications]);
+    return () => {
+      cancelled = true;
+    };
+  }, [category, revision]);
 
   const handleMarkAllRead = useCallback(async () => {
     const res = await apiRequest('/api/mobile/v1/notifications/read-all', { method: 'POST' });
@@ -135,7 +138,7 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
         }
       />
 
-      <FilterChips options={CATEGORY_CHIPS} selected={category} onSelect={setCategory} />
+      <FilterChips options={CATEGORY_CHIPS} selected={category} onSelect={(cat) => { setLoading(true); setCategory(cat); }} />
 
       {loading && !refreshing ? (
         <View style={styles.content}>
@@ -144,7 +147,7 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
           <CardSkeleton />
         </View>
       ) : error ? (
-        <ErrorState message={error} onRetry={fetchNotifications} />
+        <ErrorState message={error} onRetry={() => { setLoading(true); setRevision((r) => r + 1); }} />
       ) : (
         <FlatList
           data={notifications}
@@ -153,7 +156,7 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
           refreshControl={
             <RefreshControl colors={[colors.brand]} refreshing={refreshing} onRefresh={() => {
               setRefreshing(true);
-              void fetchNotifications();
+              setRevision((r) => r + 1);
             }} />
           }
           ListEmptyComponent={

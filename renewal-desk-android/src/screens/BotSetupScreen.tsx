@@ -232,6 +232,30 @@ export function BotSetupScreen({ onBack, onLogout }: BotSetupScreenProps) {
           <View style={styles.card}>
             <SectionHeader title="Receptionist" icon={<Icon name="chatbubble" size={18} color={colors.brand} />} />
             <View style={styles.formContent}>
+              <View>
+                <Text style={styles.fieldLabel}>Quick Welcome Templates</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.templateChipsScroll} contentContainerStyle={styles.templateChipsContainer}>
+                  <TouchableOpacity
+                    style={styles.templateChip}
+                    onPress={() => setGreeting("Welcome to our fitness club! 💪 We're here to help you crush your health & fitness goals. How can we assist you today?")}
+                  >
+                    <Text style={styles.templateChipText}>🏢 Professional</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.templateChip}
+                    onPress={() => setGreeting("Hi there! 👋 Ask me anything about our membership plans, gym timings, personal training, or free workout passes!")}
+                  >
+                    <Text style={styles.templateChipText}>⚡ Fast & Direct</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.templateChip}
+                    onPress={() => setGreeting("Hey! Welcome to the gym. 🏋️‍♂️ Interested in joining? Reply 'trial' to book a free 1-day pass or ask any question!")}
+                  >
+                    <Text style={styles.templateChipText}>🎁 Free Trial Offer</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+
               <FormField
                 editable={canEdit}
                 label="Greeting message"
@@ -330,7 +354,40 @@ export function BotSetupScreen({ onBack, onLogout }: BotSetupScreenProps) {
           </View>
 
           <View style={styles.card}>
-            <SectionHeader title={`FAQs (${faqs.length})`} icon={<Icon name="help" size={18} color={colors.brand} />} />
+            <View style={styles.faqHeaderRow}>
+              <SectionHeader title={`FAQs (${faqs.length})`} icon={<Icon name="help" size={18} color={colors.brand} />} />
+            </View>
+
+            {canEdit ? (
+              <View style={styles.prebuiltFaqSection}>
+                <Text style={styles.prebuiltFaqHeading}>⚡ Add Prebuilt FAQ Template:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.templateChipsScroll} contentContainerStyle={styles.templateChipsContainer}>
+                  {[
+                    { q: "What are your gym operating hours?", a: "We are open Monday to Saturday from 5:30 AM to 10:00 PM, and Sunday from 6:00 AM to 1:00 PM.", label: "⏰ Timings" },
+                    { q: "Do you provide personal training (PT)?", a: "Yes! We offer 1-on-1 personal training with certified fitness coaches for fat loss, muscle building, and strength conditioning.", label: "🏋️‍♂️ Personal Training" },
+                    { q: "Is parking available at the gym?", a: "Yes, we provide dedicated parking space for both two-wheelers and four-wheelers.", label: "🚗 Parking" },
+                    { q: "Do you have locker and shower facilities?", a: "Yes, we provide secure day lockers, clean washrooms, and shower facilities for members.", label: "🚿 Lockers & Showers" },
+                    { q: "What payment modes do you accept?", a: "We accept UPI (GPay, PhonePe, Paytm), Debit/Credit Cards, Net Banking, and Cash.", label: "💳 Payment Modes" },
+                    { q: "Can I get a free trial workout?", a: "Yes! We offer a complimentary 1-day workout trial pass. Visit reception with valid ID to get started.", label: "🎁 Free Trial" },
+                    { q: "What should I bring for my workout?", a: "Please bring clean workout shoes, gym attire, a sweat towel, and a water bottle.", label: "👕 Essentials" },
+                    { q: "Do you provide diet & nutrition plans?", a: "Yes, our certified trainers provide customized diet and nutrition guidance tailored to your fitness goals.", label: "🥗 Diet Plans" },
+                  ].map((tpl, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={styles.templateChip}
+                      onPress={() => {
+                        setNewFaqQuestion(tpl.q);
+                        setNewFaqAnswer(tpl.a);
+                        setShowAddFaq(true);
+                      }}
+                    >
+                      <Text style={styles.templateChipText}>{tpl.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+
             {faqs.length > 0 ? (
               <View style={styles.faqList}>
                 {faqs.map((faq) => (
@@ -376,7 +433,7 @@ export function BotSetupScreen({ onBack, onLogout }: BotSetupScreenProps) {
                 style={styles.addFaqBtn}
               >
                 <Icon name="add" size={18} color={colors.brand} />
-                <Text style={styles.addFaqBtnText}>Add FAQ</Text>
+                <Text style={styles.addFaqBtnText}>Add Custom FAQ</Text>
               </TouchableOpacity>
             ) : null}
 
@@ -675,5 +732,40 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.base,
     fontWeight: fontWeight.semibold,
+  },
+  templateChipsScroll: {
+    marginBottom: spacing.sm,
+  },
+  templateChipsContainer: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingVertical: spacing.xxs,
+  },
+  templateChip: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.brandLight,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  templateChipText: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+  },
+  faqHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  prebuiltFaqSection: {
+    marginTop: spacing.sm,
+  },
+  prebuiltFaqHeading: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    marginBottom: spacing.xs,
   },
 });
