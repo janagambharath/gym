@@ -458,7 +458,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
                     ]}
                   >
                     <Text style={styles.msgSender}>
-                      {msg.sender === 'customer' ? 'Prospect' : msg.sender === 'bot' ? '🤖 AI Bot' : 'Staff'}
+                      {msg.sender === 'customer' ? 'Prospect' : msg.sender === 'bot' ? 'AI Assistant' : 'Staff'}
                     </Text>
                     <Text style={styles.msgBody}>{msg.body}</Text>
                     <Text style={styles.msgTime}>{formatTime(msg.created_at)}</Text>

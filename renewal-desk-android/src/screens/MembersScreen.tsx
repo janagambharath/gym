@@ -235,7 +235,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
             onPress={() => setPage((p) => p - 1)}
             style={[styles.pageButton, page <= 1 && styles.pageButtonDisabled]}
           >
-            <Text style={styles.pageButtonText}>‹</Text>
+            <Icon name="back" size={16} color={page <= 1 ? colors.muted : colors.brand} />
           </TouchableOpacity>
           <Text style={styles.pageInfo}>
             Page {page} of {totalPages}
@@ -245,7 +245,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
             onPress={() => setPage((p) => p + 1)}
             style={[styles.pageButton, page >= totalPages && styles.pageButtonDisabled]}
           >
-            <Text style={styles.pageButtonText}>›</Text>
+            <Icon name="forward" size={16} color={page >= totalPages ? colors.muted : colors.brand} />
           </TouchableOpacity>
         </View>
       ) : null}

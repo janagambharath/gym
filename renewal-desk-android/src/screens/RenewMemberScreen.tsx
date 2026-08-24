@@ -59,12 +59,13 @@ export function RenewMemberScreen({
   }>();
   const paymentRequestKeyRef = useRef<string | undefined>(undefined);
 
+  const hasPlan = Boolean(member.plan && member.plan.name);
   const renewalDays = member.plan?.duration_days ?? 30;
   const amount = member.plan?.price ?? '0';
   const displayStatus = getMemberDisplayStatus(member);
 
   const handleRenew = useCallback(async () => {
-    if (renewing) return; // Prevent double tap
+    if (renewing || !hasPlan) return; // Prevent double tap or renewing without plan
 
     setRenewing(true);
     setError(undefined);
@@ -99,7 +100,7 @@ export function RenewMemberScreen({
       setError(result.error.message);
     }
     setRenewing(false);
-  }, [member.id, renewalDays, amount, paymentMethod, renewing, onLogout, onComplete]);
+  }, [hasPlan, member.id, renewalDays, amount, paymentMethod, renewing, onLogout, onComplete]);
 
   const handleSendWhatsApp = useCallback(async () => {
     if (sendingWhatsApp) return;
@@ -330,6 +331,19 @@ export function RenewMemberScreen({
           </Text>
         </TouchableOpacity>
 
+        {/* Missing Plan Warning */}
+        {!hasPlan ? (
+          <View style={[styles.secureNotice, { backgroundColor: colors.warningSurface, borderColor: colors.warningBorder }]}>
+            <Icon name="alert" size={19} color={colors.warning} />
+            <View style={styles.secureTextContainer}>
+              <Text style={[styles.secureTitle, { color: colors.warningDark }]}>Plan Required</Text>
+              <Text style={[styles.secureText, { color: colors.textSecondary }]}>
+                This member does not have an active plan assigned. Please assign a plan from Edit Member before recording a renewal payment.
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
         {/* Error */}
         {error ? (
           <View style={styles.errorBanner}>
@@ -339,10 +353,10 @@ export function RenewMemberScreen({
 
         {/* Confirm Button */}
         <PrimaryButton
-          label="Record Payment for Renewal"
+          label={hasPlan ? "Record Payment for Renewal" : "Plan Required to Renew"}
           icon={<Icon name="lock" size={16} color={colors.textInverse} />}
           onPress={() => void handleRenew()}
-          disabled={!agreementChecked}
+          disabled={!agreementChecked || !hasPlan}
           loading={renewing}
         />
 

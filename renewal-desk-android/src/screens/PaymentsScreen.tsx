@@ -218,7 +218,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
             onPress={() => setPage((p) => p - 1)}
             style={[styles.pageButton, page <= 1 && styles.pageButtonDisabled]}
           >
-            <Text style={styles.pageButtonText}>‹</Text>
+            <Icon name="back" size={16} color={page <= 1 ? colors.muted : colors.brand} />
           </TouchableOpacity>
           <Text style={styles.pageInfo}>Page {page} of {totalPages}</Text>
           <TouchableOpacity
@@ -226,7 +226,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
             onPress={() => setPage((p) => p + 1)}
             style={[styles.pageButton, page >= totalPages && styles.pageButtonDisabled]}
           >
-            <Text style={styles.pageButtonText}>›</Text>
+            <Icon name="forward" size={16} color={page >= totalPages ? colors.muted : colors.brand} />
           </TouchableOpacity>
         </View>
       ) : null}
@@ -291,12 +291,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   cardHeaderInfo: {
+    flex: 1,
     marginLeft: spacing.md,
+    minWidth: 0,
   },
   cardHeaderLeft: {
     alignItems: 'center',
     flex: 1,
     flexDirection: 'row',
+    minWidth: 0,
   },
   cardHeaderRight: {
     alignItems: 'flex-end',

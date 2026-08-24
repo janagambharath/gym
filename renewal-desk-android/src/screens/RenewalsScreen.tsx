@@ -119,9 +119,11 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken
         <TouchableOpacity
           style={styles.renewIcon}
           onPress={() => onRenew?.(item)}
+          accessibilityLabel={`Renew membership for ${item.full_name}`}
+          accessibilityRole="button"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={styles.renewIconText}>🔄</Text>
+          <Icon name="renewals" size={18} color={colors.brand} />
         </TouchableOpacity>
       </TouchableOpacity>
     );
@@ -322,11 +324,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   renewIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.md,
+    height: 36,
+    justifyContent: 'center',
     marginLeft: spacing.sm,
-    padding: spacing.xs,
-  },
-  renewIconText: {
-    fontSize: 18,
+    width: 36,
   },
   safeArea: {
     backgroundColor: colors.background,

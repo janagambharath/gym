@@ -3,7 +3,8 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
 import { BotConversationsScreen } from './src/screens/BotConversationsScreen';
@@ -570,7 +571,7 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <>
+      <SafeAreaProvider>
         <StatusBar style="dark" />
         <NavigationContainer>
           <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
@@ -579,12 +580,12 @@ export default function App() {
             </AuthStackNav.Screen>
           </AuthStackNav.Navigator>
         </NavigationContainer>
-      </>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar style="dark" />
       <NavigationContainer>
         <Tab.Navigator
@@ -601,9 +602,9 @@ export default function App() {
               backgroundColor: colors.surface,
               borderTopColor: colors.border,
               borderTopWidth: 1,
-              height: 60,
-              paddingBottom: 6,
-              paddingTop: 6,
+              height: Platform.OS === 'ios' ? 84 : 64,
+              paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+              paddingTop: 8,
             },
             tabBarIcon: ({ focused, color }) => {
               const iconMap: Record<string, 'dashboard' | 'members' | 'renewals' | 'payments' | 'more'> = {
@@ -644,7 +645,7 @@ export default function App() {
           </Tab.Screen>
         </Tab.Navigator>
       </NavigationContainer>
-    </>
+    </SafeAreaProvider>
   );
 }
 

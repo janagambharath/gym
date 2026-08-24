@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, spacing } from '../theme/tokens';
 
 type AppHeaderProps = {
@@ -19,7 +20,7 @@ export function AppHeader({ title, subtitle, onBack, rightAction }: AppHeaderPro
           onPress={onBack}
           style={styles.backButton}
         >
-          <Text style={styles.backIcon}>‹</Text>
+          <Icon name="back" size={22} color={colors.text} />
         </TouchableOpacity>
       ) : (
         <View style={styles.spacer} />
@@ -45,12 +46,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 44,
     minWidth: 44,
-  },
-  backIcon: {
-    color: colors.text,
-    fontSize: 28,
-    fontWeight: fontWeight.medium,
-    lineHeight: 32,
   },
   container: {
     alignItems: 'center',

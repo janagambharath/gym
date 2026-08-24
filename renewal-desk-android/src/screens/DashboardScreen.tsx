@@ -161,39 +161,43 @@ export function DashboardScreen({
               </Text>
             </View>
 
-            {/* Key Metrics */}
+            {/* Key Metrics - 2x2 Balanced Grid */}
             <View style={styles.metricsGrid}>
-              <DashboardMetric
-                icon={<Icon name="members" size={18} color={colors.brand} />}
-                iconBg={colors.brandSubtle}
-                label="Active Members"
-                value={data.total_active}
-                detail="Current total"
-              />
-              <DashboardMetric
-                icon={<Icon name="time" size={18} color={colors.statusExpiring} />}
-                iconBg={colors.statusExpiringSurface}
-                label="Expiring Soon"
-                value={data.expiring_soon}
-                detail={data.expiring_today ? `${data.expiring_today} today` : 'Next 7 days'}
-                detailColor={colors.statusExpiring}
-              />
-              <DashboardMetric
-                icon={<Icon name="alert" size={18} color={colors.statusExpired} />}
-                iconBg={colors.statusExpiredSurface}
-                label="Expired"
-                value={data.expired}
-                detail="Need attention"
-                detailColor={colors.statusExpired}
-              />
-              <DashboardMetric
-                icon={<Icon name="wallet" size={18} color={colors.statusPending} />}
-                iconBg={colors.statusPendingSurface}
-                label="Pending Payments"
-                value={data.pending_payments}
-                detail="Awaiting review"
-                detailColor={colors.statusPending}
-              />
+              <View style={styles.metricsRow}>
+                <DashboardMetric
+                  icon={<Icon name="members" size={18} color={colors.brand} />}
+                  iconBg={colors.brandSubtle}
+                  label="Active Members"
+                  value={data.total_active}
+                  detail="Current total"
+                />
+                <DashboardMetric
+                  icon={<Icon name="time" size={18} color={colors.statusExpiring} />}
+                  iconBg={colors.statusExpiringSurface}
+                  label="Expiring Soon"
+                  value={data.expiring_soon}
+                  detail={data.expiring_today ? `${data.expiring_today} today` : 'Next 7 days'}
+                  detailColor={colors.statusExpiring}
+                />
+              </View>
+              <View style={styles.metricsRow}>
+                <DashboardMetric
+                  icon={<Icon name="alert" size={18} color={colors.statusExpired} />}
+                  iconBg={colors.statusExpiredSurface}
+                  label="Expired"
+                  value={data.expired}
+                  detail="Need attention"
+                  detailColor={colors.statusExpired}
+                />
+                <DashboardMetric
+                  icon={<Icon name="wallet" size={18} color={colors.statusPending} />}
+                  iconBg={colors.statusPendingSurface}
+                  label="Pending Payments"
+                  value={data.pending_payments}
+                  detail="Awaiting review"
+                  detailColor={colors.statusPending}
+                />
+              </View>
             </View>
 
             {/* Revenue */}
@@ -445,8 +449,8 @@ const styles = StyleSheet.create({
   brandBlock: {
     alignItems: 'center',
     flexDirection: 'row',
-    flexShrink: 1,
-    gap: spacing.sm,
+    flexShrink: 0,
+    gap: spacing.xs,
   },
   brandGlyph: {
     color: colors.brand,
@@ -463,7 +467,7 @@ const styles = StyleSheet.create({
   },
   brandName: {
     color: colors.text,
-    fontSize: fontSize.xl,
+    fontSize: fontSize.lg,
     fontWeight: fontWeight.extrabold,
     letterSpacing: -0.2,
   },
@@ -504,55 +508,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.gray50,
     borderColor: colors.borderLight,
-    borderRadius: radius.md,
+    borderRadius: radius.full,
     borderWidth: 1,
     flex: 1,
     flexDirection: 'row',
     gap: spacing.xxs,
-    marginHorizontal: spacing.xs,
-    maxWidth: 126,
+    marginHorizontal: spacing.sm,
+    maxWidth: 140,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 7,
+    paddingVertical: 5,
   },
   metricCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     borderWidth: 1,
     flex: 1,
-    minHeight: 116,
+    minHeight: 108,
     minWidth: 0,
-    padding: spacing.sm,
+    padding: spacing.md,
     ...shadows.sm,
   },
   metricDetail: {
     color: colors.muted,
-    fontSize: 10,
+    fontSize: fontSize.xs,
     marginTop: spacing.xxs,
   },
   metricIcon: {
     alignItems: 'center',
-    borderRadius: radius.sm,
-    height: 30,
+    borderRadius: radius.md,
+    height: 32,
     justifyContent: 'center',
-    marginBottom: spacing.sm,
-    width: 30,
+    marginBottom: spacing.xs,
+    width: 32,
   },
   metricLabel: {
-    color: colors.muted,
-    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
-    lineHeight: 14,
-    minHeight: 28,
+    lineHeight: 18,
   },
   metricValue: {
     color: colors.text,
-    fontSize: fontSize['2xl'],
+    fontSize: fontSize['3xl'],
     fontVariant: ['tabular-nums'],
     fontWeight: fontWeight.extrabold,
     marginTop: spacing.xxs,
   },
   metricsGrid: {
+    gap: spacing.sm,
+  },
+  metricsRow: {
     flexDirection: 'row',
     gap: spacing.sm,
   },
@@ -690,13 +696,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: spacing.xs,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    justifyContent: 'space-between',
+    minHeight: 56,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
   topBarRight: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: spacing.xxs,
+    gap: spacing.xs,
   },
   topBarSpacer: {
     flex: 1,
