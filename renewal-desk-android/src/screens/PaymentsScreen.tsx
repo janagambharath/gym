@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   RefreshControl,
   SafeAreaView,
@@ -9,50 +8,45 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Avatar } from '../components/Avatar';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { EmptyState } from '../components/EmptyState';
+import { ErrorState } from '../components/ErrorState';
+import { FilterChips } from '../components/FilterChips';
+import { CardSkeleton } from '../components/LoadingSkeleton';
+import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
-import { colors, radius, spacing } from '../theme/tokens';
-
-type Payment = {
-  id: number;
-  member_id: number;
-  member_name: string | null;
-  amount: string;
-  paid_on: string | null;
-  method: string;
-  reference: string | null;
-  status: string;
-  renewal_days: number | null;
-  notes: string | null;
-  verified_by: string | null;
-  verified_at: string | null;
-  created_at: string | null;
-};
-
-type PaymentsResponse = {
-  payments: Payment[];
-  pagination: { page: number; page_size: number; total: number; total_pages: number };
-};
+import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import type { Payment, PaymentsResponse } from '../types';
+import { formatCurrency, formatDate } from '../types';
 
 type PaymentsScreenProps = {
-  onBack: () => void;
   onLogout: () => void;
 };
 
-const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
-  pending: { bg: colors.warningSurface, text: colors.warning },
-  verified: { bg: colors.successSurface, text: colors.success },
-  rejected: { bg: colors.criticalSurface, text: colors.critical },
-};
+const FILTER_OPTIONS = [
+  { key: 'all', label: 'All' },
+  { key: 'pending', label: 'Pending', dotColor: colors.statusPending },
+  { key: 'verified', label: 'Verified', dotColor: colors.statusVerified },
+  { key: 'rejected', label: 'Rejected', dotColor: colors.statusRejected },
+];
 
-export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
+export function PaymentsScreen({ onLogout }: PaymentsScreenProps) {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'verify' | 'reject';
+    paymentId: number;
+    memberName: string;
+    amount: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,6 +57,7 @@ export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
       if (cancelled) return;
       if (result.ok) {
         setPayments(result.data.payments);
+        setTotalPages(result.data.pagination.total_pages);
         setError(undefined);
       } else {
         if (result.error.status === 401) { onLogout(); return; }
@@ -75,9 +70,12 @@ export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
     return () => { cancelled = true; };
   }, [page, statusFilter, revision, onLogout]);
 
-  const handleVerify = useCallback(async (paymentId: number) => {
+  const executeAction = useCallback(async (action: 'verify' | 'reject', paymentId: number) => {
     setActionLoading(paymentId);
-    const result = await apiRequest<{ message: string }>(`/api/mobile/v1/payments/${paymentId}/verify`, { method: 'POST' });
+    const result = await apiRequest<{ message: string }>(
+      `/api/mobile/v1/payments/${paymentId}/${action}`,
+      { method: 'POST' },
+    );
     if (result.ok) {
       setRevision((r) => r + 1);
     } else {
@@ -85,131 +83,294 @@ export function PaymentsScreen({ onBack, onLogout }: PaymentsScreenProps) {
       setError(result.error.message);
     }
     setActionLoading(null);
-  }, [onLogout]);
-
-  const handleReject = useCallback(async (paymentId: number) => {
-    setActionLoading(paymentId);
-    const result = await apiRequest<{ message: string }>(`/api/mobile/v1/payments/${paymentId}/reject`, { method: 'POST' });
-    if (result.ok) {
-      setRevision((r) => r + 1);
-    } else {
-      if (result.error.status === 401) { onLogout(); return; }
-      setError(result.error.message);
-    }
-    setActionLoading(null);
+    setConfirmAction(null);
   }, [onLogout]);
 
   const renderPayment = useCallback(({ item }: { item: Payment }) => {
-    const style = STATUS_STYLES[item.status] ?? STATUS_STYLES.pending;
     const isPending = item.status === 'pending';
 
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.memberName} numberOfLines={1}>{item.member_name ?? `Member #${item.member_id}`}</Text>
-          <View style={[styles.badge, { backgroundColor: style.bg }]}>
-            <Text style={[styles.badgeText, { color: style.text }]}>{item.status.toUpperCase()}</Text>
+          <View style={styles.cardHeaderLeft}>
+            <Avatar name={item.member_name ?? 'M'} size={40} />
+            <View style={styles.cardHeaderInfo}>
+              <Text style={styles.memberName} numberOfLines={1}>
+                {item.member_name ?? `Member #${item.member_id}`}
+              </Text>
+              <Text style={styles.paymentMeta}>
+                {item.method?.toUpperCase()} · {formatDate(item.paid_on)}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.cardHeaderRight}>
+            <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
+            <StatusBadge status={item.status} />
           </View>
         </View>
-        <Text style={styles.amount}>₹{Number(item.amount).toLocaleString('en-IN')}</Text>
-        <Text style={styles.detail}>{item.method.toUpperCase()} · {item.paid_on ? new Date(item.paid_on).toLocaleDateString('en-IN') : '—'}</Text>
-        {item.reference ? <Text style={styles.detail}>Ref: {item.reference}</Text> : null}
-        {item.renewal_days ? <Text style={styles.detail}>Renewal: {item.renewal_days} days</Text> : null}
-        {item.verified_by ? <Text style={styles.detail}>By: {item.verified_by}</Text> : null}
+
+        {item.reference ? (
+          <Text style={styles.reference}>Ref: {item.reference}</Text>
+        ) : null}
+
+        {item.renewal_days ? (
+          <Text style={styles.reference}>Renewal: {item.renewal_days} days</Text>
+        ) : null}
+
+        {item.verified_by ? (
+          <Text style={styles.reference}>Verified by: {item.verified_by}</Text>
+        ) : null}
 
         {isPending ? (
           <View style={styles.actionRow}>
             <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: colors.success }]}
-              onPress={() => void handleVerify(item.id)}
+              style={[styles.actionBtn, styles.verifyBtn]}
+              onPress={() =>
+                setConfirmAction({
+                  type: 'verify',
+                  paymentId: item.id,
+                  memberName: item.member_name ?? 'Member',
+                  amount: item.amount,
+                })
+              }
               disabled={actionLoading === item.id}
             >
-              {actionLoading === item.id ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={styles.actionBtnText}>✓ Verify</Text>}
+              <Text style={styles.actionBtnText}>✓ Verify</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: colors.critical }]}
-              onPress={() => void handleReject(item.id)}
+              style={[styles.actionBtn, styles.rejectBtn]}
+              onPress={() =>
+                setConfirmAction({
+                  type: 'reject',
+                  paymentId: item.id,
+                  memberName: item.member_name ?? 'Member',
+                  amount: item.amount,
+                })
+              }
               disabled={actionLoading === item.id}
             >
-              <Text style={styles.actionBtnText}>✗ Reject</Text>
+              <Text style={styles.rejectBtnText}>✗ Reject</Text>
             </TouchableOpacity>
           </View>
         ) : null}
       </View>
     );
-  }, [actionLoading, handleVerify, handleReject]);
+  }, [actionLoading]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.topBarTitle}>Payments</Text>
-        <View style={styles.backButton} />
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Payments</Text>
       </View>
 
-      <View style={styles.filterRow}>
-        {['all', 'pending', 'verified', 'rejected'].map((s) => (
-          <TouchableOpacity key={s} onPress={() => { setStatusFilter(s); setPage(1); }}
-            style={[styles.filterChip, statusFilter === s && styles.filterChipActive]}>
-            <Text style={[styles.filterChipText, statusFilter === s && styles.filterChipTextActive]}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <FilterChips
+        options={FILTER_OPTIONS}
+        selected={statusFilter}
+        onSelect={(key) => { setStatusFilter(key); setPage(1); }}
+      />
 
       {loading && !refreshing ? (
-        <ActivityIndicator color={colors.brand} size="large" style={styles.spinner} />
+        <View style={styles.skeletonContainer}>
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </View>
       ) : error ? (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
+        <ErrorState message={error} onRetry={() => setRevision((r) => r + 1)} />
       ) : payments.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>💳</Text>
-          <Text style={styles.emptyText}>No payments found.</Text>
-        </View>
+        <EmptyState
+          icon="💳"
+          title="No payments"
+          message={statusFilter !== 'all' ? `No ${statusFilter} payments found.` : 'No payment activity yet.'}
+        />
       ) : (
         <FlatList
           data={payments}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderPayment}
           contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); setRevision((r) => r + 1); }} colors={[colors.brand]} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); setRevision((r) => r + 1); }}
+              colors={[colors.brand]}
+            />
+          }
         />
       )}
+
+      {/* Pagination */}
+      {totalPages > 1 && !loading ? (
+        <View style={styles.pagination}>
+          <TouchableOpacity
+            disabled={page <= 1}
+            onPress={() => setPage((p) => p - 1)}
+            style={[styles.pageButton, page <= 1 && styles.pageButtonDisabled]}
+          >
+            <Text style={styles.pageButtonText}>‹</Text>
+          </TouchableOpacity>
+          <Text style={styles.pageInfo}>Page {page} of {totalPages}</Text>
+          <TouchableOpacity
+            disabled={page >= totalPages}
+            onPress={() => setPage((p) => p + 1)}
+            style={[styles.pageButton, page >= totalPages && styles.pageButtonDisabled]}
+          >
+            <Text style={styles.pageButtonText}>›</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        visible={confirmAction !== null}
+        title={confirmAction?.type === 'verify' ? 'Verify Payment' : 'Reject Payment'}
+        message={
+          confirmAction?.type === 'verify'
+            ? `Verify payment of ${formatCurrency(confirmAction?.amount ?? '0')} from ${confirmAction?.memberName}? This will extend their membership.`
+            : `Reject payment of ${formatCurrency(confirmAction?.amount ?? '0')} from ${confirmAction?.memberName}? This action cannot be undone.`
+        }
+        confirmLabel={confirmAction?.type === 'verify' ? 'Verify' : 'Reject'}
+        destructive={confirmAction?.type === 'reject'}
+        loading={actionLoading !== null}
+        onConfirm={() => {
+          if (confirmAction) {
+            void executeAction(confirmAction.type, confirmAction.paymentId);
+          }
+        }}
+        onCancel={() => setConfirmAction(null)}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  actionBtn: { alignItems: 'center', borderRadius: radius.sm, flex: 1, minHeight: 36, justifyContent: 'center' },
-  actionBtnText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
-  actionRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  amount: { color: colors.text, fontSize: 22, fontWeight: '800', marginTop: spacing.xs },
-  backButton: { minWidth: 60 },
-  backText: { color: colors.brand, fontSize: 15, fontWeight: '600' },
-  badge: { borderRadius: 4, paddingHorizontal: 8, paddingVertical: 2 },
-  badgeText: { fontSize: 11, fontWeight: '700' },
-  card: { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, padding: spacing.md },
-  cardHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  detail: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
-  emptyContainer: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: spacing.xl },
-  emptyIcon: { fontSize: 48, marginBottom: spacing.sm },
-  emptyText: { color: colors.muted, fontSize: 15 },
-  errorContainer: { backgroundColor: colors.criticalSurface, borderColor: '#FDA29B', borderRadius: radius.md, borderWidth: 1, margin: spacing.md, padding: spacing.md },
-  errorText: { color: colors.critical, fontSize: 14 },
-  filterChip: { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.sm, borderWidth: 1, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  filterChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
-  filterChipText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
-  filterChipTextActive: { color: '#FFF' },
-  filterRow: { flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
-  listContent: { gap: spacing.sm, padding: spacing.md },
-  memberName: { color: colors.text, flex: 1, fontSize: 16, fontWeight: '700', marginRight: spacing.sm },
-  safeArea: { backgroundColor: colors.background, flex: 1 },
-  spinner: { flex: 1, justifyContent: 'center' },
-  topBar: { alignItems: 'center', borderBottomColor: colors.border, borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  topBarTitle: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  actionBtn: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+  },
+  actionBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.lg,
+  },
+  amount: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.extrabold,
+    fontVariant: ['tabular-nums'],
+  },
+  card: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    ...shadows.sm,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  cardHeaderInfo: {
+    marginLeft: spacing.md,
+  },
+  cardHeaderLeft: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+  },
+  cardHeaderRight: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  header: {
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  headerTitle: {
+    color: colors.text,
+    fontSize: fontSize['4xl'],
+    fontWeight: fontWeight.extrabold,
+  },
+  listContent: {
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  memberName: {
+    color: colors.text,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.semibold,
+  },
+  pageButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  pageButtonDisabled: {
+    opacity: 0.3,
+  },
+  pageButtonText: {
+    color: colors.brand,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.bold,
+  },
+  pageInfo: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+  },
+  pagination: {
+    alignItems: 'center',
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.lg,
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+  },
+  paymentMeta: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: 1,
+  },
+  reference: {
+    color: colors.muted,
+    fontSize: fontSize.md,
+    marginTop: spacing.xs,
+  },
+  rejectBtn: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderWidth: 1,
+  },
+  rejectBtnText: {
+    color: colors.critical,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  safeArea: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
+  skeletonContainer: {
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  verifyBtn: {
+    backgroundColor: colors.success,
+  },
 });

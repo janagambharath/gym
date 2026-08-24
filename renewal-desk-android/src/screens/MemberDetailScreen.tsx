@@ -1,39 +1,50 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { AppHeader } from '../components/AppHeader';
+import { Avatar } from '../components/Avatar';
+import { InfoRow } from '../components/InfoRow';
+import { PrimaryButton } from '../components/PrimaryButton';
+import { SectionHeader } from '../components/SectionHeader';
+import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
-import { colors, radius, spacing } from '../theme/tokens';
-import type { Member } from './MembersScreen';
+import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import type { Member, Renewal, Payment } from '../types';
+import { formatCurrency, formatDate, getMemberDisplayStatus, getDaysText } from '../types';
 
 type MemberDetailScreenProps = {
   member: Member;
   onBack: () => void;
   onLogout: () => void;
+  onRenew?: (member: Member) => void;
   onMemberUpdated?: () => void;
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  active: colors.success,
-  expired: colors.critical,
-  deleted: colors.muted,
-};
-
-export function MemberDetailScreen({ member: initialMember, onBack, onLogout, onMemberUpdated }: MemberDetailScreenProps) {
+export function MemberDetailScreen({
+  member: initialMember,
+  onBack,
+  onLogout,
+  onRenew,
+  onMemberUpdated,
+}: MemberDetailScreenProps) {
   const [member, setMember] = useState(initialMember);
-  const [renewDays, setRenewDays] = useState('30');
-  const [renewAmount, setRenewAmount] = useState(member.plan?.price ?? '0');
-  const [renewing, setRenewing] = useState(false);
+  const [renewals, setRenewals] = useState<Renewal[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const displayStatus = getMemberDisplayStatus(member);
+  const daysText = getDaysText(member.days_until_expiry);
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg);
@@ -41,31 +52,27 @@ export function MemberDetailScreen({ member: initialMember, onBack, onLogout, on
     setTimeout(() => setMessage(undefined), 4000);
   };
 
-  const handleRenew = useCallback(async () => {
-    const days = parseInt(renewDays, 10);
-    if (!days || days < 1 || days > 730) {
-      showMessage('Days must be between 1 and 730.', 'error');
-      return;
-    }
+  const fetchMemberData = useCallback(async () => {
+    const [memberRes, renewalRes, paymentRes] = await Promise.all([
+      apiRequest<Member>(`/api/mobile/v1/members/${member.id}`),
+      apiRequest<{ renewals: Renewal[] }>(`/api/mobile/v1/renewals?member_id=${member.id}&page_size=5`),
+      apiRequest<{ payments: Payment[] }>(`/api/mobile/v1/payments?page_size=50`),
+    ]);
 
-    setRenewing(true);
-    const result = await apiRequest<unknown>(`/api/mobile/v1/renewals/${member.id}`, {
-      method: 'POST',
-      body: { renewal_days: days, amount: renewAmount, notes: `Renewed via mobile app` },
-    });
+    if (memberRes.ok) setMember(memberRes.data);
+    else if (memberRes.error.status === 401) { onLogout(); return; }
 
-    if (result.ok) {
-      showMessage(`Membership renewed for ${days} days.`, 'success');
-      // Refresh member data
-      const refresh = await apiRequest<Member>(`/api/mobile/v1/members/${member.id}`);
-      if (refresh.ok) setMember(refresh.data);
-      onMemberUpdated?.();
-    } else {
-      if (result.error.status === 401) { onLogout(); return; }
-      showMessage(result.error.message, 'error');
+    if (renewalRes.ok) setRenewals(renewalRes.data.renewals);
+    if (paymentRes.ok) {
+      // Filter payments for this member
+      setPayments(paymentRes.data.payments.filter((p) => p.member_id === member.id));
     }
-    setRenewing(false);
-  }, [member.id, renewDays, renewAmount, onLogout, onMemberUpdated]);
+    setRefreshing(false);
+  }, [member.id, onLogout]);
+
+  useEffect(() => {
+    void fetchMemberData();
+  }, [fetchMemberData]);
 
   const handleSendReminder = useCallback(async () => {
     setSendingReminder(true);
@@ -83,25 +90,21 @@ export function MemberDetailScreen({ member: initialMember, onBack, onLogout, on
     setSendingReminder(false);
   }, [member.id, member.full_name, onLogout]);
 
-  const daysText = member.days_until_expiry !== null && member.days_until_expiry !== undefined
-    ? member.days_until_expiry > 0
-      ? `${member.days_until_expiry} days left`
-      : member.days_until_expiry === 0
-        ? 'Expires today'
-        : `${Math.abs(member.days_until_expiry)} days overdue`
-    : null;
-
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.topBarTitle} numberOfLines={1}>Member Details</Text>
-        <View style={styles.backButton} />
-      </View>
+      <AppHeader title="Member Details" onBack={onBack} />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); void fetchMemberData(); }}
+            colors={[colors.brand]}
+          />
+        }
+      >
         {/* Message banner */}
         {message ? (
           <View style={[styles.messageBanner, messageType === 'error' ? styles.errorBanner : styles.successBanner]}>
@@ -109,110 +112,170 @@ export function MemberDetailScreen({ member: initialMember, onBack, onLogout, on
           </View>
         ) : null}
 
-        {/* Identity card */}
+        {/* Identity Card */}
         <View style={styles.card}>
           <View style={styles.identityRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{member.full_name.charAt(0).toUpperCase()}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
+            <Avatar name={member.full_name} size={56} />
+            <View style={styles.identityInfo}>
               <Text style={styles.memberName}>{member.full_name}</Text>
-              <Text style={styles.memberSub}>📱 {member.phone}</Text>
-              {member.email ? <Text style={styles.memberSub}>✉️ {member.email}</Text> : null}
+              <Text style={styles.memberPhone}>{member.phone}</Text>
+              <Text style={styles.memberId}>ID: MBR{member.id}</Text>
+              {member.plan ? (
+                <View style={styles.planBadge}>
+                  <Text style={styles.planBadgeText}>{member.plan.name}</Text>
+                </View>
+              ) : null}
             </View>
-            <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[member.status] ?? colors.muted }]}>
-              <Text style={styles.statusText}>{member.status.toUpperCase()}</Text>
+            <View style={styles.identityRight}>
+              <StatusBadge status={displayStatus} size="md" />
+              {daysText ? (
+                <Text style={[
+                  styles.daysText,
+                  {
+                    color: member.days_until_expiry !== null && member.days_until_expiry <= 0
+                      ? colors.statusExpired
+                      : member.days_until_expiry !== null && member.days_until_expiry <= 7
+                        ? colors.statusExpiring
+                        : colors.statusActive,
+                  },
+                ]}>
+                  {member.days_until_expiry !== null && member.days_until_expiry >= 0
+                    ? `${member.days_until_expiry} days remaining`
+                    : daysText}
+                </Text>
+              ) : null}
             </View>
           </View>
         </View>
 
-        {/* Membership info */}
+        {/* Membership Card */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Membership</Text>
-          {member.plan ? (
-            <InfoRow label="Plan" value={`${member.plan.name} · ₹${member.plan.price}`} />
-          ) : (
-            <InfoRow label="Plan" value="No plan assigned" />
-          )}
-          <InfoRow label="Start" value={member.membership_start ? new Date(member.membership_start).toLocaleDateString('en-IN') : '—'} />
-          <InfoRow label="End" value={member.membership_end ? new Date(member.membership_end).toLocaleDateString('en-IN') : '—'} />
-          {daysText ? (
-            <InfoRow
-              label="Status"
-              value={daysText}
-              valueColor={
-                member.days_until_expiry !== null && member.days_until_expiry <= 0
-                  ? colors.critical
-                  : member.days_until_expiry !== null && member.days_until_expiry <= 7
-                    ? colors.warning
-                    : colors.success
-              }
-            />
+          <SectionHeader title="Membership" icon="⭐" />
+          <View style={styles.membershipGrid}>
+            <View style={styles.membershipItem}>
+              <Text style={styles.membershipLabel}>Plan</Text>
+              <Text style={styles.membershipValue}>{member.plan?.name ?? 'No plan'}</Text>
+              {member.plan ? <Text style={styles.membershipSub}>{member.plan.duration_days} days</Text> : null}
+            </View>
+            <View style={[styles.membershipItem, styles.membershipItemBorder]}>
+              <Text style={styles.membershipLabel}>Start Date</Text>
+              <Text style={styles.membershipValue}>{formatDate(member.membership_start)}</Text>
+            </View>
+            <View style={[styles.membershipItem, styles.membershipItemBorder]}>
+              <Text style={styles.membershipLabel}>Expiry Date</Text>
+              <Text style={styles.membershipValue}>{formatDate(member.membership_end)}</Text>
+            </View>
+          </View>
+
+          {/* Days remaining bar */}
+          {member.days_until_expiry !== null ? (
+            <View style={styles.daysBar}>
+              <View style={styles.daysBarLeft}>
+                <Text style={styles.daysBarIcon}>⏱</Text>
+                <Text style={[
+                  styles.daysBarText,
+                  {
+                    color: member.days_until_expiry <= 0
+                      ? colors.statusExpired
+                      : member.days_until_expiry <= 7
+                        ? colors.statusExpiring
+                        : colors.statusActive,
+                  },
+                ]}>
+                  {member.days_until_expiry >= 0
+                    ? `${member.days_until_expiry} days remaining`
+                    : `${Math.abs(member.days_until_expiry)} days overdue`}
+                </Text>
+              </View>
+              <StatusBadge status={displayStatus} />
+            </View>
           ) : null}
-          {member.has_biometric ? <InfoRow label="Biometric" value="✅ Enrolled" /> : null}
         </View>
 
-        {/* Quick actions */}
+        {/* Financial Summary */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Renew Membership</Text>
-          <View style={styles.renewRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Days</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="number-pad"
-                value={renewDays}
-                onChangeText={setRenewDays}
-                placeholder="30"
-                placeholderTextColor={colors.muted}
-              />
+          <SectionHeader title="Financial Summary" icon="₹" />
+          <View style={styles.financialGrid}>
+            <View style={styles.financialItem}>
+              <Text style={styles.financialLabel}>Membership Amount</Text>
+              <Text style={styles.financialValue}>
+                {member.plan ? formatCurrency(member.plan.price) : '—'}
+              </Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputLabel}>Amount (₹)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="decimal-pad"
-                value={renewAmount}
-                onChangeText={setRenewAmount}
-                placeholder="0"
-                placeholderTextColor={colors.muted}
-              />
+            <View style={[styles.financialItem, styles.financialItemBorder]}>
+              <Text style={styles.financialLabel}>Payments</Text>
+              <Text style={[styles.financialValue, { color: colors.statusActive }]}>
+                {payments.length > 0
+                  ? formatCurrency(
+                      payments
+                        .filter((p) => p.status === 'verified')
+                        .reduce((sum, p) => sum + Number(p.amount), 0),
+                    )
+                  : '₹0'}
+              </Text>
+              {payments.some((p) => p.status === 'verified') ? (
+                <View style={[styles.smallBadge, { backgroundColor: colors.statusPaidSurface }]}>
+                  <Text style={[styles.smallBadgeText, { color: colors.statusPaid }]}>PAID</Text>
+                </View>
+              ) : null}
             </View>
           </View>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.success }]}
-            onPress={() => void handleRenew()}
-            disabled={renewing}
-          >
-            {renewing ? (
-              <ActivityIndicator color="#FFF" size="small" />
-            ) : (
-              <Text style={styles.actionButtonText}>✓ Renew Membership</Text>
-            )}
+        </View>
+
+        {/* Activity */}
+        <View style={styles.card}>
+          <SectionHeader title="Activity" icon="⚡" />
+          <TouchableOpacity style={styles.activityRow}>
+            <View>
+              <Text style={styles.activityTitle}>Renewal History</Text>
+              <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.activityRow}>
+            <View>
+              <Text style={styles.activityTitle}>Payment History</Text>
+              <Text style={styles.activitySub}>{payments.length} payment{payments.length !== 1 ? 's' : ''}</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
           </TouchableOpacity>
         </View>
 
-        {/* WhatsApp */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>WhatsApp Reminder</Text>
-          <Text style={styles.reminderInfo}>Send a renewal reminder to {member.full_name} at {member.phone}</Text>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#25D366' }]}
-            onPress={() => void handleSendReminder()}
-            disabled={sendingReminder}
-          >
-            {sendingReminder ? (
-              <ActivityIndicator color="#FFF" size="small" />
-            ) : (
-              <Text style={styles.actionButtonText}>📱 Send Reminder</Text>
-            )}
-          </TouchableOpacity>
+        {/* Primary CTA */}
+        <PrimaryButton
+          label="Renew Membership"
+          icon="🔄"
+          onPress={() => onRenew?.(member)}
+          variant="primary"
+        />
+
+        {/* Secondary Actions */}
+        <View style={styles.secondaryActions}>
+          <View style={styles.secondaryButton}>
+            <PrimaryButton
+              label="Send WhatsApp"
+              icon="💬"
+              onPress={() => void handleSendReminder()}
+              variant="outline"
+              size="md"
+              loading={sendingReminder}
+            />
+          </View>
+          <View style={styles.secondaryButton}>
+            <PrimaryButton
+              label="Record Payment"
+              icon="₹"
+              onPress={() => {}}
+              variant="outline"
+              size="md"
+            />
+          </View>
         </View>
 
         {/* Notes */}
         {member.notes ? (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Notes</Text>
+            <SectionHeader title="Notes" />
             <Text style={styles.notesText}>{member.notes}</Text>
           </View>
         ) : null}
@@ -221,159 +284,210 @@ export function MemberDetailScreen({ member: initialMember, onBack, onLogout, on
   );
 }
 
-function InfoRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={[styles.infoValue, valueColor ? { color: valueColor } : undefined]}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  actionButton: {
+  activityRow: {
     alignItems: 'center',
-    borderRadius: radius.sm,
-    justifyContent: 'center',
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginTop: spacing.sm,
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+  activitySub: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: 1,
   },
-  avatar: {
-    alignItems: 'center',
-    backgroundColor: colors.brand,
-    borderRadius: 24,
-    height: 48,
-    justifyContent: 'center',
-    marginRight: spacing.sm,
-    width: 48,
+  activityTitle: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.medium,
   },
-  avatarText: {
-    color: '#FFF',
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  backButton: { minWidth: 60 },
-  backText: { color: colors.brand, fontSize: 15, fontWeight: '600' },
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    ...shadows.sm,
+  },
+  chevron: {
+    color: colors.muted,
+    fontSize: fontSize['3xl'],
+  },
+  content: {
+    gap: spacing.lg,
+    padding: spacing.lg,
+    paddingBottom: spacing.section,
+  },
+  daysBar: {
+    alignItems: 'center',
+    backgroundColor: colors.gray50,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  daysBarIcon: {
+    fontSize: 14,
+    marginRight: spacing.sm,
+  },
+  daysBarLeft: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  daysBarText: {
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  daysText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    marginTop: spacing.xxs,
+  },
+  errorBanner: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+  },
+  errorBannerText: {
+    color: colors.critical,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  financialGrid: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    marginTop: spacing.md,
+  },
+  financialItem: {
+    flex: 1,
+  },
+  financialItemBorder: {
+    borderLeftColor: colors.border,
+    borderLeftWidth: 1,
+    paddingLeft: spacing.lg,
+  },
+  financialLabel: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+  },
+  financialValue: {
+    color: colors.text,
+    fontSize: fontSize['3xl'],
+    fontWeight: fontWeight.extrabold,
+    fontVariant: ['tabular-nums'],
+    marginTop: spacing.xs,
+  },
+  identityInfo: {
+    flex: 1,
+    marginLeft: spacing.lg,
+  },
+  identityRight: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  identityRow: {
+    flexDirection: 'row',
+  },
+  memberId: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xxs,
+  },
+  memberName: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.bold,
+  },
+  memberPhone: {
+    color: colors.textSecondary,
+    fontSize: fontSize.base,
+    marginTop: spacing.xxs,
+  },
+  membershipGrid: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  membershipItem: {
+    flex: 1,
+  },
+  membershipItemBorder: {
+    borderLeftColor: colors.border,
+    borderLeftWidth: 1,
+    paddingLeft: spacing.sm,
+  },
+  membershipLabel: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+  },
+  membershipSub: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: 1,
+  },
+  membershipValue: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+    marginTop: spacing.xxs,
+  },
+  messageBanner: {
     borderRadius: radius.md,
     borderWidth: 1,
     padding: spacing.md,
   },
-  content: {
-    gap: spacing.md,
-    padding: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  errorBanner: { backgroundColor: colors.criticalSurface, borderColor: '#FDA29B' },
-  errorBannerText: { color: colors.critical, fontSize: 14, fontWeight: '600' },
-  identityRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  infoLabel: {
-    color: colors.muted,
-    fontSize: 14,
-    width: 80,
-  },
-  infoRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    marginTop: spacing.xs,
-  },
-  infoValue: {
-    color: colors.text,
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  input: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: 15,
-    minHeight: 40,
-    paddingHorizontal: spacing.sm,
-  },
-  inputLabel: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  memberName: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  memberSub: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: 2,
-  },
-  messageBanner: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    padding: spacing.sm,
-  },
   notesText: {
     color: colors.textSecondary,
-    fontSize: 14,
+    fontSize: fontSize.base,
     lineHeight: 20,
-    marginTop: spacing.xs,
+    marginTop: spacing.sm,
   },
-  reminderInfo: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: spacing.xs,
+  planBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.sm,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
   },
-  renewRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
+  planBadgeText: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
   },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
   },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  statusBadge: {
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  successBanner: { backgroundColor: colors.successSurface, borderColor: '#A6F4C5' },
-  successBannerText: { color: colors.success, fontSize: 14, fontWeight: '600' },
-  topBar: {
-    alignItems: 'center',
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
+  secondaryActions: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    gap: spacing.md,
   },
-  topBarTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
+  secondaryButton: {
+    flex: 1,
+  },
+  smallBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: radius.xs,
+    marginTop: spacing.xs,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  smallBadgeText: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
+  successBanner: {
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+  },
+  successBannerText: {
+    color: colors.success,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
   },
 });

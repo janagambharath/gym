@@ -1,69 +1,49 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   SafeAreaView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Avatar } from '../components/Avatar';
+import { EmptyState } from '../components/EmptyState';
+import { ErrorState } from '../components/ErrorState';
+import { FilterChips } from '../components/FilterChips';
+import { CardSkeleton } from '../components/LoadingSkeleton';
+import { SearchBar } from '../components/SearchBar';
+import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
-import { colors, radius, spacing } from '../theme/tokens';
-
-// Matches actual backend /api/mobile/v1/members response (unwrapped)
-type Member = {
-  id: number;
-  full_name: string;
-  phone: string;
-  email: string | null;
-  gender: string | null;
-  status: 'active' | 'expired' | 'deleted';
-  membership_start: string | null;
-  membership_end: string | null;
-  days_until_expiry: number | null;
-  plan: { id: number; name: string; duration_days: number; price: string } | null;
-  joined_on: string | null;
-  notes: string | null;
-  whatsapp_opted_in: boolean;
-  has_biometric: boolean;
-};
-
-type MembersResponse = {
-  members: Member[];
-  pagination: {
-    page: number;
-    page_size: number;
-    total: number;
-    total_pages: number;
-  };
-};
+import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import type { Member, MembersResponse } from '../types';
+import { formatDate, getDaysText, getMemberDisplayStatus } from '../types';
 
 type MembersScreenProps = {
-  onBack: () => void;
   onLogout: () => void;
   onSelectMember?: (member: Member) => void;
+  onAddMember?: () => void;
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  active: colors.success,
-  expired: colors.critical,
-  deleted: colors.muted,
-};
+const FILTER_OPTIONS = [
+  { key: 'all', label: 'All' },
+  { key: 'active', label: 'Active', dotColor: colors.statusActive },
+  { key: 'expiring', label: 'Expiring', dotColor: colors.statusExpiring },
+  { key: 'expired', label: 'Expired', dotColor: colors.statusExpired },
+];
 
-export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScreenProps) {
+export function MembersScreen({ onLogout, onSelectMember, onAddMember }: MembersScreenProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
-  // Debounce search input
   const handleSearch = useCallback((text: string) => {
     setSearch(text);
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -76,25 +56,31 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
   useEffect(() => {
     let cancelled = false;
 
+    setLoading(true);
     const params = new URLSearchParams({ page: String(page), page_size: '20' });
     if (debouncedSearch.trim()) {
       params.set('q', debouncedSearch.trim());
     }
-    if (statusFilter !== 'all') {
+    if (statusFilter !== 'all' && statusFilter !== 'expiring') {
       params.set('status', statusFilter);
     }
 
     void apiRequest<MembersResponse>(`/api/mobile/v1/members?${params.toString()}`).then((result) => {
       if (cancelled) return;
       if (result.ok) {
-        setMembers(result.data.members);
+        let filtered = result.data.members;
+        // Client-side filter for "expiring" (backend doesn't have this status filter)
+        if (statusFilter === 'expiring') {
+          filtered = filtered.filter(
+            (m) => m.days_until_expiry !== null && m.days_until_expiry >= 0 && m.days_until_expiry <= 7,
+          );
+        }
+        setMembers(filtered);
         setTotalPages(result.data.pagination.total_pages);
+        setTotalCount(result.data.pagination.total);
         setError(undefined);
       } else {
-        if (result.error.status === 401) {
-          onLogout();
-          return;
-        }
+        if (result.error.status === 401) { onLogout(); return; }
         setError(result.error.message);
       }
       setLoading(false);
@@ -103,129 +89,101 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
     return () => { cancelled = true; };
   }, [page, debouncedSearch, statusFilter, onLogout]);
 
-  const handleStatusFilter = useCallback((status: string) => {
-    setStatusFilter(status);
-    setPage(1);
-  }, []);
-
   const renderMember = useCallback(({ item }: { item: Member }) => {
-    const daysText = item.days_until_expiry !== null && item.days_until_expiry !== undefined
-      ? item.days_until_expiry > 0
-        ? `${item.days_until_expiry}d left`
-        : item.days_until_expiry === 0
-          ? 'Expires today'
-          : `${Math.abs(item.days_until_expiry)}d overdue`
-      : null;
+    const displayStatus = getMemberDisplayStatus(item);
+    const daysText = getDaysText(item.days_until_expiry);
 
     return (
       <TouchableOpacity
-        style={styles.memberCard}
+        style={styles.memberRow}
         onPress={() => onSelectMember?.(item)}
-        activeOpacity={onSelectMember ? 0.7 : 1}
+        activeOpacity={0.6}
       >
-        <View style={styles.memberHeader}>
+        <Avatar name={item.full_name} size={40} />
+        <View style={styles.memberInfo}>
           <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[item.status] ?? colors.muted }]}>
-            <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
-          </View>
-        </View>
-        <Text style={styles.memberDetail}>📱 {item.phone}</Text>
-        {item.plan ? (
-          <Text style={styles.memberDetail}>📋 {item.plan.name} · ₹{item.plan.price}</Text>
-        ) : null}
-        {item.membership_end ? (
-          <View style={styles.expiryRow}>
-            <Text style={styles.memberDetail}>
-              📅 {new Date(item.membership_end).toLocaleDateString('en-IN')}
+          <Text style={styles.memberPhone}>{item.phone}</Text>
+          {item.plan ? (
+            <Text style={styles.memberPlan}>
+              {item.plan.name} · {item.plan.duration_days}d
             </Text>
-            {daysText ? (
-              <Text style={[
-                styles.daysTag,
-                item.days_until_expiry !== null && item.days_until_expiry <= 0
-                  ? { backgroundColor: colors.criticalSurface, color: colors.critical }
+          ) : null}
+        </View>
+        <View style={styles.memberRight}>
+          <Text style={styles.memberExpiry}>{formatDate(item.membership_end)}</Text>
+          {daysText ? (
+            <Text style={[
+              styles.memberDays,
+              {
+                color: item.days_until_expiry !== null && item.days_until_expiry <= 0
+                  ? colors.statusExpired
                   : item.days_until_expiry !== null && item.days_until_expiry <= 7
-                    ? { backgroundColor: colors.warningSurface, color: colors.warning }
-                    : { backgroundColor: colors.successSurface, color: colors.success },
-              ]}>
-                {daysText}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
+                    ? colors.statusExpiring
+                    : colors.statusActive,
+              },
+            ]}>
+              {daysText}
+            </Text>
+          ) : null}
+          <StatusBadge status={displayStatus} />
+        </View>
       </TouchableOpacity>
     );
   }, [onSelectMember]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.topBar}>
-        <TouchableOpacity
-          accessibilityLabel="Go back"
-          onPress={onBack}
-          style={styles.backButton}
-        >
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.topBarTitle}>Members</Text>
-        <View style={styles.backButton} />
-      </View>
-
-      <View style={styles.searchContainer}>
-        <TextInput
-          accessibilityLabel="Search members"
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChangeText={handleSearch}
-          placeholder="Search by name or phone..."
-          placeholderTextColor={colors.muted}
-          style={styles.searchInput}
-          value={search}
-        />
-      </View>
-
-      <View style={styles.filterRow}>
-        {['all', 'active', 'expired'].map((status) => (
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Members</Text>
+          <Text style={styles.headerSubtitle}>{totalCount} members</Text>
+        </View>
+        {onAddMember ? (
           <TouchableOpacity
-            key={status}
-            onPress={() => handleStatusFilter(status)}
-            style={[
-              styles.filterChip,
-              statusFilter === status && styles.filterChipActive,
-            ]}
+            accessibilityLabel="Add member"
+            accessibilityRole="button"
+            onPress={onAddMember}
+            style={styles.addButton}
           >
-            <Text
-              style={[
-                styles.filterChipText,
-                statusFilter === status && styles.filterChipTextActive,
-              ]}
-            >
-              {status.charAt(0).toUpperCase() + status.slice(1)}
-            </Text>
+            <Text style={styles.addButtonText}>+ Add Member</Text>
           </TouchableOpacity>
-        ))}
+        ) : null}
       </View>
 
-      {loading ? (
-        <ActivityIndicator
-          accessibilityLabel="Loading members"
-          color={colors.brand}
-          size="large"
-          style={styles.spinner}
+      {/* Search */}
+      <View style={styles.searchContainer}>
+        <SearchBar
+          value={search}
+          onChangeText={handleSearch}
+          placeholder="Search name, phone or member ID"
         />
+      </View>
+
+      {/* Filters */}
+      <FilterChips
+        options={FILTER_OPTIONS}
+        selected={statusFilter}
+        onSelect={(key) => { setStatusFilter(key); setPage(1); }}
+      />
+
+      {/* List */}
+      {loading ? (
+        <View style={styles.skeletonContainer}>
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </View>
       ) : error ? (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={() => setPage(1)} style={styles.retryButton}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
+        <ErrorState message={error} onRetry={() => { setPage(1); setLoading(true); }} />
       ) : members.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyIcon}>👥</Text>
-          <Text style={styles.emptyText}>
-            {search ? 'No members found matching your search.' : 'No members yet.'}
-          </Text>
-        </View>
+        <EmptyState
+          icon="👥"
+          title={search ? 'No results' : 'No members yet'}
+          message={search ? 'No members found matching your search.' : 'Add your first member to get started.'}
+          actionLabel={search ? undefined : 'Add Member'}
+          onAction={onAddMember}
+        />
       ) : (
         <FlatList
           contentContainerStyle={styles.listContent}
@@ -235,17 +193,19 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
           initialNumToRender={10}
           maxToRenderPerBatch={10}
           windowSize={5}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
 
-      {totalPages > 1 ? (
+      {/* Pagination */}
+      {totalPages > 1 && !loading ? (
         <View style={styles.pagination}>
           <TouchableOpacity
             disabled={page <= 1}
             onPress={() => setPage((p) => p - 1)}
             style={[styles.pageButton, page <= 1 && styles.pageButtonDisabled]}
           >
-            <Text style={styles.pageButtonText}>Previous</Text>
+            <Text style={styles.pageButtonText}>‹</Text>
           </TouchableOpacity>
           <Text style={styles.pageInfo}>
             Page {page} of {totalPages}
@@ -255,7 +215,7 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
             onPress={() => setPage((p) => p + 1)}
             style={[styles.pageButton, page >= totalPages && styles.pageButtonDisabled]}
           >
-            <Text style={styles.pageButtonText}>Next</Text>
+            <Text style={styles.pageButtonText}>›</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -266,194 +226,124 @@ export function MembersScreen({ onBack, onLogout, onSelectMember }: MembersScree
 export type { Member };
 
 const styles = StyleSheet.create({
-  backButton: {
-    minWidth: 60,
-  },
-  backText: {
-    color: colors.brand,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  daysTag: {
-    borderRadius: 6,
-    fontSize: 12,
-    fontWeight: '700',
-    marginLeft: spacing.xs,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: spacing.sm,
-  },
-  emptyText: {
-    color: colors.muted,
-    fontSize: 15,
-    textAlign: 'center',
-  },
-  errorContainer: {
-    alignItems: 'center',
-    margin: spacing.md,
-    padding: spacing.md,
-    backgroundColor: colors.criticalSurface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#FDA29B',
-  },
-  errorText: {
-    color: colors.critical,
-    fontSize: 14,
-  },
-  expiryRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    marginTop: 2,
-  },
-  filterChip: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  filterChipActive: {
+  addButton: {
     backgroundColor: colors.brand,
-    borderColor: colors.brand,
-  },
-  filterChipText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  filterChipTextActive: {
-    color: '#FFFFFF',
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  listContent: {
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-  memberCard: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
     borderRadius: radius.md,
-    borderWidth: 1,
-    padding: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
-  memberDetail: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    marginTop: 2,
+  addButtonText: {
+    color: colors.textInverse,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
   },
-  memberHeader: {
+  header: {
     alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  headerSubtitle: {
+    color: colors.muted,
+    fontSize: fontSize.md,
+    marginTop: spacing.xxs,
+  },
+  headerTitle: {
+    color: colors.text,
+    fontSize: fontSize['4xl'],
+    fontWeight: fontWeight.extrabold,
+  },
+  listContent: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  memberDays: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    fontVariant: ['tabular-nums'],
+  },
+  memberExpiry: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontVariant: ['tabular-nums'],
+  },
+  memberInfo: {
+    flex: 1,
+    marginLeft: spacing.md,
   },
   memberName: {
     color: colors.text,
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '700',
-    marginRight: spacing.sm,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.semibold,
+  },
+  memberPhone: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+    marginTop: 1,
+  },
+  memberPlan: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: 1,
+  },
+  memberRight: {
+    alignItems: 'flex-end',
+    gap: spacing.xxs,
+    marginLeft: spacing.sm,
+  },
+  memberRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    paddingVertical: spacing.md,
   },
   pageButton: {
-    backgroundColor: colors.card,
+    alignItems: 'center',
     borderColor: colors.border,
-    borderRadius: radius.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
   },
   pageButtonDisabled: {
-    opacity: 0.4,
+    opacity: 0.3,
   },
   pageButtonText: {
     color: colors.brand,
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.bold,
   },
   pageInfo: {
     color: colors.textSecondary,
-    fontSize: 13,
+    fontSize: fontSize.md,
   },
   pagination: {
     alignItems: 'center',
     borderTopColor: colors.border,
     borderTopWidth: 1,
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.lg,
     justifyContent: 'center',
-    paddingVertical: spacing.sm,
-  },
-  retryButton: {
-    backgroundColor: colors.brand,
-    borderRadius: radius.sm,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  retryText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    paddingVertical: spacing.md,
   },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
   },
   searchContainer: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
-  searchInput: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: 15,
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
+  separator: {
+    backgroundColor: colors.borderLight,
+    height: 1,
   },
-  spinner: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  statusBadge: {
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  topBar: {
-    alignItems: 'center',
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  topBarTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
+  skeletonContainer: {
+    gap: spacing.md,
+    padding: spacing.lg,
   },
 });

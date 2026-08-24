@@ -111,3 +111,40 @@ def invalidate_dashboard_cache(gym_id: int) -> None:
             redis_client.delete(_cache_key(gym_id))
     except Exception:
         current_app.logger.exception("Dashboard cache invalidation failed")
+
+
+def gym_revenue_breakdown(gym_id: int) -> dict:
+    """Return verified payment totals for today, this week, and this month."""
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())  # Monday
+    month_start = today.replace(day=1)
+
+    def _sum_verified(start_date: date) -> str:
+        result = (
+            db.session.query(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                PaymentVerification.status == "verified",
+                                PaymentVerification.amount,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                )
+            )
+            .filter(
+                PaymentVerification.gym_id == gym_id,
+                PaymentVerification.verified_at >= start_date,
+            )
+            .scalar()
+        )
+        return str(result)
+
+    return {
+        "revenue_today": _sum_verified(today),
+        "revenue_week": _sum_verified(week_start),
+        "revenue_month": _sum_verified(month_start),
+    }

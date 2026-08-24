@@ -1,52 +1,47 @@
 import { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { login } from '../services/apiClient';
-import { colors, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 
 type LoginScreenProps = {
-  onLoginSuccess: () => void;
+  onLogin: () => void;
 };
 
-export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
+export function LoginScreen({ onLogin }: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | undefined>();
 
   const handleLogin = useCallback(async () => {
-    const trimmedEmail = email.trim().toLowerCase();
+    if (loading) return;
+
+    const trimmedEmail = email.trim();
     if (!trimmedEmail || !password) {
-      setError('Please enter your email and password.');
+      setError('Email and password are required.');
       return;
     }
 
-    setError(undefined);
     setLoading(true);
+    setError(undefined);
 
-    try {
-      const result = await login(trimmedEmail, password);
-      if (result.ok) {
-        onLoginSuccess();
-      } else {
-        setError(result.error.message);
-      }
-    } catch {
-      setError('An unexpected error occurred. Please try again.');
-    } finally {
-      setLoading(false);
+    const result = await login(trimmedEmail, password);
+    if (result.ok) {
+      onLogin();
+    } else {
+      setError(result.error.message);
     }
-  }, [email, password, onLoginSuccess]);
+    setLoading(false);
+  }, [email, password, loading, onLogin]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -54,158 +49,148 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
       >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.header}>
-            <Text accessibilityRole="header" style={styles.brand}>
-              Renewal Desk
+        <View style={styles.container}>
+          {/* Branding */}
+          <View style={styles.branding}>
+            <View style={styles.logoContainer}>
+              <Text style={styles.logoIcon}>📋</Text>
+            </View>
+            <Text style={styles.brandTitle}>Renewal Desk</Text>
+            <Text style={styles.brandSubtitle}>
+              Your gym management command center
             </Text>
-            <Text style={styles.subtitle}>Sign in to manage your gym</Text>
           </View>
 
-          <View style={styles.form}>
-            <View style={styles.field}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                accessibilityLabel="Email address"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect={false}
-                editable={!loading}
-                keyboardType="email-address"
-                onChangeText={setEmail}
-                placeholder="owner@yourgym.com"
-                placeholderTextColor={colors.muted}
-                returnKeyType="next"
-                style={styles.input}
-                textContentType="emailAddress"
+          {/* Form */}
+          <View style={styles.formCard}>
+            <Text style={styles.formTitle}>Sign in</Text>
+            <Text style={styles.formSubtitle}>
+              Enter your credentials to continue
+            </Text>
+
+            <View style={styles.form}>
+              <FormField
+                label="Email"
                 value={email}
-              />
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                accessibilityLabel="Password"
+                onChangeText={(t) => { setEmail(t); setError(undefined); }}
+                placeholder="you@example.com"
+                keyboardType="email-address"
                 autoCapitalize="none"
-                autoComplete="password"
-                editable={!loading}
-                onChangeText={setPassword}
-                onSubmitEditing={() => void handleLogin()}
-                placeholder="Enter your password"
-                placeholderTextColor={colors.muted}
-                returnKeyType="go"
-                secureTextEntry
-                style={styles.input}
-                textContentType="password"
+                returnKeyType="next"
+              />
+
+              <FormField
+                label="Password"
                 value={password}
+                onChangeText={(t) => { setPassword(t); setError(undefined); }}
+                placeholder="Enter your password"
+                secureTextEntry
+                returnKeyType="go"
+                onSubmitEditing={() => void handleLogin()}
+              />
+
+              {error ? (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : null}
+
+              <PrimaryButton
+                label="Sign In"
+                onPress={() => void handleLogin()}
+                loading={loading}
+                disabled={!email.trim() || !password}
               />
             </View>
-
-            {error ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            ) : null}
-
-            {loading ? (
-              <ActivityIndicator
-                accessibilityLabel="Signing in"
-                color={colors.brand}
-                size="large"
-                style={styles.spinner}
-              />
-            ) : (
-              <PrimaryButton
-                disabled={!email.trim() || !password}
-                label="Sign in"
-                onPress={() => void handleLogin()}
-              />
-            )}
           </View>
 
+          {/* Footer */}
           <Text style={styles.footer}>
-            Secure login via your Renewal Desk backend.{'\n'}
-            No credentials are stored in this app.
+            Secure login · Data encrypted in transit
           </Text>
-        </ScrollView>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  brand: {
+  branding: {
+    alignItems: 'center',
+    marginBottom: spacing.xxxl,
+  },
+  brandSubtitle: {
+    color: colors.muted,
+    fontSize: fontSize.lg,
+    marginTop: spacing.xs,
+    textAlign: 'center',
+  },
+  brandTitle: {
     color: colors.text,
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: -0.6,
+    fontSize: fontSize['6xl'],
+    fontWeight: fontWeight.extrabold,
+    letterSpacing: -1,
+    marginTop: spacing.lg,
   },
-  content: {
-    flexGrow: 1,
+  container: {
+    flex: 1,
     justifyContent: 'center',
-    padding: spacing.lg,
+    paddingHorizontal: spacing.xxl,
   },
-  errorBox: {
+  errorBanner: {
     backgroundColor: colors.criticalSurface,
-    borderColor: '#FDA29B',
-    borderRadius: radius.sm,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.md,
     borderWidth: 1,
-    padding: spacing.sm,
+    padding: spacing.md,
   },
   errorText: {
     color: colors.critical,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  field: {
-    gap: spacing.xxs,
+    fontSize: fontSize.base,
   },
   flex: {
     flex: 1,
   },
   footer: {
     color: colors.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: spacing.xl,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xxl,
     textAlign: 'center',
   },
   form: {
-    gap: spacing.md,
-    marginTop: spacing.xl,
+    gap: spacing.lg,
+    marginTop: spacing.xxl,
   },
-  header: {
-    alignItems: 'center',
-    gap: spacing.xxs,
-  },
-  input: {
+  formCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,
-    borderRadius: radius.md,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    color: colors.text,
-    fontSize: 16,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    padding: spacing.xxl,
   },
-  label: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
+  formSubtitle: {
+    color: colors.muted,
+    fontSize: fontSize.base,
+    marginTop: spacing.xs,
+  },
+  formTitle: {
+    color: colors.text,
+    fontSize: fontSize['3xl'],
+    fontWeight: fontWeight.bold,
+  },
+  logoContainer: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.xl,
+    height: 64,
+    justifyContent: 'center',
+    width: 64,
+  },
+  logoIcon: {
+    fontSize: 32,
   },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,
-  },
-  spinner: {
-    marginVertical: spacing.sm,
-  },
-  subtitle: {
-    color: colors.muted,
-    fontSize: 16,
   },
 });

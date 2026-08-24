@@ -1,11 +1,14 @@
 """Mobile API dashboard endpoint."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from flask import g, jsonify
 
 from app.extensions import db, limiter
 from app.mobile_api.middleware import roles_required, token_required
-from app.services.analytics_service import gym_dashboard_stats
+from app.models import Member
+from app.services.analytics_service import gym_dashboard_stats, gym_revenue_breakdown
 from sqlalchemy import text
 
 
@@ -31,6 +34,24 @@ def register_dashboard_routes(bp):
         else:
             collected = str(collected)
 
+        # Revenue breakdown (today / week / month).
+        try:
+            revenue = gym_revenue_breakdown(g.gym_id)
+        except Exception:
+            revenue = {"revenue_today": "0", "revenue_week": "0", "revenue_month": "0"}
+
+        # Expiring today count.
+        today = date.today()
+        try:
+            expiring_today = (
+                Member.query.filter_by(gym_id=g.gym_id, status="active")
+                .filter(Member.deleted_at.is_(None))
+                .filter(Member.membership_end == today)
+                .count()
+            )
+        except Exception:
+            expiring_today = 0
+
         resp = jsonify({
             "success": True,
             "data": {
@@ -41,6 +62,10 @@ def register_dashboard_routes(bp):
                 "sent_reminders": stats.get("sent_reminders", 0),
                 "failed_reminders": stats.get("failed_reminders", 0),
                 "total_collected": collected,
+                "revenue_today": revenue.get("revenue_today", "0"),
+                "revenue_week": revenue.get("revenue_week", "0"),
+                "revenue_month": revenue.get("revenue_month", "0"),
+                "expiring_today": expiring_today,
             },
         })
         resp.headers["Cache-Control"] = "no-store"
