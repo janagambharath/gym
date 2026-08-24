@@ -1,13 +1,13 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { ErrorState } from '../components/ErrorState';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';

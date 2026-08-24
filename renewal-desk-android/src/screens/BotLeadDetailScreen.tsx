@@ -3,12 +3,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
 import { BotAccessState, isBotEntitlementError, isBotSetupError } from '../components/BotAccessState';
 import { BotMessageBubble } from '../components/BotMessageBubble';

@@ -17,6 +17,7 @@ type FilterChipsProps = {
 export function FilterChips({ options, selected, onSelect }: FilterChipsProps) {
   return (
     <ScrollView
+      style={styles.container}
       contentContainerStyle={styles.scroll}
       horizontal
       showsHorizontalScrollIndicator={false}
@@ -47,14 +48,15 @@ export function FilterChips({ options, selected, onSelect }: FilterChipsProps) {
 const styles = StyleSheet.create({
   chip: {
     alignItems: 'center',
+    alignSelf: 'center',
     backgroundColor: colors.card,
     borderColor: colors.border,
     borderRadius: radius.xl,
     borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.xs,
+    height: 38,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
   },
   chipActive: {
     backgroundColor: colors.brand,
@@ -68,12 +70,17 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: colors.textInverse,
   },
+  container: {
+    flexGrow: 0,
+    maxHeight: 54,
+  },
   dot: {
     borderRadius: 4,
     height: 6,
     width: 6,
   },
   scroll: {
+    alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,

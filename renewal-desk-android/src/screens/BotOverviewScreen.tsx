@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { BotAccessState } from '../components/BotAccessState';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
 import { PrimaryButton } from '../components/PrimaryButton';
