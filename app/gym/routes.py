@@ -124,14 +124,18 @@ def whatsapp_settings():
     gym = Gym.query.filter_by(id=current_user.gym_id).first_or_404()
     form = WhatsAppSettingsForm(obj=gym)
     if form.validate_on_submit():
-        gym.whatsapp_business_account_id = form.whatsapp_business_account_id.data
-        gym.phone_number_id = form.phone_number_id.data
-        gym.business_phone_number = form.business_phone_number.data
+        if form.whatsapp_business_account_id.data:
+            gym.whatsapp_business_account_id = form.whatsapp_business_account_id.data
+        if form.phone_number_id.data:
+            gym.phone_number_id = form.phone_number_id.data
+        if form.business_phone_number.data:
+            gym.business_phone_number = form.business_phone_number.data
+        if form.whatsapp_enabled.raw_data:
+            gym.whatsapp_enabled = form.whatsapp_enabled.data
         gym.timezone = form.timezone.data
-        gym.whatsapp_enabled = form.whatsapp_enabled.data
         gym.welcome_message_template = form.welcome_message_template.data.strip()
         gym.renewal_reminder_template = form.renewal_reminder_template.data.strip()
-        if gym.whatsapp_enabled:
+        if gym.whatsapp_enabled and gym.phone_number_id and gym.whatsapp_business_account_id:
             result = WhatsAppService(gym).connect_webhooks()
             if not result.ok:
                 db.session.rollback()

@@ -1,45 +1,392 @@
 {% extends "base.html" %}
-{% block title %}{{ gym.name }} | RenewalDesk{% endblock %}
+{% block title %}{{ gym.name }} — Gym Control Center | RenewalDesk{% endblock %}
 {% block page_title %}{{ gym.name }}{% endblock %}
 {% block page_actions %}
 <form method="post" action="{{ url_for('admin.toggle_gym', gym_id=gym.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-outline-primary"><i class="bi bi-power"></i> Toggle status</button>
+    <button class="btn btn-outline-primary"><i class="bi bi-power"></i> Toggle Status ({{ gym.status.title() }})</button>
 </form>
 {% endblock %}
+
 {% block content %}
-<div class="stats-grid">
-    <div class="stat-card"><span>Users</span><strong>{{ stats.users }}</strong></div>
-    <div class="stat-card"><span>Members</span><strong>{{ stats.members }}</strong></div>
-    <div class="stat-card accent-warn"><span>Pending payments</span><strong>{{ stats.pending_payments }}</strong></div>
-    <div class="stat-card accent-success"><span>Sent reminders</span><strong>{{ stats.sent_reminders }}</strong></div>
+<!-- Top Metrics Grid -->
+<div class="stats-grid mb-4">
+    <div class="stat-card"><span>Active Users</span><strong>{{ stats.users }}</strong></div>
+    <div class="stat-card"><span>Total Members</span><strong>{{ stats.members }}</strong></div>
+    <div class="stat-card accent-warn"><span>Pending Payments</span><strong>{{ stats.pending_payments }}</strong></div>
+    <div class="stat-card accent-success"><span>Sent Reminders</span><strong>{{ stats.sent_reminders }}</strong></div>
 </div>
-<div class="panel mt-4">
-    <div class="panel-header"><h2>Users</h2><span class="badge status-{{ gym.status }}">{{ gym.status }}</span></div>
-    <div class="table-responsive">
-        <table class="table align-middle">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th></tr></thead>
-            <tbody>
-            {% for user in users %}
-            <tr><td>{{ user.full_name }}</td><td>{{ user.email }}</td><td>{{ user.role }}</td><td>{{ 'Yes' if user.is_active else 'No' }}</td></tr>
-            {% else %}
-            <tr><td colspan="4" class="text-secondary">No users.</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
+
+<div class="row g-4">
+    <!-- LEFT COLUMN: WhatsApp & Entitlements & Bot -->
+    <div class="col-lg-6">
+        
+        <!-- CARD 1: WhatsApp Integration (Founder Managed) -->
+        <div class="panel mb-4">
+            <div class="panel-header">
+                <div>
+                    <h2 class="h5 mb-0"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp Integration</h2>
+                    <small class="text-secondary">Configured by Platform Founder only (Hidden from Gym Desk)</small>
+                </div>
+                <span class="badge {{ 'status-active' if gym.whatsapp_enabled else 'status-suspended' }}">
+                    {{ 'Enabled' if gym.whatsapp_enabled else 'Disabled' }}
+                </span>
+            </div>
+            <form method="post" action="{{ url_for('admin.update_gym_whatsapp', gym_id=gym.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" {% if gym.whatsapp_enabled %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="whatsapp_enabled">Enable WhatsApp for this Gym</label>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-sm fw-semibold" for="business_phone_number">Display Business Phone Number</label>
+                    <input class="form-control" id="business_phone_number" name="business_phone_number" value="{{ gym.business_phone_number or '' }}" placeholder="+919876543210">
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="phone_number_id">Meta Phone Number ID</label>
+                        <input class="form-control font-mono text-sm" id="phone_number_id" name="phone_number_id" value="{{ gym.phone_number_id or '' }}" placeholder="e.g. 1048572910485">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="whatsapp_business_account_id">Meta WABA Account ID</label>
+                        <input class="form-control font-mono text-sm" id="whatsapp_business_account_id" name="whatsapp_business_account_id" value="{{ gym.whatsapp_business_account_id or '' }}" placeholder="e.g. 2048572910485">
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Save WhatsApp Credentials</button>
+            </form>
+        </div>
+
+        <!-- CARD 2: Feature Entitlements / Licensing -->
+        <div class="panel mb-4">
+            <div class="panel-header">
+                <div>
+                    <h2 class="h5 mb-0"><i class="bi bi-toggles text-primary me-2"></i>Feature Entitlements & Licenses</h2>
+                    <small class="text-secondary">Enable or revoke modules for this gym</small>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.update_gym_entitlements', gym_id=gym.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <!-- WhatsApp AI Bot -->
+                <div class="p-3 border rounded mb-3 bg-light-subtle">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="feat_whatsapp_bot" name="feat_whatsapp_bot" {% if entitlements.whatsapp_bot.enabled %}checked{% endif %}>
+                                <label class="form-check-label fw-bold" for="feat_whatsapp_bot">WhatsApp AI Receptionist (`whatsapp_bot`)</label>
+                            </div>
+                            <small class="text-secondary ms-4 ps-1 d-block">24/7 AI lead responder, trial booking, automated FAQ answers</small>
+                        </div>
+                        <span class="badge {{ 'status-active' if entitlements.whatsapp_bot.is_active() else 'status-suspended' }}">
+                            {{ 'Active' if entitlements.whatsapp_bot.is_active() else 'Inactive' }}
+                        </span>
+                    </div>
+                    <div class="row g-2 align-items-center ms-4">
+                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
+                        <div class="col-auto">
+                            <input type="date" class="form-control form-control-sm" name="expiry_whatsapp_bot" value="{{ entitlements.whatsapp_bot.expires_at.strftime('%Y-%m-%d') if entitlements.whatsapp_bot.expires_at else '' }}">
+                        </div>
+                        <div class="col-auto"><small class="text-muted">(leave empty for lifetime)</small></div>
+                    </div>
+                </div>
+
+                <!-- Renewal Desk Core -->
+                <div class="p-3 border rounded mb-3 bg-light-subtle">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="feat_renewal_desk" name="feat_renewal_desk" {% if entitlements.renewal_desk.enabled %}checked{% endif %}>
+                                <label class="form-check-label fw-bold" for="feat_renewal_desk">Renewal Desk Mobile App (`renewal_desk`)</label>
+                            </div>
+                            <small class="text-secondary ms-4 ps-1 d-block">Core mobile CRM, member management, renewal tracker, payment verification</small>
+                        </div>
+                        <span class="badge {{ 'status-active' if entitlements.renewal_desk.is_active() else 'status-suspended' }}">
+                            {{ 'Active' if entitlements.renewal_desk.is_active() else 'Inactive' }}
+                        </span>
+                    </div>
+                    <div class="row g-2 align-items-center ms-4">
+                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
+                        <div class="col-auto">
+                            <input type="date" class="form-control form-control-sm" name="expiry_renewal_desk" value="{{ entitlements.renewal_desk.expires_at.strftime('%Y-%m-%d') if entitlements.renewal_desk.expires_at else '' }}">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Biometric Bridge -->
+                <div class="p-3 border rounded mb-3 bg-light-subtle">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="feat_biometric" name="feat_biometric" {% if entitlements.biometric.enabled %}checked{% endif %}>
+                                <label class="form-check-label fw-bold" for="feat_biometric">Biometric Turnstile Hardware Bridge (`biometric`)</label>
+                            </div>
+                            <small class="text-secondary ms-4 ps-1 d-block">On-premise physical access control sync on expiry & renewal</small>
+                        </div>
+                        <span class="badge {{ 'status-active' if entitlements.biometric.is_active() else 'status-suspended' }}">
+                            {{ 'Active' if entitlements.biometric.is_active() else 'Inactive' }}
+                        </span>
+                    </div>
+                    <div class="row g-2 align-items-center ms-4">
+                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
+                        <div class="col-auto">
+                            <input type="date" class="form-control form-control-sm" name="expiry_biometric" value="{{ entitlements.biometric.expires_at.strftime('%Y-%m-%d') if entitlements.biometric.expires_at else '' }}">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Reports -->
+                <div class="p-3 border rounded mb-3 bg-light-subtle">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="feat_advanced_reports" name="feat_advanced_reports" {% if entitlements.advanced_reports.enabled %}checked{% endif %}>
+                                <label class="form-check-label fw-bold" for="feat_advanced_reports">Advanced Analytics (`advanced_reports`)</label>
+                            </div>
+                            <small class="text-secondary ms-4 ps-1 d-block">Periodized 7d/30d revenue forecasts and cohort reports</small>
+                        </div>
+                        <span class="badge {{ 'status-active' if entitlements.advanced_reports.is_active() else 'status-suspended' }}">
+                            {{ 'Active' if entitlements.advanced_reports.is_active() else 'Inactive' }}
+                        </span>
+                    </div>
+                    <div class="row g-2 align-items-center ms-4">
+                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
+                        <div class="col-auto">
+                            <input type="date" class="form-control form-control-sm" name="expiry_advanced_reports" value="{{ entitlements.advanced_reports.expires_at.strftime('%Y-%m-%d') if entitlements.advanced_reports.expires_at else '' }}">
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Update Entitlements</button>
+            </form>
+        </div>
+
+        <!-- CARD 3: AI Receptionist Settings -->
+        <div class="panel mb-4">
+            <div class="panel-header">
+                <div>
+                    <h2 class="h5 mb-0"><i class="bi bi-robot text-info me-2"></i>AI Receptionist Parameters</h2>
+                    <small class="text-secondary">Controls what the WhatsApp Bot tells leads</small>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.update_gym_bot_config', gym_id=gym.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="p-3 border rounded mb-3 bg-light-subtle">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="trial_enabled" name="trial_enabled" {% if bot_config.trial_enabled %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="trial_enabled">Enable Trial Pass Bookings</label>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <label class="form-label text-sm" for="trial_price">Trial Price (₹)</label>
+                            <input type="number" step="0.01" class="form-control form-control-sm" id="trial_price" name="trial_price" value="{{ bot_config.trial_price or '' }}" placeholder="0 for Free">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-sm" for="trial_duration_days">Trial Duration (Days)</label>
+                            <input type="number" class="form-control form-control-sm" id="trial_duration_days" name="trial_duration_days" value="{{ bot_config.trial_duration_days or 1 }}" placeholder="1">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-sm fw-semibold" for="opening_hours">Opening Hours (Grounding Fact)</label>
+                    <input class="form-control" id="opening_hours" name="opening_hours" value="{{ bot_config.opening_hours or '' }}" placeholder="Mon-Sat: 6am-10pm, Sun: 7am-1pm">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-sm fw-semibold" for="map_link">Google Map / Location Link</label>
+                    <input class="form-control" id="map_link" name="map_link" value="{{ bot_config.map_link or '' }}" placeholder="https://maps.app.goo.gl/...">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-sm fw-semibold" for="greeting_message">Custom Greeting Override</label>
+                    <textarea class="form-control" id="greeting_message" name="greeting_message" rows="2" placeholder="Welcome to {{ gym.name }}! How can I help you today?">{{ bot_config.greeting_message or '' }}</textarea>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="followup_enabled" name="followup_enabled" {% if bot_config.followup_enabled %}checked{% endif %}>
+                            <label class="form-check-label text-sm fw-semibold" for="followup_enabled">Automated Lead Follow-ups</label>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="handover_enabled" name="handover_enabled" {% if bot_config.handover_enabled %}checked{% endif %}>
+                            <label class="form-check-label text-sm fw-semibold" for="handover_enabled">Human Handover Trigger</label>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Save Bot Settings</button>
+            </form>
+        </div>
+
     </div>
-</div>
-<div class="panel mt-4">
-    <div class="panel-header"><h2>Offboarding</h2></div>
-    <form method="post" action="{{ url_for('admin.delete_gym', gym_id=gym.id) }}" class="row g-3 align-items-end">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="col-md-8">
-            <label class="form-label" for="confirm">Type {{ gym.slug }} to suspend and soft-delete members</label>
-            <input class="form-control" id="confirm" name="confirm">
+
+    <!-- RIGHT COLUMN: Gym Settings, Biometric Bridge & Users -->
+    <div class="col-lg-6">
+        
+        <!-- CARD 4: Gym Profile & Subscription -->
+        <div class="panel mb-4">
+            <div class="panel-header">
+                <div>
+                    <h2 class="h5 mb-0"><i class="bi bi-building text-warning me-2"></i>Gym Profile & Subscription</h2>
+                    <small class="text-secondary">Core business info & tier limits</small>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.update_gym_settings', gym_id=gym.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="mb-3">
+                    <label class="form-label text-sm fw-semibold" for="name">Gym Name</label>
+                    <input class="form-control" id="name" name="name" value="{{ gym.name }}" required>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="email">Contact Email</label>
+                        <input class="form-control" id="email" name="email" value="{{ gym.email or '' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="phone">Contact Phone</label>
+                        <input class="form-control" id="phone" name="phone" value="{{ gym.phone or '' }}">
+                    </div>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="timezone">Timezone</label>
+                        <input class="form-control" id="timezone" name="timezone" value="{{ gym.timezone or 'Asia/Kolkata' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="max_members">Max Members Limit</label>
+                        <input type="number" class="form-control" id="max_members" name="max_members" value="{{ gym.max_members or '' }}" placeholder="Empty for unlimited">
+                    </div>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="subscription_status">Subscription Tier</label>
+                        <select class="form-select" id="subscription_status" name="subscription_status">
+                            {% for opt in ['trial', 'active', 'past_due', 'canceled'] %}
+                            <option value="{{ opt }}" {% if gym.subscription_status == opt %}selected{% endif %}>{{ opt.title() }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label text-sm fw-semibold" for="status">Operational Status</label>
+                        <select class="form-select" id="status" name="status">
+                            <option value="active" {% if gym.status == 'active' %}selected{% endif %}>Active</option>
+                            <option value="suspended" {% if gym.status == 'suspended' %}selected{% endif %}>Suspended</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-sm fw-semibold" for="trial_ends_at">Trial Expiry Date</label>
+                    <input type="date" class="form-control form-control-sm" id="trial_ends_at" name="trial_ends_at" value="{{ gym.trial_ends_at.strftime('%Y-%m-%d') if gym.trial_ends_at else '' }}">
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Update Gym Profile</button>
+            </form>
         </div>
-        <div class="col-md-4">
-            <button class="btn btn-outline-danger w-100" type="submit">Offboard gym</button>
+
+        <!-- CARD 5: Biometric Hardware Bridge -->
+        <div class="panel mb-4">
+            <div class="panel-header">
+                <div>
+                    <h2 class="h5 mb-0"><i class="bi bi-fingerprint text-danger me-2"></i>Biometric Turnstile Bridge</h2>
+                    <small class="text-secondary">On-premise PC hardware sync</small>
+                </div>
+                <span class="badge {{ 'status-active' if bridge and bridge.is_active else 'status-suspended' }}">
+                    {{ 'Connected' if bridge else 'Not Installed' }}
+                </span>
+            </div>
+            {% if bridge %}
+            <div class="table-responsive mb-3">
+                <table class="table table-sm">
+                    <tr><th class="text-secondary">Device Serial</th><td class="font-mono">{{ bridge.device_serial }}</td></tr>
+                    <tr><th class="text-secondary">Public ID</th><td class="font-mono text-sm">{{ bridge.public_id }}</td></tr>
+                    <tr><th class="text-secondary">Last Heartbeat</th><td>{{ bridge.last_heartbeat_at.strftime('%Y-%m-%d %H:%M:%S') if bridge.last_heartbeat_at else 'Never' }}</td></tr>
+                    <tr><th class="text-secondary">Status</th><td><span class="badge status-active">{{ bridge.last_status or 'Provisioned' }}</span></td></tr>
+                </table>
+            </div>
+            <form method="post" action="{{ url_for('admin.create_gym_bridge', gym_id=gym.id) }}" class="d-flex gap-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="device_serial" value="{{ bridge.device_serial }}">
+                <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Rotate Bridge API Key? The old key will stop working immediately.');">
+                    <i class="bi bi-arrow-repeat me-1"></i> Rotate Bridge Key
+                </button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('admin.create_gym_bridge', gym_id=gym.id) }}" class="row g-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-8">
+                    <input class="form-control form-control-sm" name="device_serial" placeholder="Hardware Device Serial (e.g. ZK-990-2026)" required>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-outline-success btn-sm w-100"><i class="bi bi-plus-lg me-1"></i> Provision Bridge</button>
+                </div>
+            </form>
+            {% endif %}
         </div>
-    </form>
+
+        <!-- CARD 6: Staff & Users Management -->
+        <div class="panel mb-4">
+            <div class="panel-header">
+                <div>
+                    <h2 class="h5 mb-0"><i class="bi bi-people text-primary me-2"></i>Gym Staff & Users ({{ users|length }})</h2>
+                    <small class="text-secondary">Manage logins and reset passwords directly</small>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle table-sm">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Reset Password</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td><strong>{{ user.full_name }}</strong></td>
+                            <td>{{ user.email }}</td>
+                            <td><span class="badge bg-secondary">{{ user.role }}</span></td>
+                            <td>
+                                <form method="post" action="{{ url_for('admin.reset_user_password', gym_id=gym.id, user_id=user.id) }}" class="d-flex gap-1">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="password" name="new_password" class="form-control form-control-sm" placeholder="New Password" style="width: 130px;" required minlength="6">
+                                    <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-key"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-secondary">No users found.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- CARD 7: Offboarding / Danger Zone -->
+        <div class="panel border-danger">
+            <div class="panel-header text-danger"><h2 class="h5 mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Offboarding / Danger Zone</h2></div>
+            <form method="post" action="{{ url_for('admin.delete_gym', gym_id=gym.id) }}" class="row g-2 align-items-end">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-8">
+                    <label class="form-label text-sm" for="confirm">Type <strong class="text-danger">{{ gym.slug }}</strong> to suspend gym & soft-delete members:</label>
+                    <input class="form-control form-control-sm" id="confirm" name="confirm" required>
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-danger btn-sm w-100" type="submit">Offboard Gym</button>
+                </div>
+            </form>
+        </div>
+
+    </div>
 </div>
 {% endblock %}

@@ -95,17 +95,11 @@ class WhatsAppSettingsForm(FlaskForm):
         field.data = (field.data or "").strip() or None
         if field.data and not field.data.isdigit():
             raise ValidationError("Meta WhatsApp Business Account ID must contain digits only.")
-        if self.whatsapp_enabled.data and not field.data:
-            raise ValidationError(
-                "Meta WhatsApp Business Account ID is required when WhatsApp is enabled."
-            )
 
     def validate_phone_number_id(self, field) -> None:
         field.data = (field.data or "").strip() or None
         if field.data and not field.data.isdigit():
             raise ValidationError("Meta phone number ID must contain digits only.")
-        if self.whatsapp_enabled.data and not field.data:
-            raise ValidationError("Meta phone number ID is required when WhatsApp is enabled.")
 
     def validate_business_phone_number(self, field) -> None:
         cleaned = re.sub(r"\s", "", (field.data or "").strip())
@@ -114,8 +108,6 @@ class WhatsAppSettingsForm(FlaskForm):
             raise ValidationError(
                 "Enter the business number in E.164 format, e.g. +919876543210."
             )
-        if self.whatsapp_enabled.data and not field.data:
-            raise ValidationError("Business phone number is required when WhatsApp is enabled.")
 
     def validate_timezone(self, field) -> None:
         try:
