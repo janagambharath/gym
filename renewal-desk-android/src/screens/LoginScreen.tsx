@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -53,7 +54,11 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           {/* Branding */}
           <View style={styles.branding}>
             <View style={styles.logoContainer}>
-              <Text style={styles.logoIcon}>📋</Text>
+              <Image
+                source={require('../../assets/logo.png')}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
             <Text style={styles.brandTitle}>Renewal Desk</Text>
             <Text style={styles.brandSubtitle}>
@@ -180,14 +185,15 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: 'center',
-    backgroundColor: colors.brandSubtle,
+    backgroundColor: '#EFF6FF',
     borderRadius: radius.xl,
-    height: 64,
+    height: 72,
     justifyContent: 'center',
-    width: 64,
+    width: 72,
   },
-  logoIcon: {
-    fontSize: 32,
+  logoImage: {
+    height: 56,
+    width: 56,
   },
   safeArea: {
     backgroundColor: colors.background,
