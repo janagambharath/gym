@@ -18,6 +18,8 @@ import { EditMemberScreen } from './src/screens/EditMemberScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { MemberDetailScreen } from './src/screens/MemberDetailScreen';
 import { MembersScreen } from './src/screens/MembersScreen';
+import * as Notifications from 'expo-notifications';
+import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { PaymentDetailScreen } from './src/screens/PaymentDetailScreen';
 import { PaymentsScreen } from './src/screens/PaymentsScreen';
 import { PlansScreen } from './src/screens/PlansScreen';
@@ -29,6 +31,7 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
 import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
 import { apiRequest, restoreSession } from './src/services/apiClient';
+import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
 import { colors, fontSize, fontWeight, spacing } from './src/theme/tokens';
 import type { BotConversation, Member, Plan, SettingsResponse } from './src/types';
@@ -48,6 +51,7 @@ type DashboardStackParamList = {
   BotConversationDetail: { conversation: BotConversation };
   BotLeads: undefined;
   BotLeadDetail: { leadId: number };
+  Notifications: undefined;
 };
 
 type MembersStackParamList = {
@@ -155,7 +159,34 @@ function DashboardStackScreen({
             onNavigateLeadDetail={(leadId) =>
               props.navigation.navigate('BotLeadDetail', { leadId })
             }
+            onNavigateNotifications={() => props.navigation.navigate('Notifications')}
             refreshToken={refreshToken}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="Notifications">
+        {(props) => (
+          <NotificationsScreen
+            onBack={() => props.navigation.goBack()}
+            onNavigateScreen={(screen, data) => {
+              if (screen === 'BotConversationDetail' && data?.conversation_id) {
+                props.navigation.navigate('BotConversationDetail', {
+                  conversation: {
+                    id: data.conversation_id,
+                    phone: data.phone ?? '',
+                    customer_name: data.customer_name ?? '',
+                    handover_status: 'human_requested',
+                    state: 'active',
+                  } as any,
+                });
+              } else if (screen === 'BotLeadDetail' && data?.lead_id) {
+                props.navigation.navigate('BotLeadDetail', { leadId: data.lead_id });
+              } else if (screen === 'PaymentDetail' && data?.payment_id) {
+                props.navigation.navigate('PaymentDetail', { paymentId: data.payment_id });
+              } else if (screen === 'RenewalsHome') {
+                onNavigateRenewals();
+              }
+            }}
           />
         )}
       </DashboardStackNav.Screen>
@@ -604,12 +635,25 @@ export default function App() {
     void bootstrap();
   }, []);
 
-  // Fetch plans once authenticated
+  // Fetch plans & register push notifications once authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((res) => {
       if (res.ok) setPlans(res.data.plans);
     });
+
+    // Register device for native push notifications
+    void registerForPushNotificationsAsync();
+
+    // Listen to push notification tap responses
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const payload = response.notification.request.content.data;
+      console.log('[Notification Tap]', payload);
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [isAuthenticated]);
 
   const handleLoginSuccess = useCallback(() => {
@@ -617,6 +661,7 @@ export default function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
+    void unregisterPushNotificationsAsync();
     setIsAuthenticated(false);
     setPlans([]);
   }, []);

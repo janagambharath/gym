@@ -34,6 +34,7 @@ type DashboardScreenProps = {
   onNavigateBotLeads?: () => void;
   onNavigateConversationDetail?: (conversation: any) => void;
   onNavigateLeadDetail?: (leadId: number) => void;
+  onNavigateNotifications?: () => void;
   refreshToken?: number;
 };
 
@@ -52,6 +53,7 @@ export function DashboardScreen({
   onNavigateBotLeads,
   onNavigateConversationDetail,
   onNavigateLeadDetail,
+  onNavigateNotifications,
   refreshToken,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
@@ -64,7 +66,7 @@ export function DashboardScreen({
 
   const session = getCachedSession();
   const hasAttention = Boolean(
-    data && (data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0),
+    data && (data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0 || (data.bot_summary?.handover_count ?? 0) > 0),
   );
 
   const getGreeting = () => {
@@ -131,13 +133,15 @@ export function DashboardScreen({
           </View>
         ) : <View style={styles.topBarSpacer} />}
         <View style={styles.topBarRight}>
-          <View
+          <TouchableOpacity
             accessibilityLabel={hasAttention ? 'Attention items are waiting' : 'No attention items'}
+            onPress={onNavigateNotifications}
             style={styles.notificationButton}
+            activeOpacity={0.7}
           >
             <Icon name="notifications" size={21} color={colors.text} />
             {hasAttention ? <View style={styles.notificationDot} /> : null}
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity
             accessibilityLabel="Sign out"
             onPress={() => void handleLogout()}

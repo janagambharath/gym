@@ -196,6 +196,11 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     gym.timezone or "Asia/Kolkata",
                 )
                 app.logger.info("Reminder scan for gym %s: %s", gym.id, result)
+                try:
+                    from app.services.push_notification_service import notify_expiring_members_daily
+                    notify_expiring_members_daily(gym, result.get("sent", 0), expired_count)
+                except Exception:
+                    pass
             except Exception as exc:
                 db.session.rollback()
                 app.logger.exception("Reminder scan failed for gym %s", gym.id)

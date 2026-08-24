@@ -190,6 +190,12 @@ def register_payments_routes(bp):
                     return jsonify(existing.response_body), existing.status_code
             raise
 
+        try:
+            from app.services.push_notification_service import notify_new_payment
+            notify_new_payment(g.current_user.gym, payment)
+        except Exception:
+            pass
+
         return jsonify(response_body), 201
 
     @bp.route("/payments/<int:payment_id>/verify", methods=["POST"])

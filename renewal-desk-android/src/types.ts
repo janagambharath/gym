@@ -255,6 +255,37 @@ export type BotLeadDetailResponse = {
 
 export type BotLeadUpdate = Pick<BotLead, 'status' | 'notes' | 'name'>;
 
+// ─── Notifications ───────────────────────────────────────────────────
+
+export type AppNotificationItem = {
+  id: number;
+  title: string;
+  body: string;
+  category: 'handover' | 'lead' | 'trial' | 'payment' | 'renewal' | 'general';
+  data?: {
+    screen?: string;
+    conversation_id?: number;
+    lead_id?: number;
+    payment_id?: number;
+    member_id?: number;
+    phone?: string;
+    customer_name?: string;
+  };
+  is_read: boolean;
+  created_at: string | null;
+};
+
+export type NotificationsResponse = {
+  notifications: AppNotificationItem[];
+  unread_count: number;
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+  };
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 /** Derive the display status for a member (active/expiring/expired). */

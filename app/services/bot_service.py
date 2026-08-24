@@ -103,6 +103,11 @@ class BotService:
             )
             db.session.add(lead)
             db.session.flush()
+            try:
+                from app.services.push_notification_service import notify_new_lead
+                notify_new_lead(self.gym, lead)
+            except Exception:
+                pass
 
         self._record_event(
             event_type="inbound_message_received",
@@ -154,6 +159,18 @@ class BotService:
                 lead=lead,
                 payload={"intent": intent},
             )
+            try:
+                from app.services.push_notification_service import notify_handover_requested
+                notify_handover_requested(self.gym, conversation, clean_text)
+            except Exception:
+                pass
+
+        if lead and getattr(lead, "trial_requested", False):
+            try:
+                from app.services.push_notification_service import notify_trial_requested
+                notify_trial_requested(self.gym, lead)
+            except Exception:
+                pass
 
         if reply_text:
             self._send_reply(conversation, reply_text)
