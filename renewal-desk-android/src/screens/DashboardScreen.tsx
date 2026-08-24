@@ -29,6 +29,11 @@ type DashboardScreenProps = {
   onNavigateAddMember?: () => void;
   onNavigateRecordPayment?: () => void;
   onNavigateWhatsApp?: () => void;
+  onNavigateBotOverview?: () => void;
+  onNavigateBotConversations?: () => void;
+  onNavigateBotLeads?: () => void;
+  onNavigateConversationDetail?: (conversation: any) => void;
+  onNavigateLeadDetail?: (leadId: number) => void;
   refreshToken?: number;
 };
 
@@ -42,6 +47,11 @@ export function DashboardScreen({
   onNavigateAddMember,
   onNavigateRecordPayment,
   onNavigateWhatsApp,
+  onNavigateBotOverview,
+  onNavigateBotConversations,
+  onNavigateBotLeads,
+  onNavigateConversationDetail,
+  onNavigateLeadDetail,
   refreshToken,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
@@ -161,6 +171,53 @@ export function DashboardScreen({
               </Text>
             </View>
 
+            {/* 🚨 Urgent Staff Handover Alert Box */}
+            {data.bot_summary?.recent_handovers && data.bot_summary.recent_handovers.length > 0 ? (
+              <View style={[styles.card, styles.handoverAlertCard]}>
+                <View style={styles.handoverAlertHeader}>
+                  <View style={styles.handoverBadge}>
+                    <Icon name="alert" size={14} color={colors.critical} />
+                    <Text style={styles.handoverBadgeText}>
+                      {data.bot_summary.handover_count} STAFF HANDOVER{data.bot_summary.handover_count > 1 ? 'S' : ''} WAITING
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={onNavigateBotConversations} style={styles.handoverViewAll}>
+                    <Text style={styles.handoverViewAllText}>View All Chats →</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.handoverAlertTitle}>
+                  Prospective customers asked to speak with staff
+                </Text>
+
+                <View style={styles.handoverList}>
+                  {data.bot_summary.recent_handovers.map((h) => (
+                    <TouchableOpacity
+                      key={h.id}
+                      style={styles.handoverItem}
+                      onPress={onNavigateBotConversations}
+                      activeOpacity={0.7}
+                    >
+                      <Avatar name={h.customer_name} size={36} />
+                      <View style={styles.handoverInfo}>
+                        <View style={styles.handoverNameRow}>
+                          <Text style={styles.handoverName} numberOfLines={1}>{h.customer_name}</Text>
+                          <Text style={styles.handoverPhone}>+{h.phone}</Text>
+                        </View>
+                        <Text numberOfLines={1} style={styles.handoverMessage}>
+                          &ldquo;{h.last_message}&rdquo;
+                        </Text>
+                      </View>
+                      <View style={styles.handoverAction}>
+                        <Text style={styles.handoverActionText}>Reply</Text>
+                        <Icon name="forward" size={12} color={colors.brand} />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             {/* Key Metrics - 2x2 Balanced Grid */}
             <View style={styles.metricsGrid}>
               <View style={styles.metricsRow}>
@@ -197,6 +254,80 @@ export function DashboardScreen({
                   detail="Awaiting review"
                   detailColor={colors.statusPending}
                 />
+              </View>
+            </View>
+
+            {/* Inbound Leads & WhatsApp AI Card */}
+            <View style={styles.card}>
+              <SectionHeader
+                title="Inbound Leads & AI Bot"
+                icon={<Icon name="robot" size={18} color={colors.brand} />}
+                actionLabel="View All Leads"
+                onAction={onNavigateBotLeads}
+              />
+              <View style={styles.leadsStatsRow}>
+                <TouchableOpacity
+                  style={styles.leadStatTile}
+                  onPress={onNavigateBotLeads}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.leadStatValue}>{data.bot_summary?.total_leads ?? 0}</Text>
+                  <Text style={styles.leadStatLabel}>Total Leads</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.leadStatTile, styles.leadStatBorder]}
+                  onPress={onNavigateBotLeads}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.leadStatValue, { color: colors.brand }]}>
+                    {data.bot_summary?.new_leads ?? 0}
+                  </Text>
+                  <Text style={styles.leadStatLabel}>New Inquiries</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.leadStatTile, styles.leadStatBorder]}
+                  onPress={onNavigateBotLeads}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.leadStatValue, { color: colors.success }]}>
+                    {data.bot_summary?.trial_requests ?? 0}
+                  </Text>
+                  <Text style={styles.leadStatLabel}>Free Trials</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.leadStatTile, styles.leadStatBorder]}
+                  onPress={onNavigateBotConversations}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.leadStatValue,
+                      { color: (data.bot_summary?.handover_count ?? 0) > 0 ? colors.critical : colors.textSecondary },
+                    ]}
+                  >
+                    {data.bot_summary?.handover_count ?? 0}
+                  </Text>
+                  <Text style={styles.leadStatLabel}>Handovers</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.leadsActionsRow}>
+                <TouchableOpacity
+                  style={styles.leadsQuickBtn}
+                  onPress={onNavigateBotConversations}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="chatbubble" size={16} color={colors.brand} />
+                  <Text style={styles.leadsQuickBtnText}>Open AI Chats</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.leadsQuickBtn, styles.leadsQuickBtnPrimary]}
+                  onPress={onNavigateWhatsApp}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="send" size={16} color={colors.textInverse} />
+                  <Text style={styles.leadsQuickBtnTextPrimary}>Broadcast / WhatsApp</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -744,5 +875,163 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: spacing.md,
     paddingTop: spacing.md,
+  },
+  // ─── Handover Alert Styles ──────────────────────────────────────────
+  handoverAlertCard: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+    borderWidth: 1.5,
+  },
+  handoverAlertHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  handoverAlertTitle: {
+    color: '#92400E',
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    marginTop: spacing.xs,
+  },
+  handoverBadge: {
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FECACA',
+    borderRadius: radius.full,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xxs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  handoverBadgeText: {
+    color: colors.critical,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.extrabold,
+    letterSpacing: 0.3,
+  },
+  handoverViewAll: {
+    paddingVertical: 4,
+  },
+  handoverViewAllText: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+  },
+  handoverList: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  handoverItem: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: '#FDE68A',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+    ...shadows.sm,
+  },
+  handoverInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  handoverNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  handoverName: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  handoverPhone: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+  },
+  handoverMessage: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  handoverAction: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: 3,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  handoverActionText: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+  },
+  // ─── Leads Card Styles ──────────────────────────────────────────────
+  leadsStatsRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.md,
+  },
+  leadStatTile: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    paddingVertical: spacing.xs,
+  },
+  leadStatBorder: {
+    borderLeftColor: colors.borderLight,
+    borderLeftWidth: 1,
+  },
+  leadStatValue: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
+  },
+  leadStatLabel: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  leadsActionsRow: {
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+  },
+  leadsQuickBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.gray50,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+  },
+  leadsQuickBtnPrimary: {
+    backgroundColor: colors.brand,
+    borderColor: colors.brand,
+  },
+  leadsQuickBtnText: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
+  leadsQuickBtnTextPrimary: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
   },
 });

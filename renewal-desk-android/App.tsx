@@ -43,6 +43,11 @@ type DashboardStackParamList = {
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
   WhatsApp: undefined;
+  BotOverview: undefined;
+  BotConversations: undefined;
+  BotConversationDetail: { conversation: BotConversation };
+  BotLeads: undefined;
+  BotLeadDetail: { leadId: number };
 };
 
 type MembersStackParamList = {
@@ -141,6 +146,15 @@ function DashboardStackScreen({
             onNavigateAddMember={() => props.navigation.navigate('AddMember')}
             onNavigateRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
             onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
+            onNavigateBotOverview={() => props.navigation.navigate('BotOverview')}
+            onNavigateBotConversations={() => props.navigation.navigate('BotConversations')}
+            onNavigateBotLeads={() => props.navigation.navigate('BotLeads')}
+            onNavigateConversationDetail={(conversation) =>
+              props.navigation.navigate('BotConversationDetail', { conversation })
+            }
+            onNavigateLeadDetail={(leadId) =>
+              props.navigation.navigate('BotLeadDetail', { leadId })
+            }
             refreshToken={refreshToken}
           />
         )}
@@ -218,6 +232,57 @@ function DashboardStackScreen({
       <DashboardStackNav.Screen name="WhatsApp">
         {(props) => (
           <WhatsAppScreen onBack={() => props.navigation.goBack()} />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="BotOverview">
+        {(props) => (
+          <BotOverviewScreen
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onOpenConversations={() => props.navigation.navigate('BotConversations')}
+            onOpenLeads={() => props.navigation.navigate('BotLeads')}
+            onOpenSetup={() => {}}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="BotConversations">
+        {(props) => (
+          <BotConversationsScreen
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onSelectConversation={(conversation) =>
+              props.navigation.navigate('BotConversationDetail', { conversation })
+            }
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="BotConversationDetail">
+        {(props) => (
+          <BotConversationDetailScreen
+            conversation={props.route.params.conversation}
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="BotLeads">
+        {(props) => (
+          <BotLeadsScreen
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+            onSelectLead={(lead) =>
+              props.navigation.navigate('BotLeadDetail', { leadId: lead.id })
+            }
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="BotLeadDetail">
+        {(props) => (
+          <BotLeadDetailScreen
+            leadId={props.route.params.leadId}
+            onBack={() => props.navigation.goBack()}
+            onLogout={onLogout}
+          />
         )}
       </DashboardStackNav.Screen>
     </DashboardStackNav.Navigator>

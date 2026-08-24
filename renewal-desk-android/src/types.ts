@@ -43,7 +43,23 @@ export type Pagination = {
   total_pages: number;
 };
 
-// ─── Dashboard ───────────────────────────────────────────────────────
+export type RecentHandover = {
+  id: number;
+  customer_name: string;
+  phone: string;
+  state?: string;
+  handover_status?: string;
+  last_message: string;
+  last_message_at: string | null;
+};
+
+export type BotSummary = {
+  handover_count: number;
+  total_leads: number;
+  new_leads: number;
+  trial_requests: number;
+  recent_handovers: RecentHandover[];
+};
 
 export type DashboardData = {
   total_active: number;
@@ -58,6 +74,7 @@ export type DashboardData = {
   revenue_month?: string;
   expiring_today?: number;
   pending_payment_amount?: string;
+  bot_summary?: BotSummary;
 };
 
 // ─── Payment ─────────────────────────────────────────────────────────
