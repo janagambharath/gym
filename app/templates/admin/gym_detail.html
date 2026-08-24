@@ -70,18 +70,20 @@
                 <!-- WhatsApp AI Bot ON/OFF -->
                 <div class="p-3 border rounded mb-3 bg-light-subtle">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="feat_whatsapp_bot" name="feat_whatsapp_bot" {% if entitlements.whatsapp_bot.enabled %}checked{% endif %}>
-                                <label class="form-check-label fw-bold" for="feat_whatsapp_bot">WhatsApp AI Bot (`whatsapp_bot`)</label>
+                        <div class="d-flex align-items-center">
+                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
+                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_whatsapp_bot" name="feat_whatsapp_bot" {% if entitlements.whatsapp_bot.enabled %}checked{% endif %}>
                             </div>
-                            <small class="text-secondary ms-4 ps-1 d-block">AI auto-replies to incoming leads and inquiries (Gym sets prompt/hours in App)</small>
+                            <div class="ms-3">
+                                <label class="form-check-label fw-bold text-dark m-0" for="feat_whatsapp_bot" style="cursor: pointer;">WhatsApp AI Bot (`whatsapp_bot`)</label>
+                                <small class="text-secondary d-block">AI auto-replies to incoming leads and inquiries (Gym sets prompt/hours in App)</small>
+                            </div>
                         </div>
                         <span class="badge {{ 'status-active' if entitlements.whatsapp_bot.is_active() else 'status-suspended' }}">
                             {{ 'Active' if entitlements.whatsapp_bot.is_active() else 'Inactive' }}
                         </span>
                     </div>
-                    <div class="row g-2 align-items-center ms-4">
+                    <div class="row g-2 align-items-center ms-5">
                         <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
                         <div class="col-auto">
                             <input type="date" class="form-control form-control-sm" name="expiry_whatsapp_bot" value="{{ entitlements.whatsapp_bot.expires_at.strftime('%Y-%m-%d') if entitlements.whatsapp_bot.expires_at else '' }}">
@@ -93,18 +95,20 @@
                 <!-- Renewal Desk Core App -->
                 <div class="p-3 border rounded mb-3 bg-light-subtle">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="feat_renewal_desk" name="feat_renewal_desk" {% if entitlements.renewal_desk.enabled %}checked{% endif %}>
-                                <label class="form-check-label fw-bold" for="feat_renewal_desk">Renewal Desk Mobile App (`renewal_desk`)</label>
+                        <div class="d-flex align-items-center">
+                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
+                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_renewal_desk" name="feat_renewal_desk" {% if entitlements.renewal_desk.enabled %}checked{% endif %}>
                             </div>
-                            <small class="text-secondary ms-4 ps-1 d-block">Mobile CRM, member management, renewals, payments</small>
+                            <div class="ms-3">
+                                <label class="form-check-label fw-bold text-dark m-0" for="feat_renewal_desk" style="cursor: pointer;">Renewal Desk Mobile App (`renewal_desk`)</label>
+                                <small class="text-secondary d-block">Mobile CRM, member management, renewals, payments</small>
+                            </div>
                         </div>
                         <span class="badge {{ 'status-active' if entitlements.renewal_desk.is_active() else 'status-suspended' }}">
                             {{ 'Active' if entitlements.renewal_desk.is_active() else 'Inactive' }}
                         </span>
                     </div>
-                    <div class="row g-2 align-items-center ms-4">
+                    <div class="row g-2 align-items-center ms-5">
                         <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
                         <div class="col-auto">
                             <input type="date" class="form-control form-control-sm" name="expiry_renewal_desk" value="{{ entitlements.renewal_desk.expires_at.strftime('%Y-%m-%d') if entitlements.renewal_desk.expires_at else '' }}">
@@ -115,18 +119,20 @@
                 <!-- Biometric Turnstile Bridge -->
                 <div class="p-3 border rounded mb-3 bg-light-subtle">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="feat_biometric" name="feat_biometric" {% if entitlements.biometric.enabled %}checked{% endif %}>
-                                <label class="form-check-label fw-bold" for="feat_biometric">Biometric Turnstile Hardware Bridge (`biometric`)</label>
+                        <div class="d-flex align-items-center">
+                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
+                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_biometric" name="feat_biometric" {% if entitlements.biometric.enabled %}checked{% endif %}>
                             </div>
-                            <small class="text-secondary ms-4 ps-1 d-block">On-premise access control gate sync on expiry & renewal</small>
+                            <div class="ms-3">
+                                <label class="form-check-label fw-bold text-dark m-0" for="feat_biometric" style="cursor: pointer;">Biometric Turnstile Hardware Bridge (`biometric`)</label>
+                                <small class="text-secondary d-block">On-premise access control gate sync on expiry & renewal</small>
+                            </div>
                         </div>
                         <span class="badge {{ 'status-active' if entitlements.biometric.is_active() else 'status-suspended' }}">
                             {{ 'Active' if entitlements.biometric.is_active() else 'Inactive' }}
                         </span>
                     </div>
-                    <div class="row g-2 align-items-center ms-4">
+                    <div class="row g-2 align-items-center ms-5">
                         <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
                         <div class="col-auto">
                             <input type="date" class="form-control form-control-sm" name="expiry_biometric" value="{{ entitlements.biometric.expires_at.strftime('%Y-%m-%d') if entitlements.biometric.expires_at else '' }}">
@@ -137,18 +143,20 @@
                 <!-- Advanced Analytics -->
                 <div class="p-3 border rounded mb-3 bg-light-subtle">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="feat_advanced_reports" name="feat_advanced_reports" {% if entitlements.advanced_reports.enabled %}checked{% endif %}>
-                                <label class="form-check-label fw-bold" for="feat_advanced_reports">Advanced Analytics (`advanced_reports`)</label>
+                        <div class="d-flex align-items-center">
+                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
+                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_advanced_reports" name="feat_advanced_reports" {% if entitlements.advanced_reports.enabled %}checked{% endif %}>
                             </div>
-                            <small class="text-secondary ms-4 ps-1 d-block">Periodized revenue forecasts and financial breakdowns</small>
+                            <div class="ms-3">
+                                <label class="form-check-label fw-bold text-dark m-0" for="feat_advanced_reports" style="cursor: pointer;">Advanced Analytics (`advanced_reports`)</label>
+                                <small class="text-secondary d-block">Periodized revenue forecasts and financial breakdowns</small>
+                            </div>
                         </div>
                         <span class="badge {{ 'status-active' if entitlements.advanced_reports.is_active() else 'status-suspended' }}">
                             {{ 'Active' if entitlements.advanced_reports.is_active() else 'Inactive' }}
                         </span>
                     </div>
-                    <div class="row g-2 align-items-center ms-4">
+                    <div class="row g-2 align-items-center ms-5">
                         <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
                         <div class="col-auto">
                             <input type="date" class="form-control form-control-sm" name="expiry_advanced_reports" value="{{ entitlements.advanced_reports.expires_at.strftime('%Y-%m-%d') if entitlements.advanced_reports.expires_at else '' }}">
