@@ -255,7 +255,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
       `/api/mobile/v1/bot/conversations/${selectedLead.conversation_id}/reply`,
       {
         method: 'POST',
-        body: JSON.stringify({ message: replyText.trim() }),
+        body: { message: replyText.trim() },
       }
     );
     if (res.ok) {
@@ -286,10 +286,10 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
               '/api/mobile/v1/whatsapp/broadcast',
               {
                 method: 'POST',
-                body: JSON.stringify({
+                body: {
                   message: broadcastMessage.trim(),
                   audience: broadcastAudience,
-                }),
+                },
               }
             );
 
@@ -462,7 +462,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           <ScrollView contentContainerStyle={styles.broadcastContainer} showsVerticalScrollIndicator={false}>
             {broadcastSuccess ? (
               <View style={styles.successBanner}>
-                <Icon name="check" size={20} color={colors.success} />
+                <Icon name="receipt" size={20} color={colors.success} />
                 <Text style={styles.successBannerText}>{broadcastSuccess}</Text>
               </View>
             ) : null}
@@ -576,7 +576,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
               <ErrorState message={leadsError} onRetry={refreshLeads} />
             ) : leads.length === 0 ? (
               <EmptyState
-                icon={<Icon name="people" size={40} color={colors.muted} />}
+                icon={<Icon name="members" size={40} color={colors.muted} />}
                 title="No AI leads yet"
                 subtitle="New prospect inquiries from WhatsApp will appear here."
               />

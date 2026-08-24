@@ -11,10 +11,22 @@ import {
 import { AppHeader } from '../components/AppHeader';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Plan } from '../types';
+
+/** Map gym timezone to a phone country prefix. */
+function getCountryPrefix(timezone?: string): string {
+  if (!timezone) return '';
+  const tz = timezone.toLowerCase();
+  if (tz.startsWith('asia/kolkata') || tz.startsWith('asia/calcutta') || tz === 'ist') return '+91';
+  if (tz.startsWith('america/')) return '+1';
+  if (tz.startsWith('europe/london')) return '+44';
+  if (tz.startsWith('asia/dubai')) return '+971';
+  if (tz.startsWith('asia/singapore')) return '+65';
+  return '';
+}
 
 type AddMemberScreenProps = {
   onBack: () => void;
@@ -24,8 +36,11 @@ type AddMemberScreenProps = {
 };
 
 export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans = [] }: AddMemberScreenProps) {
+  const session = getCachedSession();
+  const countryPrefix = getCountryPrefix(session?.gymTimezone);
+
   const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(countryPrefix);
   const [email, setEmail] = useState('');
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(plans.length > 0 ? plans[0].id : null);
   const [notes, setNotes] = useState('');
@@ -109,7 +124,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans = [] 
                 label="Phone Number *"
                 value={phone}
                 onChangeText={(t) => { setPhone(t); setErrors((e) => ({ ...e, phone: '' })); }}
-                placeholder="Enter phone number"
+                placeholder={countryPrefix ? `${countryPrefix} 9876543210` : 'Enter phone number'}
                 error={errors.phone}
                 keyboardType="phone-pad"
                 returnKeyType="next"

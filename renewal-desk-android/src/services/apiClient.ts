@@ -249,6 +249,7 @@ export async function login(email: string, password: string): Promise<ApiResult<
       userId: String(data.user.id),
       userName: data.user.full_name,
       userRole: data.user.role,
+      gymTimezone: data.gym.timezone,
     };
     await saveSession(session);
     cachedSession = session;
