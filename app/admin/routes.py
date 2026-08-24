@@ -61,6 +61,126 @@ def gyms():
     return render_template("admin/gyms.html", pagination=pagination, status=status)
 
 
+@admin_bp.route("/gyms/create", methods=["GET", "POST"])
+@login_required
+@roles_required("super_admin")
+def create_gym():
+    from datetime import date, timedelta
+    from flask_login import current_user
+    from app.models import MembershipPlan, NotificationTemplate, QRSettings
+    from app.models.bot import FeatureEntitlement, GymBotConfig
+    from app.utils.helpers import slugify
+
+    if request.method == "POST":
+        gym_name = (request.form.get("gym_name") or "").strip()
+        owner_name = (request.form.get("owner_name") or "").strip()
+        email = (request.form.get("email") or "").strip().lower()
+        password = (request.form.get("password") or "").strip()
+        phone = (request.form.get("phone") or "").strip()
+        address = (request.form.get("address") or "").strip()
+        subscription_status = request.form.get("subscription_status") or "active"
+        max_members_str = (request.form.get("max_members") or "").strip()
+        enable_bot = request.form.get("enable_bot") == "on"
+
+        if not gym_name or not email or not password or not owner_name:
+            flash("Gym name, owner name, email, and password are required.", "danger")
+            return render_template("admin/create_gym.html")
+
+        if len(password) < 6:
+            flash("Password must be at least 6 characters long.", "danger")
+            return render_template("admin/create_gym.html")
+
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            flash(f"A user with email '{email}' already exists.", "danger")
+            return render_template("admin/create_gym.html")
+
+        slug_base = slugify(gym_name)
+        slug = slug_base
+        counter = 2
+        while Gym.query.filter_by(slug=slug).first():
+            slug = f"{slug_base}-{counter}"
+            counter += 1
+
+        max_members = int(max_members_str) if max_members_str.isdigit() else 500
+
+        gym = Gym(
+            name=gym_name,
+            slug=slug,
+            email=email,
+            phone=phone or None,
+            address=address or None,
+            status="active",
+            subscription_status=subscription_status,
+            trial_ends_at=date.today() + timedelta(days=30),
+            max_members=max_members,
+        )
+        db.session.add(gym)
+        db.session.flush()
+
+        owner = User(
+            gym_id=gym.id,
+            email=email,
+            full_name=owner_name,
+            role="gym_owner",
+            is_active=True,
+        )
+        owner.set_password(password)
+        db.session.add(owner)
+
+        # Standard initial plans and settings
+        db.session.add(MembershipPlan(gym_id=gym.id, name="Monthly Standard", duration_days=30, price=1500))
+        db.session.add(MembershipPlan(gym_id=gym.id, name="Quarterly Transformation", duration_days=90, price=4000))
+        db.session.add(MembershipPlan(gym_id=gym.id, name="Annual Champion", duration_days=365, price=12000))
+        db.session.add(QRSettings(gym_id=gym.id, payment_label=gym.name))
+        db.session.add(
+            NotificationTemplate(
+                gym_id=gym.id,
+                name="Default renewal reminder",
+                days_before=3,
+                message_body=(
+                    "Hi {{ member_name }}, your {{ gym_name }} membership expires on "
+                    "{{ expiry_date }}. Please complete your renewal payment to keep access active."
+                ),
+            )
+        )
+        # Default Bot Config
+        bot_cfg = GymBotConfig(
+            gym_id=gym.id,
+            greeting_message=f"Welcome to *{gym.name}*! 💪 How can I help you today?",
+            opening_hours="6:00 AM - 10:00 PM (Mon-Sat), 8:00 AM - 2:00 PM (Sun)",
+            trial_enabled=True,
+            trial_price=0,
+            trial_duration_days=1,
+            handover_enabled=True,
+        )
+        db.session.add(bot_cfg)
+
+        # Default feature entitlements
+        features = ["renewal_desk", "whatsapp_bot", "biometric", "advanced_reports"]
+        for feat in features:
+            is_enabled = True if (feat != "whatsapp_bot" or enable_bot) else False
+            db.session.add(FeatureEntitlement(gym_id=gym.id, feature=feat, enabled=is_enabled))
+
+        audit(
+            action="admin_create_gym",
+            resource_type="gym",
+            resource_id=gym.id,
+            gym_id=gym.id,
+            metadata={"created_by": current_user.id, "owner_email": email, "gym_name": gym.name},
+        )
+        db.session.commit()
+
+        flash(
+            f"🎉 Gym '{gym.name}' created successfully! "
+            f"Owner Login ID: {email} | Password: {password}",
+            "success",
+        )
+        return redirect(url_for("admin.gym_detail", gym_id=gym.id))
+
+    return render_template("admin/create_gym.html")
+
+
 @admin_bp.post("/gyms/<int:gym_id>/toggle")
 @login_required
 @roles_required("super_admin")

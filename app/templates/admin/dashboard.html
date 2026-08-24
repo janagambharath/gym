@@ -2,7 +2,8 @@
 {% block title %}Admin | RenewalDesk{% endblock %}
 {% block page_title %}Platform Dashboard{% endblock %}
 {% block page_actions %}
-<a class="btn btn-primary" href="{{ url_for('admin.gyms') }}"><i class="bi bi-buildings"></i> Manage gyms</a>
+<a class="btn btn-primary" href="{{ url_for('admin.create_gym') }}"><i class="bi bi-plus-circle me-1"></i> Create new gym</a>
+<a class="btn btn-outline-secondary ms-2" href="{{ url_for('admin.gyms') }}"><i class="bi bi-buildings me-1"></i> Manage gyms</a>
 {% endblock %}
 {% block content %}
 <div class="stats-grid">

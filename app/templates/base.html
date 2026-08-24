@@ -36,7 +36,7 @@
                 <a class="nav-item {{ 'active' if request.endpoint == 'admin.dashboard' else '' }}" href="{{ url_for('admin.dashboard') }}">
                     <i class="bi bi-speedometer2 nav-icon"></i> Dashboard
                 </a>
-                <a class="nav-item {{ 'active' if request.endpoint in ['admin.gyms', 'admin.gym_detail'] else '' }}" href="{{ url_for('admin.gyms') }}">
+                <a class="nav-item {{ 'active' if request.endpoint in ['admin.gyms', 'admin.gym_detail', 'admin.create_gym'] else '' }}" href="{{ url_for('admin.gyms') }}">
                     <i class="bi bi-buildings nav-icon"></i> Gyms
                 </a>
                 {% else %}

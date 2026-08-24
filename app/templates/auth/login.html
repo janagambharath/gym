@@ -21,8 +21,7 @@
                 {{ form.remember.label(class="form-check-label") }}
             </div>
             <div>
-                <a href="{{ url_for('auth.forgot_password') }}" class="small text-muted me-2">Forgot password?</a>
-                <a href="{{ url_for('auth.register') }}" class="small text-muted">Create gym</a>
+                <a href="{{ url_for('auth.forgot_password') }}" class="small text-muted">Forgot password?</a>
             </div>
         </div>
         {{ form.submit(class="btn btn-primary w-100") }}

@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Gyms | RenewalDesk{% endblock %}
 {% block page_title %}Gyms{% endblock %}
+{% block page_actions %}
+<a class="btn btn-primary" href="{{ url_for('admin.create_gym') }}"><i class="bi bi-plus-circle me-1"></i> Create new gym</a>
+{% endblock %}
 {% block content %}
 <div class="panel">
     <form class="row g-2 mb-3" method="get">
