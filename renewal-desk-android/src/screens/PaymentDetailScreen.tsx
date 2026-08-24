@@ -33,6 +33,7 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
   const [error, setError] = useState<string | undefined>();
   const [showVerify, setShowVerify] = useState(false);
   const [showReject, setShowReject] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
   const [acting, setActing] = useState(false);
 
   const fetchPayment = useCallback(() => apiRequest<Payment>(`/api/mobile/v1/payments/${paymentId}`).then((res) => {
@@ -76,6 +77,20 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
       Alert.alert('Error', res.error.message);
     }
   }, [paymentId, fetchPayment, onUpdated]);
+
+  const handleDelete = useCallback(async () => {
+    setActing(true);
+    const res = await apiRequest(`/api/mobile/v1/payments/${paymentId}`, { method: 'DELETE' });
+    setActing(false);
+    setShowDelete(false);
+    if (res.ok) {
+      Alert.alert('Deleted', 'Payment record has been removed.');
+      onUpdated?.();
+      onBack();
+    } else {
+      Alert.alert('Error', res.error.message);
+    }
+  }, [paymentId, onUpdated, onBack]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -152,6 +167,17 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
               />
             </View>
           ) : null}
+
+          {/* Delete Payment Button */}
+          <View style={styles.deleteSection}>
+            <PrimaryButton
+              title="Delete Payment"
+              variant="outline"
+              onPress={() => setShowDelete(true)}
+              icon={<Icon name="delete" size={18} color={colors.critical} />}
+              style={styles.deleteButton}
+            />
+          </View>
         </ScrollView>
       )}
 
@@ -175,6 +201,17 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
         loading={acting}
         onConfirm={() => void handleReject()}
         onCancel={() => setShowReject(false)}
+      />
+
+      <ConfirmDialog
+        visible={showDelete}
+        title="Delete Payment"
+        message="Are you sure you want to delete this payment record? If this payment extended the membership, the expiry date will be reverted safely."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        loading={acting}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setShowDelete(false)}
       />
     </SafeAreaView>
   );
@@ -216,4 +253,10 @@ const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
   sectionHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   sectionTitle: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold },
+  deleteSection: {
+    marginTop: spacing.sm,
+  },
+  deleteButton: {
+    borderColor: colors.critical,
+  },
 });

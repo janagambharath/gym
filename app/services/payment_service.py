@@ -82,3 +82,22 @@ def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None
     payment.verified_by_id = verified_by_id
     payment.verified_at = utcnow()
     invalidate_dashboard_cache(payment.gym_id)
+
+
+def delete_payment(payment: PaymentVerification) -> None:
+    """Safely delete a payment verification record and revert any renewal history."""
+    gym_id = payment.gym_id
+    member = payment.member
+    renewal = RenewalHistory.query.filter_by(payment_verification_id=payment.id).first()
+    if renewal:
+        if member and member.membership_end == renewal.new_end:
+            member.membership_end = renewal.previous_end
+            if renewal.previous_end:
+                gym_tz = member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
+                today = today_for_gym(gym_tz)
+                member.status = "active" if renewal.previous_end >= today else "expired"
+        db.session.delete(renewal)
+
+    db.session.delete(payment)
+    invalidate_dashboard_cache(gym_id)
+

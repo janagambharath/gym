@@ -15,7 +15,7 @@ from app.models import Member, MobileIdempotencyKey, PaymentVerification
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
-from app.services.payment_service import reject_payment, verify_payment
+from app.services.payment_service import delete_payment, reject_payment, verify_payment
 from app.services.timezone_service import today_for_gym
 
 
@@ -236,3 +236,27 @@ def register_payments_routes(bp):
             return error_response("CONFLICT", str(exc), 409)
 
         return jsonify({"success": True, "data": {"message": "Payment rejected."}})
+
+    @bp.route("/payments/<int:payment_id>", methods=["DELETE"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def delete_payment_endpoint(payment_id: int):
+        payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
+        if payment is None:
+            return error_response("NOT_FOUND", "Payment not found.", 404)
+        try:
+            delete_payment(payment)
+            audit(
+                action="delete_payment",
+                resource_type="payment_verification",
+                resource_id=payment_id,
+                gym_id=g.gym_id,
+                actor_id=g.current_user.id,
+            )
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            return error_response("DB_ERROR", str(exc), 500)
+
+        return jsonify({"success": True, "data": {"message": "Payment deleted successfully."}})
+
