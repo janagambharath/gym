@@ -11,6 +11,7 @@ from app.models import Member, QRSettings, ReminderLog
 from app.services.audit_service import audit
 from app.services.error_messages import friendly_error
 from app.services.reminder_service import create_manual_test_log, ensure_default_template, send_reminder
+from app.services.whatsapp_service import WhatsAppService
 
 
 def _serialize_reminder_log(log: ReminderLog) -> dict:
