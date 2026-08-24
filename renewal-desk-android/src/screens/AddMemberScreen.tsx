@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -35,18 +35,32 @@ type AddMemberScreenProps = {
   plans?: Plan[];
 };
 
-export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans = [] }: AddMemberScreenProps) {
+export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: initialPlans = [] }: AddMemberScreenProps) {
   const session = getCachedSession();
   const countryPrefix = getCountryPrefix(session?.gymTimezone);
 
+  const [plans, setPlans] = useState<Plan[]>(initialPlans);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState(countryPrefix);
   const [email, setEmail] = useState('');
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(plans.length > 0 ? plans[0].id : null);
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlans.length > 0 ? initialPlans[0].id : null);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Ensure fresh plans are loaded
+  useEffect(() => {
+    let cancelled = false;
+    void apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings').then((res) => {
+      if (cancelled) return;
+      if (res.ok && res.data.plans.length > 0) {
+        setPlans(res.data.plans);
+        setSelectedPlanId((prev) => prev ?? res.data.plans[0].id);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId);
 
