@@ -44,3 +44,8 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     renewal = db.relationship("RenewalHistory", back_populates="payment_verification", uselist=False)
     verified_by = db.relationship("User")
 
+    @property
+    def payment_mode(self) -> str:
+        return self.method or "upi"
+
+

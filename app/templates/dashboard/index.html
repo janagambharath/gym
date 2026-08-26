@@ -194,7 +194,8 @@
                         <div class="fw-semibold">
                             <a href="{{ url_for('members.detail', member_id=payment.member_id) }}">{{ payment.member.full_name }}</a>
                         </div>
-                        <div class="text-secondary small">{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '—' }} · {{ payment.payment_mode.upper() }}</div>
+                        <div class="text-secondary small">{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '—' }} · {{ (payment.method or payment.payment_mode or 'UPI')|upper }}</div>
+
                     </div>
                     <div class="text-end">
                         <div class="fw-bold">₹{{ payment.amount }}</div>

@@ -140,7 +140,8 @@
                     <tr>
                         <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '&mdash;'|safe }}</td>
                         <td><strong>₹{{ payment.amount }}</strong></td>
-                        <td><span class="badge bg-light text-dark border">{{ payment.payment_mode.upper() }}</span></td>
+                        <td><span class="badge bg-light text-dark border">{{ (payment.method or payment.payment_mode or 'UPI')|upper }}</span></td>
+
                         <td><span class="badge status-{{ payment.status }}">{{ payment.status }}</span></td>
                         <td>{{ payment.reference or '&mdash;'|safe }}</td>
                     </tr>

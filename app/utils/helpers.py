@@ -8,6 +8,9 @@ from urllib.parse import parse_qs, urlparse
 from flask import current_app
 from itsdangerous import URLSafeTimedSerializer
 
+from app.services.timezone_service import today_for_gym
+
+
 
 E164_RE = re.compile(r"^\+\d{7,15}$")
 

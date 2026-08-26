@@ -11,8 +11,10 @@ from app.extensions import db
 from app.models import Gym, Member, NotificationTemplate, ReminderLog
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
+from app.services.timezone_service import today_for_gym
 from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
-from app.utils.helpers import phone_to_whatsapp, today_for_gym
+from app.utils.helpers import phone_to_whatsapp
+
 
 _logger = logging.getLogger(__name__)
 
