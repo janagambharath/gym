@@ -14,7 +14,10 @@ from app.models.bot import (
     GymBotConfig,
 )
 from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallation
+from app.models.bridge_release import BridgeRelease
 from app.models.gym import Gym
+
+from app.models.gym_deployment import GymDeployment
 from app.models.member import Member, MembershipPlan
 from app.models.mobile_token import MobileRefreshToken
 from app.models.mobile_idempotency import MobileIdempotencyKey
@@ -40,9 +43,12 @@ __all__ = [
     "BridgeAttendance",
     "BridgeCommand",
     "BridgeInstallation",
+    "BridgeRelease",
     "FeatureEntitlement",
+
     "Gym",
     "GymBotConfig",
+    "GymDeployment",
     "Member",
     "MembershipPlan",
     "MobileRefreshToken",
@@ -56,4 +62,5 @@ __all__ = [
     "UserPushToken",
     "db",
 ]
+
 

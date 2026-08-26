@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Attendance Punches | RenewalDesk{% endblock %}
+{% block page_title %}Live Attendance Punches{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('biometric.index') }}"><i class="bi bi-arrow-left"></i> Bridge Overview</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Member</th>
+                    <th>Enroll Number</th>
+                    <th>Punch Time</th>
+                    <th>Verification</th>
+                    <th>Access Result</th>
+                    <th>Received At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if pagination and pagination.items %}
+                {% for punch in pagination.items %}
+                <tr>
+                    <td>
+                        {% if punch.member %}
+                        <a href="{{ url_for('members.detail', member_id=punch.member.id) }}">{{ punch.member.full_name }}</a>
+                        {% else %}
+                        <span class="text-muted">Unlinked Member</span>
+                        {% endif %}
+                    </td>
+                    <td><code>{{ punch.device_enroll_number }}</code></td>
+                    <td>{{ punch.event_time.strftime('%d %b %Y, %H:%M:%S') }}</td>
+                    <td>
+                        <span class="badge bg-light text-dark border">
+                            {% if punch.verify_method == 1 %}Fingerprint
+                            {% elif punch.verify_method == 2 %}Face
+                            {% elif punch.verify_method == 3 %}RFID Card
+                            {% else %}Password / Other ({{ punch.verify_method }}){% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        {% if punch.is_invalid %}
+                        <span class="badge bg-danger text-white">Access Denied (Expired/Blocked)</span>
+                        {% else %}
+                        <span class="badge bg-success text-white">Access Granted</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-secondary small">{{ punch.received_at.strftime('%H:%M:%S') }}</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr><td colspan="6" class="text-secondary text-center py-4">No attendance activity recorded yet.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if pagination %}
+    {% include "partials/pagination.html" %}
+    {% endif %}
+</div>
+{% endblock %}

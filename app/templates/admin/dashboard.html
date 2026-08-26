@@ -1,51 +1,220 @@
 {% extends "base.html" %}
-{% block title %}Admin | RenewalDesk{% endblock %}
-{% block page_title %}Platform Dashboard{% endblock %}
+{% block title %}Renewal Desk Operations & Super Admin Control Center{% endblock %}
+{% block page_title %}Renewal Desk Operations{% endblock %}
 {% block page_actions %}
-<a class="btn btn-primary" href="{{ url_for('admin.create_gym') }}"><i class="bi bi-plus-circle me-1"></i> Create new gym</a>
-<a class="btn btn-outline-secondary ms-2" href="{{ url_for('admin.gyms') }}"><i class="bi bi-buildings me-1"></i> Manage gyms</a>
+<a class="btn btn-primary" href="{{ url_for('admin.onboard_start') }}"><i class="bi bi-plus-circle-fill me-1"></i> + ONBOARD NEW GYM</a>
+<a class="btn btn-outline-secondary ms-2" href="{{ url_for('admin.gyms') }}"><i class="bi bi-buildings me-1"></i> Gym Directory</a>
 {% endblock %}
+
 {% block content %}
-<div class="stats-grid">
-    <div class="stat-card"><span>Total gyms</span><strong>{{ stats.gyms }}</strong></div>
-    <div class="stat-card accent-success"><span>Active gyms</span><strong>{{ stats.active_gyms }}</strong></div>
-    <div class="stat-card accent-warn"><span>Platform-wide members</span><strong>{{ stats.members }}</strong></div>
-    <div class="stat-card accent-danger"><span>Verified revenue</span><strong>₹{{ stats.revenue_verified }}</strong></div>
+<!-- 1. PLATFORM OVERVIEW SECTION -->
+<div class="row g-3 mb-4">
+    <!-- Gyms Metric Group -->
+    <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm p-3 h-100 bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-muted small fw-bold text-uppercase">Gym Footprint</span>
+                <i class="bi bi-buildings text-primary fs-5"></i>
+            </div>
+            <div class="d-flex align-items-baseline mb-2">
+                <span class="h2 fw-bold mb-0 me-2">{{ stats.gyms }}</span>
+                <span class="badge bg-success-subtle text-success">{{ stats.active_gyms }} Active</span>
+            </div>
+            <div class="small text-muted d-flex justify-content-between border-top pt-2 mt-auto">
+                <span>🚀 Live: <strong>{{ stats.live_gyms }}</strong></span>
+                <span>⏳ Onboarding: <strong>{{ stats.onboarding_gyms }}</strong></span>
+                <span>⏸ Suspended: <strong>{{ stats.suspended_gyms }}</strong></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Members Metric Group -->
+    <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm p-3 h-100 bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-muted small fw-bold text-uppercase">Members Under Management</span>
+                <i class="bi bi-people text-info fs-5"></i>
+            </div>
+            <div class="d-flex align-items-baseline mb-2">
+                <span class="h2 fw-bold mb-0 me-2">{{ stats.members }}</span>
+                <span class="badge bg-info-subtle text-info">{{ stats.active_members }} Active</span>
+            </div>
+            <div class="small text-muted d-flex justify-content-between border-top pt-2 mt-auto">
+                <span>⏰ Expiring 7d: <strong>{{ stats.expiring_members }}</strong></span>
+                <span>🔄 Renewals MTD: <strong>{{ stats.renewals_this_month }}</strong></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Services Metric Group -->
+    <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm p-3 h-100 bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-muted small fw-bold text-uppercase">Connected Services</span>
+                <i class="bi bi-hdd-network text-success fs-5"></i>
+            </div>
+            <div class="d-flex align-items-baseline mb-2">
+                <span class="h2 fw-bold mb-0 me-2">{{ stats.bridges_online }}</span>
+                <span class="text-muted small">/ {{ stats.bridges_total }} Bridges Online</span>
+            </div>
+            <div class="small text-muted d-flex justify-content-between border-top pt-2 mt-auto">
+                <span>🟢 WhatsApp: <strong>{{ stats.whatsapp_connected }}</strong></span>
+                <span>🤖 AI Active: <strong>{{ stats.ai_active }}</strong></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Operations & Revenue Metric Group -->
+    <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm p-3 h-100 bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-muted small fw-bold text-uppercase">Platform Revenue & Queue</span>
+                <i class="bi bi-currency-rupee text-warning fs-5"></i>
+            </div>
+            <div class="d-flex align-items-baseline mb-2">
+                <span class="h2 fw-bold mb-0 me-2 text-success">₹{{ stats.revenue_verified }}</span>
+            </div>
+            <div class="small text-muted d-flex justify-content-between border-top pt-2 mt-auto">
+                <span>💳 Pending Verif: <strong>{{ stats.pending_payments }}</strong></span>
+                <span>⚠️ Open Alerts: <strong>{{ stats.open_issues_count }}</strong></span>
+            </div>
+        </div>
+    </div>
 </div>
-<div class="row g-4 mt-1">
+
+<!-- 2. DEPLOYMENT PERFORMANCE BAR -->
+<div class="card border-0 shadow-sm p-3 mb-4 bg-primary text-white">
+    <div class="row align-items-center g-3">
+        <div class="col-lg-3">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-speedometer2 fs-2 me-3 text-white-50"></i>
+                <div>
+                    <div class="small text-white-50 text-uppercase fw-bold">Avg Onboarding Time</div>
+                    <div class="h4 mb-0 fw-bold">{{ stats.avg_setup_time }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-stopwatch fs-2 me-3 text-white-50"></i>
+                <div>
+                    <div class="small text-white-50 text-uppercase fw-bold">Median Setup Speed</div>
+                    <div class="h4 mb-0 fw-bold">{{ stats.median_setup_time }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-rocket-takeoff fs-2 me-3 text-white-50"></i>
+                <div>
+                    <div class="small text-white-50 text-uppercase fw-bold">Live This Month</div>
+                    <div class="h4 mb-0 fw-bold">{{ stats.gyms_onboarded_month }} Gyms</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 text-lg-end">
+            <a href="{{ url_for('admin.onboard_start') }}" class="btn btn-light fw-bold text-primary px-3 shadow-sm">
+                <i class="bi bi-plus-circle me-1"></i> Start Gym Onboarding
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- 3. PLATFORM ALERTS FEED -->
+{% if alerts %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-danger-subtle text-danger border-0 d-flex justify-content-between align-items-center py-2 px-3">
+        <span class="fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Platform Operational Alerts ({{ alerts|length }})</span>
+        <small class="text-muted">Live cross-gym issue detector</small>
+    </div>
+    <div class="list-group list-group-flush">
+        {% for alert in alerts %}
+        <a href="{{ alert.url }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2 px-3">
+            <div class="d-flex align-items-center">
+                <span class="badge bg-{{ alert.type }} me-3 p-2 rounded-circle"><i class="bi {{ alert.icon }}"></i></span>
+                <div>
+                    <div class="fw-bold">{{ alert.title }}</div>
+                    <div class="small text-muted">{{ alert.details }}</div>
+                </div>
+            </div>
+            <span class="btn btn-sm btn-outline-secondary">Open Gym <i class="bi bi-chevron-right ms-1"></i></span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- 4. RECENT GYMS & OPERATIONS LOG -->
+<div class="row g-4">
     <div class="col-lg-7">
-        <div class="panel">
-            <div class="panel-header"><h2>Recent gyms</h2></div>
+        <div class="panel shadow-sm">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2 class="h5 mb-0"><i class="bi bi-buildings text-primary me-2"></i>Recent Gym Deployments</h2>
+                <a href="{{ url_for('admin.gyms') }}" class="btn btn-sm btn-outline-primary">View All</a>
+            </div>
             <div class="table-responsive">
-                <table class="table align-middle">
-                    <thead><tr><th>Gym</th><th>Email</th><th>Status</th><th>Created</th></tr></thead>
+                <table class="table align-middle table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Gym</th>
+                            <th>City / Country</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
                     <tbody>
                     {% for gym in recent_gyms %}
                     <tr>
-                        <td><a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}">{{ gym.name }}</a></td>
-                        <td>{{ gym.email or '—' }}</td>
-                        <td><span class="badge status-{{ gym.status }}">{{ gym.status }}</span></td>
-                        <td>{{ gym.created_at.strftime('%d %b %Y') }}</td>
+                        <td>
+                            <a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}" class="fw-bold text-decoration-none">
+                                {{ gym.name }}
+                            </a>
+                            <div class="small text-muted font-monospace">{{ gym.slug }}</div>
+                        </td>
+                        <td>{{ gym.city or gym.country }}</td>
+                        <td>
+                            <span class="badge status-{{ gym.onboarding_status or gym.status }}">
+                                {{ (gym.onboarding_status or gym.status).title() }}
+                            </span>
+                        </td>
+                        <td class="small text-muted">{{ gym.created_at.strftime('%d %b %Y') }}</td>
+                        <td class="text-end">
+                            <a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}" class="btn btn-sm btn-outline-secondary" title="Deployment Command Center">
+                                <i class="bi bi-speedometer2"></i>
+                            </a>
+                        </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4" class="text-secondary">No gyms yet.</td></tr>
+                    <tr><td colspan="5" class="text-secondary text-center p-4">No gyms onboarded yet. Click '+ ONBOARD NEW GYM' to start.</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
     </div>
+
     <div class="col-lg-5">
-        <div class="panel">
-            <div class="panel-header"><h2>Failed reminders</h2></div>
+        <div class="panel shadow-sm">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2 class="h5 mb-0"><i class="bi bi-whatsapp text-danger me-2"></i>Failed Delivery Logs</h2>
+                <span class="badge bg-danger-subtle text-danger">{{ failed_reminders|length }} Issues</span>
+            </div>
             <div class="list-group list-group-flush">
                 {% for log in failed_reminders %}
-                <div class="list-group-item">
-                    <div class="fw-semibold">{{ log.member.full_name }}</div>
-                    <div class="small text-secondary">{{ log.error_message or 'Provider error' }}</div>
+                <div class="list-group-item py-3">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div class="fw-bold">{{ log.member.full_name if log.member else 'Unknown Member' }}</div>
+                        <span class="badge bg-secondary font-monospace text-xs">{{ log.gym.name if log.gym else 'Gym' }}</span>
+                    </div>
+                    <div class="small text-danger mb-1">{{ log.error_message or 'Provider rejected message' }}</div>
+                    <div class="small text-muted">{{ log.created_at.strftime('%d %b %H:%M') }}</div>
                 </div>
                 {% else %}
-                <div class="list-group-item text-secondary">No failed reminders.</div>
+                <div class="list-group-item text-secondary text-center p-4">
+                    <i class="bi bi-check-circle-fill text-success fs-3 d-block mb-2"></i>
+                    All messaging queues operational. No failed deliveries!
+                </div>
                 {% endfor %}
             </div>
         </div>

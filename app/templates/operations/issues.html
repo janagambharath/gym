@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Issues Center | RenewalDesk{% endblock %}
+{% block page_title %}Operational Issues & Recovery Center{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('gym.dashboard') }}"><i class="bi bi-arrow-left"></i> Dashboard</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="panel-header d-flex justify-content-between align-items-center">
+        <div>
+            <h2>Detected Incidents & Warnings</h2>
+            <p class="text-secondary small mb-0">Centralized recovery hub for failed WhatsApp reminders, biometric sync rejections, offline hardware, and pending payments.</p>
+        </div>
+        <span class="badge {% if issues|length > 0 %}bg-danger{% else %}bg-success{% endif %} fs-6 px-3 py-2">
+            {{ issues|length }} Issue(s) Requiring Attention
+        </span>
+    </div>
+
+    <div class="table-responsive mt-3">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Issue Description</th>
+                    <th>Affected Resource</th>
+                    <th>Reported Time</th>
+                    <th>Suggested Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for issue in issues %}
+                <tr>
+                    <td>
+                        <span class="badge bg-{{ issue.level }} text-white">{{ issue.category }}</span>
+                    </td>
+                    <td>
+                        <strong>{{ issue.title }}</strong>
+                        <div class="text-secondary small">{{ issue.description }}</div>
+                    </td>
+                    <td><code>{{ issue.resource }}</code></td>
+                    <td class="text-secondary small">{{ issue.time.strftime('%d %b %H:%M') if issue.time else '—' }}</td>
+                    <td>
+                        {% if issue.action_method == 'POST' %}
+                        <form method="post" action="{{ issue.action_url }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-{{ issue.level }}">
+                                <i class="bi bi-arrow-clockwise"></i> {{ issue.action_label }}
+                            </button>
+                        </form>
+                        {% else %}
+                        <a href="{{ issue.action_url }}" class="btn btn-sm btn-outline-{{ issue.level }}">
+                            {{ issue.action_label }}
+                        </a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center py-5 text-success">
+                        <i class="bi bi-check-circle-fill fs-1 d-block mb-2 text-success"></i>
+                        <h5 class="fw-bold">All Systems Healthy!</h5>
+                        <div class="text-muted small">No failed WhatsApp messages, biometric errors, or offline bridges detected.</div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

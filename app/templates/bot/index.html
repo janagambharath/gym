@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}AI Receptionist | RenewalDesk{% endblock %}
+{% block page_title %}AI Receptionist & WhatsApp Desk{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-primary" href="{{ url_for('bot_web.setup') }}"><i class="bi bi-robot"></i> Knowledge Base & Setup</a>
+<a class="btn btn-primary" href="{{ url_for('bot_web.inbox') }}"><i class="bi bi-chat-dots"></i> Open Chat Inbox</a>
+{% endblock %}
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-primary">
+            <div class="text-secondary small fw-semibold">TOTAL CONVERSATIONS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold">{{ total_conversations }}</span>
+                <i class="bi bi-chat-left-text fs-3 text-primary"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Inbound WhatsApp chats</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-warning">
+            <div class="text-secondary small fw-semibold">HUMAN TAKEOVERS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold">{{ active_handovers }}</span>
+                <i class="bi bi-person-fill-gear fs-3 text-warning"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Currently handled by staff</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-info">
+            <div class="text-secondary small fw-semibold">CAPTURED LEADS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold">{{ total_leads }}</span>
+                <i class="bi bi-funnel fs-3 text-info"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Prospective members captured</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-success">
+            <div class="text-secondary small fw-semibold">TRIALS BOOKED</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold text-success">{{ trials_booked }}</span>
+                <i class="bi bi-calendar-check fs-3 text-success"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Free workout trials booked</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2>Recent Inbound Chats</h2>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('bot_web.inbox') }}">View All Inbox</a>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for conv in recent_conversations %}
+                <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('bot_web.inbox', conv_id=conv.id) }}">
+                    <div>
+                        <div class="fw-semibold">{{ conv.user_phone }}</div>
+                        <div class="text-secondary small">Last active: {{ conv.last_message_at.strftime('%d %b %H:%M') if conv.last_message_at else '—' }}</div>
+                    </div>
+                    <div>
+                        {% if conv.handover_to_human %}
+                        <span class="badge bg-warning text-dark">Staff Handover</span>
+                        {% else %}
+                        <span class="badge bg-primary text-white">AI Handling</span>
+                        {% endif %}
+                    </div>
+                </a>
+                {% else %}
+                <div class="list-group-item text-secondary py-3 text-center">No conversation history yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="panel">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2>Recent Leads Captured</h2>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('bot_web.leads') }}">View Pipeline</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Lead</th><th>Phone</th><th>Status</th><th>Captured</th></tr></thead>
+                    <tbody>
+                        {% for lead in recent_leads %}
+                        <tr>
+                            <td>{{ lead.name or 'Prospect' }}</td>
+                            <td>{{ lead.phone }}</td>
+                            <td><span class="badge status-{{ lead.status }}">{{ lead.status.replace('_', ' ').title() }}</span></td>
+                            <td class="text-secondary small">{{ lead.created_at.strftime('%d %b %H:%M') if lead.created_at else '—' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-secondary text-center py-3">No leads captured yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

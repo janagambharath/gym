@@ -38,7 +38,9 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     renewal_days = db.Column(db.Integer, nullable=False, default=30)
     notes = db.Column(db.Text, nullable=True)
     verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="payments")
     renewal = db.relationship("RenewalHistory", back_populates="payment_verification", uselist=False)
     verified_by = db.relationship("User")
+

@@ -10,7 +10,16 @@ from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.forms import MemberForm
-from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models import (
+    BridgeAttendance,
+    BridgeCommand,
+    BridgeInstallation,
+    Gym,
+    Member,
+    MembershipPlan,
+    PaymentVerification,
+    RenewalHistory,
+)
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
@@ -224,7 +233,29 @@ def detail(member_id: int):
         .order_by(PaymentVerification.created_at.desc())
         .all()
     )
-    return render_template("members/detail.html", member=member, renewals=renewals, payments=payments)
+    commands = (
+        BridgeCommand.query.filter_by(gym_id=current_user.gym_id, member_id=member.id)
+        .order_by(BridgeCommand.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    attendance = (
+        BridgeAttendance.query.filter_by(gym_id=current_user.gym_id, member_id=member.id)
+        .order_by(BridgeAttendance.event_time.desc())
+        .limit(8)
+        .all()
+    )
+    installation = BridgeInstallation.query.filter_by(gym_id=current_user.gym_id).first()
+
+    return render_template(
+        "members/detail.html",
+        member=member,
+        renewals=renewals,
+        payments=payments,
+        commands=commands,
+        attendance=attendance,
+        installation=installation,
+    )
 
 
 @members_bp.route("/<int:member_id>/edit", methods=["GET", "POST"])

@@ -32,8 +32,17 @@ class User(UserMixin, TimestampMixin, db.Model):
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
     failed_login_count = db.Column(db.Integer, nullable=False, default=0)
     locked_until = db.Column(db.DateTime(timezone=True), nullable=True)
+    must_change_password = db.Column(db.Boolean, nullable=False, default=False)
+    invitation_status = db.Column(db.String(32), nullable=False, default="sent")
+    invited_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    is_temporary_password = db.Column(db.Boolean, nullable=False, default=False)
 
-    gym = db.relationship("Gym", back_populates="users")
+    gym = db.relationship("Gym", back_populates="users", foreign_keys=[gym_id])
+    created_by = db.relationship("User", remote_side=[id], foreign_keys=[created_by_id])
+
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)

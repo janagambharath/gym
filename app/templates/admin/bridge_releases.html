@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% block title %}Bridge Releases & Distribution — Super Admin{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <!-- Breadcrumb & Header -->
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb mb-1">
+          <li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}" class="text-decoration-none">Super Admin</a></li>
+          <li class="breadcrumb-item active">Bridge Releases</li>
+        </ol>
+      </nav>
+      <h1 class="h3 fw-bold mb-0"><i class="bi bi-hdd-network me-2 text-primary"></i>Windows Bridge Release Management</h1>
+      <p class="text-muted small mb-0">Manage versioned Windows Turnstile Bridge packages, distribution channels, SHA-256 integrity, and rollout gating.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('admin.gyms') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-building me-1"></i> Gym Directory
+      </a>
+
+      <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadBridgeModal">
+        <i class="bi bi-cloud-arrow-up me-1"></i> + Upload New Bridge
+      </button>
+    </div>
+  </div>
+
+  <!-- Platform Metrics Banner -->
+  <div class="row g-3 mb-4">
+    <div class="col-xl-2 col-md-4 col-6">
+      <div class="card border-0 shadow-sm rounded-3 h-100 bg-body-tertiary">
+        <div class="card-body p-3">
+          <span class="text-muted small text-uppercase fw-semibold">Total Bridges</span>
+          <div class="h3 fw-bold mt-1 mb-0">{{ metrics.total_bridges }}</div>
+          <span class="text-muted small">{{ metrics.online_bridges }} Online, {{ metrics.offline_bridges }} Offline</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-4 col-6">
+      <div class="card border-0 shadow-sm rounded-3 h-100 bg-body-tertiary">
+        <div class="card-body p-3">
+          <span class="text-muted small text-uppercase fw-semibold">V1 Installations</span>
+          <div class="h3 fw-bold text-success mt-1 mb-0">{{ metrics.v1_count }}</div>
+          <span class="badge bg-success-subtle text-success mt-1">Stable / Current</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-4 col-6">
+      <div class="card border-0 shadow-sm rounded-3 h-100 bg-body-tertiary">
+        <div class="card-body p-3">
+          <span class="text-muted small text-uppercase fw-semibold">V2 Installations</span>
+          <div class="h3 fw-bold text-primary mt-1 mb-0">{{ metrics.v2_count }}</div>
+          <span class="badge bg-primary-subtle text-primary mt-1">Next-Gen Pairing</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-4 col-6">
+      <div class="card border-0 shadow-sm rounded-3 h-100 bg-body-tertiary">
+        <div class="card-body p-3">
+          <span class="text-muted small text-uppercase fw-semibold">Latest Stable</span>
+          <div class="h4 fw-bold mt-1 mb-0">v{{ metrics.latest_stable.version if metrics.latest_stable else 'None' }}</div>
+          <span class="text-muted small">Build {{ metrics.latest_stable.build_number if metrics.latest_stable else '-' }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-4 col-6">
+      <div class="card border-0 shadow-sm rounded-3 h-100 bg-body-tertiary">
+        <div class="card-body p-3">
+          <span class="text-muted small text-uppercase fw-semibold">Testing Channel</span>
+          <div class="h3 fw-bold text-warning mt-1 mb-0">{{ metrics.testing_releases }}</div>
+          <span class="text-muted small">In verification gate</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-2 col-md-4 col-6">
+      <div class="card border-0 shadow-sm rounded-3 h-100 bg-body-tertiary">
+        <div class="card-body p-3">
+          <span class="text-muted small text-uppercase fw-semibold">Update Available</span>
+          <div class="h3 fw-bold text-info mt-1 mb-0">{{ metrics.update_available_count }}</div>
+          <span class="text-muted small">Gyms on older versions</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Releases Catalog Table -->
+  <div class="card border-0 shadow-sm rounded-3">
+    <div class="card-header bg-body border-0 py-3 d-flex justify-content-between align-items-center">
+      <h5 class="mb-0 fw-bold"><i class="bi bi-collection me-2"></i>Bridge Release Catalog</h5>
+      <span class="text-muted small">All packages stored securely in protected storage outside public web directory.</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-4">Version & Build</th>
+            <th>Release Channel</th>
+            <th>Supported OS</th>
+            <th>Package File & Size</th>
+            <th>SHA-256 Checksum</th>
+            <th>Installations</th>
+            <th>Downloads</th>
+            <th>Uploaded Date</th>
+            <th class="text-end pe-4">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in releases %}
+          <tr>
+            <td class="ps-4">
+              <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold fs-6">v{{ r.version }}</span>
+                <span class="badge bg-secondary-subtle text-secondary small">Build {{ r.build_number }}</span>
+                {% if r.is_current_stable %}
+                  <span class="badge bg-success text-white small"><i class="bi bi-star-fill me-1"></i>Current Stable</span>
+                {% endif %}
+              </div>
+              <small class="text-muted d-block">Protocol v{{ r.bridge_protocol_version }}</small>
+            </td>
+            <td>
+              {% if r.release_channel == 'stable' %}
+                <span class="badge bg-success-subtle text-success px-2 py-1"><i class="bi bi-check-circle-fill me-1"></i>STABLE</span>
+              {% elif r.release_channel == 'testing' %}
+                <span class="badge bg-warning-subtle text-warning px-2 py-1"><i class="bi bi-cone-striped me-1"></i>TESTING</span>
+              {% else %}
+                <span class="badge bg-secondary-subtle text-secondary px-2 py-1"><i class="bi bi-archive-fill me-1"></i>DEPRECATED</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="small"><i class="bi bi-windows text-primary me-1"></i>{{ r.supported_os }}</span>
+            </td>
+            <td>
+              <div class="fw-semibold small text-truncate" style="max-width: 220px;" title="{{ r.filename }}">{{ r.filename }}</div>
+              <span class="text-muted small">{{ r.formatted_size }}</span>
+            </td>
+            <td>
+              <div class="input-group input-group-sm" style="max-width: 180px;">
+                <input type="text" class="form-control font-monospace form-control-sm text-truncate bg-light" value="{{ r.sha256_checksum }}" readonly title="{{ r.sha256_checksum }}">
+                <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText('{{ r.sha256_checksum }}'); alert('Checksum copied to clipboard!');" title="Copy SHA-256 Checksum">
+                  <i class="bi bi-copy"></i>
+                </button>
+              </div>
+            </td>
+            <td>
+              <span class="badge bg-light text-dark border px-2 py-1">
+                <i class="bi bi-building me-1"></i>{{ release_installations.get(r.id, 0) }} gyms
+              </span>
+            </td>
+            <td>
+              <span class="small text-muted">{{ r.downloads_count or 0 }}</span>
+            </td>
+            <td>
+              <span class="small text-muted">{{ r.created_at.strftime('%d %b %Y, %H:%M') if r.created_at else 'Baseline' }}</span>
+            </td>
+            <td class="text-end pe-4">
+              <div class="d-flex justify-content-end gap-1">
+                <a href="{{ url_for('admin.download_bridge_release', release_id=r.id) }}" class="btn btn-sm btn-outline-primary" title="Download Release Package">
+                  <i class="bi bi-download me-1"></i>Download
+                </a>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#releaseNotesModal{{ r.id }}" title="View Release Notes">
+                  <i class="bi bi-file-text"></i>
+                </button>
+                <div class="dropdown d-inline-block">
+                  <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <i class="bi bi-sliders"></i>
+                  </button>
+                  <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                    <li><h6 class="dropdown-header">Switch Channel</h6></li>
+                    <li>
+                      <form method="POST" action="{{ url_for('admin.update_bridge_release_channel_route', release_id=r.id) }}">
+                        <input type="hidden" name="release_channel" value="stable">
+                        <button type="submit" class="dropdown-item text-success {% if r.release_channel == 'stable' %}active{% endif %}">
+                          <i class="bi bi-check-circle me-2"></i>Promote to STABLE
+                        </button>
+                      </form>
+                    </li>
+                    <li>
+                      <form method="POST" action="{{ url_for('admin.update_bridge_release_channel_route', release_id=r.id) }}">
+                        <input type="hidden" name="release_channel" value="testing">
+                        <button type="submit" class="dropdown-item text-warning {% if r.release_channel == 'testing' %}active{% endif %}">
+                          <i class="bi bi-cone-striped me-2"></i>Set to TESTING
+                        </button>
+                      </form>
+                    </li>
+                    <li>
+                      <form method="POST" action="{{ url_for('admin.update_bridge_release_channel_route', release_id=r.id) }}">
+                        <input type="hidden" name="release_channel" value="deprecated">
+                        <button type="submit" class="dropdown-item text-danger {% if r.release_channel == 'deprecated' %}active{% endif %}">
+                          <i class="bi bi-archive me-2"></i>Mark DEPRECATED
+                        </button>
+                      </form>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Release Notes Modal -->
+          <div class="modal fade" id="releaseNotesModal{{ r.id }}" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content border-0 shadow">
+                <div class="modal-header">
+                  <h5 class="modal-title fw-bold">Release Notes: v{{ r.version }} (Build {{ r.build_number }})</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                  <div class="mb-3">
+                    <span class="badge {% if r.release_channel == 'stable' %}bg-success{% elif r.release_channel == 'testing' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                      {{ r.release_channel.upper() }} CHANNEL
+                    </span>
+                    <span class="text-muted small ms-2">Protocol Version {{ r.bridge_protocol_version }}</span>
+                  </div>
+                  <h6 class="fw-bold small text-uppercase text-muted">What's in this version:</h6>
+                  <div class="p-3 bg-light rounded-3 small font-monospace" style="white-space: pre-wrap;">{{ r.release_notes or 'No release notes provided.' }}</div>
+                  <div class="mt-3 small text-muted">
+                    <div><strong>SHA-256:</strong> <code>{{ r.sha256_checksum }}</code></div>
+                    <div><strong>File Size:</strong> {{ r.formatted_size }}</div>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                  <a href="{{ url_for('admin.download_bridge_release', release_id=r.id) }}" class="btn btn-primary btn-sm">
+                    <i class="bi bi-download me-1"></i>Download Package
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Bridge Release Modal -->
+<div class="modal fade" id="uploadBridgeModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-cloud-arrow-up me-2"></i>Upload New Windows Bridge Package</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="POST" action="{{ url_for('admin.upload_bridge_release_route') }}" enctype="multipart/form-data">
+        <div class="modal-body p-4">
+          <div class="alert alert-info d-flex align-items-center mb-4">
+            <i class="bi bi-shield-check fs-4 me-3"></i>
+            <div>
+              <strong>Integrity & Validation:</strong> Uploaded packages are automatically checked for file type, duplicate versions, and hashed with SHA-256 for secure deployment.
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Version <span class="text-danger">*</span></label>
+              <input type="text" name="version" class="form-control" placeholder="e.g. 2.0.0" required pattern="^[0-9]+(\.[0-9]+)*$" title="Semantic version like 2.0.0">
+              <small class="text-muted">Unique release semantic version</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Build Number <span class="text-danger">*</span></label>
+              <input type="number" name="build_number" class="form-control" placeholder="e.g. 2001" value="2001" required min="1">
+              <small class="text-muted">Monotonically increasing integer build</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Initial Channel <span class="text-danger">*</span></label>
+              <select name="release_channel" class="form-select" required>
+                <option value="testing" selected>TESTING (Recommended for new builds)</option>
+                <option value="stable">STABLE (Production standard)</option>
+                <option value="deprecated">DEPRECATED</option>
+              </select>
+              <small class="text-muted">Keep in TESTING until biometric test gate passes</small>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Supported OS</label>
+              <input type="text" name="supported_os" class="form-control" value="Windows 10/11 x64">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-bold">Bridge Distribution File (.zip, .exe, .msi) <span class="text-danger">*</span></label>
+              <input type="file" name="file" class="form-control" accept=".zip,.exe,.msi" required>
+              <small class="text-muted">Maximum allowed upload size is 200MB.</small>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-bold">Release Notes & Changelog</label>
+              <textarea name="release_notes" rows="4" class="form-control font-monospace small" placeholder="- Secure one-time pairing&#10;- Automatic reconnect and offline telemetry&#10;- Hardware diagnostics&#10;- No breaking protocol change"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer bg-light">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-cloud-arrow-up me-1"></i>Upload & Compute SHA-256
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -7,103 +7,193 @@
 {% endblock %}
 {% block content %}
 <div class="row g-4">
+    <!-- LEFT COLUMN: Profile & Biometric Access Control -->
     <div class="col-lg-4">
-        <div class="panel">
-            <h2>Profile</h2>
+        <!-- Profile Details -->
+        <div class="panel mb-4">
+            <h2>Member Profile</h2>
             <dl class="detail-list">
-                <dt>Renewal Desk Member ID</dt><dd>{{ member.id }}</dd>
+                <dt>Member ID</dt><dd><code>#{{ member.id }}</code></dd>
                 <dt>Phone</dt><dd>{{ member.phone }}</dd>
                 <dt>Email</dt><dd>{{ member.email or '&mdash;'|safe }}</dd>
-                <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan' }}</dd>
-                <dt>Membership</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to {{ member.membership_end.strftime('%d %b %Y') }}</dd>
-                <dt>Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status }}</span></dd>
-                <dt>Biometric Enroll Number</dt>
+                <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan assigned' }}</dd>
+                <dt>Membership Cycle</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to <strong>{{ member.membership_end.strftime('%d %b %Y') }}</strong></dd>
+                <dt>Membership Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status.upper() }}</span></dd>
+            </dl>
+        </div>
+
+        <!-- Biometric Access Control Card -->
+        <div class="panel mb-4 border border-primary-subtle">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2 class="text-primary mb-0"><i class="bi bi-fingerprint"></i> Biometric Access</h2>
+                <span class="badge {% if member.status == 'active' %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ 'GRANTED' if member.status == 'active' else 'DENIED' }}
+                </span>
+            </div>
+            <dl class="detail-list mt-3">
+                <dt>Terminal Enroll Number</dt>
                 <dd>
-                    {{ member.device_enroll_number or '&mdash;'|safe }}
-                    {% if not member.device_enroll_number %}
-                    <div class="text-secondary text-sm mt-1">Confirm it from the connected gym laptop after fingerprint enrollment.</div>
+                    {% if member.device_enroll_number %}
+                    <span class="badge bg-dark fs-6 font-monospace">{{ member.device_enroll_number }}</span>
+                    {% else %}
+                    <span class="text-warning small"><i class="bi bi-exclamation-circle"></i> Not enrolled on terminal</span>
                     {% endif %}
                 </dd>
-                <dt>WhatsApp session</dt>
+                <dt>Physical Door Schedule</dt>
                 <dd>
-                    {% if member.has_open_whatsapp_session %}
-                    <span class="badge status-active">Open 24h window</span>
-                    {% elif member.last_inbound_at %}
-                    <span class="badge badge-inactive">Template required</span>
+                    {% if member.status == 'active' %}
+                    <span class="text-success"><i class="bi bi-unlock-fill"></i> Unlocked during gym hours</span>
                     {% else %}
-                    <span class="badge badge-inactive">No recent inbound</span>
-                    {% endif %}
-                    {% if member.last_inbound_at %}
-                    <div class="text-secondary text-sm mt-1">{{ member.last_inbound_at.strftime('%d %b %Y %H:%M') }}</div>
+                    <span class="text-danger"><i class="bi bi-lock-fill"></i> Denied (TimeZone 50 Active)</span>
                     {% endif %}
                 </dd>
             </dl>
-            {% if current_user.role == 'gym_owner' %}
+
+            <div class="d-grid gap-2 mt-3 pt-3 border-top">
+                <form method="post" action="{{ url_for('biometric.sync_member', member_id=member.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-outline-primary w-100" {% if not member.device_enroll_number %}disabled{% endif %}>
+                        <i class="bi bi-arrow-repeat"></i> Sync Access with Hardware
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- WhatsApp Session Status -->
+        <div class="panel mb-4">
+            <h2>WhatsApp Communication</h2>
+            <dl class="detail-list">
+                <dt>Messaging Window</dt>
+                <dd>
+                    {% if member.has_open_whatsapp_session %}
+                    <span class="badge bg-success">24-hour Open Window</span>
+                    {% else %}
+                    <span class="badge bg-secondary">Template Window</span>
+                    {% endif %}
+                </dd>
+                <dt>Opt-in Status</dt>
+                <dd>{{ 'Subscribed' if member.opted_out_at is none else 'Opted Out' }}</dd>
+            </dl>
+            <form method="post" action="{{ url_for('reminders.send_test', member_id=member.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-success w-100"><i class="bi bi-send"></i> Send WhatsApp Reminder</button>
+            </form>
+        </div>
+
+        <!-- Danger Zone -->
+        {% if current_user.role == 'gym_owner' %}
+        <div class="panel">
+            <h2 class="text-danger">Danger Zone</h2>
             <form method="post" action="{{ url_for('members.delete', member_id=member.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="btn btn-outline-danger w-100" data-confirm="Remove this member? They will be hidden but their history is kept.">
-                    <i class="bi bi-trash"></i> Remove member
+                    <i class="bi bi-trash"></i> Archive Member
                 </button>
             </form>
-            <button class="btn btn-outline-danger w-100 mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#hardDeleteBox">
-                <i class="bi bi-exclamation-triangle"></i> Permanently delete
-            </button>
-            <div class="collapse mt-2" id="hardDeleteBox">
-                <div class="card card-body border-danger">
-                    <p class="small text-secondary mb-2">
-                        This permanently deletes {{ member.full_name }} and all payment,
-                        renewal, and reminder history. This cannot be undone.
-                    </p>
-                    <form method="post" action="{{ url_for('members.hard_delete', member_id=member.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <label class="form-label small" for="hard-delete-confirm">
-                            Type <strong>{{ member.full_name }}</strong> to confirm
-                        </label>
-                        <input class="form-control form-control-sm mb-2" id="hard-delete-confirm" name="confirm" autocomplete="off">
-                        <button class="btn btn-danger btn-sm w-100" type="submit">
-                            <i class="bi bi-trash3"></i> Permanently delete
-                        </button>
-                    </form>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- RIGHT COLUMN: Timeline, Payments, Renewals, Biometric Log -->
+    <div class="col-lg-8">
+        <!-- EXPLAINABLE LIFECYCLE TIMELINE -->
+        <div class="panel mb-4">
+            <div class="panel-header"><h2>Operational Verification Chain</h2></div>
+            <div class="p-3 bg-light rounded">
+                <div class="row text-center">
+                    <div class="col-3 border-end">
+                        <div class="text-success"><i class="bi bi-receipt fs-3"></i></div>
+                        <div class="fw-bold small mt-1">1. Payment</div>
+                        <div class="text-muted text-xs">Recorded & Verified</div>
+                    </div>
+                    <div class="col-3 border-end">
+                        <div class="text-success"><i class="bi bi-arrow-repeat fs-3"></i></div>
+                        <div class="fw-bold small mt-1">2. Renewal</div>
+                        <div class="text-muted text-xs">Expiry Extended</div>
+                    </div>
+                    <div class="col-3 border-end">
+                        <div class="{% if member.status == 'active' %}text-success{% else %}text-danger{% endif %}"><i class="bi bi-fingerprint fs-3"></i></div>
+                        <div class="fw-bold small mt-1">3. Biometric</div>
+                        <div class="text-muted text-xs">{{ 'Access Granted' if member.status == 'active' else 'Access Blocked' }}</div>
+                    </div>
+                    <div class="col-3">
+                        <div class="text-success"><i class="bi bi-whatsapp fs-3"></i></div>
+                        <div class="fw-bold small mt-1">4. WhatsApp</div>
+                        <div class="text-muted text-xs">Confirmation Sent</div>
+                    </div>
                 </div>
             </div>
-            {% endif %}
         </div>
-    </div>
-    <div class="col-lg-8">
+
+        <!-- PAYMENT HISTORY -->
         <div class="panel mb-4">
-            <div class="panel-header"><h2>Payment history</h2></div>
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2>Payment History</h2>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('payments.create', member_id=member.id) }}">Record Payment</a>
+            </div>
             <div class="table-responsive">
                 <table class="table align-middle">
-                    <thead><tr><th>Date</th><th>Amount</th><th>Status</th><th>Reference</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Amount</th><th>Mode</th><th>Status</th><th>Reference</th></tr></thead>
                     <tbody>
                     {% for payment in payments %}
                     <tr>
                         <td>{{ payment.paid_on.strftime('%d %b %Y') if payment.paid_on else '&mdash;'|safe }}</td>
-                        <td>&#8377;{{ payment.amount }}</td>
-                        <td>{{ payment.status }}</td>
+                        <td><strong>₹{{ payment.amount }}</strong></td>
+                        <td><span class="badge bg-light text-dark border">{{ payment.payment_mode.upper() }}</span></td>
+                        <td><span class="badge status-{{ payment.status }}">{{ payment.status }}</span></td>
                         <td>{{ payment.reference or '&mdash;'|safe }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="4" class="text-secondary">No payments yet.</td></tr>
+                    <tr><td colspan="5" class="text-secondary py-3 text-center">No payment records found.</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
-        <div class="panel">
-            <div class="panel-header"><h2>Renewal history</h2></div>
+
+        <!-- RENEWAL HISTORY -->
+        <div class="panel mb-4">
+            <div class="panel-header"><h2>Renewal History</h2></div>
             <div class="table-responsive">
                 <table class="table align-middle">
-                    <thead><tr><th>Previous expiry</th><th>New cycle</th><th>Amount</th></tr></thead>
+                    <thead><tr><th>Previous Expiry</th><th>New Cycle</th><th>Amount</th><th>Date</th></tr></thead>
                     <tbody>
                     {% for renewal in renewals %}
                     <tr>
-                        <td>{{ renewal.previous_end.strftime('%d %b %Y') }}</td>
-                        <td>{{ renewal.new_start.strftime('%d %b %Y') }} to {{ renewal.new_end.strftime('%d %b %Y') }}</td>
-                        <td>&#8377;{{ renewal.amount }}</td>
+                        <td>{{ renewal.previous_end.strftime('%d %b %Y') if renewal.previous_end else '&mdash;'|safe }}</td>
+                        <td><strong>{{ renewal.new_start.strftime('%d %b') }} &rarr; {{ renewal.new_end.strftime('%d %b %Y') }}</strong></td>
+                        <td>₹{{ renewal.amount }}</td>
+                        <td class="text-secondary small">{{ renewal.created_at.strftime('%d %b %Y') }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="3" class="text-secondary">No renewals yet.</td></tr>
+                    <tr><td colspan="4" class="text-secondary py-3 text-center">No previous renewals recorded.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- BIOMETRIC COMMAND AUDIT TRAIL -->
+        <div class="panel">
+            <div class="panel-header"><h2>Biometric Access Log & Punches</h2></div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Command</th><th>Status</th><th>Attempts</th><th>Date</th><th>Error / Note</th></tr></thead>
+                    <tbody>
+                    {% for cmd in commands %}
+                    <tr>
+                        <td>
+                            <span class="badge {% if cmd.command_type == 'enable_user' %}bg-success{% else %}bg-danger{% endif %} text-white">
+                                {{ cmd.command_type.replace('_', ' ').title() }}
+                            </span>
+                        </td>
+                        <td><span class="badge status-{{ cmd.status }}">{{ cmd.status }}</span></td>
+                        <td>{{ cmd.delivery_attempts }}</td>
+                        <td class="text-secondary small">{{ cmd.created_at.strftime('%d %b %H:%M') }}</td>
+                        <td>{{ cmd.last_error or 'OK' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-secondary py-3 text-center">No biometric commands queued for this member yet.</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>

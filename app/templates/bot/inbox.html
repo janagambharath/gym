@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}AI Receptionist Inbox | RenewalDesk{% endblock %}
+{% block page_title %}WhatsApp Live Inbox{% endblock %}
+{% block content %}
+<div class="row g-0 border rounded bg-white overflow-hidden shadow-sm" style="height: calc(100vh - 160px); min-height: 600px;">
+    <!-- LEFT PANE: Conversation Threads List -->
+    <div class="col-md-3 border-end d-flex flex-column h-100 bg-light">
+        <div class="p-2 border-bottom bg-white">
+            <div class="btn-group w-100" role="group">
+                <a href="{{ url_for('bot_web.inbox', filter='all') }}" class="btn btn-sm {% if filter_mode == 'all' %}btn-primary{% else %}btn-outline-secondary{% endif %}">All</a>
+                <a href="{{ url_for('bot_web.inbox', filter='human') }}" class="btn btn-sm {% if filter_mode == 'human' %}btn-warning text-dark{% else %}btn-outline-secondary{% endif %}">Staff</a>
+                <a href="{{ url_for('bot_web.inbox', filter='ai') }}" class="btn btn-sm {% if filter_mode == 'ai' %}btn-primary{% else %}btn-outline-secondary{% endif %}">AI</a>
+            </div>
+        </div>
+        <div class="overflow-auto flex-grow-1">
+            <div class="list-group list-group-flush">
+                {% for conv in conversations %}
+                <a href="{{ url_for('bot_web.inbox', conv_id=conv.id, filter=filter_mode) }}" class="list-group-item list-group-item-action p-3 {% if selected_conv and selected_conv.id == conv.id %}active{% endif %}">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong class="text-truncate">{{ conv.customer_name or conv.phone }}</strong>
+                        <small class="{% if selected_conv and selected_conv.id == conv.id %}text-white-50{% else %}text-muted{% endif %}">
+                            {{ conv.last_message_at.strftime('%H:%M') if conv.last_message_at else '' }}
+                        </small>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="badge {% if conv.handover_status in ['human_requested', 'human_active'] %}bg-warning text-dark{% else %}bg-secondary text-white{% endif %} text-xs">
+                            {{ 'Staff Takeover' if conv.handover_status in ['human_requested', 'human_active'] else 'AI Receptionist' }}
+                        </span>
+                        <small class="text-muted text-xs">{{ conv.phone }}</small>
+                    </div>
+                </a>
+                {% else %}
+                <div class="p-4 text-center text-muted">No conversations found.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- CENTER PANE: Active Chat Message Stream -->
+    <div class="col-md-6 d-flex flex-column h-100 bg-white border-end">
+        {% if selected_conv %}
+        <!-- Header -->
+        <div class="p-3 border-bottom d-flex justify-content-between align-items-center bg-light">
+            <div>
+                <h5 class="mb-0 fw-bold">{{ selected_conv.customer_name or selected_conv.phone }}</h5>
+                <small class="text-muted">
+                    Mode: <span class="fw-semibold {% if selected_conv.handover_status in ['human_requested', 'human_active'] %}text-warning{% else %}text-primary{% endif %}">
+                        {{ 'Staff Active (AI Paused)' if selected_conv.handover_status in ['human_requested', 'human_active'] else 'AI Receptionist Handling' }}
+                    </span>
+                </small>
+            </div>
+            <form method="post" action="{{ url_for('bot_web.toggle_handover', conv_id=selected_conv.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% if selected_conv.handover_status in ['human_requested', 'human_active'] %}
+                <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-robot"></i> Hand Back to AI</button>
+                {% else %}
+                <button type="submit" class="btn btn-sm btn-warning text-dark"><i class="bi bi-person-fill"></i> Take Over (Human)</button>
+                {% endif %}
+            </form>
+        </div>
+
+        <!-- Messages Stream -->
+        <div class="p-3 flex-grow-1 overflow-auto bg-light" id="chatMessageArea" style="display: flex; flex-direction: column; gap: 10px;">
+            {% for msg in messages %}
+            <div class="d-flex {% if msg.sender in ['staff', 'bot', 'system'] %}justify-content-end{% else %}justify-content-start{% endif %}">
+                <div class="p-3 rounded shadow-sm" style="max-width: 80%; {% if msg.sender in ['staff', 'bot', 'system'] %}background-color: #dcf8c6; color: #000;{% else %}background-color: #ffffff; color: #000;{% endif %}">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="badge {% if msg.sender == 'staff' %}bg-primary{% elif msg.sender == 'bot' %}bg-secondary{% else %}bg-dark{% endif %} text-white text-xs me-2">
+                            {{ msg.sender.title() if msg.sender else 'Client' }}
+                        </span>
+                        <small class="text-muted text-xs">{{ msg.created_at.strftime('%d %b %H:%M') if msg.created_at else '' }}</small>
+                    </div>
+                    <div class="text-break" style="white-space: pre-wrap;">{{ msg.body }}</div>
+                </div>
+            </div>
+            {% else %}
+            <div class="text-center text-muted my-auto">No messages recorded in this conversation thread.</div>
+            {% endfor %}
+        </div>
+
+        <!-- Reply Input Box -->
+        <div class="p-3 border-top bg-white">
+            <form method="post" action="{{ url_for('bot_web.send_staff_message', conv_id=selected_conv.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="input-group">
+                    <textarea class="form-control" name="message" rows="2" placeholder="Type WhatsApp message as staff..." required></textarea>
+                    <button class="btn btn-success px-4" type="submit"><i class="bi bi-send-fill"></i> Send</button>
+                </div>
+                <div class="text-muted small mt-1">Sending a manual reply automatically activates Human Staff Takeover.</div>
+            </form>
+        </div>
+        {% else %}
+        <div class="m-auto text-center text-muted">
+            <i class="bi bi-chat-left-dots fs-1 d-block mb-2"></i>
+            Select a conversation on the left to start chatting.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- RIGHT PANE: Lead & Member Context Panel -->
+    <div class="col-md-3 p-3 overflow-auto h-100 bg-white">
+        <h6 class="text-uppercase text-secondary fw-bold text-xs mb-3">Context & Profile</h6>
+        {% if member %}
+        <div class="card mb-3 border-primary">
+            <div class="card-body p-3">
+                <span class="badge bg-primary mb-2">Existing Gym Member</span>
+                <h6 class="fw-bold mb-1"><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></h6>
+                <div class="text-muted small">Plan: {{ member.plan.name if member.plan else 'No plan' }}</div>
+                <div class="text-muted small">Status: <span class="badge status-{{ member.status }}">{{ member.status }}</span></div>
+                <div class="text-muted small">Expires: {{ member.membership_end.strftime('%d %b %Y') }}</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if lead %}
+        <div class="card mb-3 border-info">
+            <div class="card-body p-3">
+                <span class="badge bg-info text-dark mb-2">Captured Lead</span>
+                <div class="fw-bold">{{ lead.name or 'Prospective Member' }}</div>
+                <div class="text-muted small">Status: <span class="badge status-{{ lead.status }}">{{ lead.status.replace('_', ' ').title() }}</span></div>
+                {% if lead.trial_date %}
+                <div class="text-muted small mt-1">Trial Scheduled: <strong>{{ lead.trial_date.strftime('%d %b %Y') }}</strong></div>
+                {% endif %}
+                {% if lead.notes %}
+                <div class="text-muted small mt-2"><strong>Notes:</strong> {{ lead.notes }}</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not member and not lead and selected_conv %}
+        <div class="alert alert-light border p-3">
+            <p class="small text-muted mb-0">Unregistered contact ({{ selected_conv.user_phone }}). You can register them as a member or capture them as a lead.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

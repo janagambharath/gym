@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Reports & Outcome Funnels | RenewalDesk{% endblock %}
+{% block page_title %}Reports & Business Outcome Funnels{% endblock %}
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-success">
+            <div class="text-secondary small fw-semibold">THIS MONTH'S VERIFIED REVENUE</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-3 fw-bold text-success">₹{{ "{:,.2f}".format(monthly_verified_revenue) }}</span>
+                <i class="bi bi-cash-stack fs-2 text-success"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Strictly verified bank/UPI/cash</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-primary">
+            <div class="text-secondary small fw-semibold">ALL-TIME VERIFIED REVENUE</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-3 fw-bold">₹{{ "{:,.2f}".format(total_verified_revenue) }}</span>
+                <i class="bi bi-wallet2 fs-2 text-primary"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Audited payment history</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-info">
+            <div class="text-secondary small fw-semibold">ACTIVE GYM MEMBERS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-3 fw-bold">{{ total_active_members }}</span>
+                <i class="bi bi-people-fill fs-2 text-info"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">{{ expiring_soon_count }} expiring in next 7 days</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-warning">
+            <div class="text-secondary small fw-semibold">RENEWAL CONVERSIONS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-3 fw-bold">{{ renewals_month_count }}</span>
+                <i class="bi bi-arrow-repeat fs-2 text-warning"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Renewals processed this month</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- RENEWAL FUNNEL -->
+    <div class="col-lg-6">
+        <div class="panel h-100">
+            <div class="panel-header">
+                <h2>Membership Renewal Funnel</h2>
+                <div class="text-secondary small">Expiring Members → Reminders → Verified Renewals → Recovered Revenue</div>
+            </div>
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fw-semibold">Expiring Members (7 Days)</span>
+                        <span>{{ expiring_soon_count }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-warning" role="progressbar" style="width: 100%;"></div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fw-semibold">WhatsApp Reminders Sent</span>
+                        <span>{{ reminders_sent_month }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-info" role="progressbar" style="width: 85%;"></div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fw-semibold">Verified Renewals Converted</span>
+                        <span>{{ renewals_month_count }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: 70%;"></div>
+                    </div>
+                </div>
+
+                <div class="p-3 bg-light rounded mt-4 text-center">
+                    <div class="text-secondary small text-uppercase">Recovered Revenue This Month</div>
+                    <div class="fs-4 fw-bold text-success mt-1">₹{{ "{:,.2f}".format(monthly_verified_revenue) }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LEAD FUNNEL -->
+    <div class="col-lg-6">
+        <div class="panel h-100">
+            <div class="panel-header">
+                <h2>WhatsApp Inbound Lead Funnel</h2>
+                <div class="text-secondary small">Inbound Leads → AI Automated Receptionist → Trials → Member Conversions</div>
+            </div>
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fw-semibold">Total Inbound Prospects</span>
+                        <span>{{ total_inbound_leads }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-primary" role="progressbar" style="width: 100%;"></div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fw-semibold">Free / Paid Trials Booked</span>
+                        <span>{{ trial_bookings }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-info" role="progressbar" style="width: {% if total_inbound_leads > 0 %}{{ (trial_bookings / total_inbound_leads * 100)|round }}{% else %}0{% endif %}%;"></div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span class="fw-semibold">Converted to Paid Members</span>
+                        <span>{{ converted_leads }}</span>
+                    </div>
+                    <div class="progress" style="height: 10px;">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: {% if total_inbound_leads > 0 %}{{ (converted_leads / total_inbound_leads * 100)|round }}{% else %}0{% endif %}%;"></div>
+                    </div>
+                </div>
+
+                <div class="p-3 bg-light rounded mt-4 text-center">
+                    <div class="text-secondary small text-uppercase">Lead-to-Member Conversion Rate</div>
+                    <div class="fs-4 fw-bold text-primary mt-1">
+                        {% if total_inbound_leads > 0 %}
+                        {{ ((converted_leads / total_inbound_leads) * 100)|round(1) }}%
+                        {% else %}
+                        0.0%
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BIOMETRIC & RELIABILITY METRICS -->
+<div class="panel">
+    <div class="panel-header">
+        <h2>Biometric Access Control & Physical Turnstile Health</h2>
+    </div>
+    <div class="row g-4 p-3">
+        <div class="col-md-4 text-center border-end">
+            <div class="text-secondary small">Total Successful Access Syncs</div>
+            <div class="fs-3 fw-bold text-success mt-1">{{ biometric_synced_count }}</div>
+        </div>
+        <div class="col-md-4 text-center border-end">
+            <div class="text-secondary small">Total Failed Sync Commands</div>
+            <div class="fs-3 fw-bold {% if biometric_failed_count > 0 %}text-danger{% else %}text-success{% endif %} mt-1">{{ biometric_failed_count }}</div>
+        </div>
+        <div class="col-md-4 text-center">
+            <div class="text-secondary small">Attendance Punch Events Recorded</div>
+            <div class="fs-3 fw-bold text-primary mt-1">{{ today_punches }}</div>
+        </div>
+    </div>
+</div>
+{% endblock %}

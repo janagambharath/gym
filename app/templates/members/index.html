@@ -1,45 +1,82 @@
 {% extends "base.html" %}
-{% block title %}Members | RenewalDesk{% endblock %}
-{% block page_title %}Members{% endblock %}
+{% block title %}Members Directory | RenewalDesk{% endblock %}
+{% block page_title %}Members Directory{% endblock %}
 {% block page_actions %}
 <a class="btn btn-outline-secondary" href="{{ url_for('members.export') }}"><i class="bi bi-download"></i> Export CSV</a>
-<a class="btn btn-outline-primary" href="{{ url_for('members.bulk_renew') }}"><i class="bi bi-arrow-repeat"></i> Bulk renew</a>
+<a class="btn btn-outline-primary" href="{{ url_for('members.bulk_renew') }}"><i class="bi bi-arrow-repeat"></i> Bulk Renew</a>
 <a class="btn btn-outline-primary" href="{{ url_for('members_import.import_members') }}"><i class="bi bi-upload"></i> Import CSV</a>
-<a class="btn btn-primary" href="{{ url_for('members.create') }}"><i class="bi bi-person-plus"></i> Add member</a>
+<a class="btn btn-primary" href="{{ url_for('members.create') }}"><i class="bi bi-person-plus"></i> Add Member</a>
 {% endblock %}
 {% block content %}
 <div class="panel">
     <form class="row g-2 mb-3" method="get">
-        <div class="col-md-6"><input class="form-control" name="q" value="{{ search }}" placeholder="Search by name or phone"></div>
+        <div class="col-md-6">
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input class="form-control" name="q" value="{{ search }}" placeholder="Search by name, phone, or enroll number...">
+            </div>
+        </div>
         <div class="col-md-3">
-            <select class="form-select" name="status">
+            <select class="form-select" name="status" onchange="this.form.submit()">
                 <option value="">All statuses</option>
                 {% for option in ['active','expired','paused'] %}
                 <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-3"><button class="btn btn-outline-primary w-100"><i class="bi bi-search"></i> Search</button></div>
+        <div class="col-md-3">
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-funnel"></i> Filter</button>
+        </div>
     </form>
     <div class="table-responsive">
-        <table class="table align-middle">
-            <thead><tr><th>Name</th><th>Phone</th><th>Plan</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
+        <table class="table align-middle table-hover">
+            <thead>
+                <tr>
+                    <th>Member Name</th>
+                    <th>Phone</th>
+                    <th>Plan</th>
+                    <th>Expiry Date</th>
+                    <th>Biometric Enroll</th>
+                    <th>Status</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
             <tbody>
             {% for member in pagination.items %}
             <tr>
-                <td><a href="{{ url_for('members.detail', member_id=member.id) }}">{{ member.full_name }}</a></td>
+                <td>
+                    <a href="{{ url_for('members.detail', member_id=member.id) }}" class="fw-bold text-decoration-none">{{ member.full_name }}</a>
+                </td>
                 <td>{{ member.phone }}</td>
-                <td>{{ member.plan.name if member.plan else 'No plan' }}</td>
-                <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
+                <td>{{ member.plan.name if member.plan else '<span class="text-muted">No plan</span>'|safe }}</td>
+                <td>
+                    <strong>{{ member.membership_end.strftime('%d %b %Y') }}</strong>
+                </td>
+                <td>
+                    {% if member.device_enroll_number %}
+                    <span class="badge bg-dark font-monospace">#{{ member.device_enroll_number }}</span>
+                    {% else %}
+                    <span class="text-muted small">—</span>
+                    {% endif %}
+                </td>
                 <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
                 <td class="text-end text-nowrap">
+                    <a class="btn btn-sm btn-outline-success" href="{{ url_for('payments.create', member_id=member.id) }}" title="Record Payment">
+                        <i class="bi bi-receipt"></i>
+                    </a>
+                    <form method="post" action="{{ url_for('reminders.send_test', member_id=member.id) }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-primary" type="submit" title="WhatsApp Reminder">
+                            <i class="bi bi-send"></i>
+                        </button>
+                    </form>
                     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('members.edit', member_id=member.id) }}" title="Edit {{ member.full_name }}">
-                        <i class="bi bi-pencil"></i><span class="visually-hidden">Edit {{ member.full_name }}</span>
+                        <i class="bi bi-pencil"></i>
                     </a>
                     {% if current_user.role == 'gym_owner' %}
                     <form class="d-inline" method="post" action="{{ url_for('members.delete', member_id=member.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-outline-danger" type="submit" data-confirm="Remove this member? They will be hidden but their history is kept.">
+                        <button class="btn btn-sm btn-outline-danger" type="submit" data-confirm="Remove this member? They will be hidden but their history is kept." title="Delete member">
                             <i class="bi bi-trash"></i> Delete
                         </button>
                     </form>
@@ -47,7 +84,7 @@
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="6" class="text-secondary">No members found.</td></tr>
+            <tr><td colspan="7" class="text-secondary text-center py-4">No members found matching criteria.</td></tr>
             {% endfor %}
             </tbody>
         </table>

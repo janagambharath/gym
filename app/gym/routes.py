@@ -14,7 +14,19 @@ from app.forms import (
     QRSettingsForm,
     WhatsAppSettingsForm,
 )
-from app.models import Gym, Member, MembershipPlan, NotificationTemplate, PaymentVerification, QRSettings
+from app.models import (
+    BridgeCommand,
+    BridgeInstallation,
+    Gym,
+    Member,
+    MembershipPlan,
+    NotificationTemplate,
+    PaymentVerification,
+    QRSettings,
+    ReminderLog,
+)
+from app.models.bot import BotConversation, BotLead, GymBotConfig
+from app.models.mixins import utcnow
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
@@ -61,11 +73,55 @@ def dashboard():
         .limit(8)
         .all()
     )
+
+    # Operational Attention & Real-Time Status
+    installation = BridgeInstallation.query.filter_by(gym_id=gym_id).first()
+    bridge_online = False
+    heartbeat_seconds = None
+    failed_biometric_count = 0
+    if installation:
+        if installation.last_heartbeat_at:
+            hb = installation.last_heartbeat_at
+            if hb.tzinfo is None:
+                from datetime import timezone
+                hb = hb.replace(tzinfo=timezone.utc)
+            heartbeat_seconds = max(0, int((utcnow() - hb).total_seconds()))
+            bridge_online = heartbeat_seconds <= 120 and installation.is_active
+        failed_biometric_count = BridgeCommand.query.filter_by(bridge_id=installation.id, status="failed").count()
+
+    failed_reminders_count = ReminderLog.query.filter_by(gym_id=gym_id, status="failed").count()
+    new_leads_count = BotLead.query.filter_by(gym_id=gym_id, status="new").count()
+    active_handovers_count = BotConversation.query.filter_by(gym_id=gym_id, handover_status="human_active").count()
+    pending_payments_count = PaymentVerification.query.filter_by(gym_id=gym_id, status="pending").count()
+
+    # First-Time Gym Setup Checklist
+    checklist_items = [
+        {"key": "profile", "label": "Gym profile configured", "done": bool(current_user.gym.name and current_user.gym.phone)},
+        {"key": "plans", "label": "Membership plans created", "done": MembershipPlan.query.filter_by(gym_id=gym_id).count() > 0},
+        {"key": "members", "label": "Members added or imported", "done": Member.query.filter_by(gym_id=gym_id, deleted_at=None).count() > 0},
+        {"key": "whatsapp", "label": "WhatsApp connected", "done": bool(current_user.gym.phone_number_id and current_user.gym.whatsapp_business_account_id)},
+        {"key": "ai", "label": "AI Receptionist configured", "done": GymBotConfig.query.filter_by(gym_id=gym_id).first() is not None},
+        {"key": "biometric", "label": "Biometric bridge provisioned", "done": installation is not None},
+        {"key": "reminder", "label": "First reminder processed", "done": ReminderLog.query.filter_by(gym_id=gym_id).count() > 0},
+        {"key": "payment", "label": "First payment verified", "done": PaymentVerification.query.filter_by(gym_id=gym_id, status="verified").count() > 0},
+    ]
+    completed_checklist_count = sum(1 for item in checklist_items if item["done"])
+
     return render_template(
         "dashboard/index.html",
         stats=stats,
         expiring_members=expiring_members,
         recent_payments=recent_payments,
+        bridge_online=bridge_online,
+        heartbeat_seconds=heartbeat_seconds,
+        failed_biometric_count=failed_biometric_count,
+        failed_reminders_count=failed_reminders_count,
+        new_leads_count=new_leads_count,
+        active_handovers_count=active_handovers_count,
+        pending_payments_count=pending_payments_count,
+        checklist_items=checklist_items,
+        completed_checklist_count=completed_checklist_count,
+        installation=installation,
     )
 
 

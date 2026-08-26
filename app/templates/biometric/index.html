@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Biometric Control Center | RenewalDesk{% endblock %}
+{% block page_title %}Biometric Control Center{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('biometric.download_support_package') }}"><i class="bi bi-download"></i> Support Package</a>
+<a class="btn btn-primary" href="{{ url_for('biometric.settings') }}"><i class="bi bi-gear"></i> Pairing & Config</a>
+{% endblock %}
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 {% if is_online %}border-success{% else %}border-danger{% endif %}">
+            <div class="text-secondary small fw-semibold">BRIDGE STATUS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold">
+                    {% if is_online %}
+                    <span class="text-success"><i class="bi bi-check-circle-fill"></i> Online</span>
+                    {% elif installation %}
+                    <span class="text-danger"><i class="bi bi-x-circle-fill"></i> Offline</span>
+                    {% else %}
+                    <span class="text-warning"><i class="bi bi-exclamation-triangle-fill"></i> Not Set</span>
+                    {% endif %}
+                </span>
+                <span class="badge {% if is_online %}bg-success{% else %}bg-danger{% endif %} text-white">
+                    {{ 'Connected' if is_online else 'Disconnected' }}
+                </span>
+            </div>
+            <div class="text-secondary text-sm mt-2">
+                {% if heartbeat_age_seconds is not none %}
+                Last heartbeat: <strong>{{ heartbeat_age_seconds }}s ago</strong>
+                {% else %}
+                Never connected
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-primary">
+            <div class="text-secondary small fw-semibold">ENROLLED MEMBERS</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold">{{ enrolled_members_count }}</span>
+                <i class="bi bi-fingerprint fs-3 text-primary"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">Members linked to hardware</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 border-warning">
+            <div class="text-secondary small fw-semibold">PENDING SYNC</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold">{{ pending_count + leased_count }}</span>
+                <i class="bi bi-clock-history fs-3 text-warning"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">{{ pending_count }} pending · {{ leased_count }} in-flight</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel p-3 border-start border-4 {% if failed_count > 0 %}border-danger{% else %}border-success{% endif %}">
+            <div class="text-secondary small fw-semibold">SYNC HEALTH</div>
+            <div class="d-flex align-items-center justify-content-between mt-2">
+                <span class="fs-4 fw-bold {% if failed_count > 0 %}text-danger{% else %}text-success{% endif %}">
+                    {{ failed_count }} Failed
+                </span>
+                <i class="bi bi-shield-check fs-3 {% if failed_count > 0 %}text-danger{% else %}text-success{% endif %}"></i>
+            </div>
+            <div class="text-secondary text-sm mt-2">{{ acked_count }} successful syncs</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="panel">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2>Recent Command Queue</h2>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('biometric.commands') }}">View All Queue</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Action</th>
+                            <th>Member</th>
+                            <th>Status</th>
+                            <th>Attempts</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cmd in recent_commands %}
+                        <tr>
+                            <td>
+                                <span class="badge {% if cmd.command_type == 'enable_user' %}bg-success{% else %}bg-danger{% endif %} text-white">
+                                    {{ cmd.command_type.replace('_', ' ').title() }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if cmd.member %}
+                                <a href="{{ url_for('members.detail', member_id=cmd.member.id) }}">{{ cmd.member.full_name }}</a>
+                                {% else %}
+                                {{ cmd.member_name or 'Enroll #' ~ cmd.enroll_number }}
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge status-{{ cmd.status }}">{{ cmd.status }}</span>
+                                {% if cmd.status == 'failed' and cmd.last_error %}
+                                <div class="text-danger small mt-1" title="{{ cmd.last_error }}">{{ cmd.last_error[:40] }}...</div>
+                                {% endif %}
+                            </td>
+                            <td>{{ cmd.delivery_attempts }}</td>
+                            <td>{{ cmd.created_at.strftime('%d %b %H:%M') if cmd.created_at else '—' }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="text-secondary">No recent biometric commands.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="panel">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2>Live Attendance Punches</h2>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('biometric.activity') }}">View All Activity</a>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for punch in recent_attendance %}
+                <div class="list-group-item d-flex justify-content-between align-items-center py-2">
+                    <div>
+                        <div class="fw-semibold">
+                            {% if punch.member %}
+                            <a href="{{ url_for('members.detail', member_id=punch.member.id) }}">{{ punch.member.full_name }}</a>
+                            {% else %}
+                            <span class="text-secondary">Enroll #{{ punch.device_enroll_number }} (Unlinked)</span>
+                            {% endif %}
+                        </div>
+                        <div class="text-secondary small">{{ punch.event_time.strftime('%d %b %Y %H:%M:%S') }}</div>
+                    </div>
+                    <div>
+                        {% if punch.is_invalid %}
+                        <span class="badge bg-danger">Denied</span>
+                        {% else %}
+                        <span class="badge bg-success">Granted</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="list-group-item text-secondary py-3 text-center">No attendance punches received yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

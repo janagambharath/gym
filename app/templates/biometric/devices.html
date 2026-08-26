@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Biometric Terminals | RenewalDesk{% endblock %}
+{% block page_title %}Biometric Terminals & Hardware{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('biometric.index') }}"><i class="bi bi-arrow-left"></i> Bridge Overview</a>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h2>Primary Biometric Terminal</h2>
+                <span class="badge {% if is_online %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ 'Connected via Bridge' if is_online else 'Bridge Offline' }}
+                </span>
+            </div>
+            <dl class="detail-list mt-3">
+                <dt>Hardware Model</dt>
+                <dd>eSSL / ZKTeco Standalone (X990 / K90 / SilkBio series)</dd>
+                <dt>Device Serial</dt>
+                <dd><code>{{ installation.device_serial if installation else 'Not provisioned' }}</code></dd>
+                <dt>Communication Protocol</dt>
+                <dd>Ethernet LAN / Standalone SDK (TCP Port 4370)</dd>
+                <dt>Access Enforcement</dt>
+                <dd><span class="badge bg-primary">TimeZone Slot 50 (All-Day-Deny)</span></dd>
+                <dt>Template Protection</dt>
+                <dd><span class="text-success fw-semibold"><i class="bi bi-shield-lock-fill"></i> Safe (Zero template deletion on expiry)</span></dd>
+            </dl>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="panel">
+            <div class="panel-header">
+                <h2>Local Network Architecture</h2>
+            </div>
+            <p class="text-secondary small">
+                The terminal connects locally to your gym PC via LAN. The Renewal Desk Bridge handles all lease queues without exposing any ports to the public internet.
+            </p>
+            <div class="card bg-light border p-3">
+                <div class="d-flex align-items-center mb-2">
+                    <i class="bi bi-router fs-4 text-primary me-3"></i>
+                    <div>
+                        <strong>Local Gym Router / Switch</strong>
+                        <div class="text-muted small">Standard DHCP / Static IP LAN</div>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center mb-2">
+                    <i class="bi bi-laptop fs-4 text-success me-3"></i>
+                    <div>
+                        <strong>Gym Windows Laptop / PC</strong>
+                        <div class="text-muted small">Runs <code>RenewalDeskBridge.exe</code></div>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center">
+                    <i class="bi bi-door-closed fs-4 text-danger me-3"></i>
+                    <div>
+                        <strong>Electric Magnetic Turnstile / Door Lock</strong>
+                        <div class="text-muted small">Wired to terminal relay NC/COM terminals</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

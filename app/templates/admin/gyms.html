@@ -1,45 +1,165 @@
 {% extends "base.html" %}
-{% block title %}Gyms | RenewalDesk{% endblock %}
-{% block page_title %}Gyms{% endblock %}
+{% block title %}Gym Deployment Directory | RenewalDesk Super Admin{% endblock %}
+{% block page_title %}Gym Directory & Operations{% endblock %}
 {% block page_actions %}
-<a class="btn btn-primary" href="{{ url_for('admin.create_gym') }}"><i class="bi bi-plus-circle me-1"></i> Create new gym</a>
+<a class="btn btn-primary" href="{{ url_for('admin.onboard_start') }}"><i class="bi bi-plus-circle-fill me-1"></i> + ONBOARD NEW GYM</a>
 {% endblock %}
+
 {% block content %}
-<div class="panel">
+<div class="panel shadow-sm mb-4">
+    <!-- MULTI-FILTER BAR -->
     <form class="row g-2 mb-3" method="get">
-        <div class="col-md-4">
+        <div class="col-md-3">
+            <div class="input-group">
+                <span class="input-group-text bg-transparent"><i class="bi bi-search"></i></span>
+                <input type="text" class="form-control" name="q" value="{{ search_q }}" placeholder="Search gym, owner, city, phone...">
+            </div>
+        </div>
+        <div class="col-md-2">
             <select class="form-select" name="status">
-                <option value="">All statuses</option>
-                {% for option in ['active','suspended'] %}
-                <option value="{{ option }}" {% if status == option %}selected{% endif %}>{{ option.title() }}</option>
+                <option value="">All Statuses</option>
+                <option value="live" {% if status == 'live' %}selected{% endif %}>🚀 Live</option>
+                <option value="onboarding" {% if status == 'onboarding' %}selected{% endif %}>⏳ Onboarding</option>
+                <option value="trial" {% if status == 'trial' %}selected{% endif %}>⏱ Trial</option>
+                <option value="ready" {% if status == 'ready' %}selected{% endif %}>✓ Ready</option>
+                <option value="active" {% if status == 'active' %}selected{% endif %}>Active</option>
+                <option value="suspended" {% if status == 'suspended' %}selected{% endif %}>Paused / Suspended</option>
+                <option value="failed" {% if status == 'failed' %}selected{% endif %}>Failed</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <select class="form-select" name="country">
+                <option value="">All Countries</option>
+                {% for c in all_countries %}
+                <option value="{{ c }}" {% if country == c %}selected{% endif %}>{{ c }}</option>
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-2"><button class="btn btn-outline-primary w-100">Filter</button></div>
+        <div class="col-md-2">
+            <select class="form-select" name="sort">
+                <option value="created_desc" {% if sort_by == 'created_desc' %}selected{% endif %}>Newest First</option>
+                <option value="name_asc" {% if sort_by == 'name_asc' %}selected{% endif %}>Name (A-Z)</option>
+                <option value="health_asc" {% if sort_by == 'health_asc' %}selected{% endif %}>Lowest Health</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-outline-primary w-100" type="submit"><i class="bi bi-funnel me-1"></i> Apply Filters</button>
+        </div>
+        <div class="col-md-1">
+            <a href="{{ url_for('admin.gyms') }}" class="btn btn-outline-secondary w-100" title="Reset Filters"><i class="bi bi-x-circle"></i></a>
+        </div>
     </form>
+
+    <!-- GYMS TABLE WITH SERVICE INDICATORS -->
     <div class="table-responsive">
-        <table class="table align-middle">
-            <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Subscription</th><th></th></tr></thead>
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Gym</th>
+                    <th>Owner</th>
+                    <th>City / Country</th>
+                    <th>Members</th>
+                    <th>Status</th>
+                    <th class="text-center" title="WhatsApp Integration">WA</th>
+                    <th class="text-center" title="Biometric Bridge">Bridge</th>
+                    <th class="text-center" title="Biometric Terminal">Bio</th>
+                    <th class="text-center" title="Operational Health Score">Health</th>
+                    <th>Last Activity</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
             <tbody>
-            {% for gym in pagination.items %}
+            {% for item in gym_items %}
+            {% set g = item.gym %}
             <tr>
-                <td><a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}">{{ gym.name }}</a></td>
-                <td>{{ gym.email or '—' }}</td>
-                <td><span class="badge status-{{ gym.status }}">{{ gym.status }}</span></td>
-                <td>{{ gym.subscription_status }}</td>
+                <td>
+                    <a href="{{ url_for('admin.gym_detail', gym_id=g.id) }}" class="fw-bold text-decoration-none">
+                        {{ g.name }}
+                    </a>
+                    <div class="small text-muted font-monospace">{{ g.slug }}</div>
+                </td>
+                <td>
+                    {% if item.owner %}
+                    <div class="fw-semibold small">{{ item.owner.full_name }}</div>
+                    <div class="text-muted small">{{ item.owner.email }}</div>
+                    {% else %}
+                    <span class="text-muted small">No Owner</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="fw-semibold small">{{ g.city or '—' }}</span>
+                    <span class="text-muted small d-block">{{ g.country }}</span>
+                </td>
+                <td>
+                    <strong>{{ item.active_members }}</strong> <span class="text-muted small">/ {{ item.total_members }}</span>
+                </td>
+                <td>
+                    <span class="badge status-{{ g.onboarding_status or g.status }}">
+                        {{ (g.onboarding_status or g.status).title() }}
+                    </span>
+                </td>
+                <td class="text-center">
+                    <span title="{{ item.indicators.whatsapp.label }}" style="font-size: 1.1rem; cursor: help;">
+                        {{ item.indicators.whatsapp.icon }}
+                    </span>
+                </td>
+                <td class="text-center">
+                    <span title="{{ item.indicators.bridge.label }}" style="font-size: 1.1rem; cursor: help;">
+                        {{ item.indicators.bridge.icon }}
+                    </span>
+                </td>
+                <td class="text-center">
+                    <span title="{{ item.indicators.biometric.label }}" style="font-size: 1.1rem; cursor: help;">
+                        {{ item.indicators.biometric.icon }}
+                    </span>
+                </td>
+                <td class="text-center">
+                    <span class="badge {% if item.score >= 90 %}bg-success{% elif item.score >= 70 %}bg-warning text-dark{% else %}bg-danger{% endif %} rounded-pill px-2">
+                        {{ item.score }}%
+                    </span>
+                </td>
+                <td class="small text-muted">
+                    {{ item.last_activity.strftime('%d %b %H:%M') if item.last_activity else '—' }}
+                </td>
                 <td class="text-end">
-                    <form method="post" action="{{ url_for('admin.toggle_gym', gym_id=gym.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-power"></i></button>
-                    </form>
+                    <div class="dropdown d-inline">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                            Manage
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end shadow">
+                            <li><a class="dropdown-item" href="{{ url_for('admin.gym_detail', gym_id=g.id) }}"><i class="bi bi-speedometer2 me-2"></i> Command Center</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('admin.onboard_step', gym_id=g.id, step_num=g.deployment.current_step if g.deployment else 1) }}"><i class="bi bi-magic me-2"></i> Onboarding Wizard</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            {% if g.status == 'active' %}
+                            <li>
+                                <form method="post" action="{{ url_for('admin.suspend_gym', gym_id=g.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="dropdown-item text-danger" type="submit" onclick="return confirm('Suspend operations for {{ g.name }}?');">
+                                        <i class="bi bi-pause-circle me-2"></i> Suspend Gym
+                                    </button>
+                                </form>
+                            </li>
+                            {% else %}
+                            <li>
+                                <form method="post" action="{{ url_for('admin.resume_gym', gym_id=g.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="dropdown-item text-success" type="submit">
+                                        <i class="bi bi-play-circle me-2"></i> Resume Operations
+                                    </button>
+                                </form>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </div>
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="text-secondary">No gyms found.</td></tr>
+            <tr><td colspan="11" class="text-secondary text-center p-5">No gyms match the selected criteria.</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
+
     {% include "partials/pagination.html" %}
 </div>
 {% endblock %}

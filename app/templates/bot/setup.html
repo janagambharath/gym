@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}AI Bot Knowledge & Setup | RenewalDesk{% endblock %}
+{% block page_title %}AI Receptionist Knowledge & Setup{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('bot_web.inbox') }}"><i class="bi bi-chat-dots"></i> View Live Inbox</a>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel">
+            <h2>Business & Receptionist Profile</h2>
+            <form method="post" action="{{ url_for('bot_web.setup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="update_config">
+                
+                <div class="mb-3">
+                    <label class="form-label" for="greeting_message">Greeting & Persona</label>
+                    <textarea class="form-control" id="greeting_message" name="greeting_message" rows="2" placeholder="e.g. Welcome to Yodha Fitness! I am the automated receptionist. How can I help you today?">{{ config.greeting_message or '' }}</textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="opening_hours">Gym Opening Hours</label>
+                    <textarea class="form-control" id="opening_hours" name="opening_hours" rows="2" placeholder="e.g. Mon-Sat: 6:00 AM - 10:00 PM, Sun: 7:00 AM - 12:00 PM">{{ config.opening_hours or '' }}</textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label" for="map_link">Google Maps Location Link</label>
+                    <input class="form-control" id="map_link" name="map_link" value="{{ config.map_link or '' }}" placeholder="https://maps.app.goo.gl/...">
+                </div>
+
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="trial_enabled" name="trial_enabled" value="1" {% if config.trial_enabled %}checked{% endif %}>
+                    <label class="form-check-label" for="trial_enabled">Offer Free / Paid Workout Trial to New Inbound Inquiries</label>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label" for="trial_duration_days">Trial Days</label>
+                        <input type="number" class="form-control" id="trial_duration_days" name="trial_duration_days" value="{{ config.trial_duration_days or 1 }}" min="1" max="14">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label" for="trial_price">Trial Price (₹)</label>
+                        <input type="number" class="form-control" id="trial_price" name="trial_price" value="{{ config.trial_price or 0 }}" min="0">
+                    </div>
+                </div>
+
+                <div class="form-check form-switch mb-4">
+                    <input class="form-check-input" type="checkbox" id="handover_enabled" name="handover_enabled" value="1" {% if config.handover_enabled %}checked{% endif %}>
+                    <label class="form-check-label" for="handover_enabled">Enable Human Handover when user asks to speak with staff</label>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-check-circle"></i> Save Business Knowledge</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="panel">
+            <h2>Frequently Asked Questions (FAQs)</h2>
+            <p class="text-secondary small">The AI Receptionist automatically matches questions from inbound leads against this knowledge base.</p>
+
+            <form method="post" action="{{ url_for('bot_web.setup') }}" class="p-3 bg-light rounded border mb-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="add_faq">
+                <div class="mb-2">
+                    <input class="form-control form-control-sm" name="question" placeholder="Question (e.g. Do you have personal trainers?)" required>
+                </div>
+                <div class="mb-2">
+                    <textarea class="form-control form-control-sm" name="answer" rows="2" placeholder="Answer (e.g. Yes, certified personal trainers are available daily.)" required></textarea>
+                </div>
+                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-circle"></i> Add FAQ to AI Knowledge</button>
+            </form>
+
+            <div class="list-group list-group-flush">
+                {% for faq in faqs %}
+                <div class="list-group-item px-0 py-3">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong class="d-block mb-1">Q: {{ faq.question }}</strong>
+                            <p class="text-secondary small mb-0">A: {{ faq.answer }}</p>
+                        </div>
+                        <form method="post" action="{{ url_for('bot_web.setup') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="delete_faq">
+                            <input type="hidden" name="faq_id" value="{{ faq.id }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete FAQ"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </div>
+                {% else %}
+                <div class="text-secondary text-center py-3">No custom FAQs configured yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

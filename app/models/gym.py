@@ -53,7 +53,29 @@ class Gym(TimestampMixin, db.Model):
         default=DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE,
     )
 
-    users = db.relationship("User", back_populates="gym", cascade="all, delete-orphan")
+    country = db.Column(db.String(64), nullable=False, default="India")
+    city = db.Column(db.String(120), nullable=True)
+    area = db.Column(db.String(120), nullable=True)
+    currency = db.Column(db.String(16), nullable=False, default="INR")
+    business_category = db.Column(db.String(64), nullable=False, default="Gym / Fitness Center")
+    internal_notes = db.Column(db.Text, nullable=True)
+    onboarding_status = db.Column(
+        db.String(32), nullable=False, default="lead", index=True
+    )
+    is_test_gym = db.Column(db.Boolean, nullable=False, default=False)
+    health_score = db.Column(db.Integer, nullable=False, default=100)
+    go_live_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    go_live_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL", use_alter=True, name="fk_gyms_go_live_by_id"),
+        nullable=True,
+    )
+
+    deployment_version = db.Column(db.String(32), nullable=False, default="v2.4")
+
+    users = db.relationship(
+        "User", back_populates="gym", cascade="all, delete-orphan", foreign_keys="User.gym_id"
+    )
     plans = db.relationship(
         "MembershipPlan", back_populates="gym", cascade="all, delete-orphan"
     )
@@ -64,6 +86,9 @@ class Gym(TimestampMixin, db.Model):
     bridge_installation = db.relationship(
         "BridgeInstallation", back_populates="gym", cascade="all, delete-orphan", uselist=False
     )
+    deployment = db.relationship(
+        "GymDeployment", back_populates="gym", cascade="all, delete-orphan", uselist=False
+    )
 
     def is_operational(self) -> bool:
         return self.status == "active"
@@ -72,3 +97,4 @@ class Gym(TimestampMixin, db.Model):
         if self.max_members is None:
             return False
         return current_count >= self.max_members
+

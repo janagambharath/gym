@@ -36,6 +36,7 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     new_end = db.Column(db.Date, nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     notes = db.Column(db.Text, nullable=True)
+    is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="renewals")
     plan = db.relationship("MembershipPlan")
@@ -43,3 +44,4 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
         "PaymentVerification", back_populates="renewal", foreign_keys=[payment_verification_id]
     )
     renewed_by = db.relationship("User")
+

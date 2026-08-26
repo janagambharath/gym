@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Biometric Command Queue | RenewalDesk{% endblock %}
+{% block page_title %}Biometric Command Queue{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('biometric.index') }}"><i class="bi bi-arrow-left"></i> Bridge Overview</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-4">
+            <select class="form-select" name="status" onchange="this.form.submit()">
+                <option value="">All command statuses</option>
+                {% for st in ['pending', 'leased', 'acked', 'failed'] %}
+                <option value="{{ st }}" {% if status_filter == st %}selected{% endif %}>{{ st.title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-filter"></i> Filter</button>
+        </div>
+    </form>
+
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Command</th>
+                    <th>Member</th>
+                    <th>Enroll Number</th>
+                    <th>Status</th>
+                    <th>Attempts</th>
+                    <th>Last Error</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if pagination and pagination.items %}
+                {% for cmd in pagination.items %}
+                <tr>
+                    <td>
+                        <span class="badge {% if cmd.command_type == 'enable_user' %}bg-success{% else %}bg-danger{% endif %} text-white">
+                            {{ cmd.command_type.replace('_', ' ').title() }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if cmd.member %}
+                        <a href="{{ url_for('members.detail', member_id=cmd.member.id) }}">{{ cmd.member.full_name }}</a>
+                        {% else %}
+                        {{ cmd.member_name or 'Unlinked Member' }}
+                        {% endif %}
+                    </td>
+                    <td><code>{{ cmd.enroll_number }}</code></td>
+                    <td><span class="badge status-{{ cmd.status }}">{{ cmd.status }}</span></td>
+                    <td>{{ cmd.delivery_attempts }} (Retry #{{ cmd.retry_attempt }})</td>
+                    <td>
+                        {% if cmd.last_error %}
+                        <span class="text-danger small" title="{{ cmd.last_error }}">{{ cmd.last_error[:35] }}...</span>
+                        {% else %}
+                        <span class="text-secondary">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-secondary small">{{ cmd.created_at.strftime('%d %b %H:%M') if cmd.created_at else '—' }}</td>
+                    <td>
+                        {% if cmd.status == 'failed' %}
+                        <form method="post" action="{{ url_for('biometric.retry_command', command_id=cmd.id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Retry immediately">
+                                <i class="bi bi-arrow-clockwise"></i> Retry
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr><td colspan="8" class="text-secondary text-center py-4">No commands matching criteria.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if pagination %}
+    {% include "partials/pagination.html" %}
+    {% endif %}
+</div>
+{% endblock %}

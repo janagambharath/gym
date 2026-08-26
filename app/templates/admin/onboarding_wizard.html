@@ -1,0 +1,732 @@
+{% extends "base.html" %}
+{% block title %}Gym Onboarding Wizard — Step {{ step }} of 9 | RenewalDesk Operations{% endblock %}
+{% block page_title %}
+<div class="d-flex align-items-center">
+    <a href="{{ url_for('admin.gyms') }}" class="btn btn-sm btn-outline-secondary me-3"><i class="bi bi-arrow-left"></i> Gyms</a>
+    <span>{% if gym %}{{ gym.name }} — {% endif %}Onboarding Wizard</span>
+</div>
+{% endblock %}
+
+{% block page_actions %}
+{% if gym %}
+<span class="badge status-{{ gym.onboarding_status or 'configuring' }} fs-6 me-2">{{ (gym.onboarding_status or 'configuring').title() }}</span>
+<a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}"><i class="bi bi-speedometer me-1"></i> Command Center</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- WIZARD STEPPER NAVIGATION BAR -->
+    <div class="col-12">
+        <div class="card border-0 shadow-sm p-3 bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-bold text-uppercase small text-muted">Deployment Pipeline: Step {{ step }} of 9</span>
+                <span class="badge bg-primary-subtle text-primary fw-bold">
+                    {% if step == 1 %}1. Gym Details
+                    {% elif step == 2 %}2. Owner Account
+                    {% elif step == 3 %}3. Membership Plans
+                    {% elif step == 4 %}4. Member Import
+                    {% elif step == 5 %}5. WhatsApp Setup
+                    {% elif step == 6 %}6. AI Receptionist
+                    {% elif step == 7 %}7. Biometric Setup
+                    {% elif step == 8 %}8. Final Testing
+                    {% elif step == 9 %}9. Go Live Gate{% endif %}
+                </span>
+            </div>
+            
+            <!-- Stepper Indicators -->
+            <div class="wizard-stepper d-flex justify-content-between align-items-center position-relative my-2">
+                {% set steps = [
+                    (1, 'Gym Details', 'bi-buildings'),
+                    (2, 'Owner Account', 'bi-person-badge'),
+                    (3, 'Plans', 'bi-card-checklist'),
+                    (4, 'Members', 'bi-people'),
+                    (5, 'WhatsApp', 'bi-whatsapp'),
+                    (6, 'AI Receptionist', 'bi-robot'),
+                    (7, 'Biometric', 'bi-fingerprint'),
+                    (8, 'Testing', 'bi-patch-check'),
+                    (9, 'Go Live', 'bi-rocket-takeoff')
+                ] %}
+
+                {% for s_num, s_title, s_icon in steps %}
+                <div class="step-node text-center position-relative {% if step == s_num %}active{% elif step > s_num %}completed{% endif %}" style="flex: 1; z-index: 2;">
+                    {% if gym and dep and dep.current_step >= s_num %}
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=s_num) }}" class="step-circle btn btn-sm rounded-circle p-0 d-inline-flex align-items-center justify-content-center {% if step == s_num %}btn-primary shadow{% elif step > s_num %}btn-success{% else %}btn-outline-secondary{% endif %}" style="width: 38px; height: 38px;">
+                        {% if step > s_num %}<i class="bi bi-check-lg fs-6"></i>{% else %}<i class="bi {{ s_icon }} fs-6"></i>{% endif %}
+                    </a>
+                    {% else %}
+                    <div class="step-circle btn btn-sm rounded-circle p-0 d-inline-flex align-items-center justify-content-center {% if step == s_num %}btn-primary shadow{% else %}btn-outline-secondary disabled opacity-50{% endif %}" style="width: 38px; height: 38px;">
+                        <i class="bi {{ s_icon }} fs-6"></i>
+                    </div>
+                    {% endif %}
+                    <div class="step-title small fw-semibold mt-1 d-none d-md-block {% if step == s_num %}text-primary fw-bold{% elif step > s_num %}text-success{% else %}text-muted{% endif %}">
+                        {{ s_title }}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <div class="progress mt-2" style="height: 6px;">
+                <div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" role="progressbar" style="width: {{ (step / 9 * 100) }}%"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN STEP CONTENT -->
+    <div class="col-lg-8">
+        <div class="panel shadow-sm">
+            
+            <!-- STEP 1: GYM DETAILS -->
+            {% if step == 1 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div>
+                    <h2 class="h4 mb-1"><i class="bi bi-buildings text-primary me-2"></i>Step 1: Gym Information</h2>
+                    <p class="text-secondary small mb-0">Enter business registration, city, and operational timezone details.</p>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id if gym else 0, step_num=1) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <label class="form-label fw-bold" for="name">Gym Name <span class="text-danger">*</span></label>
+                        <input class="form-control" id="name" name="name" value="{{ gym.name if gym else '' }}" placeholder="e.g. Iron Forge Athletics" required autofocus>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold" for="business_category">Business Category</label>
+                        <select class="form-select" id="business_category" name="business_category">
+                            <option value="Gym / Fitness Center" {% if gym and gym.business_category == 'Gym / Fitness Center' %}selected{% endif %}>Gym / Fitness Center</option>
+                            <option value="CrossFit / Strength Box" {% if gym and gym.business_category == 'CrossFit / Strength Box' %}selected{% endif %}>CrossFit / Strength Box</option>
+                            <option value="Yoga / Pilates Studio" {% if gym and gym.business_category == 'Yoga / Pilates Studio' %}selected{% endif %}>Yoga / Pilates Studio</option>
+                            <option value="Martial Arts / MMA Academy" {% if gym and gym.business_category == 'Martial Arts / MMA Academy' %}selected{% endif %}>Martial Arts / MMA Academy</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold" for="country">Country</label>
+                        <select class="form-select" id="country" name="country" onchange="applyCountryDefaults(this.value)">
+                            {% for c_name in country_defaults.keys() %}
+                            <option value="{{ c_name }}" {% if (gym and gym.country == c_name) or (not gym and c_name == 'India') %}selected{% endif %}>{{ c_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold" for="city">City <span class="text-danger">*</span></label>
+                        <input class="form-control" id="city" name="city" value="{{ gym.city if gym else '' }}" placeholder="e.g. Hyderabad, Dubai, Austin" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold" for="area">Area / Locality</label>
+                        <input class="form-control" id="area" name="area" value="{{ gym.area if gym else '' }}" placeholder="e.g. Madhapur, Downtown">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold" for="address">Full Street Address</label>
+                        <textarea class="form-control" id="address" name="address" rows="2" placeholder="Building, Street, Landmark...">{{ gym.address if gym else '' }}</textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="phone">Contact Phone</label>
+                        <input class="form-control" id="phone" name="phone" value="{{ gym.phone if gym else '' }}" placeholder="+919876543210">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="email">Billing / Operations Email</label>
+                        <input class="form-control" id="email" name="email" type="email" value="{{ gym.email if gym else '' }}" placeholder="ops@ironforge.com">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="timezone">Timezone</label>
+                        <input class="form-control font-monospace" id="timezone" name="timezone" value="{{ gym.timezone if gym else 'Asia/Kolkata' }}" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="currency">Currency Code</label>
+                        <input class="form-control font-monospace" id="currency" name="currency" value="{{ gym.currency if gym else 'INR' }}" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold" for="internal_notes">Internal Founder Notes</label>
+                        <textarea class="form-control" id="internal_notes" name="internal_notes" rows="2" placeholder="Lead source, sales agreement notes, hardware delivery schedule...">{{ gym.internal_notes if gym else '' }}</textarea>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                    <a href="{{ url_for('admin.gyms') }}" class="btn btn-outline-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary px-4"><i class="bi bi-arrow-right me-1"></i> Save & Continue to Owner Account</button>
+                </div>
+            </form>
+
+            <!-- STEP 2: OWNER ACCOUNT -->
+            {% elif step == 2 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div>
+                    <h2 class="h4 mb-1"><i class="bi bi-person-badge text-primary me-2"></i>Step 2: Gym Owner Account</h2>
+                    <p class="text-secondary small mb-0">Provision the primary gym owner credentials. Forced password reset on first login is automatically enforced.</p>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=2) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                {% if temp_pass %}
+                <div class="alert alert-success d-flex align-items-center p-3 mb-4" role="alert">
+                    <i class="bi bi-check-circle-fill fs-3 me-3 text-success"></i>
+                    <div class="flex-grow-1">
+                        <div class="fw-bold">Owner Account Created Successfully!</div>
+                        <div class="small">Login: <code>{{ owner.email if owner else '' }}</code> | Temporary Password: <code class="fs-6 fw-bold text-dark bg-white px-2 py-1 rounded border">{{ temp_pass }}</code></div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-success ms-2" onclick="navigator.clipboard.writeText('Login: {{ owner.email if owner else '' }}\nPassword: {{ temp_pass }}'); alert('Credentials copied to clipboard!');">
+                        <i class="bi bi-clipboard me-1"></i> Copy
+                    </button>
+                </div>
+                {% endif %}
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="owner_name">Owner Full Name <span class="text-danger">*</span></label>
+                        <input class="form-control" id="owner_name" name="owner_name" value="{{ owner.full_name if owner else '' }}" placeholder="e.g. Rajesh Kumar" required autofocus>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="owner_email">Owner Login Email <span class="text-danger">*</span></label>
+                        <input class="form-control" id="owner_email" name="owner_email" type="email" value="{{ owner.email if owner else gym.email or '' }}" placeholder="owner@fitness.com" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="temp_password">Temporary Password</label>
+                        <div class="input-group">
+                            <input class="form-control font-monospace" id="temp_password" name="temp_password" value="{{ temp_pass or '' }}" placeholder="Auto-generated if empty">
+                            <button class="btn btn-outline-secondary" type="button" onclick="document.getElementById('temp_password').value = Math.random().toString(36).slice(-8) + '!A1';">Generate</button>
+                        </div>
+                        <small class="text-muted">Owner must change this password upon first login.</small>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Invitation Status</label>
+                        <div class="p-2 border rounded bg-light-subtle d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-send text-primary me-2"></i>Status: <strong>{{ (owner.invitation_status if owner else 'Ready to send').title() }}</strong></span>
+                            <span class="badge bg-success-subtle text-success">Active</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=1) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                    <button type="submit" class="btn btn-primary px-4"><i class="bi bi-arrow-right me-1"></i> Save & Continue to Plans</button>
+                </div>
+            </form>
+
+            <!-- STEP 3: MEMBERSHIP PLANS -->
+            {% elif step == 3 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="h4 mb-1"><i class="bi bi-card-checklist text-primary me-2"></i>Step 3: Membership Plans</h2>
+                        <p class="text-secondary small mb-0">Configure standard renewal durations and prices for this gym.</p>
+                    </div>
+                    {% if not plans %}
+                    <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=3) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="_action" value="populate_defaults">
+                        <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-magic me-1"></i> Populate Standard Plans</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Existing Plans Table -->
+            <div class="table-responsive mb-4">
+                <table class="table table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Plan Name</th>
+                            <th>Duration</th>
+                            <th>Price ({{ gym.currency }})</th>
+                            <th class="text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for plan in plans %}
+                        <tr>
+                            <td class="fw-bold">{{ plan.name }}</td>
+                            <td>{{ plan.duration_days }} days ({{ (plan.duration_days / 30)|round(0, 'floor')|int }} mo)</td>
+                            <td class="fw-bold text-success">{{ gym.currency }} {{ plan.price }}</td>
+                            <td class="text-end">
+                                <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=3) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="_action" value="delete_plan">
+                                    <input type="hidden" name="plan_id" value="{{ plan.id }}">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('Remove this plan?');"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-center text-muted p-4">No plans created yet. Add below or click "Populate Standard Plans".</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Add Custom Plan Box -->
+            <div class="p-3 border rounded bg-light-subtle mb-4">
+                <h6 class="fw-bold mb-3"><i class="bi bi-plus-circle me-1"></i> Add Custom Membership Plan</h6>
+                <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=3) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="_action" value="add_plan">
+                    <div class="row g-2">
+                        <div class="col-md-5">
+                            <input class="form-control form-control-sm" name="plan_name" placeholder="Plan Name (e.g. 3 Months Gold)" required>
+                        </div>
+                        <div class="col-md-3">
+                            <input class="form-control form-control-sm" name="duration_days" type="number" placeholder="Days (e.g. 90)" required>
+                        </div>
+                        <div class="col-md-3">
+                            <input class="form-control form-control-sm" name="price" type="number" step="0.01" placeholder="Price ({{ gym.currency }})" required>
+                        </div>
+                        <div class="col-md-1">
+                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus"></i></button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=3) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=2) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                    <button type="submit" class="btn btn-primary px-4" {% if not plans %}disabled{% endif %}><i class="bi bi-arrow-right me-1"></i> Save & Continue to Member Import</button>
+                </div>
+            </form>
+
+            <!-- STEP 4: MEMBER IMPORT -->
+            {% elif step == 4 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="h4 mb-1"><i class="bi bi-people text-primary me-2"></i>Step 4: Member Import & Seeding</h2>
+                        <p class="text-secondary small mb-0">Upload existing member CSV or seed starter members to verify renewals.</p>
+                    </div>
+                    <span class="badge bg-primary fs-6">{{ member_count }} Members in Gym</span>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <!-- Option A: Starter Sample Members -->
+                <div class="col-md-6">
+                    <div class="p-3 border rounded bg-light-subtle h-100 d-flex flex-column justify-content-between">
+                        <div>
+                            <h6 class="fw-bold"><i class="bi bi-lightning-charge text-warning me-1"></i> Fast Starter Data</h6>
+                            <p class="small text-muted mb-3">Add 3 sample members (Active, Expiring in 5 days, and Expired) for immediate testing.</p>
+                        </div>
+                        <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=4) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="_action" value="seed_sample">
+                            <button type="submit" class="btn btn-outline-primary btn-sm w-100"><i class="bi bi-person-plus me-1"></i> Add Starter Members</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Option B: CSV Upload -->
+                <div class="col-md-6">
+                    <div class="p-3 border rounded bg-light-subtle h-100 d-flex flex-column justify-content-between">
+                        <div>
+                            <h6 class="fw-bold"><i class="bi bi-file-earmark-spreadsheet text-success me-1"></i> Upload Member CSV</h6>
+                            <p class="small text-muted mb-2">Columns: <code>full_name, phone, membership_start, membership_end</code></p>
+                        </div>
+                        <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=4) }}" enctype="multipart/form-data">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="_action" value="upload_csv">
+                            <div class="input-group input-group-sm">
+                                <input type="file" class="form-control" name="csv_file" accept=".csv" required>
+                                <button class="btn btn-success" type="submit">Upload</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Members Preview -->
+            {% if members %}
+            <div class="table-responsive mb-4">
+                <table class="table table-sm table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Member</th>
+                            <th>Phone</th>
+                            <th>Expiry</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for m in members %}
+                        <tr>
+                            <td class="fw-semibold">{{ m.full_name }}</td>
+                            <td>{{ m.phone }}</td>
+                            <td>{{ m.membership_end.strftime('%d %b %Y') if m.membership_end else '—' }}</td>
+                            <td><span class="badge status-{{ m.status }}">{{ m.status }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=4) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=3) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                    <button type="submit" class="btn btn-primary px-4" {% if member_count == 0 %}disabled{% endif %}><i class="bi bi-arrow-right me-1"></i> Continue to WhatsApp Setup</button>
+                </div>
+            </form>
+
+            <!-- STEP 5: WHATSAPP SETUP -->
+            {% elif step == 5 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div>
+                    <h2 class="h4 mb-1"><i class="bi bi-whatsapp text-success me-2"></i>Step 5: WhatsApp Integration</h2>
+                    <p class="text-secondary small mb-0">Connect Meta WhatsApp Cloud API credentials or enable simulation mode.</p>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=5) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" {% if gym.whatsapp_enabled %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="whatsapp_enabled">Enable WhatsApp Messaging & Reminders for this Gym</label>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="business_phone_number">Display Phone Number</label>
+                        <input class="form-control" id="business_phone_number" name="business_phone_number" value="{{ gym.business_phone_number or '' }}" placeholder="+919876543210">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="phone_number_id">Meta Phone Number ID</label>
+                        <input class="form-control font-monospace" id="phone_number_id" name="phone_number_id" value="{{ gym.phone_number_id or '' }}" placeholder="e.g. 1048572910485">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold" for="whatsapp_business_account_id">Meta WhatsApp Business Account ID (WABA)</label>
+                        <input class="form-control font-monospace" id="whatsapp_business_account_id" name="whatsapp_business_account_id" value="{{ gym.whatsapp_business_account_id or '' }}" placeholder="e.g. 2048572910485">
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=4) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                    <button type="submit" class="btn btn-primary px-4"><i class="bi bi-arrow-right me-1"></i> Save & Continue to AI Receptionist</button>
+                </div>
+            </form>
+
+            <!-- STEP 6: AI RECEPTIONIST -->
+            {% elif step == 6 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div>
+                    <h2 class="h4 mb-1"><i class="bi bi-robot text-primary me-2"></i>Step 6: AI Receptionist Configuration</h2>
+                    <p class="text-secondary small mb-0">Configure automated inquiry handling, opening hours, and grounded FAQ rules.</p>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=6) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label fw-bold" for="greeting_message">Greeting Message</label>
+                        <textarea class="form-control" id="greeting_message" name="greeting_message" rows="2">{{ bot_cfg.greeting_message if bot_cfg else 'Welcome to ' ~ gym.name ~ '! How can I help you with your fitness journey today?' }}</textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="opening_hours">Opening Hours</label>
+                        <input class="form-control" id="opening_hours" name="opening_hours" value="{{ bot_cfg.opening_hours if bot_cfg else '6:00 AM - 10:00 PM (Mon-Sat), 8:00 AM - 2:00 PM (Sun)' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold" for="map_link">Google Maps / Location Link</label>
+                        <input class="form-control" id="map_link" name="map_link" value="{{ bot_cfg.map_link if bot_cfg else '' }}" placeholder="https://maps.app.goo.gl/...">
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-check form-switch pt-2">
+                            <input class="form-check-input" type="checkbox" id="trial_enabled" name="trial_enabled" {% if bot_cfg and bot_cfg.trial_enabled %}checked{% endif %}>
+                            <label class="form-check-label fw-bold" for="trial_enabled">Offer Free Trial Sessions</label>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-check form-switch pt-2">
+                            <input class="form-check-input" type="checkbox" id="handover_enabled" name="handover_enabled" {% if not bot_cfg or bot_cfg.handover_enabled %}checked{% endif %}>
+                            <label class="form-check-label fw-bold" for="handover_enabled">Enable Human Staff Handover</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=5) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                    <button type="submit" class="btn btn-primary px-4"><i class="bi bi-arrow-right me-1"></i> Save & Continue to Biometrics</button>
+                </div>
+            </form>
+
+            <!-- STEP 7: BIOMETRIC SETUP -->
+            {% elif step == 7 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div>
+                    <h2 class="h4 mb-1"><i class="bi bi-fingerprint text-primary me-2"></i>Step 7: Biometric Bridge Setup</h2>
+                    <p class="text-secondary small mb-0">Pair on-premise Windows PC bridge for automated turnstile gate control.</p>
+                </div>
+            </div>
+
+            <!-- Pairing Code Display Box -->
+            <div class="p-4 border rounded bg-light-subtle text-center mb-4">
+                <span class="text-uppercase small fw-bold text-muted d-block mb-1">Gym Biometric Pairing Code</span>
+                <div class="display-4 fw-bold font-monospace text-primary letter-spacing-2 my-2">{{ dep.pairing_code or '834921' }}</div>
+                <div class="small text-muted mb-3">Valid for 24 hours. Enter this 6-digit code inside the Renewal Desk Windows Bridge app.</div>
+                
+                <div class="d-flex justify-content-center gap-2">
+                    <form method="post" action="{{ url_for('admin.generate_bridge_pairing', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-clockwise me-1"></i> Refresh Code</button>
+                    </form>
+                </div>
+            </div>
+
+            {% if bridge_raw_key %}
+            <div class="alert alert-warning mb-4">
+                <strong>Bridge API Key Generated:</strong> <code class="fs-6 fw-bold">{{ bridge_raw_key }}</code>
+                <div class="small mt-1 text-muted">Save this key in the gym bridge config. It will not be shown again.</div>
+            </div>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=7) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="enable_biometric" name="enable_biometric" {% if bridge %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="enable_biometric">Enable Biometric Turnstile Hardware for this Gym</label>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="device_serial">Biometric Device Serial Number</label>
+                    <input class="form-control font-monospace" id="device_serial" name="device_serial" value="{{ bridge.device_serial if bridge else '' }}" placeholder="e.g. X990-YODHA-01 or SN-883921">
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=6) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                    <button type="submit" class="btn btn-primary px-4"><i class="bi bi-arrow-right me-1"></i> Save & Continue to Testing</button>
+                </div>
+            </form>
+
+            <!-- STEP 8: FINAL TESTING & CHECKLIST -->
+            {% elif step == 8 %}
+            <div class="panel-header border-bottom pb-3 mb-4">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2 class="h4 mb-1"><i class="bi bi-patch-check text-primary me-2"></i>Step 8: Pre-Launch Verification</h2>
+                        <p class="text-secondary small mb-0">Execute controlled tests to verify member access, renewals, and notification pipelines.</p>
+                    </div>
+                    <span class="badge bg-success fs-6">{{ checklist_stats.completed }} / {{ checklist_stats.total }} Passed / Skipped</span>
+                </div>
+            </div>
+
+            <!-- Testing Runners Row -->
+            <div class="row g-3 mb-4">
+                <!-- Test 1: Biometric Sync -->
+                <div class="col-md-6">
+                    <div class="p-3 border rounded bg-light-subtle h-100">
+                        <div class="fw-bold mb-1"><i class="bi bi-fingerprint text-primary me-1"></i> Biometric Test Sync</div>
+                        <p class="small text-muted mb-2">Queue an <code>enable_user</code> access command for a test member.</p>
+                        <form method="post" action="{{ url_for('admin.run_test_biometric_sync', gym_id=gym.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-outline-primary btn-sm w-100" type="submit"><i class="bi bi-play-circle me-1"></i> Sync Test Member</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Test 2: Controlled Test Payment & Renewal -->
+                <div class="col-md-6">
+                    <div class="p-3 border rounded bg-light-subtle h-100">
+                        <div class="fw-bold mb-1"><i class="bi bi-receipt text-success me-1"></i> Test Payment & Renewal</div>
+                        <p class="small text-muted mb-2">Simulates isolated test renewal without contaminating financial revenue.</p>
+                        <form method="post" action="{{ url_for('admin.run_test_payment_renewal', gym_id=gym.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-outline-success btn-sm w-100" type="submit"><i class="bi bi-arrow-repeat me-1"></i> Run Test Renewal</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Test 3: WhatsApp Test Message -->
+                <div class="col-md-6">
+                    <div class="p-3 border rounded bg-light-subtle h-100">
+                        <div class="fw-bold mb-1"><i class="bi bi-whatsapp text-success me-1"></i> WhatsApp Message Test</div>
+                        <form method="post" action="{{ url_for('admin.run_test_whatsapp', gym_id=gym.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="input-group input-group-sm mb-2">
+                                <input class="form-control" name="test_phone" placeholder="+91..." value="{{ gym.phone or '' }}" required>
+                                <button class="btn btn-outline-success" type="submit">Send Test</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Test 4: AI Receptionist Query -->
+                <div class="col-md-6">
+                    <div class="p-3 border rounded bg-light-subtle h-100">
+                        <div class="fw-bold mb-1"><i class="bi bi-robot text-primary me-1"></i> Test AI Receptionist</div>
+                        <form method="post" action="{{ url_for('admin.run_test_ai', gym_id=gym.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="input-group input-group-sm mb-2">
+                                <input class="form-control" name="query" value="How much is quarterly membership?">
+                                <button class="btn btn-outline-primary" type="submit">Ask AI</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Go-Live Checklist Table -->
+            <h6 class="fw-bold mb-2">Go-Live Checklist Items</h6>
+            <div class="table-responsive mb-4">
+                <table class="table table-bordered align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Checklist Item</th>
+                            <th>Requirement</th>
+                            <th>Status</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if dep and dep.checklist_json %}
+                        {% for key, item in dep.checklist_json.items() %}
+                        <tr>
+                            <td>
+                                <div class="fw-bold">{{ item.label }}</div>
+                                {% if item.details %}<small class="text-muted">{{ item.details }}</small>{% endif %}
+                            </td>
+                            <td>
+                                {% if item.required %}<span class="badge bg-danger-subtle text-danger">Mandatory</span>
+                                {% else %}<span class="badge bg-secondary-subtle text-secondary">Optional</span>{% endif %}
+                            </td>
+                            <td>
+                                {% if item.status == 'passed' %}<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i> Passed</span>
+                                {% elif item.status == 'skipped' %}<span class="badge bg-secondary"><i class="bi bi-dash-circle me-1"></i> Skipped</span>
+                                {% elif item.status == 'failed' %}<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i> Failed</span>
+                                {% else %}<span class="badge bg-warning text-dark"><i class="bi bi-hourglass me-1"></i> Pending</span>{% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if not item.required and item.status != 'skipped' %}
+                                <form method="post" action="{{ url_for('admin.skip_checklist_item', gym_id=gym.id, key=key) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-sm btn-outline-secondary" type="submit">Skip</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=7) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back</a>
+                <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=9) }}" class="btn btn-primary px-4"><i class="bi bi-arrow-right me-1"></i> Proceed to Go Live Gate</a>
+            </div>
+
+            <!-- STEP 9: GO LIVE GATE -->
+            {% elif step == 9 %}
+            <div class="panel-header border-bottom pb-3 mb-4 text-center">
+                <div class="d-inline-flex p-3 bg-primary-subtle text-primary rounded-circle mb-3">
+                    <i class="bi bi-rocket-takeoff fs-1"></i>
+                </div>
+                <h2 class="h3 mb-1">Step 9: Launch & Activate Gym</h2>
+                <p class="text-secondary small mb-0">Final validation gate for <strong>{{ gym.name }}</strong></p>
+            </div>
+
+            {% if not ready_for_live %}
+            <div class="alert alert-danger p-3 mb-4">
+                <h6 class="fw-bold"><i class="bi bi-shield-x me-1"></i> Go-Live Blocked</h6>
+                <ul class="mb-0 small">
+                    {% for blocker in live_blockers %}
+                    <li>{{ blocker }}</li>
+                    {% endfor %}
+                </ul>
+                <div class="mt-3">
+                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=8) }}" class="btn btn-sm btn-outline-danger">Resolve Checklist Items in Step 8</a>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-success p-4 mb-4 text-center">
+                <i class="bi bi-patch-check-fill fs-2 text-success d-block mb-2"></i>
+                <h5 class="fw-bold">All Pre-Launch Checks PASSED!</h5>
+                <p class="small text-muted mb-0">The gym is 100% verified, configured, and ready to operate independently.</p>
+            </div>
+
+            <div class="card bg-body-tertiary border-0 p-3 mb-4">
+                <div class="row text-center g-2">
+                    <div class="col-4">
+                        <small class="text-muted d-block">Owner Account</small>
+                        <strong>{{ owner.email if owner else 'Provisioned' }}</strong>
+                    </div>
+                    <div class="col-4">
+                        <small class="text-muted d-block">Active Plans</small>
+                        <strong>{{ plans|length }} Plans</strong>
+                    </div>
+                    <div class="col-4">
+                        <small class="text-muted d-block">Initial Members</small>
+                        <strong>{{ member_count }} Members</strong>
+                    </div>
+                </div>
+            </div>
+
+            <form method="post" action="{{ url_for('admin.mark_gym_live', gym_id=gym.id) }}" class="text-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-lg btn-success px-5 py-3 shadow">
+                    <i class="bi bi-rocket-takeoff-fill me-2"></i> MARK GYM LIVE & ACTIVATE
+                </button>
+            </form>
+            {% endif %}
+
+            <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=8) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i> Back to Testing</a>
+                <a href="{{ url_for('admin.gym_detail', gym_id=gym.id) }}" class="btn btn-outline-primary"><i class="bi bi-speedometer me-1"></i> Open Command Center</a>
+            </div>
+
+            {% endif %}
+
+        </div>
+    </div>
+
+    <!-- SIDEBAR SUMMARY & TIMELINE -->
+    <div class="col-lg-4">
+        <!-- Live Checklist Summary Card -->
+        <div class="panel mb-4 shadow-sm">
+            <div class="panel-header">
+                <h6 class="mb-0 fw-bold"><i class="bi bi-list-check text-primary me-2"></i>Onboarding Progress</h6>
+                <span class="badge bg-primary">{{ checklist_stats.completed }}/{{ checklist_stats.total }}</span>
+            </div>
+            <div class="p-3">
+                <div class="progress mb-3" style="height: 8px;">
+                    <div class="progress-bar bg-success" style="width: {{ ((checklist_stats.passed|default(0)) / (checklist_stats.total|default(12)) * 100) }}%"></div>
+                    <div class="progress-bar bg-secondary" style="width: {{ ((checklist_stats.skipped|default(0)) / (checklist_stats.total|default(12)) * 100) }}%"></div>
+                </div>
+                <div class="d-flex justify-content-between small text-muted mb-2">
+                    <span>Passed: <strong>{{ checklist_stats.passed|default(0) }}</strong></span>
+                    <span>Skipped: <strong>{{ checklist_stats.skipped|default(0) }}</strong></span>
+                    <span>Pending: <strong>{{ checklist_stats.pending|default(0) }}</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Deployment Timeline Card -->
+        <div class="panel shadow-sm">
+            <div class="panel-header">
+                <h6 class="mb-0 fw-bold"><i class="bi bi-clock-history text-secondary me-2"></i>Deployment Log</h6>
+            </div>
+            <div class="p-3" style="max-height: 400px; overflow-y: auto;">
+                {% if dep and dep.deployment_timeline_json %}
+                <div class="timeline">
+                    {% for event in dep.deployment_timeline_json|reverse %}
+                    <div class="d-flex mb-3">
+                        <div class="me-2 text-primary"><i class="bi bi-dot fs-4"></i></div>
+                        <div>
+                            <div class="small fw-semibold">{{ event.event }}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">{{ event.display_time }} • {{ event.actor }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-muted small text-center p-3">Timeline events will appear as setup progresses.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function applyCountryDefaults(country) {
+    const defaults = {{ country_defaults|tojson }};
+    if (defaults && defaults[country]) {
+        document.getElementById('timezone').value = defaults[country].timezone || 'Asia/Kolkata';
+        document.getElementById('currency').value = defaults[country].currency || 'INR';
+    }
+}
+</script>
+{% endblock %}

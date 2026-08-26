@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime
-
+from datetime import datetime, timezone
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
+from sqlalchemy import func, select
 
 from app.extensions import db
 from app.forms.member import E164_RE
 from app.models import Member, MembershipPlan
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
+from app.services.bridge_service import queue_membership_command
 from app.services.reminder_service import today_for_gym
 from app.utils.decorators import active_gym_required, roles_required
 
@@ -75,8 +76,17 @@ def import_members():
         for plan in MembershipPlan.query.filter_by(gym_id=current_user.gym_id).all()
     }
 
+    # Pre-fetch existing phone numbers in gym for duplicate detection
+    existing_phones = {
+        m.phone for m in Member.query.filter_by(gym_id=current_user.gym_id).filter(Member.deleted_at.is_(None)).all()
+    }
+
     valid_rows: list[dict] = []
     row_errors: dict[int, list[str]] = {}
+    seen_in_file_phones: set[str] = set()
+    duplicate_count = 0
+
+    batch_id = f"IMPORT-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
 
     for index, row in enumerate(reader, start=2):
         row = {(key or "").strip().lower(): (value or "").strip() for key, value in row.items()}
@@ -90,6 +100,14 @@ def import_members():
         cleaned_phone = phone.replace(" ", "")
         if not E164_RE.match(cleaned_phone):
             errors.append(f"phone '{phone}' must be in E.164 format, e.g. +919876543210")
+        elif cleaned_phone in existing_phones:
+            errors.append(f"phone '{phone}' is already registered in this gym (duplicate)")
+            duplicate_count += 1
+        elif cleaned_phone in seen_in_file_phones:
+            errors.append(f"phone '{phone}' appears multiple times in CSV file")
+            duplicate_count += 1
+        else:
+            seen_in_file_phones.add(cleaned_phone)
 
         membership_start = _parse_date(row.get("membership_start", ""), errors, "membership_start")
         membership_end = _parse_date(row.get("membership_end", ""), errors, "membership_end")
@@ -118,6 +136,8 @@ def import_members():
         if gender and gender not in {"female", "male", "other"}:
             errors.append(f"gender '{gender}' must be female, male, or other")
 
+        device_enroll = row.get("device_enroll_number", "") or None
+
         if errors:
             row_errors[index] = errors
             continue
@@ -132,7 +152,9 @@ def import_members():
                 "membership_start": membership_start,
                 "membership_end": membership_end,
                 "status": status,
-                "notes": row.get("notes", "") or None,
+                "device_enroll_number": device_enroll,
+                "external_ref": batch_id,
+                "notes": row.get("notes", "") or f"Imported in batch {batch_id}",
             }
         )
 
@@ -141,12 +163,12 @@ def import_members():
             "members/import.html",
             row_errors=row_errors,
             total_rows=len(valid_rows) + len(row_errors),
+            duplicates=duplicate_count,
+            invalid=len(row_errors) - duplicate_count,
         )
 
     gym = current_user.gym
     if gym.max_members is not None:
-        from sqlalchemy import func, select
-
         locked_gym = db.session.execute(
             select(gym.__class__).where(gym.__class__.id == gym.id).with_for_update()
         ).scalar_one()
@@ -168,6 +190,8 @@ def import_members():
                 "members/import.html",
                 row_errors=row_errors,
                 total_rows=len(valid_rows) + len(row_errors),
+                duplicates=duplicate_count,
+                invalid=len(row_errors) - duplicate_count,
             )
 
     created = 0
@@ -179,14 +203,20 @@ def import_members():
     audit(
         action="bulk_import_members",
         resource_type="member",
-        metadata={"created": created, "skipped": len(row_errors)},
+        gym_id=current_user.gym_id,
+        metadata={
+            "batch_id": batch_id,
+            "created": created,
+            "skipped": len(row_errors),
+            "duplicates": duplicate_count,
+        },
     )
     invalidate_dashboard_cache(current_user.gym_id)
     db.session.commit()
 
     if row_errors:
         flash(
-            f"Imported {created} member(s). {len(row_errors)} row(s) had errors and were skipped.",
+            f"Batch {batch_id}: Imported {created} members. {len(row_errors)} rows skipped ({duplicate_count} duplicates, {len(row_errors) - duplicate_count} invalid).",
             "warning",
         )
         return render_template(
@@ -194,7 +224,46 @@ def import_members():
             row_errors=row_errors,
             total_rows=created + len(row_errors),
             imported=created,
+            batch_id=batch_id,
+            duplicates=duplicate_count,
+            invalid=len(row_errors) - duplicate_count,
         )
 
-    flash(f"Imported {created} member(s) successfully.", "success")
+    flash(f"Batch {batch_id}: Successfully imported {created} member(s).", "success")
+    return redirect(url_for("members.index"))
+
+
+@import_bp.post("/undo/<batch_id>")
+@login_required
+@active_gym_required
+@roles_required("gym_owner")
+def undo_import(batch_id: str):
+    """Rollback an import batch: soft-deletes members created in that batch who have no payments."""
+    from app.models.mixins import utcnow
+
+    members = Member.query.filter_by(gym_id=current_user.gym_id, external_ref=batch_id, deleted_at=None).all()
+    if not members:
+        flash(f"No active members found for import batch '{batch_id}'.", "warning")
+        return redirect(url_for("members.index"))
+
+    undone_count = 0
+    for m in members:
+        # Check if member has verified payments recorded
+        if m.payments:
+            continue
+        m.deleted_at = utcnow()
+        m.status = "deleted"
+        queue_membership_command(m)
+        undone_count += 1
+
+    audit(
+        action="undo_import_batch",
+        resource_type="member_batch",
+        gym_id=current_user.gym_id,
+        metadata={"batch_id": batch_id, "undone_count": undone_count},
+    )
+    invalidate_dashboard_cache(current_user.gym_id)
+    db.session.commit()
+
+    flash(f"Rollback complete: {undone_count} member(s) from batch '{batch_id}' were safely removed.", "success")
     return redirect(url_for("members.index"))

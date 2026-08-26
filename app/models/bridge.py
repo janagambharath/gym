@@ -53,13 +53,31 @@ class BridgeInstallation(TimestampMixin, db.Model):
     last_heartbeat_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_status = db.Column(db.String(32), nullable=True)
 
+    # V2 Distribution & Telemetry Fields
+    installed_version = db.Column(db.String(32), nullable=False, default="1.0.0", index=True)
+    installed_build = db.Column(db.Integer, nullable=True)
+    os_info = db.Column(db.String(120), nullable=True)
+    pc_name = db.Column(db.String(120), nullable=True)
+    first_paired_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    release_channel = db.Column(db.String(32), nullable=False, default="stable")
+    release_id = db.Column(
+        db.Integer, db.ForeignKey("bridge_releases.id", ondelete="SET NULL"), nullable=True
+    )
+    status = db.Column(
+        db.String(32), nullable=False, default="paired", index=True
+    )  # pending, paired, online, offline, revoked, disabled
+
     gym = db.relationship("Gym", back_populates="bridge_installation")
+    release = db.relationship(
+        "BridgeRelease", back_populates="installations", foreign_keys=[release_id]
+    )
     commands = db.relationship(
         "BridgeCommand", back_populates="bridge", cascade="all, delete-orphan"
     )
     attendance_events = db.relationship(
         "BridgeAttendance", back_populates="bridge", cascade="all, delete-orphan"
     )
+
 
     @classmethod
     def create_for_gym(
@@ -133,6 +151,8 @@ class BridgeCommand(TimestampMixin, db.Model):
 
     bridge = db.relationship("BridgeInstallation", back_populates="commands")
     member = db.relationship("Member", back_populates="bridge_commands")
+    gym = db.relationship("Gym")
+
 
     def lease(self, lease_token: str, lease_expires_at) -> None:
         self.status = "leased"

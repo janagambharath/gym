@@ -48,3 +48,5 @@ class ReminderLog(TenantMixin, TimestampMixin, db.Model):
 
     member = db.relationship("Member", back_populates="reminders")
     template = db.relationship("NotificationTemplate", back_populates="reminder_logs")
+    gym = db.relationship("Gym")
+

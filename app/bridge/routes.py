@@ -10,8 +10,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
-from app.models import BridgeAttendance, BridgeCommand, BridgeInstallation, Member
-from app.models.bridge import hash_bridge_api_key
+from app.models import (
+    BridgeAttendance,
+    BridgeCommand,
+    BridgeInstallation,
+    BridgeRelease,
+    GymDeployment,
+    Member,
+)
+from app.models.bridge import (
+    generate_bridge_api_key,
+    generate_bridge_public_id,
+    hash_bridge_api_key,
+)
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.bridge_service import (
@@ -24,6 +35,8 @@ from app.services.bridge_service import (
 
 
 bridge_bp = Blueprint("bridge", __name__, url_prefix="/api/bridge/v1")
+bridge_v2_bp = Blueprint("bridge_v2", __name__, url_prefix="/api/bridge/v2")
+
 
 
 def _json_error(status: int, code: str, message: str):
@@ -135,10 +148,29 @@ def heartbeat():
     status = _payload_value(payload, "status", "Status")
     if not isinstance(status, str) or not status.strip():
         return _json_error(422, "invalid_status", "status is required.")
-    installation.last_status = status.strip()[:32]
+    
+    clean_status = status.strip()[:32]
+    installation.last_status = clean_status
+    installation.status = "online" if clean_status.lower() in ("online", "ok", "healthy") else clean_status.lower()
     installation.last_heartbeat_at = utcnow()
+
+    # Capture optional client telemetry (V2 clients)
+    version = _payload_value(payload, "version", "bridgeVersion", "installed_version")
+    if version and isinstance(version, str):
+        installation.installed_version = version.strip()[:32]
+    build = _payload_value(payload, "buildNumber", "build_number", "build")
+    if build and str(build).isdigit():
+        installation.installed_build = int(build)
+    os_info = _payload_value(payload, "osInfo", "os_info", "os")
+    if os_info and isinstance(os_info, str):
+        installation.os_info = os_info.strip()[:120]
+    pc_name = _payload_value(payload, "pcName", "pc_name")
+    if pc_name and isinstance(pc_name, str):
+        installation.pc_name = pc_name.strip()[:120]
+
     db.session.commit()
     return jsonify({"ok": True, "serverTime": utcnow().isoformat()})
+
 
 
 @bridge_bp.post("/attendance")
@@ -344,3 +376,131 @@ def confirm_enrollment():
             "commandQueued": command is not None,
         }
     )
+
+
+# ─── Bridge V2 Pairing Endpoint ──────────────────────────────────────────────
+
+@bridge_v2_bp.post("/pair")
+@limiter.limit("20 per minute")
+def pair_bridge():
+    """Exchange a 6-digit one-time pairing code for permanent bridge credentials."""
+    payload = _require_json()
+    if payload is None:
+        return _json_error(415, "invalid_json", "Send a JSON request body.")
+
+    pairing_code = str(_payload_value(payload, "pairingCode", "pairing_code", "code") or "").strip()
+    device_serial = str(_payload_value(payload, "deviceSerial", "device_serial", "serial") or "").strip()
+    version = str(_payload_value(payload, "version", "bridgeVersion", "installed_version") or "2.0.0").strip()
+    build_num = _payload_value(payload, "buildNumber", "build_number", "build")
+    os_info = str(_payload_value(payload, "osInfo", "os_info", "os") or "").strip()
+    pc_name = str(_payload_value(payload, "pcName", "pc_name") or "").strip()
+
+    if not pairing_code or len(pairing_code) < 6:
+        return _json_error(422, "invalid_pairing_code", "A 6-digit pairing code is required.")
+    if not device_serial:
+        return _json_error(422, "invalid_device_serial", "Biometric device serial is required.")
+
+    # Find deployment with active pairing code
+    dep = GymDeployment.query.filter_by(pairing_code=pairing_code).first()
+    if not dep or not dep.pairing_code_expires_at:
+        return _json_error(401, "pairing_code_invalid", "Invalid or expired pairing code.")
+
+    expires_at = dep.pairing_code_expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < utcnow():
+        return _json_error(401, "pairing_code_expired", "Pairing code has expired. Generate a new code from admin dashboard.")
+
+    gym = dep.gym
+    if not gym or gym.status != "active":
+        return _json_error(403, "gym_inactive", "Gym is not active for bridge pairing.")
+
+    # Check if another gym has this device serial bound
+    existing_serial = BridgeInstallation.query.filter(
+        BridgeInstallation.device_serial == device_serial,
+        BridgeInstallation.gym_id != gym.id,
+        BridgeInstallation.is_active == True,
+    ).first()
+    if existing_serial:
+        return _json_error(409, "device_already_bound", "This biometric terminal is already registered to another active gym.")
+
+    # Create or update BridgeInstallation for this gym
+    installation = BridgeInstallation.query.filter_by(gym_id=gym.id).first()
+    raw_api_key = generate_bridge_api_key()
+    api_key_hash = hash_bridge_api_key(raw_api_key)
+
+    if installation is None:
+        installation = BridgeInstallation(
+            gym_id=gym.id,
+            public_id=generate_bridge_public_id(),
+            api_key_hash=api_key_hash,
+            device_serial=device_serial,
+            display_name=f"{gym.name} Biometric Bridge",
+            installed_version=version[:32] if version else "2.0.0",
+            installed_build=int(build_num) if build_num and str(build_num).isdigit() else None,
+            os_info=os_info[:120] if os_info else None,
+            pc_name=pc_name[:120] if pc_name else None,
+            first_paired_at=utcnow(),
+            last_heartbeat_at=utcnow(),
+            status="paired",
+            is_active=True,
+        )
+        db.session.add(installation)
+    else:
+        # Re-pairing / Updating existing installation
+        installation.api_key_hash = api_key_hash
+        installation.device_serial = device_serial
+        installation.installed_version = version[:32] if version else "2.0.0"
+        if build_num and str(build_num).isdigit():
+            installation.installed_build = int(build_num)
+        if os_info:
+            installation.os_info = os_info[:120]
+        if pc_name:
+            installation.pc_name = pc_name[:120]
+        if not installation.first_paired_at:
+            installation.first_paired_at = utcnow()
+        installation.last_heartbeat_at = utcnow()
+        installation.status = "paired"
+        installation.is_active = True
+
+    # Associate with latest release if matched
+    matched_release = BridgeRelease.query.filter_by(version=version).first()
+    if matched_release:
+        installation.release_id = matched_release.id
+        installation.release_channel = matched_release.release_channel
+
+    # Burn / invalidate pairing code
+    dep.pairing_code = None
+    dep.pairing_code_expires_at = None
+    if "bridge_connected" in dep.checklist_json:
+        dep.checklist_json["bridge_connected"]["status"] = "passed"
+        dep.checklist_json["bridge_connected"]["details"] = f"Paired {device_serial} (v{version})"
+
+    dep.add_timeline_event(
+        event=f"Biometric Bridge V2 Paired ({device_serial})",
+        actor=pc_name or "Bridge Client",
+        details=f"Version: {version}, OS: {os_info}, ID: {installation.public_id}",
+    )
+
+
+    audit(
+        action="bridge_v2_paired",
+        resource_type="bridge",
+        resource_id=installation.id,
+        gym_id=gym.id,
+        metadata={"device_serial": device_serial, "version": version},
+    )
+    db.session.commit()
+
+
+    return jsonify({
+        "ok": True,
+        "gymId": installation.public_id,
+        "gymName": gym.name,
+        "apiKey": raw_api_key,
+        "deviceSerial": device_serial,
+        "protocolVersion": 2,
+        "pollIntervalSeconds": 5,
+        "serverTime": utcnow().isoformat(),
+    }), 201
+

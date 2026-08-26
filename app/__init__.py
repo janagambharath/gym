@@ -190,11 +190,14 @@ def _init_extensions(app: Flask) -> None:
 def _register_blueprints(app: Flask) -> None:
     from app.admin.routes import admin_bp
     from app.auth.routes import auth_bp
-    from app.bridge.routes import bridge_bp
+    from app.biometric.routes import biometric_bp
+    from app.bot_web.routes import bot_web_bp
+    from app.bridge.routes import bridge_bp, bridge_v2_bp
     from app.gym.routes import gym_bp
     from app.gym.staff_routes import staff_bp
     from app.members.import_routes import import_bp
     from app.members.routes import members_bp
+    from app.operations.routes import operations_bp
     from app.payments.routes import payments_bp
     from app.reminders.routes import reminders_bp
     from app.webhooks.whatsapp import webhooks_bp
@@ -208,11 +211,17 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(reminders_bp)
     app.register_blueprint(webhooks_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(biometric_bp)
+    app.register_blueprint(bot_web_bp)
+    app.register_blueprint(operations_bp)
     # The gym-laptop agent uses an API key rather than browser cookies.  Keep
     # CSRF protection on every dashboard form and exempt only this strict,
     # independently authenticated machine API.
     csrf.exempt(bridge_bp)
+    csrf.exempt(bridge_v2_bp)
     app.register_blueprint(bridge_bp)
+    app.register_blueprint(bridge_v2_bp)
+
 
     # Mobile JSON API — uses Bearer tokens, no CSRF.
     if app.config.get("MOBILE_API_ENABLED"):

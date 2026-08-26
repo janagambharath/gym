@@ -114,8 +114,14 @@ def login():
         session.permanent = True
         user.reset_failed_logins()
         user.mark_login()
+        if getattr(user, "invitation_status", None) in {"pending", "sent"}:
+            user.invitation_status = "accepted"
         audit(action="login", resource_type="user", resource_id=user.id, gym_id=user.gym_id)
         db.session.commit()
+
+        if getattr(user, "must_change_password", False):
+            flash("Welcome! Please set a new permanent password to secure your account.", "info")
+            return redirect(url_for("auth.change_password"))
 
         next_url = request.args.get("next")
         if not _is_safe_redirect(next_url):
@@ -206,6 +212,8 @@ def change_password():
             flash("Current password is incorrect.", "danger")
             return render_template("auth/change_password.html", form=form)
         current_user.set_password(form.new_password.data)
+        current_user.must_change_password = False
+        current_user.is_temporary_password = False
         audit(action="change_password", resource_type="user", resource_id=current_user.id)
         db.session.commit()
         flash("Password changed successfully.", "success")
@@ -213,6 +221,7 @@ def change_password():
             return redirect(url_for("admin.dashboard"))
         return redirect(url_for("gym.dashboard"))
     return render_template("auth/change_password.html", form=form)
+
 
 
 _RESET_SALT = "password-reset"

@@ -1,338 +1,779 @@
 {% extends "base.html" %}
-{% block title %}{{ gym.name }} — Gym Control Center | RenewalDesk{% endblock %}
-{% block page_title %}{{ gym.name }}{% endblock %}
+{% block title %}{{ gym.name }} — Deployment Command Center | RenewalDesk Operations{% endblock %}
+{% block page_title %}
+<div class="d-flex align-items-center">
+    <a href="{{ url_for('admin.gyms') }}" class="btn btn-sm btn-outline-secondary me-3"><i class="bi bi-arrow-left"></i> Gyms</a>
+    <span>{{ gym.name }}</span>
+</div>
+{% endblock %}
+
 {% block page_actions %}
-<form method="post" action="{{ url_for('admin.toggle_gym', gym_id=gym.id) }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-outline-primary"><i class="bi bi-power"></i> Toggle Status ({{ gym.status.title() }})</button>
-</form>
+<span class="badge status-{{ gym.onboarding_status or gym.status }} fs-6 me-2">{{ (gym.onboarding_status or gym.status).title() }}</span>
+<span class="badge {% if health_score >= 90 %}bg-success{% elif health_score >= 70 %}bg-warning text-dark{% else %}bg-danger{% endif %} fs-6 me-3">Health: {{ health_score }}%</span>
+
+<div class="btn-group">
+    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=dep.current_step if dep else 1) }}" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-magic me-1"></i> Onboarding Wizard
+    </a>
+    {% if gym.status == 'active' %}
+    <form method="post" action="{{ url_for('admin.suspend_gym', gym_id=gym.id) }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-sm btn-outline-danger ms-1" type="submit" onclick="return confirm('Suspend operations for {{ gym.name }}?');">
+            <i class="bi bi-pause-circle me-1"></i> Suspend
+        </button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('admin.resume_gym', gym_id=gym.id) }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-sm btn-success ms-1" type="submit">
+            <i class="bi bi-play-circle me-1"></i> Resume Live
+        </button>
+    </form>
+    {% endif %}
+</div>
 {% endblock %}
 
 {% block content %}
-<!-- Top Metrics Grid -->
-<div class="stats-grid mb-4">
-    <div class="stat-card"><span>Active Users</span><strong>{{ stats.users }}</strong></div>
-    <div class="stat-card"><span>Total Members</span><strong>{{ stats.members }}</strong></div>
-    <div class="stat-card accent-warn"><span>Pending Payments</span><strong>{{ stats.pending_payments }}</strong></div>
-    <div class="stat-card accent-success"><span>Sent Reminders</span><strong>{{ stats.sent_reminders }}</strong></div>
-</div>
+<!-- COMMAND CENTER TABS -->
+<ul class="nav nav-pills mb-4 gap-1 p-2 bg-body-tertiary rounded shadow-sm border">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'overview' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='overview') }}">
+            <i class="bi bi-speedometer2 me-1"></i> Overview
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'deployment' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='deployment') }}">
+            <i class="bi bi-rocket-takeoff me-1"></i> Deployment
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'members' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='members') }}">
+            <i class="bi bi-people me-1"></i> Members ({{ stats.members }})
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'payments' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='payments') }}">
+            <i class="bi bi-receipt me-1"></i> Payments
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'renewals' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='renewals') }}">
+            <i class="bi bi-arrow-repeat me-1"></i> Renewals
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'whatsapp' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='whatsapp') }}">
+            <i class="bi bi-whatsapp me-1"></i> WhatsApp
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'ai' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='ai') }}">
+            <i class="bi bi-robot me-1"></i> AI Receptionist
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'biometric' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='biometric') }}">
+            <i class="bi bi-fingerprint me-1"></i> Biometric Bridge
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'staff' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='staff') }}">
+            <i class="bi bi-person-badge me-1"></i> Staff
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'issues' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='issues') }}">
+            <i class="bi bi-exclamation-octagon me-1"></i> Issues {% if issues_list %}<span class="badge bg-danger ms-1">{{ issues_list|length }}</span>{% endif %}
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'activity' %}active{% endif %}" href="{{ url_for('admin.gym_detail', gym_id=gym.id, tab='activity') }}">
+            <i class="bi bi-clock-history me-1"></i> Activity Log
+        </a>
+    </li>
+</ul>
 
+<!-- ─── TAB 1: OVERVIEW ────────────────────────────────────────────────── -->
+{% if active_tab == 'overview' %}
 <div class="row g-4">
-    <!-- LEFT COLUMN: WhatsApp & Entitlements -->
-    <div class="col-lg-6">
-        
-        <!-- CARD 1: WhatsApp Integration (Founder Managed) -->
-        <div class="panel mb-4">
-            <div class="panel-header">
-                <div>
-                    <h2 class="h5 mb-0"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp Integration</h2>
-                    <small class="text-secondary">Configured by Platform Founder only (Hidden from Gym Desk)</small>
-                </div>
-                <span class="badge {{ 'status-active' if gym.whatsapp_enabled else 'status-suspended' }}">
-                    {{ 'Enabled' if gym.whatsapp_enabled else 'Disabled' }}
-                </span>
-            </div>
-            <form method="post" action="{{ url_for('admin.update_gym_whatsapp', gym_id=gym.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="form-check form-switch mb-3">
-                    <input class="form-check-input" type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" {% if gym.whatsapp_enabled %}checked{% endif %}>
-                    <label class="form-check-label fw-bold" for="whatsapp_enabled">Enable WhatsApp Messaging for this Gym</label>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label text-sm fw-semibold" for="business_phone_number">Display Business Phone Number</label>
-                    <input class="form-control" id="business_phone_number" name="business_phone_number" value="{{ gym.business_phone_number or '' }}" placeholder="+919876543210">
-                </div>
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="phone_number_id">Meta Phone Number ID</label>
-                        <input class="form-control font-mono text-sm" id="phone_number_id" name="phone_number_id" value="{{ gym.phone_number_id or '' }}" placeholder="e.g. 1048572910485">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="whatsapp_business_account_id">Meta WABA Account ID</label>
-                        <input class="form-control font-mono text-sm" id="whatsapp_business_account_id" name="whatsapp_business_account_id" value="{{ gym.whatsapp_business_account_id or '' }}" placeholder="e.g. 2048572910485">
-                    </div>
-                </div>
-                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Save WhatsApp Credentials</button>
-            </form>
+    <!-- Top Metrics Row -->
+    <div class="col-12">
+        <div class="stats-grid">
+            <div class="stat-card"><span>Active Members</span><strong>{{ stats.active_members }}</strong></div>
+            <div class="stat-card accent-success"><span>Verified Revenue</span><strong>₹{{ stats.revenue_verified }}</strong></div>
+            <div class="stat-card accent-warn"><span>Pending Payments</span><strong>{{ stats.pending_payments }}</strong></div>
+            <div class="stat-card"><span>Sent Reminders</span><strong>{{ stats.sent_reminders }}</strong></div>
         </div>
-
-        <!-- CARD 2: Feature Entitlements / Licensing (Clean ON/OFF Switches) -->
-        <div class="panel mb-4">
-            <div class="panel-header">
-                <div>
-                    <h2 class="h5 mb-0"><i class="bi bi-toggles text-primary me-2"></i>Feature Entitlements & Modules</h2>
-                    <small class="text-secondary">Turn features ON or OFF for this gym</small>
-                </div>
-            </div>
-            <form method="post" action="{{ url_for('admin.update_gym_entitlements', gym_id=gym.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                
-                <!-- WhatsApp AI Bot ON/OFF -->
-                <div class="p-3 border rounded mb-3 bg-light-subtle">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center">
-                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
-                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_whatsapp_bot" name="feat_whatsapp_bot" {% if entitlements.whatsapp_bot.enabled %}checked{% endif %}>
-                            </div>
-                            <div class="ms-3">
-                                <label class="form-check-label fw-bold text-dark m-0" for="feat_whatsapp_bot" style="cursor: pointer;">WhatsApp AI Bot (`whatsapp_bot`)</label>
-                                <small class="text-secondary d-block">AI auto-replies to incoming leads and inquiries (Gym sets prompt/hours in App)</small>
-                            </div>
-                        </div>
-                        <span class="badge {{ 'status-active' if entitlements.whatsapp_bot.is_active() else 'status-suspended' }}">
-                            {{ 'Active' if entitlements.whatsapp_bot.is_active() else 'Inactive' }}
-                        </span>
-                    </div>
-                    <div class="row g-2 align-items-center ms-5">
-                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
-                        <div class="col-auto">
-                            <input type="date" class="form-control form-control-sm" name="expiry_whatsapp_bot" value="{{ entitlements.whatsapp_bot.expires_at.strftime('%Y-%m-%d') if entitlements.whatsapp_bot.expires_at else '' }}">
-                        </div>
-                        <div class="col-auto"><small class="text-muted">(empty for unlimited)</small></div>
-                    </div>
-                </div>
-
-                <!-- Renewal Desk Core App -->
-                <div class="p-3 border rounded mb-3 bg-light-subtle">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center">
-                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
-                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_renewal_desk" name="feat_renewal_desk" {% if entitlements.renewal_desk.enabled %}checked{% endif %}>
-                            </div>
-                            <div class="ms-3">
-                                <label class="form-check-label fw-bold text-dark m-0" for="feat_renewal_desk" style="cursor: pointer;">Renewal Desk Mobile App (`renewal_desk`)</label>
-                                <small class="text-secondary d-block">Mobile CRM, member management, renewals, payments</small>
-                            </div>
-                        </div>
-                        <span class="badge {{ 'status-active' if entitlements.renewal_desk.is_active() else 'status-suspended' }}">
-                            {{ 'Active' if entitlements.renewal_desk.is_active() else 'Inactive' }}
-                        </span>
-                    </div>
-                    <div class="row g-2 align-items-center ms-5">
-                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
-                        <div class="col-auto">
-                            <input type="date" class="form-control form-control-sm" name="expiry_renewal_desk" value="{{ entitlements.renewal_desk.expires_at.strftime('%Y-%m-%d') if entitlements.renewal_desk.expires_at else '' }}">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Biometric Turnstile Bridge -->
-                <div class="p-3 border rounded mb-3 bg-light-subtle">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center">
-                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
-                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_biometric" name="feat_biometric" {% if entitlements.biometric.enabled %}checked{% endif %}>
-                            </div>
-                            <div class="ms-3">
-                                <label class="form-check-label fw-bold text-dark m-0" for="feat_biometric" style="cursor: pointer;">Biometric Turnstile Hardware Bridge (`biometric`)</label>
-                                <small class="text-secondary d-block">On-premise access control gate sync on expiry & renewal</small>
-                            </div>
-                        </div>
-                        <span class="badge {{ 'status-active' if entitlements.biometric.is_active() else 'status-suspended' }}">
-                            {{ 'Active' if entitlements.biometric.is_active() else 'Inactive' }}
-                        </span>
-                    </div>
-                    <div class="row g-2 align-items-center ms-5">
-                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
-                        <div class="col-auto">
-                            <input type="date" class="form-control form-control-sm" name="expiry_biometric" value="{{ entitlements.biometric.expires_at.strftime('%Y-%m-%d') if entitlements.biometric.expires_at else '' }}">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Advanced Analytics -->
-                <div class="p-3 border rounded mb-3 bg-light-subtle">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <div class="d-flex align-items-center">
-                            <div class="form-check form-switch m-0" style="font-size: 1.3rem;">
-                                <input class="form-check-input" style="cursor: pointer; width: 2.6em; height: 1.3em;" type="checkbox" id="feat_advanced_reports" name="feat_advanced_reports" {% if entitlements.advanced_reports.enabled %}checked{% endif %}>
-                            </div>
-                            <div class="ms-3">
-                                <label class="form-check-label fw-bold text-dark m-0" for="feat_advanced_reports" style="cursor: pointer;">Advanced Analytics (`advanced_reports`)</label>
-                                <small class="text-secondary d-block">Periodized revenue forecasts and financial breakdowns</small>
-                            </div>
-                        </div>
-                        <span class="badge {{ 'status-active' if entitlements.advanced_reports.is_active() else 'status-suspended' }}">
-                            {{ 'Active' if entitlements.advanced_reports.is_active() else 'Inactive' }}
-                        </span>
-                    </div>
-                    <div class="row g-2 align-items-center ms-5">
-                        <div class="col-auto"><label class="form-label text-sm mb-0">Expires on:</label></div>
-                        <div class="col-auto">
-                            <input type="date" class="form-control form-control-sm" name="expiry_advanced_reports" value="{{ entitlements.advanced_reports.expires_at.strftime('%Y-%m-%d') if entitlements.advanced_reports.expires_at else '' }}">
-                        </div>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Save Feature Entitlements</button>
-            </form>
-        </div>
-
     </div>
 
-    <!-- RIGHT COLUMN: Gym Profile, Biometric Bridge & Users -->
+    <!-- Health Breakdown Card -->
     <div class="col-lg-6">
-        
-        <!-- CARD 3: Gym Profile & Subscription -->
-        <div class="panel mb-4">
-            <div class="panel-header">
-                <div>
-                    <h2 class="h5 mb-0"><i class="bi bi-building text-warning me-2"></i>Gym Profile & Subscription</h2>
-                    <small class="text-secondary">Core business info & member limits</small>
-                </div>
-            </div>
-            <form method="post" action="{{ url_for('admin.update_gym_settings', gym_id=gym.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                
-                <div class="mb-3">
-                    <label class="form-label text-sm fw-semibold" for="name">Gym Name</label>
-                    <input class="form-control" id="name" name="name" value="{{ gym.name }}" required>
-                </div>
-
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="email">Contact Email</label>
-                        <input class="form-control" id="email" name="email" value="{{ gym.email or '' }}">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="phone">Contact Phone</label>
-                        <input class="form-control" id="phone" name="phone" value="{{ gym.phone or '' }}">
-                    </div>
-                </div>
-
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="timezone">Timezone</label>
-                        <input class="form-control" id="timezone" name="timezone" value="{{ gym.timezone or 'Asia/Kolkata' }}">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="max_members">Max Members Limit</label>
-                        <input type="number" class="form-control" id="max_members" name="max_members" value="{{ gym.max_members or '' }}" placeholder="Empty for unlimited">
-                    </div>
-                </div>
-
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="subscription_status">Subscription Tier</label>
-                        <select class="form-select" id="subscription_status" name="subscription_status">
-                            {% for opt in ['trial', 'active', 'past_due', 'canceled'] %}
-                            <option value="{{ opt }}" {% if gym.subscription_status == opt %}selected{% endif %}>{{ opt.title() }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label text-sm fw-semibold" for="status">Operational Status</label>
-                        <select class="form-select" id="status" name="status">
-                            <option value="active" {% if gym.status == 'active' %}selected{% endif %}>Active</option>
-                            <option value="suspended" {% if gym.status == 'suspended' %}selected{% endif %}>Suspended</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="mb-3">
-                    <label class="form-label text-sm fw-semibold" for="trial_ends_at">Trial Expiry Date</label>
-                    <input type="date" class="form-control form-control-sm" id="trial_ends_at" name="trial_ends_at" value="{{ gym.trial_ends_at.strftime('%Y-%m-%d') if gym.trial_ends_at else '' }}">
-                </div>
-
-                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Update Gym Profile</button>
-            </form>
-        </div>
-
-        <!-- CARD 4: Biometric Hardware Bridge -->
-        <div class="panel mb-4">
-            <div class="panel-header">
-                <div>
-                    <h2 class="h5 mb-0"><i class="bi bi-fingerprint text-danger me-2"></i>Biometric Turnstile Bridge</h2>
-                    <small class="text-secondary">On-premise PC hardware sync</small>
-                </div>
-                <span class="badge {{ 'status-active' if bridge and bridge.is_active else 'status-suspended' }}">
-                    {{ 'Connected' if bridge else 'Not Installed' }}
+        <div class="panel h-100 shadow-sm">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-heart-pulse text-danger me-2"></i>Gym Operational Health Score</h5>
+                <span class="badge {% if health_score >= 90 %}bg-success{% elif health_score >= 70 %}bg-warning text-dark{% else %}bg-danger{% endif %} fs-6">
+                    {{ health_score }} / 100
                 </span>
             </div>
-            {% if bridge %}
-            <div class="table-responsive mb-3">
-                <table class="table table-sm">
-                    <tr><th class="text-secondary">Device Serial</th><td class="font-mono">{{ bridge.device_serial }}</td></tr>
-                    <tr><th class="text-secondary">Public ID</th><td class="font-mono text-sm">{{ bridge.public_id }}</td></tr>
-                    <tr><th class="text-secondary">Last Heartbeat</th><td>{{ bridge.last_heartbeat_at.strftime('%Y-%m-%d %H:%M:%S') if bridge.last_heartbeat_at else 'Never' }}</td></tr>
-                    <tr><th class="text-secondary">Status</th><td><span class="badge status-active">{{ bridge.last_status or 'Provisioned' }}</span></td></tr>
-                </table>
+            <div class="p-3">
+                <div class="progress mb-3" style="height: 10px;">
+                    <div class="progress-bar {% if health_score >= 90 %}bg-success{% elif health_score >= 70 %}bg-warning{% else %}bg-danger{% endif %}" style="width: {{ health_score }}%"></div>
+                </div>
+                <h6 class="small fw-bold text-uppercase text-muted mb-2">Live Signals:</h6>
+                <div class="list-group list-group-flush">
+                    {% for sig in health_signals %}
+                    <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center">
+                        <span class="fw-semibold">{{ sig.name }}</span>
+                        <span class="badge bg-{{ sig.status }}-subtle text-{{ sig.status }}">{{ sig.msg }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
-            <form method="post" action="{{ url_for('admin.create_gym_bridge', gym_id=gym.id) }}" class="d-flex gap-2">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="device_serial" value="{{ bridge.device_serial }}">
-                <button type="submit" class="btn btn-outline-warning btn-sm" onclick="return confirm('Rotate Bridge API Key? The old key will stop working immediately.');">
-                    <i class="bi bi-arrow-repeat me-1"></i> Rotate Bridge Key
-                </button>
-            </form>
-            {% else %}
-            <form method="post" action="{{ url_for('admin.create_gym_bridge', gym_id=gym.id) }}" class="row g-2">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="col-md-8">
-                    <input class="form-control form-control-sm" name="device_serial" placeholder="Hardware Device Serial (e.g. ZK-990-2026)" required>
-                </div>
-                <div class="col-md-4">
-                    <button type="submit" class="btn btn-outline-success btn-sm w-100"><i class="bi bi-plus-lg me-1"></i> Provision Bridge</button>
-                </div>
-            </form>
-            {% endif %}
         </div>
+    </div>
 
-        <!-- CARD 5: Staff & Users Management -->
-        <div class="panel mb-4">
+    <!-- Core Gym Profile & Quick Settings -->
+    <div class="col-lg-6">
+        <div class="panel h-100 shadow-sm">
             <div class="panel-header">
-                <div>
-                    <h2 class="h5 mb-0"><i class="bi bi-people text-primary me-2"></i>Gym Staff & Users ({{ users|length }})</h2>
-                    <small class="text-secondary">Manage logins and reset passwords directly</small>
+                <h5 class="mb-0"><i class="bi bi-buildings text-primary me-2"></i>Gym Details & Region</h5>
+            </div>
+            <div class="p-3">
+                <div class="row g-2 mb-3">
+                    <div class="col-6"><small class="text-muted d-block">City / Country</small><strong>{{ gym.city or '—' }}, {{ gym.country }}</strong></div>
+                    <div class="col-6"><small class="text-muted d-block">Timezone / Currency</small><strong>{{ gym.timezone }} ({{ gym.currency }})</strong></div>
+                    <div class="col-6"><small class="text-muted d-block">Subscription Status</small><strong class="badge bg-primary-subtle text-primary">{{ gym.subscription_status.title() }}</strong></div>
+                    <div class="col-6"><small class="text-muted d-block">Deployment Version</small><strong>{{ gym.deployment_version }}</strong></div>
                 </div>
+                {% if gym.address %}
+                <div class="small text-muted mb-2"><strong>Address:</strong> {{ gym.address }}</div>
+                {% endif %}
+                {% if gym.internal_notes %}
+                <div class="p-2 border rounded bg-light-subtle small text-muted"><strong>Founder Notes:</strong> {{ gym.internal_notes }}</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── TAB 2: DEPLOYMENT COMMAND CENTER ───────────────────────────────── -->
+{% elif active_tab == 'deployment' %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="panel shadow-sm mb-4">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0"><i class="bi bi-patch-check text-primary me-2"></i>Go-Live Checklist & Verification</h5>
+                    <small class="text-muted">{{ checklist_stats.completed }} of {{ checklist_stats.total }} items passed or verified</small>
+                </div>
+                <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=8) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-play-circle me-1"></i> Run Tests in Wizard
+                </a>
             </div>
             <div class="table-responsive">
-                <table class="table align-middle table-sm">
-                    <thead>
+                <table class="table table-bordered align-middle mb-0">
+                    <thead class="table-light">
                         <tr>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Role</th>
-                            <th>Reset Password</th>
+                            <th>Verification Item</th>
+                            <th>Requirement</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for user in users %}
+                        {% if dep and dep.checklist_json %}
+                        {% for key, item in dep.checklist_json.items() %}
                         <tr>
-                            <td><strong>{{ user.full_name }}</strong></td>
-                            <td>{{ user.email }}</td>
-                            <td><span class="badge bg-secondary">{{ user.role }}</span></td>
                             <td>
-                                <form method="post" action="{{ url_for('admin.reset_user_password', gym_id=gym.id, user_id=user.id) }}" class="d-flex gap-1">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="password" name="new_password" class="form-control form-control-sm" placeholder="New Password" style="width: 130px;" required minlength="6">
-                                    <button type="submit" class="btn btn-outline-primary btn-sm" title="Save New Password"><i class="bi bi-key"></i></button>
-                                </form>
+                                <div class="fw-bold">{{ item.label }}</div>
+                                {% if item.details %}<small class="text-muted">{{ item.details }}</small>{% endif %}
+                            </td>
+                            <td>
+                                {% if item.required %}<span class="badge bg-danger-subtle text-danger">Mandatory</span>
+                                {% else %}<span class="badge bg-secondary-subtle text-secondary">Optional</span>{% endif %}
+                            </td>
+                            <td>
+                                {% if item.status == 'passed' %}<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i> Passed</span>
+                                {% elif item.status == 'skipped' %}<span class="badge bg-secondary"><i class="bi bi-dash-circle me-1"></i> Skipped</span>
+                                {% elif item.status == 'failed' %}<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i> Failed</span>
+                                {% else %}<span class="badge bg-warning text-dark"><i class="bi bi-hourglass me-1"></i> Pending</span>{% endif %}
                             </td>
                         </tr>
-                        {% else %}
-                        <tr><td colspan="4" class="text-secondary">No users found.</td></tr>
                         {% endfor %}
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <!-- CARD 6: Offboarding / Danger Zone -->
-        <div class="panel border-danger">
-            <div class="panel-header text-danger"><h2 class="h5 mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Offboarding / Danger Zone</h2></div>
-            <form method="post" action="{{ url_for('admin.delete_gym', gym_id=gym.id) }}" class="row g-2 align-items-end">
+        {% if ready_for_live and gym.onboarding_status != 'live' %}
+        <div class="card bg-success-subtle border-success p-4 text-center shadow-sm">
+            <h4 class="fw-bold text-success"><i class="bi bi-rocket-takeoff me-2"></i>Gym Ready For Launch!</h4>
+            <p class="text-muted small">All mandatory tests have passed. Activate this gym to make it live for owners and staff.</p>
+            <form method="post" action="{{ url_for('admin.mark_gym_live', gym_id=gym.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="col-md-8">
-                    <label class="form-label text-sm" for="confirm">Type <strong class="text-danger">{{ gym.slug }}</strong> to suspend gym & soft-delete members:</label>
-                    <input class="form-control form-control-sm" id="confirm" name="confirm" required>
-                </div>
-                <div class="col-md-4">
-                    <button class="btn btn-danger btn-sm w-100" type="submit">Offboard Gym</button>
-                </div>
+                <button type="submit" class="btn btn-success px-4 py-2 fw-bold"><i class="bi bi-check-lg me-1"></i> MARK GYM LIVE NOW</button>
             </form>
         </div>
+        {% endif %}
+    </div>
 
+    <!-- Deployment Metrics & History Timeline -->
+    <div class="col-lg-4">
+        <div class="panel shadow-sm mb-4">
+            <div class="panel-header"><h6 class="mb-0 fw-bold">Deployment Summary</h6></div>
+            <div class="p-3">
+                <div class="mb-2"><small class="text-muted d-block">Current Stage</small><span class="badge status-{{ gym.onboarding_status }}">{{ (gym.onboarding_status or 'configuring').title() }}</span></div>
+                <div class="mb-2"><small class="text-muted d-block">Setup Started</small><strong>{{ dep.started_at.strftime('%d %b %Y, %H:%M') if dep and dep.started_at else '—' }}</strong></div>
+                <div class="mb-2"><small class="text-muted d-block">Setup Duration</small><strong>{% if dep and dep.setup_duration_seconds %}{{ dep.setup_duration_seconds // 60 }}m {{ dep.setup_duration_seconds % 60 }}s{% else %}In Progress{% endif %}</strong></div>
+                {% if gym.go_live_at %}
+                <div class="mb-2"><small class="text-muted d-block">Go Live Date</small><strong class="text-success">{{ gym.go_live_at.strftime('%d %b %Y, %H:%M') }}</strong></div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="panel shadow-sm">
+            <div class="panel-header"><h6 class="mb-0 fw-bold"><i class="bi bi-clock-history text-secondary me-2"></i>Deployment Timeline</h6></div>
+            <div class="p-3" style="max-height: 450px; overflow-y: auto;">
+                {% if dep and dep.deployment_timeline_json %}
+                <div class="timeline">
+                    {% for event in dep.deployment_timeline_json|reverse %}
+                    <div class="d-flex mb-3">
+                        <div class="me-2 text-primary"><i class="bi bi-dot fs-4"></i></div>
+                        <div>
+                            <div class="small fw-semibold">{{ event.event }}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">{{ event.display_time }} • {{ event.actor }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-muted small text-center p-3">No deployment logs recorded yet.</div>
+                {% endif %}
+            </div>
+        </div>
     </div>
 </div>
+
+<!-- ─── TAB 3: MEMBERS ─────────────────────────────────────────────────── -->
+{% elif active_tab == 'members' %}
+<div class="panel shadow-sm mb-4">
+    <div class="panel-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-people text-primary me-2"></i>Member Records ({{ members|length }})</h5>
+        <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=4) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-circle me-1"></i> Import More</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Member</th>
+                    <th>Phone</th>
+                    <th>Biometric Enroll #</th>
+                    <th>Membership Period</th>
+                    <th>Status</th>
+                    <th>Batch</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in members %}
+                <tr>
+                    <td class="fw-bold">{{ m.full_name }}</td>
+                    <td>{{ m.phone }}</td>
+                    <td><code>{{ m.device_enroll_number or '—' }}</code></td>
+                    <td class="small">{{ m.membership_start.strftime('%d %b %Y') if m.membership_start else '—' }} to {{ m.membership_end.strftime('%d %b %Y') if m.membership_end else '—' }}</td>
+                    <td><span class="badge status-{{ m.status }}">{{ m.status }}</span></td>
+                    <td class="small text-muted font-monospace">{{ m.external_ref or 'Manual' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted p-4">No members registered yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if import_batches %}
+<div class="panel shadow-sm">
+    <div class="panel-header"><h5 class="mb-0"><i class="bi bi-archive text-secondary me-2"></i>Import Batches</h5></div>
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Batch ID</th>
+                    <th>Members Added</th>
+                    <th>Created At</th>
+                    <th class="text-end">Rollback</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in import_batches %}
+                <tr>
+                    <td class="fw-bold font-monospace">{{ b[0] }}</td>
+                    <td>{{ b[1] }} Members</td>
+                    <td class="small text-muted">{{ b[2].strftime('%d %b %Y, %H:%M') if b[2] else '—' }}</td>
+                    <td class="text-end">
+                        <form method="post" action="{{ url_for('admin.undo_member_import_batch', gym_id=gym.id, batch_id=b[0]) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('Rollback import batch {{ b[0] }}? This will soft-delete non-renewed members.');">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i> Undo Batch
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- ─── TAB 4: PAYMENTS ────────────────────────────────────────────────── -->
+{% elif active_tab == 'payments' %}
+<div class="panel shadow-sm">
+    <div class="panel-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-receipt text-success me-2"></i>Payments & Verifications</h5>
+        <form method="post" action="{{ url_for('admin.run_test_payment_renewal', gym_id=gym.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-success" type="submit"><i class="bi bi-plus-circle me-1"></i> Run Isolated Test Payment</button>
+        </form>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Member</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Reference</th>
+                    <th>Status</th>
+                    <th>Test Flag</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in payments %}
+                <tr>
+                    <td class="fw-bold">{{ p.member.full_name if p.member else 'Unknown' }}</td>
+                    <td class="fw-bold text-success">₹{{ p.amount }}</td>
+                    <td>{{ p.method.upper() }}</td>
+                    <td class="small font-monospace">{{ p.reference or '—' }}</td>
+                    <td><span class="badge status-{{ p.status }}">{{ p.status }}</span></td>
+                    <td>{% if p.is_test %}<span class="badge bg-warning text-dark">TEST (Isolated)</span>{% else %}<span class="badge bg-light text-muted border">Real</span>{% endif %}</td>
+                    <td class="small text-muted">{{ p.created_at.strftime('%d %b %H:%M') }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="text-center text-muted p-4">No payments recorded.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── TAB 5: RENEWALS ────────────────────────────────────────────────── -->
+{% elif active_tab == 'renewals' %}
+<div class="panel shadow-sm">
+    <div class="panel-header"><h5 class="mb-0"><i class="bi bi-arrow-repeat text-primary me-2"></i>Renewal Timeline</h5></div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Member</th>
+                    <th>Plan</th>
+                    <th>New Access Window</th>
+                    <th>Amount</th>
+                    <th>Type</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in renewals %}
+                <tr>
+                    <td class="fw-bold">{{ r.member.full_name if r.member else 'Unknown' }}</td>
+                    <td>{{ r.plan.name if r.plan else 'Standard' }}</td>
+                    <td class="small">{{ r.new_start.strftime('%d %b %Y') }} to {{ r.new_end.strftime('%d %b %Y') }}</td>
+                    <td class="fw-bold">₹{{ r.amount }}</td>
+                    <td>{% if r.is_test %}<span class="badge bg-warning text-dark">Test Renewal</span>{% else %}<span class="badge bg-success">Live Renewal</span>{% endif %}</td>
+                    <td class="small text-muted">{{ r.created_at.strftime('%d %b %H:%M') }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted p-4">No renewals recorded.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── TAB 6: WHATSAPP ────────────────────────────────────────────────── -->
+{% elif active_tab == 'whatsapp' %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel shadow-sm">
+            <div class="panel-header"><h5 class="mb-0"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp Configuration</h5></div>
+            <div class="p-3">
+                <form method="post" action="{{ url_for('admin.update_gym_whatsapp', gym_id=gym.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="whatsapp_enabled" name="whatsapp_enabled" {% if gym.whatsapp_enabled %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="whatsapp_enabled">Enable WhatsApp Messaging</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="business_phone_number">Display Business Phone</label>
+                        <input class="form-control" id="business_phone_number" name="business_phone_number" value="{{ gym.business_phone_number or '' }}" placeholder="+919876543210">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="phone_number_id">Meta Phone Number ID</label>
+                        <input class="form-control font-monospace" id="phone_number_id" name="phone_number_id" value="{{ gym.phone_number_id or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="whatsapp_business_account_id">Meta WABA Account ID</label>
+                        <input class="form-control font-monospace" id="whatsapp_business_account_id" name="whatsapp_business_account_id" value="{{ gym.whatsapp_business_account_id or '' }}">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Save WhatsApp Credentials</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- WhatsApp Test Console -->
+    <div class="col-lg-6">
+        <div class="panel shadow-sm">
+            <div class="panel-header"><h5 class="mb-0"><i class="bi bi-send text-primary me-2"></i>Test WhatsApp Delivery</h5></div>
+            <div class="p-3">
+                <p class="small text-muted">Enter a destination number to test direct API connectivity.</p>
+                <form method="post" action="{{ url_for('admin.run_test_whatsapp', gym_id=gym.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Destination Number (E.164)</label>
+                        <input class="form-control" name="test_phone" value="{{ gym.phone or '' }}" placeholder="+919876543210" required>
+                    </div>
+                    <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-whatsapp me-1"></i> Send Test Message</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── TAB 7: AI RECEPTIONIST ─────────────────────────────────────────── -->
+{% elif active_tab == 'ai' %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel shadow-sm">
+            <div class="panel-header"><h5 class="mb-0"><i class="bi bi-robot text-primary me-2"></i>AI Settings</h5></div>
+            <div class="p-3">
+                <form method="post" action="{{ url_for('admin.update_gym_bot_config', gym_id=gym.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Greeting Message</label>
+                        <textarea class="form-control" name="greeting_message" rows="2">{{ bot_config.greeting_message or '' }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Opening Hours</label>
+                        <input class="form-control" name="opening_hours" value="{{ bot_config.opening_hours or '' }}">
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="trial_enabled" name="trial_enabled" {% if bot_config.trial_enabled %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="trial_enabled">Free Trial Sessions</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i> Update Bot Settings</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Playground Console -->
+    <div class="col-lg-6">
+        <div class="panel shadow-sm">
+            <div class="panel-header"><h5 class="mb-0"><i class="bi bi-chat-left-dots text-info me-2"></i>AI Test Playground</h5></div>
+            <div class="p-3">
+                <p class="small text-muted">Test how the AI receptionist replies based on grounded gym facts.</p>
+                <form method="post" action="{{ url_for('admin.run_test_ai', gym_id=gym.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Test Question</label>
+                        <input class="form-control" name="query" value="How much is quarterly membership?" required>
+                    </div>
+                    <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-play-circle me-1"></i> Generate Answer</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── TAB 8: BIOMETRIC BRIDGE ────────────────────────────────────────── -->
+{% elif active_tab == 'biometric' %}
+<div class="row g-4">
+    <!-- Pairing & Hardware Box -->
+    <div class="col-lg-5">
+        <div class="panel shadow-sm mb-4">
+            <div class="panel-header"><h5 class="mb-0"><i class="bi bi-fingerprint text-primary me-2"></i>Bridge Status & Pairing</h5></div>
+            <div class="p-3">
+                <div class="p-3 border rounded bg-light-subtle text-center mb-3">
+                    <small class="text-muted text-uppercase fw-bold d-block mb-1">Active Pairing Code</small>
+                    <div class="h2 fw-bold font-monospace text-primary mb-1">{{ dep.pairing_code or '834921' }}</div>
+                    <form method="post" action="{{ url_for('admin.generate_bridge_pairing', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-secondary" type="submit">Refresh Code</button>
+                    </form>
+                </div>
+
+                {% if bridge %}
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <div class="p-2 border rounded bg-light small">
+                            <span class="text-muted d-block small">Installed Version</span>
+                            <span class="fw-bold">v{{ bridge_status_info.installed_version }}</span>
+                            <span class="badge bg-secondary-subtle text-secondary small ms-1">{{ bridge_status_info.installed_channel | upper }}</span>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-2 border rounded bg-light small">
+                            <span class="text-muted d-block small">Bridge Status</span>
+                            <span class="fw-bold {% if bridge.is_active and bridge.status == 'online' %}text-success{% elif bridge.status == 'revoked' %}text-danger{% else %}text-secondary{% endif %}">
+                                <i class="bi bi-circle-fill small me-1"></i>{{ bridge_status_info.status | upper }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                {% if bridge_status_info.update_available and bridge_status_info.target_upgrade %}
+                <div class="alert alert-warning border-warning small mb-3">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <strong><i class="bi bi-arrow-up-circle-fill me-1"></i>Update Available:</strong>
+                            v{{ bridge_status_info.target_upgrade.version }} ({{ bridge_status_info.target_upgrade.release_channel | upper }})
+                        </div>
+                        {% if bridge_status_info.is_yodha and bridge_status_info.target_upgrade.release_channel != 'stable' %}
+                        <span class="badge bg-danger text-white"><i class="bi bi-lock-fill me-1"></i>Yodha Locked to Stable</span>
+                        {% else %}
+                        <button type="button" class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#upgradeBridgeModal">
+                            Upgrade
+                        </button>
+                        {% endif %}
+                    </div>
+                    {% if bridge_status_info.is_yodha and bridge_status_info.target_upgrade.release_channel != 'stable' %}
+                    <div class="text-danger small mt-1">
+                        Yodha Fitness is running V1.0.0 STABLE. Upgrades to V2 are blocked until V2 is promoted to STABLE in Bridge Releases.
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <div class="mb-2"><small class="text-muted d-block">Bound Serial</small><code>{{ bridge.device_serial }}</code></div>
+                <div class="mb-2"><small class="text-muted d-block">Public Bridge ID</small><code>{{ bridge.public_id }}</code></div>
+                <div class="mb-2"><small class="text-muted d-block">PC & OS</small><span class="small">{{ bridge_status_info.pc_name or 'N/A' }} ({{ bridge_status_info.os_info or 'Windows' }})</span></div>
+                <div class="mb-3"><small class="text-muted d-block">Last Heartbeat</small><strong>{{ bridge.last_heartbeat_at.strftime('%d %b %H:%M:%S UTC') if bridge.last_heartbeat_at else 'No heartbeat received' }}</strong></div>
+                
+                <div class="d-flex gap-2 border-top pt-3">
+                    <form method="post" action="{{ url_for('admin.rotate_bridge_key', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-warning" type="submit" onclick="return confirm('Rotate Bridge API Key? The gym PC must be updated with the new key.');">Rotate Key</button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin.revoke_bridge', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('Revoke Bridge? Hardware credentials will become immediately invalid.');">Revoke</button>
+                    </form>
+
+                </div>
+
+                <!-- Upgrade Modal -->
+                {% if bridge_status_info.target_upgrade %}
+                <div class="modal fade" id="upgradeBridgeModal" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content border-0 shadow">
+                            <div class="modal-header">
+                                <h5 class="modal-title fw-bold">Upgrade Gym Bridge to v{{ bridge_status_info.target_upgrade.version }}</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <form method="POST" action="{{ url_for('admin.upgrade_gym_bridge_route', gym_id=gym.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="target_version" value="{{ bridge_status_info.target_upgrade.version }}">
+                                <div class="modal-body">
+                                    <p class="small mb-2">You are upgrading <strong>{{ gym.name }}</strong> from <code>v{{ bridge_status_info.installed_version }}</code> to <code>v{{ bridge_status_info.target_upgrade.version }}</code>.</p>
+                                    <div class="p-3 bg-light rounded-3 small font-monospace mb-3">
+                                        {{ bridge_status_info.target_upgrade.release_notes or 'No changelog provided.' }}
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="confirmUpgradeCheck" required>
+                                        <label class="form-check-label small" for="confirmUpgradeCheck">
+                                            I confirm this gym PC has downloaded and installed the corresponding package.
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="submit" class="btn btn-warning btn-sm">Confirm Bridge Upgrade</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% else %}
+                <div class="alert alert-secondary small mb-3">Bridge not provisioned yet. Generate pairing code above or manually enter hardware serial below.</div>
+                <form method="post" action="{{ url_for('admin.create_gym_bridge', gym_id=gym.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-2">
+                        <input class="form-control form-control-sm font-monospace" name="device_serial" placeholder="Hardware Serial (e.g. X990-01)" required>
+                    </div>
+                    <button class="btn btn-primary btn-sm w-100" type="submit">Provision Hardware Bridge</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Commands Queue & Sync -->
+    <div class="col-lg-7">
+        <div class="panel shadow-sm mb-4">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-list-task text-primary me-2"></i>Biometric Command Queue</h5>
+                <div class="d-flex gap-2">
+                    <form method="post" action="{{ url_for('admin.run_test_biometric_sync', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-play me-1"></i> Sync Test Member</button>
+                    </form>
+                    <form method="post" action="{{ url_for('admin.retry_failed_commands', gym_id=gym.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-clockwise me-1"></i> Retry Failed</button>
+                    </form>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 small">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Command</th>
+                            <th>Enroll #</th>
+                            <th>Status</th>
+                            <th>Attempts</th>
+                            <th>Created</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for c in commands %}
+                        <tr>
+                            <td class="fw-bold">{{ c.command_type }}</td>
+                            <td><code>{{ c.enroll_number }}</code></td>
+                            <td><span class="badge status-{{ c.status }}">{{ c.status }}</span></td>
+                            <td>{{ c.delivery_attempts }}</td>
+                            <td class="text-muted">{{ c.created_at.strftime('%d %b %H:%M') }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="text-center text-muted p-4">No biometric commands in queue.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── TAB 9: STAFF & ACCOUNTS ────────────────────────────────────────── -->
+{% elif active_tab == 'staff' %}
+<div class="panel shadow-sm">
+    <div class="panel-header"><h5 class="mb-0"><i class="bi bi-person-badge text-primary me-2"></i>User & Staff Accounts</h5></div>
+    <div class="table-responsive">
+        <table class="table align-middle table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Invitation</th>
+                    <th>Password Status</th>
+                    <th>Last Login</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td>
+                        <div class="fw-bold">{{ u.full_name }}</div>
+                        <div class="small text-muted">{{ u.email }}</div>
+                    </td>
+                    <td><span class="badge bg-primary-subtle text-primary">{{ u.role.replace('_', ' ').title() }}</span></td>
+                    <td><span class="badge bg-info-subtle text-info">{{ (u.invitation_status or 'sent').title() }}</span></td>
+                    <td>
+                        {% if u.must_change_password %}<span class="badge bg-warning text-dark">Temporary (Must change)</span>
+                        {% else %}<span class="badge bg-success">Set by User</span>{% endif %}
+                    </td>
+                    <td class="small text-muted">{{ u.last_login_at.strftime('%d %b %H:%M') if u.last_login_at else 'Never' }}</td>
+                    <td class="text-end">
+                        <div class="btn-group">
+                            <form method="post" action="{{ url_for('admin.resend_user_invitation', gym_id=gym.id, user_id=u.id) }}" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-secondary" type="submit" title="Resend Invite"><i class="bi bi-send"></i></button>
+                            </form>
+                            <form method="post" action="{{ url_for('admin.reset_user_password', gym_id=gym.id, user_id=u.id) }}" class="d-inline ms-1">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-warning" type="submit" title="Generate New Temp Password" onclick="return confirm('Reset password for {{ u.email }}?');">
+                                    <i class="bi bi-key"></i> Reset
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ─── TAB 10: ISSUES ─────────────────────────────────────────────────── -->
+{% elif active_tab == 'issues' %}
+<div class="panel shadow-sm">
+    <div class="panel-header"><h5 class="mb-0"><i class="bi bi-exclamation-octagon text-danger me-2"></i>Open Issues</h5></div>
+    <div class="list-group list-group-flush">
+        {% for iss in issues_list %}
+        <div class="list-group-item d-flex justify-content-between align-items-center py-3">
+            <div>
+                <span class="badge bg-{{ iss.level }} me-2">{{ iss.category }}</span>
+                <strong>{{ iss.title }}</strong>
+                <div class="small text-muted">{{ iss.desc }}</div>
+            </div>
+            <a href="{{ iss.fix_url }}" class="btn btn-sm btn-outline-primary">Resolve</a>
+        </div>
+        {% else %}
+        <div class="list-group-item text-center p-5 text-muted">
+            <i class="bi bi-check-circle-fill text-success fs-2 d-block mb-2"></i>
+            No open platform issues for {{ gym.name }}!
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- ─── TAB 11: ACTIVITY LOG ───────────────────────────────────────────── -->
+{% elif active_tab == 'activity' %}
+<div class="panel shadow-sm">
+    <div class="panel-header"><h5 class="mb-0"><i class="bi bi-clock-history text-secondary me-2"></i>Audit Trail</h5></div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 small">
+            <thead class="table-light">
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Action</th>
+                    <th>Actor</th>
+                    <th>Resource</th>
+                    <th>Metadata</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in audit_logs %}
+                <tr>
+                    <td class="text-muted">{{ log.created_at.strftime('%d %b %Y, %H:%M:%S') }}</td>
+                    <td class="fw-bold">{{ log.action }}</td>
+                    <td>{{ log.actor.full_name if log.actor else 'System / Admin' }}</td>
+                    <td><code>{{ log.resource_type }}:{{ log.resource_id or '' }}</code></td>
+                    <td class="text-muted font-monospace">{{ log.metadata_json or '—' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted p-4">No audit records found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 {% endblock %}

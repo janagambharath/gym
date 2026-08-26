@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Bridge Pairing & Settings | RenewalDesk{% endblock %}
+{% block page_title %}Bridge Pairing & Settings{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('biometric.index') }}"><i class="bi bi-arrow-left"></i> Bridge Overview</a>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="panel">
+            <h2>Bridge Provisioning</h2>
+            {% if installation %}
+            <div class="alert alert-success d-flex align-items-center mb-3">
+                <i class="bi bi-check-circle-fill fs-4 me-3"></i>
+                <div>
+                    <strong>Bridge is Provisioned</strong>
+                    <div class="small">Public ID: <code>{{ installation.public_id }}</code></div>
+                </div>
+            </div>
+            <dl class="detail-list">
+                <dt>Display Name</dt>
+                <dd>{{ installation.display_name }}</dd>
+                <dt>Public ID (gymId in config)</dt>
+                <dd><code>{{ installation.public_id }}</code></dd>
+                <dt>Bound Device Serial</dt>
+                <dd><code>{{ installation.device_serial }}</code></dd>
+                <dt>Active Status</dt>
+                <dd><span class="badge {% if installation.is_active %}bg-success{% else %}bg-secondary{% endif %}">{{ 'Active' if installation.is_active else 'Disabled' }}</span></dd>
+                <dt>Last Heartbeat</dt>
+                <dd>{{ installation.last_heartbeat_at.strftime('%d %b %Y %H:%M:%S UTC') if installation.last_heartbeat_at else 'Never' }}</dd>
+            </dl>
+
+            {% if new_api_key %}
+            <div class="alert alert-warning mt-3">
+                <strong><i class="bi bi-key-fill"></i> New Bridge API Key (Copy Now!):</strong>
+                <div class="p-2 bg-dark text-warning font-monospace text-break mt-2 rounded">{{ new_api_key }}</div>
+                <div class="small mt-2 text-muted">Paste this key into <code>appsettings.json</code> on your gym PC.</div>
+            </div>
+            {% endif %}
+
+            <div class="mt-4 pt-3 border-top">
+                <form method="post" action="{{ url_for('biometric.settings') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="rotate_key">
+                    <button type="submit" class="btn btn-outline-warning w-100" data-confirm="Rotate Bridge API key? The current gym PC bridge will disconnect until you update appsettings.json with the new key.">
+                        <i class="bi bi-arrow-repeat"></i> Rotate Bridge API Key
+                    </button>
+                </form>
+            </div>
+            {% else %}
+            <p class="text-secondary small">
+                Generate new credentials to connect a Windows laptop running Renewal Desk Bridge to this gym.
+            </p>
+            <form method="post" action="{{ url_for('biometric.settings') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="provision">
+                <div class="mb-3">
+                    <label class="form-label" for="display_name">PC / Desk Name</label>
+                    <input class="form-control" id="display_name" name="display_name" value="Front Desk Laptop" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="device_serial">Biometric Terminal Serial</label>
+                    <input class="form-control" id="device_serial" name="device_serial" placeholder="e.g. X990-YODHA-01" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-plus-circle"></i> Generate Provisioning Credentials</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="panel">
+            <h2>5-Minute Setup Runbook</h2>
+            <div class="list-group list-group-flush small">
+                <div class="list-group-item px-0 py-2">
+                    <strong>1. Install Bridge</strong>
+                    <div class="text-muted">Download and copy the <code>RenewalDeskBridge</code> folder onto the gym Windows PC.</div>
+                </div>
+                <div class="list-group-item px-0 py-2">
+                    <strong>2. Register eSSL SDK (One-time)</strong>
+                    <div class="text-muted">Right click <code>Register_SDK.cmd</code> and run as Administrator.</div>
+                </div>
+                <div class="list-group-item px-0 py-2">
+                    <strong>3. Update <code>appsettings.json</code></strong>
+                    <div class="text-muted">Fill in <code>GymId</code> (Public ID) and <code>ApiKey</code> from this page, and <code>DeviceIp</code> (e.g. 192.168.1.201).</div>
+                </div>
+                <div class="list-group-item px-0 py-2">
+                    <strong>4. Run Bridge</strong>
+                    <div class="text-muted">Execute <code>RenewalDeskBridge.exe</code>. Confirm the green indicator appears.</div>
+                </div>
+                <div class="list-group-item px-0 py-2">
+                    <strong>5. Verify Real Door Lock</strong>
+                    <div class="text-muted">Tap <strong>Sync Access</strong> on any member to confirm the door relay obeys their expiration state.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

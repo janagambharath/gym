@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Leads Pipeline | RenewalDesk{% endblock %}
+{% block page_title %}Leads Pipeline{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-primary" href="{{ url_for('bot_web.inbox') }}"><i class="bi bi-chat-dots"></i> Open Chat Inbox</a>
+{% endblock %}
+{% block content %}
+<div class="panel">
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-md-4">
+            <select class="form-select" name="status" onchange="this.form.submit()">
+                <option value="">All lead statuses</option>
+                {% for st in ['new', 'contacted', 'trial_booked', 'converted', 'lost'] %}
+                <option value="{{ st }}" {% if status_filter == st %}selected{% endif %}>{{ st.replace('_', ' ').title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-filter"></i> Filter</button>
+        </div>
+    </form>
+
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Lead Name</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Trial Date</th>
+                    <th>Captured At</th>
+                    <th>Notes & Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if pagination and pagination.items %}
+                {% for lead in pagination.items %}
+                <tr>
+                    <td><strong>{{ lead.name or 'Prospective Member' }}</strong></td>
+                    <td>{{ lead.phone }}</td>
+                    <td><span class="badge status-{{ lead.status }}">{{ lead.status.replace('_', ' ').title() }}</span></td>
+                    <td>{{ lead.trial_date.strftime('%d %b %Y') if lead.trial_date else '—' }}</td>
+                    <td class="text-secondary small">{{ lead.created_at.strftime('%d %b %Y %H:%M') if lead.created_at else '—' }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('bot_web.update_lead_status', lead_id=lead.id) }}" class="d-flex gap-2">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select class="form-select form-select-sm" name="status" style="width: 140px;">
+                                {% for st in ['new', 'contacted', 'trial_booked', 'converted', 'lost'] %}
+                                <option value="{{ st }}" {% if lead.status == st %}selected{% endif %}>{{ st.replace('_', ' ').title() }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-check2"></i> Update</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr><td colspan="6" class="text-secondary text-center py-4">No leads found in pipeline.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if pagination %}
+    {% include "partials/pagination.html" %}
+    {% endif %}
+</div>
+{% endblock %}
