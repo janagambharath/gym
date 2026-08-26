@@ -219,8 +219,8 @@ def compute_gym_health(gym: Gym) -> tuple[int, list[dict[str, Any]]]:
         signals.append({"name": "Status", "status": "danger", "msg": "Gym currently suspended (-30%)"})
 
     final_score = max(0, min(100, score))
-    gym.health_score = final_score
     return final_score, signals
+
 
 
 def get_service_indicators(gym: Gym) -> dict[str, dict[str, str]]:
