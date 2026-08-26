@@ -258,10 +258,13 @@ def _register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(500)
     def server_error(error):
+        import traceback
+        traceback.print_exc()
         app.logger.exception("Unhandled server error: %s", error)
         if _is_api_request():
             return jsonify({"success": False, "error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred."}}), 500
         return render_template("errors/500.html"), 500
+
 
 
 def _register_security_headers(app: Flask) -> None:
