@@ -738,6 +738,11 @@ def onboard_step(gym_id: int, step_num: int):
             timezone_val = (request.form.get("timezone") or COUNTRY_DEFAULTS.get(country, {}).get("timezone", "Asia/Kolkata")).strip()
             currency_val = (request.form.get("currency") or COUNTRY_DEFAULTS.get(country, {}).get("currency", "INR")).strip()
             internal_notes = (request.form.get("internal_notes") or "").strip()
+            sub_status = (request.form.get("subscription_status") or "trial").strip()
+            try:
+                max_members_val = int(request.form.get("max_members") or 500)
+            except ValueError:
+                max_members_val = 500
 
             if not gym_name:
                 flash("Gym name is required.", "danger")
@@ -766,9 +771,9 @@ def onboard_step(gym_id: int, step_num: int):
                     internal_notes=internal_notes or None,
                     status="active",
                     onboarding_status="configuring",
-                    subscription_status="trial",
+                    subscription_status=sub_status,
                     trial_ends_at=date.today() + timedelta(days=30),
-                    max_members=500,
+                    max_members=max_members_val,
                 )
                 db.session.add(gym)
                 db.session.flush()
@@ -808,10 +813,13 @@ def onboard_step(gym_id: int, step_num: int):
                 gym.timezone = timezone_val
                 gym.currency = currency_val
                 gym.internal_notes = internal_notes or None
+                gym.subscription_status = sub_status
+                gym.max_members = max_members_val
                 dep.current_step = max(dep.current_step, 2)
                 db.session.commit()
                 flash("Gym details updated.", "success")
                 return redirect(url_for("admin.onboard_step", gym_id=gym.id, step_num=2))
+
 
         # Ensure gym exists for steps 2-9
         if not gym:
@@ -1645,7 +1653,57 @@ def archive_gym(gym_id: int):
     return redirect(url_for("admin.gyms"))
 
 
+@admin_bp.post("/gyms/<int:gym_id>/update-settings")
+@login_required
+@roles_required("super_admin")
+def update_gym_settings(gym_id: int):
+    gym = Gym.query.get_or_404(gym_id)
+
+    gym.name = (request.form.get("name") or gym.name).strip()
+    gym.phone = (request.form.get("phone") or "").strip() or None
+    gym.email = (request.form.get("email") or "").strip().lower() or None
+    gym.city = (request.form.get("city") or "").strip() or None
+    gym.area = (request.form.get("area") or "").strip() or None
+    gym.address = (request.form.get("address") or "").strip() or None
+    gym.country = (request.form.get("country") or gym.country).strip()
+    gym.business_category = (request.form.get("business_category") or gym.business_category).strip()
+    gym.timezone = (request.form.get("timezone") or gym.timezone).strip()
+    gym.currency = (request.form.get("currency") or gym.currency).strip()
+    gym.subscription_status = (request.form.get("subscription_status") or gym.subscription_status).strip()
+
+    max_members_str = request.form.get("max_members")
+    if max_members_str is not None:
+        max_members_str = max_members_str.strip()
+        if max_members_str == "" or max_members_str.lower() in ("0", "none", "unlimited"):
+            gym.max_members = None
+        else:
+            try:
+                gym.max_members = int(max_members_str)
+            except ValueError:
+                pass
+
+    notes = request.form.get("internal_notes")
+    if notes is not None:
+        gym.internal_notes = notes.strip() or None
+
+    audit(
+        action="admin_update_gym_settings",
+        resource_type="gym",
+        resource_id=gym.id,
+        gym_id=gym.id,
+        metadata={
+            "max_members": gym.max_members,
+            "subscription_status": gym.subscription_status,
+        },
+    )
+    invalidate_dashboard_cache(gym.id)
+    db.session.commit()
+    flash(f"Gym settings and member limit for '{gym.name}' updated successfully.", "success")
+    return redirect(request.referrer or url_for("admin.gym_detail", gym_id=gym.id))
+
+
 @admin_bp.post("/gyms/<int:gym_id>/members/undo-batch/<batch_id>")
+
 @login_required
 @roles_required("super_admin")
 def undo_member_import_batch(gym_id: int, batch_id: str):

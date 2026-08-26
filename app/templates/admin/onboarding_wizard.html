@@ -136,10 +136,24 @@
                         <label class="form-label fw-bold" for="currency">Currency Code</label>
                         <input class="form-control font-monospace" id="currency" name="currency" value="{{ gym.currency if gym else 'INR' }}" required>
                     </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="max_members">Member Capacity Limit</label>
+                        <input class="form-control" id="max_members" name="max_members" type="number" min="1" value="{{ gym.max_members if gym and gym.max_members is not none else 500 }}" placeholder="e.g. 500 or 1000">
+                        <div class="form-text small">Maximum active members allowed for this gym.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold" for="subscription_status">SaaS Subscription Status</label>
+                        <select class="form-select" id="subscription_status" name="subscription_status">
+                            <option value="active" {% if gym and gym.subscription_status == 'active' %}selected{% endif %}>Active (Paid)</option>
+                            <option value="trial" {% if not gym or gym.subscription_status == 'trial' %}selected{% endif %}>Trial (30 Days)</option>
+                            <option value="suspended" {% if gym and gym.subscription_status == 'suspended' %}selected{% endif %}>Suspended</option>
+                        </select>
+                    </div>
                     <div class="col-12">
                         <label class="form-label fw-semibold" for="internal_notes">Internal Founder Notes</label>
                         <textarea class="form-control" id="internal_notes" name="internal_notes" rows="2" placeholder="Lead source, sales agreement notes, hardware delivery schedule...">{{ gym.internal_notes if gym else '' }}</textarea>
                     </div>
+
                 </div>
                 <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
                     <a href="{{ url_for('admin.gyms') }}" class="btn btn-outline-secondary">Cancel</a>

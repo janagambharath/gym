@@ -143,18 +143,24 @@
                     <div class="col-6"><small class="text-muted d-block">City / Country</small><strong>{{ gym.city or '—' }}, {{ gym.country }}</strong></div>
                     <div class="col-6"><small class="text-muted d-block">Timezone / Currency</small><strong>{{ gym.timezone }} ({{ gym.currency }})</strong></div>
                     <div class="col-6"><small class="text-muted d-block">Subscription Status</small><strong class="badge bg-primary-subtle text-primary">{{ gym.subscription_status.title() }}</strong></div>
+                    <div class="col-6"><small class="text-muted d-block">Member Capacity Limit</small><strong class="badge {% if gym.max_members and stats.active_members >= gym.max_members %}bg-danger{% else %}bg-success-subtle text-success{% endif %} fs-6">{{ gym.max_members if gym.max_members is not none else 'Unlimited' }}</strong></div>
                     <div class="col-6"><small class="text-muted d-block">Deployment Version</small><strong>{{ gym.deployment_version }}</strong></div>
+                    <div class="col-6"><small class="text-muted d-block">Trial Ends At</small><strong>{{ gym.trial_ends_at.strftime('%d %b %Y') if gym.trial_ends_at else '—' }}</strong></div>
                 </div>
                 {% if gym.address %}
                 <div class="small text-muted mb-2"><strong>Address:</strong> {{ gym.address }}</div>
                 {% endif %}
                 {% if gym.internal_notes %}
-                <div class="p-2 border rounded bg-light-subtle small text-muted"><strong>Founder Notes:</strong> {{ gym.internal_notes }}</div>
+                <div class="p-2 border rounded bg-light-subtle small text-muted mb-3"><strong>Founder Notes:</strong> {{ gym.internal_notes }}</div>
                 {% endif %}
+                <button type="button" class="btn btn-sm btn-outline-primary w-100" data-bs-toggle="modal" data-bs-target="#editGymSettingsModal">
+                    <i class="bi bi-sliders me-1"></i> Edit Settings, Plan & Member Limit
+                </button>
             </div>
         </div>
     </div>
 </div>
+
 
 <!-- ─── TAB 2: DEPLOYMENT COMMAND CENTER ───────────────────────────────── -->
 {% elif active_tab == 'deployment' %}
@@ -776,4 +782,90 @@
 </div>
 {% endif %}
 
+<!-- EDIT GYM SETTINGS & CAPACITY MODAL -->
+<div class="modal fade" id="editGymSettingsModal" tabindex="-1" aria-labelledby="editGymSettingsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="post" action="{{ url_for('admin.update_gym_settings', gym_id=gym.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editGymSettingsModalLabel"><i class="bi bi-sliders text-primary me-2"></i>Edit Settings & Capacity Limits — {{ gym.name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold" for="modal_name">Gym Name</label>
+                            <input class="form-control" id="modal_name" name="name" value="{{ gym.name }}" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold" for="modal_business_category">Business Category</label>
+                            <select class="form-select" id="modal_business_category" name="business_category">
+                                <option value="Gym / Fitness Center" {% if gym.business_category == 'Gym / Fitness Center' %}selected{% endif %}>Gym / Fitness Center</option>
+                                <option value="CrossFit / Strength Box" {% if gym.business_category == 'CrossFit / Strength Box' %}selected{% endif %}>CrossFit / Strength Box</option>
+                                <option value="Yoga / Pilates Studio" {% if gym.business_category == 'Yoga / Pilates Studio' %}selected{% endif %}>Yoga / Pilates Studio</option>
+                                <option value="Martial Arts / MMA Academy" {% if gym.business_category == 'Martial Arts / MMA Academy' %}selected{% endif %}>Martial Arts / MMA Academy</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold text-primary" for="modal_max_members"><i class="bi bi-people-fill me-1"></i> Member Capacity Limit</label>
+                            <input class="form-control form-control-lg fw-bold" id="modal_max_members" name="max_members" type="number" min="1" value="{{ gym.max_members if gym.max_members is not none else 500 }}" placeholder="e.g. 500 or 1000">
+                            <div class="form-text">Active members limit. Set higher (e.g. 500, 1000, 5000) to allow more member registrations.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold" for="modal_subscription_status">SaaS Subscription Status</label>
+                            <select class="form-select form-select-lg" id="modal_subscription_status" name="subscription_status">
+                                <option value="active" {% if gym.subscription_status == 'active' %}selected{% endif %}>Active (Paid Plan)</option>
+                                <option value="trial" {% if gym.subscription_status == 'trial' %}selected{% endif %}>Trial</option>
+                                <option value="suspended" {% if gym.subscription_status == 'suspended' %}selected{% endif %}>Suspended</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold" for="modal_phone">Contact Phone</label>
+                            <input class="form-control" id="modal_phone" name="phone" value="{{ gym.phone or '' }}" placeholder="+919876543210">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold" for="modal_email">Billing / Operations Email</label>
+                            <input class="form-control" id="modal_email" name="email" type="email" value="{{ gym.email or '' }}" placeholder="ops@gym.com">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold" for="modal_city">City</label>
+                            <input class="form-control" id="modal_city" name="city" value="{{ gym.city or '' }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold" for="modal_area">Area</label>
+                            <input class="form-control" id="modal_area" name="area" value="{{ gym.area or '' }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold" for="modal_country">Country</label>
+                            <input class="form-control" id="modal_country" name="country" value="{{ gym.country or 'India' }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold" for="modal_address">Address</label>
+                            <textarea class="form-control" id="modal_address" name="address" rows="2">{{ gym.address or '' }}</textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold" for="modal_timezone">Timezone</label>
+                            <input class="form-control font-monospace" id="modal_timezone" name="timezone" value="{{ gym.timezone }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold" for="modal_currency">Currency Code</label>
+                            <input class="form-control font-monospace" id="modal_currency" name="currency" value="{{ gym.currency }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold" for="modal_internal_notes">Internal Founder Notes</label>
+                            <textarea class="form-control" id="modal_internal_notes" name="internal_notes" rows="2">{{ gym.internal_notes or '' }}</textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary px-4"><i class="bi bi-check-lg me-1"></i> Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
+
