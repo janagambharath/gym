@@ -17,7 +17,8 @@
                 <dt>Phone</dt><dd>{{ member.phone }}</dd>
                 <dt>Email</dt><dd>{{ member.email or '&mdash;'|safe }}</dd>
                 <dt>Plan</dt><dd>{{ member.plan.name if member.plan else 'No plan assigned' }}</dd>
-                <dt>Membership Cycle</dt><dd>{{ member.membership_start.strftime('%d %b %Y') }} to <strong>{{ member.membership_end.strftime('%d %b %Y') }}</strong></dd>
+                <dt>Membership Cycle</dt><dd>{{ member.membership_start.strftime('%d %b %Y') if member.membership_start else '—' }} to <strong>{{ member.membership_end.strftime('%d %b %Y') if member.membership_end else '—' }}</strong></dd>
+
                 <dt>Membership Status</dt><dd><span class="badge status-{{ member.status }}">{{ member.status.upper() }}</span></dd>
             </dl>
         </div>
@@ -161,10 +162,11 @@
                     {% for renewal in renewals %}
                     <tr>
                         <td>{{ renewal.previous_end.strftime('%d %b %Y') if renewal.previous_end else '&mdash;'|safe }}</td>
-                        <td><strong>{{ renewal.new_start.strftime('%d %b') }} &rarr; {{ renewal.new_end.strftime('%d %b %Y') }}</strong></td>
+                        <td><strong>{{ renewal.new_start.strftime('%d %b') if renewal.new_start else '—' }} &rarr; {{ renewal.new_end.strftime('%d %b %Y') if renewal.new_end else '—' }}</strong></td>
                         <td>₹{{ renewal.amount }}</td>
-                        <td class="text-secondary small">{{ renewal.created_at.strftime('%d %b %Y') }}</td>
+                        <td class="text-secondary small">{{ renewal.created_at.strftime('%d %b %Y') if renewal.created_at else '—' }}</td>
                     </tr>
+
                     {% else %}
                     <tr><td colspan="4" class="text-secondary py-3 text-center">No previous renewals recorded.</td></tr>
                     {% endfor %}
@@ -189,7 +191,8 @@
                         </td>
                         <td><span class="badge status-{{ cmd.status }}">{{ cmd.status }}</span></td>
                         <td>{{ cmd.delivery_attempts }}</td>
-                        <td class="text-secondary small">{{ cmd.created_at.strftime('%d %b %H:%M') }}</td>
+                        <td class="text-secondary small">{{ cmd.created_at.strftime('%d %b %H:%M') if cmd.created_at else '—' }}</td>
+
                         <td>{{ cmd.last_error or 'OK' }}</td>
                     </tr>
                     {% else %}

@@ -428,8 +428,10 @@ def dashboard():
             "type": "info",
             "icon": "bi-hourglass-split",
             "title": f"Incomplete Onboarding ({g.name})",
-            "details": f"Setup started {g.created_at.strftime('%d %b')}. Status: {g.onboarding_status.title()}",
-            "url": url_for("admin.onboard_wizard", gym_id=g.id),
+            "details": f"Setup started {g.created_at.strftime('%d %b') if g.created_at else 'recently'}. Status: {(g.onboarding_status or '').title()}",
+            "url": url_for("admin.onboard_start", gym_id=g.id),
+
+
         })
 
     stats = {

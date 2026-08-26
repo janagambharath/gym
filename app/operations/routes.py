@@ -240,8 +240,9 @@ def search():
         .filter(
             or_(
                 PaymentVerification.reference.ilike(like_term),
-                PaymentVerification.amount.ilike(like_term),
+                func.cast(PaymentVerification.amount, db.String).ilike(like_term),
             )
+
         )
         .limit(6)
         .all()
