@@ -295,7 +295,7 @@ def dashboard():
         Member.membership_end <= today + timedelta(days=7),
     ).count()
 
-    month_start = today.replace(day=1)
+    month_start = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
     renewals_this_month = RenewalHistory.query.filter(
         RenewalHistory.created_at >= month_start,
         RenewalHistory.is_test == False,
@@ -355,6 +355,7 @@ def dashboard():
         Gym.onboarding_status == "live",
         Gym.go_live_at >= month_start,
     ).count()
+
 
     # 6. Cross-Gym Platform Alerts
     alerts = []
@@ -542,9 +543,12 @@ def gyms():
         total_m = Member.query.filter_by(gym_id=g.id, deleted_at=None).count()
         
         # Last activity
-        last_act = g.created_at
+        last_act = _as_utc(g.created_at)
         if g.bridge_installation and g.bridge_installation.last_heartbeat_at:
-            last_act = max(last_act, g.bridge_installation.last_heartbeat_at)
+            hb_utc = _as_utc(g.bridge_installation.last_heartbeat_at)
+            if hb_utc:
+                last_act = max(last_act, hb_utc) if last_act else hb_utc
+
 
         gym_items.append({
             "gym": g,
