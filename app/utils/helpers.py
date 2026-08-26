@@ -21,17 +21,39 @@ def slugify(value: str) -> str:
     return cleaned or "gym"
 
 
-def phone_to_whatsapp(phone: str) -> str:
+def normalize_phone_e164(phone: str, default_country_code: str = "+91") -> str:
+    """Normalize any phone string to E.164 standard (e.g. +917995854994)."""
     raw = (phone or "").strip()
-    if not raw.startswith("+"):
-        raise ValueError(
-            f"Phone number '{phone}' must be in E.164 format (+<country><number>)."
-        )
+    if not raw:
+        return ""
     digits = re.sub(r"\D", "", raw)
-    cleaned = f"+{digits}"
-    if not E164_RE.match(cleaned):
-        raise ValueError(f"Phone number '{phone}' is not a valid E.164 number.")
-    return cleaned[1:]
+    if not digits:
+        return raw
+
+    if raw.startswith("+"):
+        return f"+{digits}"
+
+    if len(digits) == 10:
+        return f"{default_country_code}{digits}"
+    if len(digits) == 11 and digits.startswith("0"):
+        return f"{default_country_code}{digits[1:]}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+
+    return f"{default_country_code}{digits}"
+
+
+def phone_to_whatsapp(phone: str, default_country_code: str = "+91") -> str:
+    """Convert phone number to WhatsApp recipient format (digits only with country code, e.g. 917995854994)."""
+    raw = (phone or "").strip()
+    if not raw:
+        raise ValueError("Phone number cannot be empty.")
+
+    normalized = normalize_phone_e164(raw, default_country_code)
+    if not E164_RE.match(normalized):
+        raise ValueError(f"Phone number '{phone}' is not a valid phone number.")
+    return normalized[1:]
+
 
 
 def normalize_public_media_url(value: str | None) -> str:

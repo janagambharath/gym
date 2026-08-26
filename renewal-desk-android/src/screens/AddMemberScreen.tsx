@@ -18,15 +18,16 @@ import type { Member, Plan } from '../types';
 
 /** Map gym timezone to a phone country prefix. */
 function getCountryPrefix(timezone?: string): string {
-  if (!timezone) return '';
+  if (!timezone) return '+91';
   const tz = timezone.toLowerCase();
   if (tz.startsWith('asia/kolkata') || tz.startsWith('asia/calcutta') || tz === 'ist') return '+91';
   if (tz.startsWith('america/')) return '+1';
   if (tz.startsWith('europe/london')) return '+44';
   if (tz.startsWith('asia/dubai')) return '+971';
   if (tz.startsWith('asia/singapore')) return '+65';
-  return '';
+  return '+91';
 }
+
 
 type AddMemberScreenProps = {
   onBack: () => void;
@@ -84,12 +85,18 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     const duration = selectedPlan?.duration_days ?? 30;
     const endDate = new Date(Date.now() + duration * 86400000).toISOString().split('T')[0];
 
+    const cleanDigits = phone.replace(/\D/g, '');
+    const normalizedPhone = phone.trim().startsWith('+')
+      ? phone.trim()
+      : (cleanDigits.length === 10 ? `+91${cleanDigits}` : `+${cleanDigits}`);
+
     const result = await apiRequest<Member>('/api/mobile/v1/members', {
       method: 'POST',
       body: {
         full_name: fullName.trim(),
-        phone: phone.trim(),
+        phone: normalizedPhone,
         email: email.trim() || undefined,
+
         plan_id: selectedPlanId,
         membership_start: today,
         membership_end: endDate,

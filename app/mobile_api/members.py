@@ -16,6 +16,8 @@ from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
+from app.utils.helpers import normalize_phone_e164
+
 
 
 def _serialize_member(m: Member) -> dict:
@@ -99,9 +101,10 @@ def register_members_routes(bp):
     def create_member():
         data = request.get_json(silent=True) or {}
         full_name = (data.get("full_name") or "").strip()
-        phone = (data.get("phone") or "").strip()
+        phone = normalize_phone_e164((data.get("phone") or "").strip())
         if not full_name or not phone:
             return error_response("VALIDATION_ERROR", "full_name and phone are required.", 400)
+
 
         # Check member limit.
         gym = db.session.execute(select(Gym).where(Gym.id == g.gym_id).with_for_update()).scalar_one()
@@ -169,10 +172,11 @@ def register_members_routes(bp):
                 return error_response("VALIDATION_ERROR", "full_name cannot be empty.", 400)
             member.full_name = name
         if "phone" in data:
-            phone = (data["phone"] or "").strip()
+            phone = normalize_phone_e164((data["phone"] or "").strip())
             if not phone:
                 return error_response("VALIDATION_ERROR", "phone cannot be empty.", 400)
             member.phone = phone
+
         if "email" in data:
             member.email = (data["email"] or "").strip() or None
         if "gender" in data:

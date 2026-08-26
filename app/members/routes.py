@@ -26,6 +26,8 @@ from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.bridge_service import queue_membership_command
 from app.utils.decorators import active_gym_required, roles_required
+from app.utils.helpers import normalize_phone_e164
+
 
 
 members_bp = Blueprint("members", __name__, url_prefix="/members")
@@ -336,8 +338,9 @@ def hard_delete(member_id: int):
 
 def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.full_name = form.full_name.data.strip()
-    member.phone = form.phone.data.strip()
+    member.phone = normalize_phone_e164(form.phone.data.strip())
     member.email = form.email.data.strip() if form.email.data else None
+
     member.gender = form.gender.data or None
     member.plan_id = form.plan_id.data or None
     member.membership_start = form.membership_start.data

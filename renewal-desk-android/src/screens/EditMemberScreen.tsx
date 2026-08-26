@@ -84,10 +84,16 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
     setSaving(true);
     setFormErrors({});
 
+    const cleanDigits = phone.replace(/\D/g, '');
+    const normalizedPhone = phone.trim().startsWith('+')
+      ? phone.trim()
+      : (cleanDigits.length === 10 ? `+91${cleanDigits}` : `+${cleanDigits}`);
+
     const body: Record<string, unknown> = {
       full_name: fullName.trim(),
-      phone: phone.trim(),
+      phone: normalizedPhone,
     };
+
     if (email.trim()) body.email = email.trim();
     else body.email = null;
     if (gender.trim()) body.gender = gender.trim();

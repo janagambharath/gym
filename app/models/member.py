@@ -77,7 +77,15 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     bridge_commands = db.relationship("BridgeCommand", back_populates="member")
     bridge_attendance = db.relationship("BridgeAttendance", back_populates="member")
 
+    @db.validates("phone")
+    def validate_phone(self, key, value):
+        if value:
+            from app.utils.helpers import normalize_phone_e164
+            return normalize_phone_e164(value)
+        return value
+
     @property
+
     def days_until_expiry(self) -> int:
         gym_timezone = self.gym.timezone if self.gym else "Asia/Kolkata"
         return (self.membership_end - today_for_gym(gym_timezone)).days
