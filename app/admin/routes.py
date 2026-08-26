@@ -1071,6 +1071,22 @@ def onboard_step(gym_id: int, step_num: int):
         dep.pairing_code_expires_at = utcnow() + timedelta(hours=24)
         db.session.commit()
 
+    # Auto-reconcile checklist against actual database state
+    if dep and gym:
+        cl = dep.checklist_json or {}
+        if owner and cl.get("owner_created", {}).get("status") == "pending":
+            dep.update_checklist_item("owner_created", "passed", "Owner Account Provisioned", True, f"Owner: {owner.email}")
+        if len(plans) > 0 and cl.get("plans_configured", {}).get("status") == "pending":
+            dep.update_checklist_item("plans_configured", "passed", "Membership Plans Configured", True, f"{len(plans)} active plans")
+        if member_count > 0 and cl.get("members_imported", {}).get("status") == "pending":
+            dep.update_checklist_item("members_imported", "passed", "Members Imported / Added", True, f"{member_count} members")
+        if gym.whatsapp_enabled and gym.phone_number_id and cl.get("whatsapp_connected", {}).get("status") == "pending":
+            dep.update_checklist_item("whatsapp_connected", "passed", "WhatsApp Business Connected", False, f"Phone ID: {gym.phone_number_id}")
+        if bot_cfg and cl.get("ai_configured", {}).get("status") == "pending":
+            dep.update_checklist_item("ai_configured", "passed", "AI Receptionist Configured", False)
+        db.session.commit()
+
+
     checklist_stats = dep.get_checklist_stats() if dep else {"passed": 0, "skipped": 0, "failed": 0, "pending": 12, "total": 12, "completed": 0}
 
     ready_for_live, live_blockers = dep.is_ready_for_golive() if dep else (False, ["Step 1 required"])

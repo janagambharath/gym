@@ -590,13 +590,27 @@
                                 {% else %}<span class="badge bg-warning text-dark"><i class="bi bi-hourglass me-1"></i> Pending</span>{% endif %}
                             </td>
                             <td class="text-end">
-                                {% if not item.required and item.status != 'skipped' %}
+                                {% if item.status == 'pending' %}
+                                    {% if key == 'owner_created' %}
+                                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=2) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil-square me-1"></i> Setup Owner</a>
+                                    {% elif key == 'plans_configured' %}
+                                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=3) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-card-checklist me-1"></i> Setup Plans</a>
+                                    {% elif key == 'members_imported' %}
+                                    <a href="{{ url_for('admin.onboard_step', gym_id=gym.id, step_num=4) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-people me-1"></i> Add Members</a>
+                                    {% elif not item.required %}
+                                    <form method="post" action="{{ url_for('admin.skip_checklist_item', gym_id=gym.id, key=key) }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="btn btn-sm btn-outline-secondary" type="submit">Skip</button>
+                                    </form>
+                                    {% endif %}
+                                {% elif not item.required and item.status != 'skipped' %}
                                 <form method="post" action="{{ url_for('admin.skip_checklist_item', gym_id=gym.id, key=key) }}" class="d-inline">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="btn btn-sm btn-outline-secondary" type="submit">Skip</button>
                                 </form>
                                 {% endif %}
                             </td>
+
                         </tr>
                         {% endfor %}
                         {% endif %}
