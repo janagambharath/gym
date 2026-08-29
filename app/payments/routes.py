@@ -12,7 +12,8 @@ from app.models import Member, PaymentVerification
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
-from app.services.payment_service import reject_payment, verify_payment
+from app.services.payment_service import delete_payment, reject_payment, verify_payment
+
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -155,3 +156,21 @@ def reject(payment_id: int):
         db.session.rollback()
         flash(str(exc), "warning")
     return redirect(url_for("payments.index"))
+
+
+@payments_bp.post("/<int:payment_id>/delete")
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def delete(payment_id: int):
+    payment = TenantRepository(PaymentVerification, current_user.gym_id).get_or_404(payment_id)
+    try:
+        delete_payment(payment)
+        audit(action="delete_payment", resource_type="payment_verification", resource_id=payment_id)
+        db.session.commit()
+        flash("Payment record deleted successfully.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"Could not delete payment: {exc}", "danger")
+    return redirect(url_for("payments.index"))
+

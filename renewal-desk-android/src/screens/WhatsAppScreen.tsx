@@ -239,28 +239,30 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
       return;
     }
     setChatLoading(true);
-    const res = await apiRequest<{ conversation: { messages: BotMessage[] } }>(
+    const res = await apiRequest<{ conversation: unknown; messages: BotMessage[] }>(
       `/api/mobile/v1/bot/conversations/${lead.conversation_id}`
     );
     if (res.ok) {
-      setLeadMessages(res.data.conversation.messages);
+      setLeadMessages(res.data.messages || (res.data.conversation as any)?.messages || []);
     }
     setChatLoading(false);
   };
 
   const sendReply = async () => {
-    if (!selectedLead?.conversation_id || !replyText.trim()) return;
+    if (!selectedLead?.conversation_id || !replyText.trim() || sendingReply) return;
     setSendingReply(true);
     const res = await apiRequest<{ message: BotMessage }>(
-      `/api/mobile/v1/bot/conversations/${selectedLead.conversation_id}/reply`,
+      `/api/mobile/v1/bot/conversations/${selectedLead.conversation_id}/message`,
       {
         method: 'POST',
-        body: { message: replyText.trim() },
+        body: { body: replyText.trim() },
       }
     );
     if (res.ok) {
       setLeadMessages((prev) => [...prev, res.data.message]);
       setReplyText('');
+    } else {
+      Alert.alert('Error', res.error.message);
     }
     setSendingReply(false);
   };

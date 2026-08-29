@@ -1,9 +1,11 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+
+export const navigationRef = createNavigationContainerRef<any>();
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
@@ -647,8 +649,38 @@ export default function App() {
 
     // Listen to push notification tap responses
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const payload = response.notification.request.content.data;
+      const payload = response.notification.request.content.data as any;
       console.log('[Notification Tap]', payload);
+      if (navigationRef.isReady()) {
+        if (payload?.screen === 'BotConversationDetail' && payload?.conversation_id) {
+          navigationRef.navigate('Dashboard', {
+            screen: 'BotConversationDetail',
+            params: {
+              conversation: {
+                id: payload.conversation_id,
+                phone: payload.phone ?? '',
+                customer_name: payload.customer_name ?? '',
+                handover_status: 'human_requested',
+                state: 'active',
+              },
+            },
+          });
+        } else if (payload?.screen === 'BotLeadDetail' && payload?.lead_id) {
+          navigationRef.navigate('Dashboard', {
+            screen: 'BotLeadDetail',
+            params: { leadId: payload.lead_id },
+          });
+        } else if (payload?.screen === 'PaymentDetail' && payload?.payment_id) {
+          navigationRef.navigate('Payments', {
+            screen: 'PaymentDetail',
+            params: { paymentId: payload.payment_id },
+          });
+        } else if (payload?.screen === 'RenewalsHome') {
+          navigationRef.navigate('Renewals');
+        } else if (payload?.screen === 'Notifications') {
+          navigationRef.navigate('Dashboard', { screen: 'Notifications' });
+        }
+      }
     });
 
     return () => {
@@ -671,7 +703,11 @@ export default function App() {
       <View style={styles.splash}>
         <StatusBar style="dark" />
         <View style={styles.splashContent}>
-          <Icon name="fitness" size={48} color={colors.brand} />
+          <Image
+            source={require('./assets/logo.png')}
+            style={styles.splashLogo}
+            resizeMode="contain"
+          />
           <Text style={styles.splashTitle}>Renewal Desk</Text>
           <ActivityIndicator color={colors.brand} size="large" style={styles.splashLoader} />
         </View>
@@ -683,7 +719,7 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <StatusBar style="dark" />
-        <NavigationContainer>
+        <NavigationContainer ref={navigationRef}>
           <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
             <AuthStackNav.Screen name="Login">
               {() => <LoginScreen onLogin={handleLoginSuccess} />}
@@ -697,7 +733,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
@@ -772,6 +808,10 @@ const styles = StyleSheet.create({
   },
   splashLoader: {
     marginTop: spacing.xxl,
+  },
+  splashLogo: {
+    height: 72,
+    width: 72,
   },
   splashTitle: {
     color: colors.text,

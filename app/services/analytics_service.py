@@ -53,14 +53,14 @@ def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
 
     payment_stats = (
         db.session.query(
-            func.sum(case((PaymentVerification.status == "pending", 1), else_=0)).label(
+            func.sum(case(((PaymentVerification.status == "pending") & (PaymentVerification.is_test.is_(False)), 1), else_=0)).label(
                 "pending"
             ),
             func.coalesce(
                 func.sum(
                     case(
                         (
-                            PaymentVerification.status == "verified",
+                            (PaymentVerification.status == "verified") & (PaymentVerification.is_test.is_(False)),
                             PaymentVerification.amount,
                         ),
                         else_=0,
@@ -72,6 +72,7 @@ def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
         .filter(PaymentVerification.gym_id == gym_id)
         .one()
     )
+
 
     reminder_stats = (
         db.session.query(
@@ -137,7 +138,7 @@ def gym_revenue_breakdown(gym_id: int, gym_timezone: str | None = None) -> dict:
                     func.sum(
                         case(
                             (
-                                PaymentVerification.status == "verified",
+                                (PaymentVerification.status == "verified") & (PaymentVerification.is_test.is_(False)),
                                 PaymentVerification.amount,
                             ),
                             else_=0,
@@ -149,10 +150,12 @@ def gym_revenue_breakdown(gym_id: int, gym_timezone: str | None = None) -> dict:
             .filter(
                 PaymentVerification.gym_id == gym_id,
                 PaymentVerification.verified_at >= start_at,
+                PaymentVerification.is_test.is_(False),
             )
             .scalar()
         )
         return str(result)
+
 
     return {
         "revenue_today": _sum_verified(today),

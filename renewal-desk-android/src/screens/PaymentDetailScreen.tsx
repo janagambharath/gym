@@ -51,6 +51,7 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
   }, [fetchPayment]);
 
   const handleVerify = useCallback(async () => {
+    if (acting) return;
     setActing(true);
     const res = await apiRequest(`/api/mobile/v1/payments/${paymentId}/verify`, { method: 'POST' });
     setActing(false);
@@ -62,9 +63,10 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
     } else {
       Alert.alert('Error', res.error.message);
     }
-  }, [paymentId, fetchPayment, onUpdated]);
+  }, [acting, paymentId, fetchPayment, onUpdated]);
 
   const handleReject = useCallback(async () => {
+    if (acting) return;
     setActing(true);
     const res = await apiRequest(`/api/mobile/v1/payments/${paymentId}/reject`, { method: 'POST' });
     setActing(false);
@@ -76,9 +78,10 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
     } else {
       Alert.alert('Error', res.error.message);
     }
-  }, [paymentId, fetchPayment, onUpdated]);
+  }, [acting, paymentId, fetchPayment, onUpdated]);
 
   const handleDelete = useCallback(async () => {
+    if (acting) return;
     setActing(true);
     const res = await apiRequest(`/api/mobile/v1/payments/${paymentId}`, { method: 'DELETE' });
     setActing(false);
@@ -90,7 +93,7 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
     } else {
       Alert.alert('Error', res.error.message);
     }
-  }, [paymentId, onUpdated, onBack]);
+  }, [acting, paymentId, onUpdated, onBack]);
 
   return (
     <SafeAreaView style={styles.safeArea}>

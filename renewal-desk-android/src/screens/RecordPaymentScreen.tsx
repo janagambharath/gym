@@ -77,6 +77,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
   }, [searchQuery, selectedMember]);
 
   const handleSubmit = useCallback(async () => {
+    if (saving) return;
     if (!selectedMember) {
       Alert.alert('Error', 'Please select a member.');
       return;
@@ -115,7 +116,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
     } else {
       Alert.alert('Error', result.error.message);
     }
-  }, [selectedMember, amount, method, reference, notes, renewalDays, onBack, onCreated]);
+  }, [selectedMember, amount, method, reference, notes, renewalDays, onBack, onCreated, saving]);
 
   return (
     <SafeAreaView style={styles.safeArea}>

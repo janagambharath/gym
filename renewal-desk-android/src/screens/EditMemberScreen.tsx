@@ -80,6 +80,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
   }, [fullName, phone]);
 
   const handleSave = useCallback(async () => {
+    if (saving) return;
     if (!validate()) return;
     setSaving(true);
     setFormErrors({});
@@ -116,7 +117,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
     } else {
       Alert.alert('Error', result.error.message);
     }
-  }, [fullName, phone, email, gender, notes, planId, memberId, validate, onBack, onSaved]);
+  }, [fullName, phone, email, gender, notes, planId, memberId, validate, onBack, onSaved, saving]);
 
   if (loading) {
     return (

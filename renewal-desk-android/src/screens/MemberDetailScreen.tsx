@@ -297,6 +297,15 @@ export function MemberDetailScreen({
             </View>
             <Icon name="whatsapp" size={17} color={member.whatsapp_opted_in ? colors.whatsapp : colors.muted} />
           </View>
+          <View style={styles.activityRow}>
+            <View>
+              <Text style={styles.activityTitle}>Biometric / Access State</Text>
+              <Text style={styles.activitySub}>
+                {member.has_biometric ? 'Enrolled on Access Device' : 'Not enrolled on device'}
+              </Text>
+            </View>
+            <StatusBadge status={member.has_biometric ? 'active' : 'pending'} />
+          </View>
         </View>
 
         {/* Primary CTA */}

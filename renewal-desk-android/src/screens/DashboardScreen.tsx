@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import {
+  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -527,9 +528,12 @@ function AttentionTile({
 
 function BrandMark() {
   return (
-    <View accessibilityLabel="Renewal Desk" style={styles.brandMark}>
-      <Text style={styles.brandGlyph}>R</Text>
-    </View>
+    <Image
+      source={require('../../assets/logo.png')}
+      style={styles.brandMark}
+      resizeMode="contain"
+      accessibilityLabel="Renewal Desk"
+    />
   );
 }
 
@@ -587,18 +591,10 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     gap: spacing.xs,
   },
-  brandGlyph: {
-    color: colors.brand,
-    fontSize: fontSize.xl,
-    fontWeight: fontWeight.extrabold,
-  },
   brandMark: {
-    alignItems: 'center',
-    backgroundColor: colors.brandSubtle,
-    borderRadius: radius.md,
-    height: 30,
-    justifyContent: 'center',
-    width: 30,
+    borderRadius: radius.sm,
+    height: 32,
+    width: 32,
   },
   brandName: {
     color: colors.text,

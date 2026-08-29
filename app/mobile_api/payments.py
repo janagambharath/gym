@@ -245,8 +245,9 @@ def register_payments_routes(bp):
 
     @bp.route("/payments/<int:payment_id>", methods=["DELETE"])
     @token_required
-    @roles_required("gym_owner")
+    @roles_required("gym_owner", "staff")
     def delete_payment_endpoint(payment_id: int):
+
         payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)

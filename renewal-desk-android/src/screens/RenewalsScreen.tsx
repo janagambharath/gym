@@ -88,34 +88,35 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken
     const daysText = getDaysText(item.days_until_expiry);
 
     return (
-      <TouchableOpacity
-        key={item.id}
-        style={styles.memberRow}
-        onPress={() => onSelectMember?.(item)}
-        activeOpacity={0.6}
-      >
-        <Avatar name={item.full_name} size={40} />
-        <View style={styles.memberInfo}>
-          <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
-          <Text style={styles.memberDetail}>{item.phone}</Text>
-          <Text style={styles.memberDetail}>{item.plan?.name ?? 'No plan'}</Text>
-        </View>
-        <View style={styles.memberRight}>
-          <Text style={styles.memberExpiry}>{formatDate(item.membership_end)}</Text>
-          {daysText ? (
-            <Text style={[
-              styles.daysText,
-              {
-                color: item.days_until_expiry !== null && item.days_until_expiry <= 0
-                  ? colors.statusExpired
-                  : colors.statusExpiring,
-              },
-            ]}>
-              {daysText}
-            </Text>
-          ) : null}
-          <StatusBadge status={displayStatus} />
-        </View>
+      <View key={item.id} style={styles.memberRow}>
+        <TouchableOpacity
+          style={styles.memberRowContent}
+          onPress={() => onSelectMember?.(item)}
+          activeOpacity={0.6}
+        >
+          <Avatar name={item.full_name} size={40} />
+          <View style={styles.memberInfo}>
+            <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
+            <Text style={styles.memberDetail}>{item.phone}</Text>
+            <Text style={styles.memberDetail}>{item.plan?.name ?? 'No plan'}</Text>
+          </View>
+          <View style={styles.memberRight}>
+            <Text style={styles.memberExpiry}>{formatDate(item.membership_end)}</Text>
+            {daysText ? (
+              <Text style={[
+                styles.daysText,
+                {
+                  color: item.days_until_expiry !== null && item.days_until_expiry <= 0
+                    ? colors.statusExpired
+                    : colors.statusExpiring,
+                },
+              ]}>
+                {daysText}
+              </Text>
+            ) : null}
+            <StatusBadge status={displayStatus} />
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.renewIcon}
           onPress={() => onRenew?.(item)}
@@ -125,7 +126,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken
         >
           <Icon name="renewals" size={18} color={colors.brand} />
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
     );
   }, [onSelectMember, onRenew]);
 
@@ -322,6 +323,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
+  },
+  memberRowContent: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
   },
   renewIcon: {
     alignItems: 'center',

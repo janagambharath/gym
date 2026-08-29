@@ -73,7 +73,8 @@ from app.services.bridge_release_service import (
 )
 from app.services.bridge_service import queue_membership_command
 
-from app.services.payment_service import verify_payment
+from app.services.payment_service import delete_payment, verify_payment
+
 from app.services.timezone_service import today_for_gym
 from app.services.whatsapp_service import WhatsAppService
 from app.utils.decorators import roles_required

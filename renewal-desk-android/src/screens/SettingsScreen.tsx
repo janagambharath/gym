@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -141,9 +142,19 @@ export function SettingsScreen({
 
         {/* About */}
         <View style={styles.card}>
-          <SectionHeader title="About" icon={<Icon name="info" size={18} color={colors.brand} />} />
+          <View style={styles.aboutHeader}>
+            <Image
+              source={require('../../assets/logo.png')}
+              style={styles.aboutLogo}
+              resizeMode="contain"
+            />
+            <View style={styles.aboutInfo}>
+              <Text style={styles.aboutTitle}>Renewal Desk</Text>
+              <Text style={styles.aboutSubtitle}>Gym Management & AI Receptionist</Text>
+            </View>
+          </View>
           <InfoRow label="Version" value="1.0.0" />
-          <InfoRow label="Build" value="Preview" />
+          <InfoRow label="Build" value="Production Release (Build 4)" />
         </View>
 
         {/* Logout */}
@@ -171,6 +182,33 @@ function MenuItem({ icon, label, onPress }: { icon: IconName; label: string; onP
 }
 
 const styles = StyleSheet.create({
+  aboutHeader: {
+    alignItems: 'center',
+    borderBottomColor: colors.borderLight,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingBottom: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  aboutInfo: {
+    flex: 1,
+  },
+  aboutLogo: {
+    borderRadius: radius.md,
+    height: 44,
+    width: 44,
+  },
+  aboutSubtitle: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: 2,
+  },
+  aboutTitle: {
+    color: colors.text,
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+  },
   accountDetails: {
     marginLeft: spacing.lg,
   },

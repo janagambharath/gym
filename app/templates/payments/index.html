@@ -34,17 +34,28 @@
                         <button
                             class="btn btn-sm btn-success"
                             data-confirm="Verify this payment and extend membership?"
+                            title="Verify"
                         ><i class="bi bi-check2"></i></button>
                     </form>
                     <form class="d-inline" method="post" action="{{ url_for('payments.reject', payment_id=payment.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button
-                            class="btn btn-sm btn-outline-danger"
+                            class="btn btn-sm btn-outline-warning"
                             data-confirm="Reject this payment? This cannot be undone."
+                            title="Reject"
                         ><i class="bi bi-x"></i></button>
                     </form>
                     {% endif %}
+                    <form class="d-inline" method="post" action="{{ url_for('payments.delete', payment_id=payment.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button
+                            class="btn btn-sm btn-outline-danger"
+                            data-confirm="Delete this payment record completely?"
+                            title="Delete Payment"
+                        ><i class="bi bi-trash"></i></button>
+                    </form>
                 </td>
+
             </tr>
             {% else %}
             <tr><td colspan="5" class="text-secondary">No payments found.</td></tr>
