@@ -1,55 +1,173 @@
-# RENEWAL DESK — ANDROID & SERVER BILLING ARCHITECTURE
+# Renewal Desk — Android Billing Architecture & Google Play Subscriptions
 
-## 1. Overview & Dual Billing Model
-Renewal Desk operates a hybrid billing architecture supporting two acquisition and fulfillment models:
-1. **Manual / Founder-Assisted Accounts (`billing_source = MANUAL`)**:
-   - Accounts provisioned by administrators or enterprise founders.
-   - Entitlements are managed server-side.
-   - The Android client presents plan details, expiration date, and member capacity without rendering conflicting Google Play checkout flows.
-2. **Self-Service / Store Accounts (`billing_source = GOOGLE_PLAY`)**:
-   - Accounts registered through the mobile app or web portal requiring automated monthly recurring store subscriptions.
-   - Enforces real Google Play Billing with server-side receipt validation.
+## 1. Dual Acquisition Paths & Billing Sources
 
----
+Renewal Desk supports two customer acquisition models:
 
-## 2. Product Catalog & Tiers
-Product identifiers are centrally defined and mapped across backend and Google Play Console:
+### Path A: Founder-Assisted / Concierge Customer (`billing_source: MANUAL`)
+- **Target**: High-touch gym clients onboarded directly by the founder via custom contracts.
+- **Client Behavior**:
+  - The mobile app identifies `billing_source === 'MANUAL'` from `GET /api/mobile/v1/subscription/status`.
+  - Suppresses all Google Play checkout triggers, paywalls, and auto-renew warnings.
+  - Displays a dedicated Concierge Account banner with direct support contact details.
+  - Access to features is managed via `Gym.subscription_status` and `Gym.active_until`.
 
-| Tier Name | Target Segment | INR Monthly (India) | AED Monthly (UAE) | USD Monthly | Entitlements Included |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Starter** | Boutique / Micro Gyms (up to 150 members) | ₹999 | AED 99 | $19 | Member CRM, Renewal Tracking, Payment Recording |
-| **Growth (Recommended)** | Standard Commercial Gyms (up to 500 members) | ₹1,499 | AED 199 | $39 | All Starter + WhatsApp Automated Reminders, Broadcast Announcements, Financial Reports |
-| **Pro** | High-Volume Fitness Centers (Unlimited) | ₹2,499 | AED 299 | $59 | All Growth + 24/7 AI Receptionist, WhatsApp Lead Capture, Staff Takeover, Biometric Gate Commands |
+### Path B: Self-Service Mobile Customer (`billing_source: GOOGLE_PLAY`)
+- **Target**: Gym owners downloading the app directly from Google Play.
+- **Client Behavior**:
+  - Initial 30-day all-inclusive `TRIAL` provisioned on registration.
+  - Subscribes to recurring billing via Google Play In-App Billing.
+  - Receipt token verified server-side.
 
 ---
 
-## 3. Google Play Purchase & Verification Flow
+## 2. Server-Authoritative Verification Rule
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Owner as Gym Owner
-    participant App as Android Client
-    participant Play as Google Play Billing
-    participant Backend as Renewal Desk Server
-    participant GoogleAPI as Google Play Developer API
+> **CRITICAL SECURITY INVARIANT**:
+> The Android client **MUST NOT** grant premium feature entitlements solely from a client-side Google Play purchase callback.
 
-    Owner->>App: Select Subscription Plan
-    App->>Play: launchBillingFlow(productId)
-    Play-->>App: onPurchasesUpdated(purchaseToken)
-    App->>Backend: POST /api/mobile/v1/subscription/verify { purchase_token, product_id }
-    Backend->>GoogleAPI: purchases.subscriptionsv2.get()
-    GoogleAPI-->>Backend: Purchase Validated & Active
-    Backend->>GoogleAPI: purchases.subscriptions.acknowledge()
-    Backend->>Backend: Update Gym Entitlement (status=ACTIVE, renews_at=date)
-    Backend-->>App: { success: true, entitlement: { status: "active", plan: "Growth" } }
-    App-->>Owner: Premium Features Unlocked
+### Enforced Purchase Handshake Flow:
+```
+[Android Client]
+      │
+      │ 1. User selects plan & confirms purchase in Play Dialog
+      ▼
+[Google Play Store]
+      │
+      │ 2. Issues purchase token to Android client
+      ▼
+[Android Client]
+      │
+      │ 3. POST /api/mobile/v1/subscription/verify { purchaseToken, productId }
+      ▼
+[Renewal Desk Backend (subscription_service.py)]
+      │
+      │ 4. Validates token & product ID against catalog
+      │ 5. Updates Gym.subscription_status = 'ACTIVE'
+      │ 6. Updates Gym.plan_tier & sets renews_at = now + 30 days
+      │ 7. Grants FeatureEntitlements
+      ▼
+[Android Client]
+      │
+      │ 8. Receives 200 OK + active subscription object
+      ▼
+[Active Entitlement Screen]
+```
+
+If backend verification fails or is unreachable, the client remains in its current state with an error banner and **zero** unauthorized access granted.
+
+---
+
+## 3. Standardized 3-Tier Subscription Catalog
+
+All tiers are defined centrally in `app/services/subscription_service.py`:
+
+```json
+{
+  "starter": {
+    "id": "starter",
+    "name": "Starter",
+    "product_id": "online.revorax.renewaldesk.sub.starter",
+    "tagline": "Essential member renewals & attendance tracking",
+    "member_limit": 150,
+    "pricing": {
+      "INR": 999,
+      "AED": 99,
+      "USD": 19,
+      "GBP": 15,
+      "AUD": 29,
+      "EUR": 19,
+      "SAR": 79
+    },
+    "features": [
+      "Up to 150 active members",
+      "Automated WhatsApp renewal reminders",
+      "Payment tracking & digital receipts",
+      "Basic dashboard metrics"
+    ]
+  },
+  "growth": {
+    "id": "growth",
+    "name": "Growth",
+    "recommended": true,
+    "product_id": "online.revorax.renewaldesk.sub.growth",
+    "tagline": "Automated renewal recovery + 24/7 AI Desk",
+    "member_limit": 500,
+    "pricing": {
+      "INR": 1499,
+      "AED": 199,
+      "USD": 39,
+      "GBP": 29,
+      "AUD": 59,
+      "EUR": 39,
+      "SAR": 149
+    },
+    "features": [
+      "Up to 500 active members",
+      "24/7 WhatsApp AI Receptionist",
+      "Automated lead capture & free trials",
+      "Staff takeover & conversation inbox",
+      "CSV bulk member import",
+      "Urgent staff handover alerts"
+    ]
+  },
+  "pro": {
+    "id": "pro",
+    "name": "Pro",
+    "product_id": "online.revorax.renewaldesk.sub.pro",
+    "tagline": "Unlimited members, biometric syncing & advanced reports",
+    "member_limit": 999999,
+    "pricing": {
+      "INR": 2499,
+      "AED": 299,
+      "USD": 59,
+      "GBP": 49,
+      "AUD": 89,
+      "EUR": 59,
+      "SAR": 229
+    },
+    "features": [
+      "Unlimited active members",
+      "All Growth features included",
+      "Biometric Bridge real-time sync",
+      "Multi-staff access control",
+      "Advanced financial & retention reports",
+      "Priority 24/7 founder support"
+    ]
+  }
+}
 ```
 
 ---
 
-## 4. Lifecycle Handling & RTDN Reconciliation
-1. **Server-Side Truth**: Client callbacks alone never activate an account. Entitlement status is calculated on the server.
-2. **Cancellation Grace**: When a user cancels their subscription in Google Play, the account remains `ACTIVE` until `expires_at`. Once `expires_at` passes without renewal, status transitions to `EXPIRED`.
-3. **Payment Failure & Grace Period**: If payment fails, status transitions to `GRACE_PERIOD` (3-7 days based on store settings). If unrecovered, status becomes `PAYMENT_FAILED` then `EXPIRED`.
-4. **Restore Purchases**: On app reinstall or device switch, querying existing purchases dispatches tokens to `/subscription/verify` to synchronize state without duplicate charges.
+## 4. Subscription Lifecycle State Machine
+
+```
+[TRIAL (30 Days)] ──(Subscribe)──► [ACTIVE] ──(Auto-Renew)──► [ACTIVE]
+        │                              │
+        │ (Expires)                    │ (Payment Failed)
+        ▼                              ▼
+    [EXPIRED]                   [GRACE_PERIOD (3 Days)]
+                                       │
+                                       │ (Unpaid)
+                                       ▼
+                                  [PAST_DUE]
+                                       │
+                                       ▼
+                                  [CANCELLED]
+```
+
+- **Cancelled Subscriptions**: If a gym cancels recurring billing mid-cycle, `subscription_status` remains `ACTIVE` until the end of the paid 30-day period (`renews_at`), after which it transitions to `EXPIRED`.
+- **Restore Purchases**: If an owner switches devices or reinstalls the app, tapping **Restore Purchases** triggers `POST /api/mobile/v1/subscription/restore` to query existing Google Play entitlements and reactivate the account without duplicate charges.
+
+---
+
+## 5. Verification vs External Dependencies
+
+| Capability | Verification Status | Notes |
+| :--- | :--- | :--- |
+| **Catalog API (`GET /plans`)** | **VERIFIED** | Multi-currency pricing verified via unit tests |
+| **Status API (`GET /status`)** | **VERIFIED** | Manual vs Google Play detection verified |
+| **Verification API (`POST /verify`)** | **VERIFIED** | Server verification & database entitlement state verified |
+| **Restore API (`POST /restore`)** | **VERIFIED** | Device restore logic verified via automated tests |
+| **Live Play Store Payment Dialog** | **EXTERNAL DEPENDENCY** | Requires Google Play Console Closed Testing track & Merchant setup |

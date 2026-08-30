@@ -1,33 +1,38 @@
-# RENEWAL DESK — ANDROID FINAL FEATURE MATRIX
+# Renewal Desk — Final Android Feature Matrix
 
-| Feature | Screen | Backend Endpoint | Role | Current State | Test State | Status | Notes |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **User Login** | `LoginScreen.tsx` | `POST /auth/login` | Owner / Staff | Complete | Tested | **PASS** | Validates email/password, issues JWT access + refresh tokens, stores in SecureStore. |
-| **Token Rotation** | Background / `apiClient.ts` | `POST /auth/refresh` | Owner / Staff | Complete | Tested | **PASS** | Deduplicated single in-flight refresh. Retains session on transient network error. |
-| **Sign Out** | `SettingsScreen.tsx` | `POST /auth/logout` | Owner / Staff | Complete | Tested | **PASS** | Clears secure storage, unregisters push notifications. |
-| **Dashboard Metrics** | `DashboardScreen.tsx` | `GET /dashboard` | Owner / Staff | Complete | Tested | **PASS** | 2x2 grid (Active, Expiring Soon, Expired, Pending), Revenue breakdown (Today, Week, Month). |
-| **Urgent Staff Handover** | `DashboardScreen.tsx` | `GET /dashboard` | Owner / Staff | Complete | Tested | **PASS** | Displays urgent handover banner with customer message snippet and direct Reply action. |
-| **Member Directory** | `MembersScreen.tsx` | `GET /members` | Owner / Staff | Complete | Tested | **PASS** | Paginated (20/page), debounced name/phone search, active/expiring/expired chips. |
-| **Member Detail** | `MemberDetailScreen.tsx` | `GET /members/:id` | Owner / Staff | Complete | Tested | **PASS** | Shows profile, membership dates, financial summary, and Biometric enrollment status badge. |
-| **Add Member** | `AddMemberScreen.tsx` | `POST /members` | Owner / Staff | Complete | Tested | **PASS** | Name, phone (E.164 normalized), plan selection, auto-calculates end date. |
-| **Edit Member** | `EditMemberScreen.tsx` | `PATCH /members/:id` | Owner / Staff | Complete | Tested | **PASS** | Edit personal details, gender, plan, notes with duplicate-tap prevention. |
-| **Deactivate Member** | `MemberDetailScreen.tsx` | `POST /members/:id/deactivate`| Owner only | Complete | Tested | **PASS** | Confirmation dialog, soft deletes member, queues bridge command. |
-| **Renewals Hub** | `RenewalsScreen.tsx` | `GET /renewals` | Owner / Staff | Complete | Tested | **PASS** | Segmented into Expiring Today, Next 7 Days, and Overdue with urgency styling. |
-| **Renew Member** | `RenewMemberScreen.tsx` | `POST /renewals` | Owner / Staff | Complete | Tested | **PASS** | Records renewal with `Idempotency-Key` header, updates end date. |
-| **Payments List** | `PaymentsScreen.tsx` | `GET /payments` | Owner / Staff | Complete | Tested | **PASS** | Filter by pending, verified, rejected. Shows method, amount, reference. |
-| **Payment Detail** | `PaymentDetailScreen.tsx` | `GET /payments/:id` | Owner / Staff | Complete | Tested | **PASS** | Payment receipt view with member link, timestamp, and audit trail. |
-| **Verify / Reject Payment**| `PaymentsScreen.tsx` | `POST /payments/:id/verify` | Owner / Staff | Complete | Tested | **PASS** | Confirmation modal before verifying/rejecting, extends membership end date on verify. |
-| **Record Payment** | `RecordPaymentScreen.tsx` | `POST /payments` | Owner / Staff | Complete | Tested | **PASS** | Member picker, amount, method (Cash, UPI, Card), renewal days extension. |
-| **WhatsApp Reminders** | `WhatsAppScreen.tsx` | `GET /whatsapp/reminders` | Owner / Staff | Complete | Tested | **PASS** | Log of sent/failed/pending renewal reminders with timestamps. |
-| **WhatsApp Broadcast** | `WhatsAppScreen.tsx` | `POST /whatsapp/broadcast`| Owner / Staff | Complete | Tested | **PASS** | Broadcast announcements with quick presets to segmented audiences. |
-| **AI Bot Overview** | `BotOverviewScreen.tsx` | `GET /bot/stats` | Owner / Staff | Complete | Tested | **PASS** | 4 KPI stats: Total chats, leads, trial requests, handovers. |
-| **AI Conversations** | `BotConversationsScreen.tsx`| `GET /bot/conversations` | Owner / Staff | Complete | Tested | **PASS** | Live customer conversations with status badges and search. |
-| **Bot Chat & Takeover** | `BotConversationDetailScreen.tsx`| `POST /bot/conversations/:id/handover` | Owner / Staff | Complete | Tested | **PASS** | Staff Takeover stops AI auto-replies; Resume AI restores receptionist. |
-| **AI Leads Directory** | `BotLeadsScreen.tsx` | `GET /bot/leads` | Owner / Staff | Complete | Tested | **PASS** | Captured leads from WhatsApp, intent classification, interested plan. |
-| **Bot Setup & FAQs** | `BotSetupScreen.tsx` | `PATCH /bot/config` | Owner only | Complete | Tested | **PASS** | Greeting, opening hours, map link, trial options, FAQ management. |
-| **AI Sandbox Test** | `BotTestScreen.tsx` | `POST /bot/test` | Owner / Staff | Complete | Tested | **PASS** | Safe testing sandbox simulating customer queries and intent parsing. |
-| **Push Notifications** | `NotificationsScreen.tsx` | `GET /notifications` | Owner / Staff | Complete | Tested | **PASS** | Push token registration, in-app feed, unread counter, allow-listed deep links. |
-| **Plan Management** | `PlansScreen.tsx` | `GET / POST / PATCH / DELETE /plans` | Owner only | Complete | Tested | **PASS** | Full CRUD for gym membership plans with duration and price configuration. |
-| **Staff Directory** | `StaffScreen.tsx` | `GET / POST /staff` | Owner only | Complete | Tested | **PASS** | Manage staff accounts and permissions. |
-| **Analytics Reports** | `ReportsScreen.tsx` | `GET /reports/summary` | Owner / Staff | Complete | Tested | **PASS** | Period analytics for Revenue, Members, Renewals, and WhatsApp delivery. |
-| **Gym Settings** | `SettingsScreen.tsx` | `GET / PATCH /settings` | Owner / Staff | Complete | Tested | **PASS** | Gym profile, address, timezone, subscription status, build info. |
+| Feature | Screen | Mobile API Endpoint | Backend Service / Model | Role | Implemented | Tested | Real-world Verified | Status | Notes |
+| :--- | :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **Owner / Staff Login** | `LoginScreen.tsx` | `POST /api/mobile/v1/auth/login` | `User`, `app/mobile_api/auth.py` | All | YES | YES | YES | **PASS** | Dual JWT issuance & secure store persistence |
+| **Session Refresh** | `App.tsx` | `POST /api/mobile/v1/auth/refresh` | `app/mobile_api/auth.py` | All | YES | YES | YES | **PASS** | Transparent background token refresh on 401 |
+| **Self-Service Registration** | `SignupScreen.tsx` | `POST /api/mobile/v1/auth/signup` | `Gym`, `User`, `app/mobile_api/auth.py` | Owner | YES | YES | YES | **PASS** | 2-step onboarding, plan seeding, 30-day trial |
+| **Dashboard Metrics** | `DashboardScreen.tsx` | `GET /api/mobile/v1/dashboard` | `Gym`, `Member`, `Payment` | All | YES | YES | YES | **PASS** | Active, Expiring, Expired, Pending payments |
+| **Onboarding Checklist** | `DashboardScreen.tsx` | `GET /api/mobile/v1/onboarding/progress` | `app/mobile_api/dashboard.py` | Owner | YES | YES | YES | **PASS** | 8-milestone interactive setup progress tracker |
+| **Members List & Filter** | `MembersScreen.tsx` | `GET /api/mobile/v1/members` | `Member`, `app/mobile_api/members.py` | All | YES | YES | YES | **PASS** | Paginated search, status chips, avatar badges |
+| **Member Detail** | `MemberDetailScreen.tsx` | `GET /api/mobile/v1/members/<id>` | `Member`, `Plan`, `Payment` | All | YES | YES | YES | **PASS** | Membership timeline, renewal ledger, quick actions |
+| **Add Member** | `AddMemberScreen.tsx` | `POST /api/mobile/v1/members` | `Member`, `Payment`, `Plan` | All | YES | YES | YES | **PASS** | Auto-calculates expiry based on selected plan |
+| **Edit Member** | `EditMemberScreen.tsx` | `PUT /api/mobile/v1/members/<id>` | `Member`, `app/mobile_api/members.py` | All | YES | YES | YES | **PASS** | Updates phone, name, email, membership status |
+| **CSV Member Import** | `MembersScreen.tsx` | `POST /api/mobile/v1/members/import-csv` | `Member`, `Plan` | Owner | YES | YES | YES | **PASS** | Client preview, schema validation, error reporting |
+| **Renewals Hub** | `RenewalsScreen.tsx` | `GET /api/mobile/v1/renewals` | `Member`, `Plan`, `app/mobile_api/renewals.py` | All | YES | YES | YES | **PASS** | Filter by upcoming, expiring today, expired |
+| **Renew Member** | `RenewMemberScreen.tsx` | `POST /api/mobile/v1/renewals` | `Member`, `Payment`, `Plan` | All | YES | YES | YES | **PASS** | Idempotent renewal with payment mode tracking |
+| **Payments Ledger** | `PaymentsScreen.tsx` | `GET /api/mobile/v1/payments` | `Payment`, `Member`, `Plan` | All | YES | YES | YES | **PASS** | Full transaction history with mode filters |
+| **Record Payment** | `RecordPaymentScreen.tsx` | `POST /api/mobile/v1/payments` | `Payment`, `Member` | All | YES | YES | YES | **PASS** | Idempotent payment recording preventing double entry |
+| **Payment Detail** | `PaymentDetailScreen.tsx` | `GET /api/mobile/v1/payments/<id>` | `Payment`, `Member` | All | YES | YES | YES | **PASS** | Digital invoice receipt, PDF share, mode tag |
+| **WhatsApp Reminders** | `WhatsAppScreen.tsx` | `GET /api/mobile/v1/whatsapp/reminders` | `WhatsAppMessageLog` | All | YES | YES | YES | **PASS** | Delivery status tracking, failed retry action |
+| **WhatsApp Broadcast** | `WhatsAppScreen.tsx` | `POST /api/mobile/v1/whatsapp/broadcast` | `WhatsAppMessageLog` | Owner | YES | YES | YES | **PASS** | Audience segmenting (active, expired, all) & presets |
+| **Meta WABA Onboarding** | `WhatsAppScreen.tsx` | `POST /api/mobile/v1/whatsapp/connect-waba` | `Gym`, `app/mobile_api/whatsapp.py` | Owner | YES | YES | YES | **PASS** | Links WABA ID & Phone Number ID via modal |
+| **WhatsApp Profile** | `WhatsAppScreen.tsx` | `GET/PATCH /api/mobile/v1/whatsapp/profile` | `app/mobile_api/whatsapp.py` | Owner | YES | YES | YES | **PASS** | Updates business description and gym address |
+| **AI Receptionist Hub** | `BotOverviewScreen.tsx` | `GET /api/mobile/v1/bot/overview` | `BotLead`, `BotConversation` | All | YES | YES | YES | **PASS** | Inquiries count, trial requests, handover metrics |
+| **Inbound Leads** | `BotLeadsScreen.tsx` | `GET /api/mobile/v1/bot/leads` | `BotLead`, `app/mobile_api/bot.py` | All | YES | YES | YES | **PASS** | Pipeline status (New, Trial Requested, Contacted) |
+| **Lead Detail** | `BotLeadDetailScreen.tsx` | `GET /api/mobile/v1/bot/leads/<id>` | `BotLead`, `BotConversation` | All | YES | YES | YES | **PASS** | Lead history, conversion to member action |
+| **AI Chat Inbox** | `BotConversationsScreen.tsx`| `GET /api/mobile/v1/bot/conversations` | `BotConversation`, `BotMessage` | All | YES | YES | YES | **PASS** | Live conversation stream with handover badges |
+| **Chat & Human Takeover**| `BotConversationDetailScreen.tsx`| `POST /api/mobile/v1/bot/conversations/<id>/messages` | `BotConversation`, `BotMessage` | All | YES | YES | YES | **PASS** | 1-hour cooldown suppression on manual reply |
+| **AI Receptionist Config**| `BotSetupScreen.tsx` | `GET/POST /api/mobile/v1/bot/setup` | `GymBotConfig` | Owner | YES | YES | YES | **PASS** | Timings, facilities, trial policy, FAQs |
+| **Bot Test Sandbox** | `BotTestScreen.tsx` | `POST /api/mobile/v1/bot/test` | `GymBotConfig`, AI Provider | All | YES | YES | YES | **PASS** | Interactive sandbox for testing gym bot prompts |
+| **Membership Plans** | `PlansScreen.tsx` | `GET/POST/PUT/DELETE /api/mobile/v1/plans` | `Plan`, `app/mobile_api/plans.py` | Owner | YES | YES | YES | **PASS** | Create, edit, activate/deactivate plans |
+| **Staff Management** | `StaffScreen.tsx` | `GET/POST/DELETE /api/mobile/v1/staff` | `User`, `app/mobile_api/staff.py` | Owner | YES | YES | YES | **PASS** | Add staff credentials, delete staff access |
+| **Analytics & Reports** | `ReportsScreen.tsx` | `GET /api/mobile/v1/reports` | `Payment`, `Member`, `Plan` | Owner | YES | YES | YES | **PASS** | Revenue breakdown, member growth, retention rate |
+| **Subscription & Billing**| `SubscriptionScreen.tsx` | `GET /api/mobile/v1/subscription/status` | `subscription_service.py` | Owner | YES | YES | YES | **PASS** | 3-tier catalog, currency switch, plan upgrade |
+| **Purchase Verification** | `SubscriptionScreen.tsx` | `POST /api/mobile/v1/subscription/verify` | `subscription_service.py` | Owner | YES | YES | YES | **PASS** | Server-authoritative Google Play verification |
+| **Purchase Restoration** | `SubscriptionScreen.tsx` | `POST /api/mobile/v1/subscription/restore`| `subscription_service.py` | Owner | YES | YES | YES | **PASS** | Re-links active subscription on device change |
+| **Push Notifications** | `NotificationsScreen.tsx`| `GET /api/mobile/v1/notifications` | `NotificationLog` | All | YES | YES | YES | **PASS** | Allowlisted routing on notification tap |
+| **Settings & Profile** | `SettingsScreen.tsx` | `GET /api/mobile/v1/settings` | `Gym`, `User`, `app/mobile_api/settings.py`| All | YES | YES | YES | **PASS** | Gym details, navigation shortcuts, safe logout |

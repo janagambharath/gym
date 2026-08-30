@@ -1,22 +1,45 @@
-# META WHATSAPP BUSINESS APP + CLOUD API COEXISTENCE
+# Renewal Desk — WhatsApp Business App Coexistence Architecture
 
-## 1. Concept
-Meta Cloud API Coexistence allows a business phone number to be actively used inside the standard **WhatsApp Business Mobile App** (for owner manual chats) while simultaneously granting **Cloud API access** to Renewal Desk (for automated renewal reminders, broadcast announcements, and AI Receptionist messages).
+## 1. Coexistence Overview
+
+Meta Cloud API Coexistence allows a gym's existing mobile **WhatsApp Business App** to operate concurrently with the **Renewal Desk Cloud API** integration on the same registered phone number.
+
+```
+                  ┌──────────────────────────────────────────────┐
+                  │           Gym's Business Phone Number        │
+                  └──────────────────────┬───────────────────────┘
+                                         │
+                 ┌───────────────────────┴───────────────────────┐
+                 ▼                                               ▼
+   ┌───────────────────────────┐                   ┌───────────────────────────┐
+   │ WhatsApp Business App     │                   │ Renewal Desk Cloud API    │
+   │ (Physical Mobile Device)  │                   │ (Automated SaaS Engine)   │
+   ├───────────────────────────┤                   ├───────────────────────────┤
+   │ • Manual 1-on-1 chats     │                   │ • Automated renewals      │
+   │ • Status stories          │                   │ • 24/7 AI Receptionist    │
+   │ • Catalog browsing        │                   │ • Payment receipt PDFs    │
+   │ • Direct voice calls      │                   │ • Bulk segment broadcast  │
+   └───────────────────────────┘                   └───────────────────────────┘
+```
 
 ---
 
-## 2. Technical Prerequisites
-1. **WhatsApp Business App** installed and registered on the gym owner's phone.
-2. **Meta Embedded Signup** integrated with `whatsapp_business_management` and `whatsapp_business_messaging` permissions.
-3. **Webhook Subscriptions** configured for message status and inbound message ingestion.
+## 2. Feature Support & Verification Status
+
+| Capability | Status | Implementation Details |
+| :--- | :--- | :--- |
+| **Coexistence Option in Mobile UI** | **SUPPORTED / VERIFIED** | `WhatsAppOnboardingModal.tsx` provides dedicated Coexistence selection card |
+| **Backend Phone & WABA Binding** | **SUPPORTED / VERIFIED** | `app/mobile_api/whatsapp.py` links phone numbers with Cloud API endpoints |
+| **AI Cooldown on Staff Intervention** | **SUPPORTED / VERIFIED** | 1-hour suppression window stops automated AI replies upon human response |
+| **WhatsApp Business Profile Sync** | **SUPPORTED / VERIFIED** | `PATCH /api/mobile/v1/whatsapp/profile` updates About text and physical address |
+| **Live Cloud API Coexistence Webhook** | **SUPPORTED BY META (External)**| Requires eligible phone number on Meta Cloud API with active WABA permissions |
 
 ---
 
-## 3. Human Staff Takeover Interaction
-When an inbound message arrives from a gym member or prospective lead:
-1. The **AI Receptionist** responds automatically if the conversation state is active.
-2. If the user explicitly asks for human support ("talk to human", "call trainer") or if gym staff taps **Staff Takeover** inside Renewal Desk:
-   - AI response is paused (`handover_status = "human_requested"`).
-   - High-priority push notification is dispatched to staff Android devices.
-   - Staff can reply directly inside Renewal Desk or inside the native WhatsApp Business App.
-   - Tapping **Resume AI** returns the thread to automated receptionist handling.
+## 3. Disconnection & Offboarding Behavior
+
+- **Disconnect from Renewal Desk**:
+  - If a gym owner disconnects the WhatsApp integration inside Renewal Desk, the Cloud API webhook is deregistered.
+  - The gym's physical WhatsApp Business App continues functioning normally without interruption.
+- **Ineligible Numbers**:
+  - If a number is currently registered on standard personal WhatsApp (not WhatsApp Business), the owner is guided to migrate to WhatsApp Business or register a dedicated secondary number.
