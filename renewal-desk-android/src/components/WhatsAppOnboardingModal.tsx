@@ -128,7 +128,7 @@ export function WhatsAppOnboardingModal({
               onPress={() => setActiveTab('connect')}
             >
               <Text style={[styles.tabBtnText, activeTab === 'connect' && styles.tabBtnTextActive]}>
-                Connect WABA
+                Connect WhatsApp
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -160,7 +160,7 @@ export function WhatsAppOnboardingModal({
                     <View style={styles.methodTextContainer}>
                       <Text style={styles.methodTitle}>Existing WhatsApp Business</Text>
                       <Text style={styles.methodDesc}>
-                        Keep using your WhatsApp Business App with Cloud API coexistence.
+                        Keep using your WhatsApp Business App on phone with Cloud API coexistence.
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -207,7 +207,7 @@ export function WhatsAppOnboardingModal({
                   keyboardType="numeric"
                 />
 
-                <Text style={styles.inputLabel}>WhatsApp Business Account ID (WABA ID)</Text>
+                <Text style={styles.inputLabel}>WhatsApp Business Account ID (Optional)</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="e.g. 987654321012345"
@@ -217,7 +217,7 @@ export function WhatsAppOnboardingModal({
                   keyboardType="numeric"
                 />
 
-                <Text style={styles.inputLabel}>Business Phone Number (E.164)</Text>
+                <Text style={styles.inputLabel}>Business Phone Number (with Country Code)</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="e.g. +919876543210"

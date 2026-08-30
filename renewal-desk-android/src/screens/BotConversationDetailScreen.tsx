@@ -289,6 +289,14 @@ export function BotConversationDetailScreen({
 
           <View style={styles.composerCard}>
             <Text style={styles.composerLabel}>Manual reply</Text>
+            {isStaffActive && (
+              <View style={styles.takeoverActiveBanner}>
+                <Icon name="info" size={16} color={colors.warningDark} />
+                <Text style={styles.takeoverActiveBannerText}>
+                  AI replies are currently paused. Your replies are sent directly to the customer.
+                </Text>
+              </View>
+            )}
             <TextInput
               accessibilityLabel="Manual message"
               editable={!isClosed && !sending}
@@ -511,5 +519,22 @@ const styles = StyleSheet.create({
   successNotice: {
     backgroundColor: colors.successSurface,
     borderColor: colors.successBorder,
+  },
+  takeoverActiveBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.warningSurface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  takeoverActiveBannerText: {
+    color: colors.warningDark,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+    flex: 1,
   },
 });
