@@ -112,3 +112,50 @@ def register_dashboard_routes(bp):
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
+    @bp.route("/onboarding/progress", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def onboarding_progress():
+        """Track new customer onboarding setup checklist progress."""
+        from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
+        
+        gym = g.current_user.gym
+
+        account_created = True
+        plan_active = bool(gym.subscription_status in ("active", "trial"))
+        gym_profile_complete = bool(gym.phone and (gym.address or gym.city))
+        plans_configured = MembershipPlan.query.filter_by(gym_id=gym.id, is_active=True).count() > 0
+        members_imported = Member.query.filter_by(gym_id=gym.id).filter(Member.deleted_at.is_(None)).count() > 0
+        whatsapp_connected = bool(gym.whatsapp_enabled and gym.phone_number_id)
+        reminders_configured = bool(gym.renewal_reminder_template)
+        first_renewal_completed = (
+            RenewalHistory.query.filter_by(gym_id=gym.id).count() > 0
+            or PaymentVerification.query.filter_by(gym_id=gym.id).count() > 0
+        )
+
+        steps = [
+            {"id": "account_created", "title": "Account Created", "completed": account_created, "route": None},
+            {"id": "plan_active", "title": "Subscription Plan Active", "completed": plan_active, "route": "Subscription"},
+            {"id": "gym_profile", "title": "Gym Profile & Location", "completed": gym_profile_complete, "route": "Settings"},
+            {"id": "plans_configured", "title": "Membership Pricing Plans", "completed": plans_configured, "route": "Plans"},
+            {"id": "members_imported", "title": "Add or Import Members", "completed": members_imported, "route": "Members"},
+            {"id": "whatsapp_connected", "title": "Connect WhatsApp Business", "completed": whatsapp_connected, "route": "WhatsApp"},
+            {"id": "reminders_configured", "title": "Configure Renewal Templates", "completed": reminders_configured, "route": "WhatsApp"},
+            {"id": "first_renewal_completed", "title": "Complete First Renewal / Payment", "completed": first_renewal_completed, "route": "Renewals"},
+        ]
+
+        completed_count = sum(1 for s in steps if s["completed"])
+        total_count = len(steps)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "completed_count": completed_count,
+                "total_count": total_count,
+                "percentage": int((completed_count / total_count) * 100),
+                "is_complete": completed_count == total_count,
+                "steps": steps,
+            },
+        })
+
+

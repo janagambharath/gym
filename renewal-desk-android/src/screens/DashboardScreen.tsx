@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { ErrorState } from '../components/ErrorState';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
+import { OnboardingChecklistCard } from '../components/OnboardingChecklistCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession, logout } from '../services/apiClient';
@@ -175,6 +176,18 @@ export function DashboardScreen({
                 Here&apos;s the live view of what needs your attention today.
               </Text>
             </View>
+
+            {/* 📋 Onboarding Setup Checklist */}
+            <OnboardingChecklistCard
+              onNavigate={(route) => {
+                if (route === 'Subscription') onNavigateSettings?.();
+                else if (route === 'Settings') onNavigateSettings?.();
+                else if (route === 'Plans') onNavigateSettings?.();
+                else if (route === 'Members') onNavigateMembers();
+                else if (route === 'WhatsApp') onNavigateWhatsApp?.();
+                else if (route === 'Renewals') onNavigateRenewals?.();
+              }}
+            />
 
             {/* 🚨 Urgent Staff Handover Alert Box */}
             {data.bot_summary?.recent_handovers && data.bot_summary.recent_handovers.length > 0 ? (

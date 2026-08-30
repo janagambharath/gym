@@ -20,6 +20,7 @@ import { ErrorState } from '../components/ErrorState';
 import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
+import { WhatsAppOnboardingModal } from '../components/WhatsAppOnboardingModal';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
@@ -117,6 +118,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [selectedLead, setSelectedLead] = useState<BotLead | null>(null);
   const [leadMessages, setLeadMessages] = useState<BotMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
+  const [onboardingModalVisible, setOnboardingModalVisible] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
 
@@ -368,18 +370,25 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
 
       <View style={styles.container}>
         {/* Connection Status */}
-        <View style={styles.statusCard}>
+        <TouchableOpacity
+          style={styles.statusCard}
+          onPress={() => setOnboardingModalVisible(true)}
+          activeOpacity={0.8}
+        >
           <View style={styles.statusRow}>
             <Icon name="whatsapp" size={24} color={whatsappEnabled ? colors.whatsapp : colors.muted} />
             <View style={styles.statusInfo}>
               <Text style={styles.statusTitle}>WhatsApp Business</Text>
               <Text style={[styles.statusState, whatsappEnabled ? { color: colors.success } : undefined]}>
-                {whatsappEnabled ? 'Integration Active & Connected' : 'Not Connected'}
+                {whatsappEnabled ? 'Integration Active & Connected' : 'Not Connected — Tap to Setup'}
               </Text>
             </View>
-            <View style={[styles.statusDot, whatsappEnabled ? styles.dotConnected : styles.dotDisconnected]} />
+            <View style={styles.setupActionBadge}>
+              <Text style={styles.setupActionBadgeText}>{whatsappEnabled ? 'Settings' : 'Connect'}</Text>
+              <Icon name="forward" size={16} color={colors.whatsapp} />
+            </View>
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* 3-Tab Toggle */}
         <View style={styles.tabToggle}>
@@ -638,11 +647,34 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           </View>
         </SafeAreaView>
       </Modal>
+
+      <WhatsAppOnboardingModal
+        visible={onboardingModalVisible}
+        onClose={() => setOnboardingModalVisible(false)}
+        onConnected={() => {
+          refreshReminders();
+          refreshLeads();
+        }}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  setupActionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(37, 211, 102, 0.1)',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  setupActionBadgeText: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    color: colors.whatsapp,
+    marginRight: 2,
+  },
   audienceBtn: {
     backgroundColor: colors.card,
     borderColor: colors.border,

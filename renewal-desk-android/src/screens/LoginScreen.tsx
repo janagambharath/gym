@@ -5,6 +5,7 @@ import {
   Platform,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,9 +16,10 @@ import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 
 type LoginScreenProps = {
   onLogin: () => void;
+  onNavigateSignup?: () => void;
 };
 
-export function LoginScreen({ onLogin }: LoginScreenProps) {
+export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -109,6 +111,16 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             </View>
           </View>
 
+          {/* Signup Link */}
+          {onNavigateSignup && (
+            <View style={styles.signupRow}>
+              <Text style={styles.signupText}>New gym owner? </Text>
+              <TouchableOpacity onPress={onNavigateSignup}>
+                <Text style={styles.signupLink}>Create an Account</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Footer */}
           <Text style={styles.footer}>
             Secure login · Data encrypted in transit
@@ -156,10 +168,25 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
+  signupRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.lg,
+  },
+  signupText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
+  signupLink: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
   footer: {
     color: colors.muted,
     fontSize: fontSize.sm,
-    marginTop: spacing.xxl,
+    marginTop: spacing.lg,
     textAlign: 'center',
   },
   form: {

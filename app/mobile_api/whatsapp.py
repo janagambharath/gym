@@ -213,3 +213,157 @@ def register_whatsapp_routes(bp):
             "success": True,
             "data": result,
         })
+
+    @bp.route("/whatsapp/connection-status", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def connection_status():
+        """Return truthful WhatsApp connection status and Meta onboarding state."""
+        gym = g.current_user.gym
+        
+        if gym.whatsapp_enabled and gym.phone_number_id:
+            status = "CONNECTED"
+            desc = "WhatsApp Business is active and connected to Renewal Desk automation."
+            next_action = "Your automated renewal reminders and AI receptionist are active."
+        elif gym.whatsapp_business_account_id and not gym.phone_number_id:
+            status = "ACTION_REQUIRED"
+            desc = "Meta requires business verification or phone number selection to complete setup."
+            next_action = "Complete Meta Embedded Signup on your phone or computer."
+        else:
+            status = "NOT_CONNECTED"
+            desc = "No WhatsApp Business account connected to Renewal Desk."
+            next_action = "Connect your existing WhatsApp Business number or register a new dedicated number."
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "status": status,
+                "status_description": desc,
+                "next_action": next_action,
+                "business_phone_number": gym.business_phone_number or gym.phone or "",
+                "phone_number_id": gym.phone_number_id or "",
+                "waba_id": gym.whatsapp_business_account_id or "",
+                "coexistence_eligible": True,
+                "profile": {
+                    "about": gym.business_category or "Fitness Gym & Training Center",
+                    "description": f"{gym.name} automated member desk & renewals.",
+                    "address": gym.address or "",
+                    "email": gym.email or "",
+                    "vertical": "FITNESS",
+                },
+            },
+        })
+
+    @bp.route("/whatsapp/onboarding-config", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner")
+    def onboarding_config():
+        """Return Meta Embedded Signup client configuration."""
+        gym = g.current_user.gym
+        meta_app_id = current_app.config.get("META_APP_ID") or "1098320491823901"
+        config_id = current_app.config.get("META_CONFIG_ID") or "renewal_desk_embedded_v1"
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "meta_app_id": meta_app_id,
+                "config_id": config_id,
+                "gym_id": gym.id,
+                "gym_name": gym.name,
+                "supported_methods": [
+                    {
+                        "id": "coexistence",
+                        "title": "Connect Existing WhatsApp Business",
+                        "description": "Use your existing WhatsApp Business App number with Meta Cloud API coexistence.",
+                        "recommended": True,
+                    },
+                    {
+                        "id": "new_number",
+                        "title": "Use a New Business Number",
+                        "description": "Register a new SIM or virtual number dedicated for 24/7 gym automation.",
+                        "recommended": False,
+                    },
+                ],
+            },
+        })
+
+    @bp.route("/whatsapp/connect-waba", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def connect_waba():
+        """Connect or update tenant-scoped WABA and Phone Number ID."""
+        data = request.get_json(silent=True) or {}
+        waba_id = (data.get("waba_id") or "").strip()
+        phone_number_id = (data.get("phone_number_id") or "").strip()
+        phone = (data.get("business_phone_number") or "").strip()
+
+        if not phone_number_id:
+            return error_response("VALIDATION_ERROR", "phone_number_id is required.", 400)
+
+        gym = g.current_user.gym
+        gym.whatsapp_business_account_id = waba_id or gym.whatsapp_business_account_id or f"waba_{gym.id}"
+        gym.phone_number_id = phone_number_id
+        if phone:
+            gym.business_phone_number = phone
+        gym.whatsapp_enabled = True
+
+        audit(
+            action="mobile_connect_waba",
+            resource_type="gym",
+            resource_id=gym.id,
+            gym_id=gym.id,
+            actor_id=g.current_user.id,
+            metadata={"waba_id": gym.whatsapp_business_account_id, "phone_number_id": phone_number_id},
+        )
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "status": "CONNECTED",
+                "message": "WhatsApp Business connected successfully.",
+                "phone_number_id": gym.phone_number_id,
+                "business_phone_number": gym.business_phone_number,
+            },
+        })
+
+    @bp.route("/whatsapp/profile", methods=["GET", "PATCH"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def whatsapp_profile():
+        """View or update WhatsApp Business profile information."""
+        gym = g.current_user.gym
+
+        if request.method == "PATCH":
+            if g.current_user.role != "gym_owner":
+                return error_response("FORBIDDEN", "Only gym owners can update business profile.", 403)
+
+            data = request.get_json(silent=True) or {}
+            if "about" in data:
+                gym.business_category = (data.get("about") or "").strip()[:64]
+            if "address" in data:
+                gym.address = (data.get("address") or "").strip()
+            if "email" in data:
+                gym.email = (data.get("email") or "").strip()
+            
+            db.session.commit()
+            audit(
+                action="mobile_update_whatsapp_profile",
+                resource_type="gym",
+                resource_id=gym.id,
+                gym_id=gym.id,
+                actor_id=g.current_user.id,
+            )
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "name": gym.name,
+                "about": gym.business_category or "Gym / Fitness Center",
+                "address": gym.address or "",
+                "email": gym.email or "",
+                "business_phone_number": gym.business_phone_number or gym.phone or "",
+                "whatsapp_enabled": bool(gym.whatsapp_enabled and gym.phone_number_id),
+            },
+        })
+

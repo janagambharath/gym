@@ -30,7 +30,9 @@ import { RenewalsScreen } from './src/screens/RenewalsScreen';
 import { RenewMemberScreen } from './src/screens/RenewMemberScreen';
 import { ReportsScreen } from './src/screens/ReportsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
+import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
 import { apiRequest, restoreSession } from './src/services/apiClient';
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
@@ -81,6 +83,7 @@ type PaymentsStackParamList = {
 
 type MoreStackParamList = {
   MoreHome: undefined;
+  Subscription: undefined;
   WhatsApp: undefined;
   BotOverview: undefined;
   BotConversations: undefined;
@@ -96,6 +99,7 @@ type MoreStackParamList = {
 
 type AuthStackParamList = {
   Login: undefined;
+  Signup: undefined;
 };
 
 // ─── Navigators ──────────────────────────────────────────────────────
@@ -542,6 +546,7 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
         {(props) => (
           <SettingsScreen
             onLogout={onLogout}
+            onNavigateSubscription={() => props.navigation.navigate('Subscription')}
             onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
             onNavigateBot={() => props.navigation.navigate('BotOverview')}
             onNavigateBotTest={() => props.navigation.navigate('BotTest')}
@@ -550,6 +555,9 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
             onNavigateReports={() => props.navigation.navigate('Reports')}
           />
         )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="Subscription">
+        {(props) => <SubscriptionScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="WhatsApp">
         {(props) => <WhatsAppScreen onBack={() => props.navigation.goBack()} />}
@@ -721,7 +729,20 @@ export default function App() {
         <NavigationContainer ref={navigationRef}>
           <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
             <AuthStackNav.Screen name="Login">
-              {() => <LoginScreen onLogin={handleLoginSuccess} />}
+              {(props) => (
+                <LoginScreen
+                  onLogin={handleLoginSuccess}
+                  onNavigateSignup={() => props.navigation.navigate('Signup')}
+                />
+              )}
+            </AuthStackNav.Screen>
+            <AuthStackNav.Screen name="Signup">
+              {(props) => (
+                <SignupScreen
+                  onSignupSuccess={handleLoginSuccess}
+                  onNavigateLogin={() => props.navigation.navigate('Login')}
+                />
+              )}
             </AuthStackNav.Screen>
           </AuthStackNav.Navigator>
         </NavigationContainer>

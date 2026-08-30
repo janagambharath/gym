@@ -28,6 +28,8 @@ const ICON_MAP = {
   filter: { family: 'ion', name: 'funnel-outline' },
   back: { family: 'ion', name: 'chevron-back' },
   forward: { family: 'ion', name: 'chevron-forward' },
+  chevronUp: { family: 'ion', name: 'chevron-up' },
+  chevronDown: { family: 'ion', name: 'chevron-down' },
   close: { family: 'ion', name: 'close-outline' },
   checkmark: { family: 'ion', name: 'checkmark-circle' },
   send: { family: 'ion', name: 'send-outline' },

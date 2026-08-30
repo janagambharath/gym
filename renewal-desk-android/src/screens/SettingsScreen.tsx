@@ -26,6 +26,7 @@ type SettingsScreenProps = {
   onNavigateReports?: () => void;
   onNavigateBot?: () => void;
   onNavigateBotTest?: () => void;
+  onNavigateSubscription?: () => void;
 };
 
 export function SettingsScreen({
@@ -36,6 +37,7 @@ export function SettingsScreen({
   onNavigateReports,
   onNavigateBot,
   onNavigateBotTest,
+  onNavigateSubscription,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const session = getCachedSession();
@@ -83,6 +85,7 @@ export function SettingsScreen({
         <View style={styles.card}>
           <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
+            <MenuItem icon="wallet" label="Subscription & Billing" onPress={onNavigateSubscription} />
             <MenuItem icon="whatsapp" label="WhatsApp reminders" onPress={onNavigateWhatsApp} />
             <MenuItem icon="robot" label="WhatsApp Bot" onPress={onNavigateBot} />
             <MenuItem icon="testTube" label="Bot test sandbox" onPress={onNavigateBotTest} />
