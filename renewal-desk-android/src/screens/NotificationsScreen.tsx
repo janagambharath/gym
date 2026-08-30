@@ -16,7 +16,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { AppNotificationItem, NotificationsResponse } from '../types';
+import { formatShortDate, type AppNotificationItem, type NotificationsResponse } from '../types';
 
 type NotificationsScreenProps = {
   onBack: () => void;
@@ -46,7 +46,7 @@ function formatTimeAgo(dateStr: string | null): string {
   if (diffHour < 24) return `${diffHour}h ago`;
   if (diffDay === 1) return 'Yesterday';
   if (diffDay < 7) return `${diffDay}d ago`;
-  return past.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  return formatShortDate(dateStr);
 }
 
 function getCategoryConfig(category: string): { icon: IconName; iconBg: string; iconColor: string } {

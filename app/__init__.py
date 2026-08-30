@@ -141,6 +141,18 @@ def _validate_config(app: Flask, selected_config: str) -> None:
                 "when MOBILE_API_ENABLED=true. Generate one with: "
                 'python -c "import secrets; print(secrets.token_hex(32))"'
             )
+    if app.config.get("GOOGLE_PLAY_PACKAGE_NAME"):
+        required_play_config = (
+            "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+            "GOOGLE_PLAY_TOKEN_ENCRYPTION_KEY",
+            "GOOGLE_PLAY_RTDN_AUDIENCE",
+            "GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL",
+        )
+        missing = [key for key in required_play_config if not app.config.get(key)]
+        if missing:
+            raise RuntimeError(
+                "Google Play billing is incomplete. Set: " + ", ".join(missing)
+            )
 
 
 def _ensure_runtime_dirs(app: Flask) -> None:
@@ -417,6 +429,32 @@ def _register_cli(app: Flask) -> None:
             for gym in batch:
                 last_id = gym.id
                 yield gym
+
+    @app.cli.command("reconcile-google-play")
+    @click.option("--gym-id", type=int, default=None, help="Reconcile one gym only.")
+    @click.option("--limit", type=int, default=500, show_default=True)
+    def reconcile_google_play(gym_id: int | None, limit: int) -> None:
+        """Reverify stored Google Play subscriptions after an outage or backfill."""
+        from app.models import GooglePlaySubscription
+        from app.services.mobile_billing_service import (
+            GooglePlayConfigurationError,
+            reconcile_google_subscription,
+        )
+
+        query = GooglePlaySubscription.query.order_by(GooglePlaySubscription.id.asc())
+        if gym_id is not None:
+            query = query.filter_by(gym_id=gym_id)
+        reconciled = 0
+        failed = 0
+        for subscription in query.limit(max(1, min(limit, 5000))).all():
+            try:
+                reconcile_google_subscription(subscription)
+                db.session.commit()
+                reconciled += 1
+            except GooglePlayConfigurationError:
+                db.session.rollback()
+                failed += 1
+        click.echo(f"Reconciled {reconciled} subscription(s); {failed} failed.")
 
     @app.cli.command("create-admin")
     def create_admin() -> None:

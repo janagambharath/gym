@@ -11,6 +11,7 @@ from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, MembershipPlan
 from app.services.audit_service import audit
+from app.services.mobile_billing_service import entitlement_for
 
 
 def _serialize_plan(p: MembershipPlan) -> dict:
@@ -47,8 +48,10 @@ def register_settings_routes(bp):
                     "country": gym.country,
                     "currency": gym.currency,
                     "whatsapp_enabled": gym.whatsapp_enabled,
+                    "whatsapp_connection_status": gym.whatsapp_connection_status,
                     "max_members": gym.max_members,
                     "subscription_status": gym.subscription_status,
+                    "billing": entitlement_for(gym),
                 },
                 "plans": [_serialize_plan(p) for p in plans],
             },

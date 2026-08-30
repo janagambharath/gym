@@ -85,6 +85,17 @@ class Config:
     MOBILE_API_ACCESS_TOKEN_MINUTES = int(os.getenv("MOBILE_API_ACCESS_TOKEN_MINUTES", "15"))
     MOBILE_API_REFRESH_TOKEN_DAYS = int(os.getenv("MOBILE_API_REFRESH_TOKEN_DAYS", "30"))
 
+    # Google Play credentials are held only by the API deployment.  The
+    # Android client receives catalog metadata, never a service credential.
+    GOOGLE_PLAY_PACKAGE_NAME = os.getenv("GOOGLE_PLAY_PACKAGE_NAME", "")
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON", "")
+    GOOGLE_PLAY_CATALOG_JSON = os.getenv("GOOGLE_PLAY_CATALOG_JSON", "")
+    GOOGLE_PLAY_TOKEN_ENCRYPTION_KEY = os.getenv("GOOGLE_PLAY_TOKEN_ENCRYPTION_KEY", "")
+    GOOGLE_PLAY_RTDN_AUDIENCE = os.getenv("GOOGLE_PLAY_RTDN_AUDIENCE", "")
+    GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL = os.getenv(
+        "GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL", ""
+    )
+
     # ── WhatsApp AI Bot & OpenRouter Multi-Tier Configuration ────────────
     BOT_AI_ENABLED = os.getenv("BOT_AI_ENABLED", "true").lower() == "true"
     BOT_AI_PROVIDER = os.getenv("BOT_AI_PROVIDER", "openrouter")

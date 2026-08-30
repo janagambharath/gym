@@ -82,6 +82,12 @@ export function MemberDetailScreen({
   }, [fetchMemberData, refreshToken]);
 
   const handleSendReminder = useCallback(async () => {
+    if (!member.whatsapp_opted_in) {
+      showMessage('This member has not opted in to WhatsApp reminders.', 'error');
+      return;
+    }
+    if (sendingReminder) return;
+
     setSendingReminder(true);
     const result = await apiRequest<{ message: string; status: string }>('/api/mobile/v1/whatsapp/send-reminder', {
       method: 'POST',
@@ -95,7 +101,7 @@ export function MemberDetailScreen({
       showMessage(result.error.message, 'error');
     }
     setSendingReminder(false);
-  }, [member.id, member.full_name, onLogout]);
+  }, [member.id, member.full_name, member.whatsapp_opted_in, onLogout, sendingReminder]);
 
   const verifiedPaidAmount = payments
     .filter((payment) => ['verified', 'paid'].includes(payment.status.toLowerCase()))
@@ -321,17 +327,17 @@ export function MemberDetailScreen({
           <TouchableOpacity
             accessibilityLabel="Send WhatsApp reminder"
             accessibilityRole="button"
-            disabled={sendingReminder}
+            disabled={sendingReminder || !member.whatsapp_opted_in}
             onPress={() => void handleSendReminder()}
             style={[
               styles.memberAction,
               styles.memberActionWhatsApp,
-              sendingReminder ? styles.memberActionDisabled : undefined,
+              sendingReminder || !member.whatsapp_opted_in ? styles.memberActionDisabled : undefined,
             ]}
           >
             <Icon name="whatsapp" size={18} color={colors.whatsappDark} />
             <Text style={[styles.memberActionLabel, { color: colors.whatsappDark }]}>
-              {sendingReminder ? 'Sending...' : 'Send WhatsApp'}
+              {sendingReminder ? 'Sending...' : member.whatsapp_opted_in ? 'Send WhatsApp' : 'WhatsApp not opted in'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity

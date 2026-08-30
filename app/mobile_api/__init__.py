@@ -23,6 +23,7 @@ def create_mobile_api_blueprint() -> Blueprint:
     from app.mobile_api.bot import register_bot_routes
     from app.mobile_api.notifications import register_notifications_routes
     from app.mobile_api.subscription import register_subscription_routes
+    from app.mobile_api.billing import register_billing_routes
 
     register_auth_routes(bp)
     register_dashboard_routes(bp)
@@ -36,6 +37,7 @@ def create_mobile_api_blueprint() -> Blueprint:
     register_bot_routes(bp)
     register_notifications_routes(bp)
     register_subscription_routes(bp)
+    register_billing_routes(bp)
 
     return bp
 

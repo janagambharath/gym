@@ -276,17 +276,26 @@ export async function signup(params: {
   currency?: string;
   timezone?: string;
 }): Promise<ApiResult<LoginResponseData>> {
-  const result = await apiRequest<LoginResponseData>('/api/mobile/v1/auth/signup', {
+  const locales: Record<string, { country: string; currency: string; timezone: string }> = {
+    India: { country: 'IN', currency: 'INR', timezone: 'Asia/Kolkata' },
+    UAE: { country: 'AE', currency: 'AED', timezone: 'Asia/Dubai' },
+    'United States': { country: 'US', currency: 'USD', timezone: 'America/New_York' },
+    'United Kingdom': { country: 'GB', currency: 'GBP', timezone: 'Europe/London' },
+    Australia: { country: 'AU', currency: 'AUD', timezone: 'Australia/Sydney' },
+  };
+  const locale = locales[params.country] ?? locales.India;
+  const result = await apiRequest<LoginResponseData>('/api/mobile/v1/auth/register', {
     method: 'POST',
     body: {
-      full_name: params.fullName,
+      owner_name: params.fullName,
       email: params.email,
       phone: params.phone,
       password: params.password,
       gym_name: params.gymName,
-      country: params.country,
-      currency: params.currency,
-      timezone: params.timezone,
+      country: locale.country,
+      currency: params.currency ?? locale.currency,
+      timezone: params.timezone ?? locale.timezone,
+      terms_accepted: true,
     },
     anonymous: true,
   });

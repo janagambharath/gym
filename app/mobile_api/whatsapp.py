@@ -14,6 +14,15 @@ from app.services.reminder_service import create_manual_test_log, ensure_default
 from app.services.whatsapp_service import WhatsAppService
 
 
+def _connection_state(gym) -> str:
+    """Return a backend-confirmed state, never a client cache inference."""
+    configured = bool(gym.whatsapp_enabled and gym.phone_number_id)
+    stored = (gym.whatsapp_connection_status or "NOT_CONNECTED").upper()
+    if configured:
+        return "CONNECTED" if stored != "FAILED" else "FAILED"
+    return stored if stored in {"PENDING", "ACTION_REQUIRED", "FAILED"} else "NOT_CONNECTED"
+
+
 def _serialize_reminder_log(log: ReminderLog) -> dict:
     return {
         "id": log.id,
@@ -27,6 +36,25 @@ def _serialize_reminder_log(log: ReminderLog) -> dict:
 
 
 def register_whatsapp_routes(bp):
+    @bp.route("/whatsapp/status", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def whatsapp_status():
+        gym = g.current_user.gym
+        state = _connection_state(gym)
+        next_step = None
+        if state in {"NOT_CONNECTED", "ACTION_REQUIRED"}:
+            next_step = "WhatsApp setup required. Complete Meta Business onboarding with your account administrator."
+        elif state == "PENDING":
+            next_step = "WhatsApp setup is pending provider confirmation."
+        elif state == "FAILED":
+            next_step = "WhatsApp setup failed. Review the provider configuration and retry from the administrator console."
+        return jsonify({"success": True, "data": {
+            "state": state,
+            "business_phone_number": gym.business_phone_number or gym.phone or None,
+            "next_step": next_step,
+        }})
+
     @bp.route("/whatsapp/send-reminder", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
@@ -52,6 +80,12 @@ def register_whatsapp_routes(bp):
         )
         if member is None:
             return error_response("NOT_FOUND", "Member not found.", 404)
+        if not member.whatsapp_opted_in:
+            return error_response(
+                "WHATSAPP_OPT_IN_REQUIRED",
+                "Member has not opted in to receive WhatsApp reminders.",
+                409,
+            )
 
         try:
             template = ensure_default_template(g.gym_id)
@@ -172,7 +206,8 @@ def register_whatsapp_routes(bp):
         return jsonify({
             "success": True,
             "data": {
-                "whatsapp_enabled": bool(gym.whatsapp_enabled and gym.phone_number_id),
+                "whatsapp_enabled": _connection_state(gym) == "CONNECTED",
+                "connection_state": _connection_state(gym),
                 "business_phone_number": gym.business_phone_number or gym.phone or "",
                 "counts": {
                     "active": active_count,

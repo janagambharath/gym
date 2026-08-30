@@ -10,6 +10,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { formatDate as formatGymDate } from '../types';
 
 type StaffMember = {
   id: number;
@@ -52,7 +53,7 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
   const formatDate = (iso: string | null) => {
     if (!iso) return 'Never';
     try {
-      return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      return formatGymDate(iso);
     } catch { return '—'; }
   };
 

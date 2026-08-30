@@ -113,14 +113,10 @@ class WhatsAppService:
         if configuration_error:
             return WhatsAppResult(ok=False, error=configuration_error)
         if not self.enabled:
-            if current_app.testing or current_app.config.get("TESTING"):
-                return WhatsAppResult(ok=True, provider_message_id="simulated-test")
-            current_app.logger.warning(
-                "WhatsApp disabled globally; message send refused for gym %s to %s",
-                self.gym_id,
-                to,
+            return WhatsAppResult(
+                ok=False,
+                error="WhatsApp delivery is disabled by the server configuration",
             )
-            return WhatsAppResult(ok=False, error="WhatsApp is disabled globally (WHATSAPP_ENABLED=false)")
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -144,14 +140,10 @@ class WhatsAppService:
         if not template_name:
             return WhatsAppResult(ok=False, error="WhatsApp reminder template name is missing")
         if not self.enabled:
-            if current_app.testing or current_app.config.get("TESTING"):
-                return WhatsAppResult(ok=True, provider_message_id="simulated-template-test")
-            current_app.logger.warning(
-                "WhatsApp disabled globally; template send refused for gym %s to %s",
-                self.gym_id,
-                to,
+            return WhatsAppResult(
+                ok=False,
+                error="WhatsApp delivery is disabled by the server configuration",
             )
-            return WhatsAppResult(ok=False, error="WhatsApp is disabled globally (WHATSAPP_ENABLED=false)")
 
         template: dict = {
             "name": template_name,
@@ -181,14 +173,10 @@ class WhatsAppService:
         if configuration_error:
             return WhatsAppResult(ok=False, error=configuration_error)
         if not self.enabled:
-            if current_app.testing or current_app.config.get("TESTING"):
-                return WhatsAppResult(ok=True, provider_message_id="simulated-image-test")
-            current_app.logger.warning(
-                "WhatsApp disabled globally; image send refused for gym %s to %s",
-                self.gym_id,
-                to,
+            return WhatsAppResult(
+                ok=False,
+                error="WhatsApp delivery is disabled by the server configuration",
             )
-            return WhatsAppResult(ok=False, error="WhatsApp is disabled globally (WHATSAPP_ENABLED=false)")
 
         media_id = self._upload_media(image_url)
         if media_id:

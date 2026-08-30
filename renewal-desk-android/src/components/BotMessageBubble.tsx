@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View, type TextStyle, type ViewStyle } from 'react-native';
-import type { BotMessage } from '../types';
+import { formatDateTime, type BotMessage } from '../types';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 
 type BotMessageBubbleProps = {
@@ -7,15 +7,7 @@ type BotMessageBubbleProps = {
 };
 
 function formatTimestamp(timestamp: string | null): string {
-  if (!timestamp) return '';
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) return '';
-  return parsed.toLocaleString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return timestamp ? formatDateTime(timestamp) : '';
 }
 
 function styleForSender(sender: string): {

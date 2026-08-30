@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getRuntimeConfiguration } from '../config/runtime';
+import { getRuntimeConfiguration, getRuntimeConfigurationSafely, getRuntimeEnvironment } from '../config/runtime';
 
 test('uses a safe development default when no environment is supplied', () => {
   assert.deepEqual(getRuntimeConfiguration({}), {
@@ -64,5 +64,28 @@ test('rejects credentials embedded in the API URL', () => {
   assert.throws(
     () => getRuntimeConfiguration({ EXPO_PUBLIC_API_BASE_URL: 'https://user:password@renewal.example' }),
     /credentials/,
+  );
+});
+
+test('returns a controlled result when runtime API configuration is invalid', () => {
+  assert.deepEqual(
+    getRuntimeConfigurationSafely({
+      EXPO_PUBLIC_API_BASE_URL: 'not a URL',
+      EXPO_PUBLIC_APP_ENV: 'production',
+    }),
+    {
+      ok: false,
+      error: { message: 'API configuration is invalid.' },
+    },
+  );
+});
+
+test('reads the configured runtime environment without parsing the API URL', () => {
+  assert.equal(
+    getRuntimeEnvironment({
+      EXPO_PUBLIC_API_BASE_URL: 'not a URL',
+      EXPO_PUBLIC_APP_ENV: 'staging',
+    }),
+    'staging',
   );
 });

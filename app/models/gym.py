@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import CheckConstraint
 
@@ -31,17 +31,32 @@ class Gym(TimestampMixin, db.Model):
     email = db.Column(db.String(255), nullable=True)
     phone = db.Column(db.String(40), nullable=True)
     timezone = db.Column(db.String(64), nullable=False, default="Asia/Kolkata")
+    # Locale and entitlement values are server-owned.  The mobile client uses
+    # these fields only for presentation and must never infer an entitlement.
+    country = db.Column(db.String(2), nullable=False, default="IN")
+    currency = db.Column(db.String(3), nullable=False, default="INR")
     status = db.Column(db.String(32), nullable=False, default="active", index=True)
     subscription_status = db.Column(
         db.String(32), nullable=False, default="trial", index=True
     )
     trial_ends_at = db.Column(db.Date, nullable=True)
+    billing_source = db.Column(db.String(32), nullable=False, default="MANUAL", index=True)
+    billing_plan_id = db.Column(db.String(120), nullable=True)
+    billing_plan_name = db.Column(db.String(160), nullable=True)
+    billing_started_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    billing_renews_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    billing_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    billing_grace_period_end = db.Column(db.DateTime(timezone=True), nullable=True)
     max_members = db.Column(db.Integer, nullable=True)
     address = db.Column(db.Text, nullable=True)
     whatsapp_business_account_id = db.Column(db.String(255), nullable=True, index=True)
     phone_number_id = db.Column(db.String(255), nullable=True, unique=True, index=True)
     business_phone_number = db.Column(db.String(40), nullable=True, unique=True, index=True)
     whatsapp_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    whatsapp_connection_status = db.Column(
+        db.String(32), nullable=False, default="NOT_CONNECTED", index=True
+    )
+    whatsapp_connection_error = db.Column(db.String(500), nullable=True)
     welcome_message_template = db.Column(
         db.Text,
         nullable=False,

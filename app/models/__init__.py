@@ -16,6 +16,7 @@ from app.models.bot import (
 from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallation
 from app.models.bridge_release import BridgeRelease
 from app.models.gym import Gym
+from app.models.google_play_subscription import GooglePlaySubscription
 
 from app.models.gym_deployment import GymDeployment
 from app.models.member import Member, MembershipPlan
@@ -47,6 +48,7 @@ __all__ = [
     "FeatureEntitlement",
 
     "Gym",
+    "GooglePlaySubscription",
     "GymBotConfig",
     "GymDeployment",
     "Member",

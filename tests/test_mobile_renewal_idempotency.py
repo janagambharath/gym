@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
+
 from app.mobile_api.token_service import create_access_token
 from app.models import RenewalHistory
 
@@ -64,3 +68,65 @@ def test_mobile_direct_renewal_rejects_reused_key_for_changed_payload(
         gym_id=seed_gym["gym"].id,
         member_id=seed_member.id,
     ).count() == 1
+
+
+@pytest.mark.parametrize(
+    "amount_payload",
+    [
+        {},
+        {"amount": None},
+        {"amount": ""},
+        {"amount": "   "},
+        {"amount": True},
+        {"amount": "-0.01"},
+        {"amount": "NaN"},
+        {"amount": "Infinity"},
+        {"amount": "10.001"},
+        {"amount": "100000000.00"},
+    ],
+    ids=[
+        "missing",
+        "null",
+        "empty",
+        "whitespace",
+        "boolean",
+        "negative",
+        "nan",
+        "infinity",
+        "fractional-cent",
+        "too-large",
+    ],
+)
+def test_mobile_direct_renewal_rejects_unsafe_amounts(
+    client, seed_gym, seed_member, amount_payload
+):
+    headers = _headers(seed_gym, f"unsafe-renewal-amount-{str(amount_payload)}")
+    response = client.post(
+        f"/api/mobile/v1/renewals/{seed_member.id}",
+        headers=headers,
+        json={"renewal_days": 30, **amount_payload},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "VALIDATION_ERROR"
+    assert RenewalHistory.query.filter_by(
+        gym_id=seed_gym["gym"].id,
+        member_id=seed_member.id,
+    ).count() == 0
+
+
+def test_mobile_direct_renewal_allows_explicit_complimentary_amount(
+    client, seed_gym, seed_member
+):
+    response = client.post(
+        f"/api/mobile/v1/renewals/{seed_member.id}",
+        headers=_headers(seed_gym, "complimentary-manual-renewal"),
+        json={"renewal_days": 30, "amount": "0.00"},
+    )
+
+    assert response.status_code == 201
+    renewal = RenewalHistory.query.filter_by(
+        gym_id=seed_gym["gym"].id,
+        member_id=seed_member.id,
+    ).one()
+    assert renewal.amount == Decimal("0.00")

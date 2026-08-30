@@ -16,6 +16,7 @@ from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
+from app.services.mobile_member_import_service import validate_csv
 from app.utils.helpers import normalize_phone_e164
 
 
@@ -40,6 +41,52 @@ def _serialize_member(m: Member) -> dict:
 
 
 def register_members_routes(bp):
+    @bp.route("/members/import/preview", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def preview_member_import():
+        data = request.get_json(silent=True) or {}
+        preview = validate_csv(g.gym_id, g.current_user.gym.timezone, data.get("csv_text", ""))
+        return jsonify({"success": True, "data": preview})
+
+    @bp.route("/members/import", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def import_members():
+        data = request.get_json(silent=True) or {}
+        preview = validate_csv(g.gym_id, g.current_user.gym.timezone, data.get("csv_text", ""))
+        if preview["file_errors"] or preview["summary"]["invalid"] or preview["summary"]["duplicates"]:
+            return error_response(
+                "IMPORT_VALIDATION_FAILED",
+                "Fix every invalid or duplicate row before importing. No members were imported.",
+                422,
+                {"preview": preview},
+            )
+        rows = preview["rows"]
+        if not rows:
+            return error_response("VALIDATION_ERROR", "CSV has no member rows.", 400)
+        gym = db.session.execute(select(Gym).where(Gym.id == g.gym_id).with_for_update()).scalar_one()
+        current_count = db.session.query(func.count(Member.id)).filter(
+            Member.gym_id == g.gym_id, Member.deleted_at.is_(None)
+        ).scalar() or 0
+        if gym.max_members is not None and current_count + len(rows) > gym.max_members:
+            return error_response("MEMBER_LIMIT", "Import would exceed the member limit. No members were imported.", 409)
+        for row in rows:
+            normalized = dict(row["normalized"])
+            normalized["membership_start"] = date.fromisoformat(normalized["membership_start"])
+            normalized["membership_end"] = date.fromisoformat(normalized["membership_end"])
+            db.session.add(Member(gym_id=g.gym_id, joined_on=today_for_gym(gym.timezone), **normalized))
+        audit(
+            action="mobile_bulk_import_members",
+            resource_type="member",
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"created": len(rows)},
+        )
+        invalidate_dashboard_cache(g.gym_id)
+        db.session.commit()
+        return jsonify({"success": True, "data": {"imported": len(rows), "skipped": 0}}), 201
+
     @bp.route("/members", methods=["GET"])
     @token_required
     @roles_required("gym_owner", "staff")

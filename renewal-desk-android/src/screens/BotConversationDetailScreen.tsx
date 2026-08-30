@@ -21,11 +21,12 @@ import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type {
-  BotConversation,
-  BotConversationDetailResponse,
-  BotLeadSummary,
-  BotMessage,
+import {
+  formatDateTime,
+  type BotConversation,
+  type BotConversationDetailResponse,
+  type BotLeadSummary,
+  type BotMessage,
 } from '../types';
 
 type BotConversationDetailScreenProps = {
@@ -46,15 +47,8 @@ function displayName(conversation: BotConversation): string {
 
 function formatTimestamp(timestamp: string | null): string {
   if (!timestamp) return 'Unavailable';
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) return 'Unavailable';
-  return parsed.toLocaleString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const formatted = formatDateTime(timestamp);
+  return formatted === '—' ? 'Unavailable' : formatted;
 }
 
 /** Displays the bounded, server-authoritative transcript for one conversation. */

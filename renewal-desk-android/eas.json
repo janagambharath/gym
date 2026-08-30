@@ -18,8 +18,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging",
-        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app"
+        "EXPO_PUBLIC_APP_ENV": "staging"
       }
     },
     "staging": {
@@ -27,8 +26,7 @@
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging",
-        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app"
+        "EXPO_PUBLIC_APP_ENV": "staging"
       }
     },
     "production": {
@@ -39,8 +37,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app"
+        "EXPO_PUBLIC_APP_ENV": "production"
       }
     }
   },

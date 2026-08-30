@@ -19,7 +19,7 @@ import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { BotConversation, BotConversationsResponse } from '../types';
+import { formatShortDate, type BotConversation, type BotConversationsResponse } from '../types';
 
 type BotConversationsScreenProps = {
   onBack: () => void;
@@ -50,7 +50,7 @@ function formatLastMessageAt(timestamp: string | null): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  return formatShortDate(timestamp);
 }
 
 function statusMatches(status: string, selectedFilter: string): boolean {

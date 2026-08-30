@@ -18,7 +18,7 @@ import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, MembersResponse } from '../types';
-import { formatDate, getDaysText, getMemberDisplayStatus } from '../types';
+import { formatDate, formatInteger, getDaysText, getMemberDisplayStatus } from '../types';
 
 type MembersScreenProps = {
   onLogout: () => void;
@@ -142,7 +142,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Members</Text>
-          <Text style={styles.headerSubtitle}>{totalCount.toLocaleString('en-IN')} members</Text>
+          <Text style={styles.headerSubtitle}>{formatInteger(totalCount)} members</Text>
         </View>
         <View style={styles.headerActions}>
           <View accessibilityLabel="Notifications" style={styles.notificationButton}>

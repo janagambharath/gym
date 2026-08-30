@@ -7,6 +7,7 @@ Flask-Login==0.6.3
 Flask-Migrate==4.0.7
 Flask-SQLAlchemy==3.1.1
 Flask-WTF==1.2.1
+google-api-python-client==2.183.0
 gunicorn==22.0.0
 limits==3.10.1
 psycopg2-binary>=2.9.9,<3.0

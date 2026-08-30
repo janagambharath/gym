@@ -19,7 +19,7 @@ import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { BotLead, BotLeadsResponse } from '../types';
+import { formatDate, type BotLead, type BotLeadsResponse } from '../types';
 
 type BotLeadsScreenProps = {
   onBack: () => void;
@@ -39,9 +39,8 @@ const FILTERS = [
 
 function formatCreatedAt(timestamp: string | null): string {
   if (!timestamp) return 'Date unavailable';
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) return 'Date unavailable';
-  return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const formatted = formatDate(timestamp);
+  return formatted === '—' ? 'Date unavailable' : formatted;
 }
 
 export function BotLeadsScreen({ onBack, onSelectLead, onLogout }: BotLeadsScreenProps) {

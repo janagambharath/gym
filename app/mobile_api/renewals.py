@@ -144,13 +144,38 @@ def register_renewals_routes(bp):
         if not 1 <= renewal_days <= 730:
             return error_response("VALIDATION_ERROR", "renewal_days must be between 1 and 730.", 400)
 
-        # Validate amount.
+        # A manual renewal may intentionally be complimentary, so an explicit
+        # zero remains valid. Do not silently coerce omitted/blank input to
+        # zero, however, and reject values the Numeric(10, 2) column cannot
+        # safely represent.
+        raw_amount = data.get("amount")
+        if raw_amount is None or isinstance(raw_amount, bool):
+            return error_response(
+                "VALIDATION_ERROR",
+                "Amount is required and must be a non-negative amount with up to two decimal places.",
+                400,
+            )
+        if isinstance(raw_amount, str) and not raw_amount.strip():
+            return error_response(
+                "VALIDATION_ERROR",
+                "Amount is required and must be a non-negative amount with up to two decimal places.",
+                400,
+            )
         try:
-            amount = Decimal(str(data.get("amount", "0")).strip() or "0")
+            amount = Decimal(str(raw_amount).strip())
         except (InvalidOperation, TypeError):
             return error_response("VALIDATION_ERROR", "Invalid amount.", 400)
-        if amount < 0:
-            return error_response("VALIDATION_ERROR", "Amount cannot be negative.", 400)
+        if (
+            not amount.is_finite()
+            or amount < 0
+            or amount > Decimal("99999999.99")
+            or amount.as_tuple().exponent < -2
+        ):
+            return error_response(
+                "VALIDATION_ERROR",
+                "Amount must be a non-negative amount with up to two decimal places.",
+                400,
+            )
 
         notes = (data.get("notes") or "").strip()
 
