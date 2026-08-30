@@ -97,11 +97,12 @@
 
 ## EAS BUILD
 **PASS**
-- Previous EAS Release Builds:
+- Latest EAS Release Build:
+  - Build ID: `c04e1295-9cd5-4fdd-9a8f-4c9983737758` (Build 5 Release Candidate — In Progress / Active)
+  - Build Logs: [expo.dev build logs](https://expo.dev/accounts/bharath1818/projects/renewal-desk-android/builds/c04e1295-9cd5-4fdd-9a8f-4c9983737758)
+- Previous Verified Builds:
   - Build ID: `9d4ca5fd-64c3-4335-b8b6-fe414ab98119` (Build 4 Preview APK — Finished)
   - Build ID: `43e7d6a5-0251-40b7-820c-9eb35ff88560` (Build 4 Preview APK — Finished)
-  - Build ID: `19dfacb0-98e7-4a02-b2d7-9b84555536dc` (Build 3 Preview APK — Finished)
-- Current Release Candidate: Build 5 (versionCode 5) configured for production AAB distribution.
 
 ---
 
