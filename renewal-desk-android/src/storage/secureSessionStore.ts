@@ -12,6 +12,8 @@ export type MobileSession = {
   userName?: string;
   userRole?: string;
   gymTimezone?: string;
+  gymCurrency?: string;
+  gymCountry?: string;
 };
 
 function isSession(value: unknown): value is MobileSession {
@@ -29,7 +31,9 @@ function isSession(value: unknown): value is MobileSession {
     (session.tenantName === undefined || typeof session.tenantName === 'string') &&
     (session.userName === undefined || typeof session.userName === 'string') &&
     (session.userRole === undefined || typeof session.userRole === 'string') &&
-    (session.gymTimezone === undefined || typeof session.gymTimezone === 'string')
+    (session.gymTimezone === undefined || typeof session.gymTimezone === 'string') &&
+    (session.gymCurrency === undefined || typeof session.gymCurrency === 'string') &&
+    (session.gymCountry === undefined || typeof session.gymCountry === 'string')
   );
 }
 

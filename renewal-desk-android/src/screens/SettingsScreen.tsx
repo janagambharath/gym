@@ -154,7 +154,7 @@ export function SettingsScreen({
             </View>
           </View>
           <InfoRow label="Version" value="1.0.0" />
-          <InfoRow label="Build" value="Production Release (Build 4)" />
+          <InfoRow label="Build" value="Production Release (Build 5)" />
         </View>
 
         {/* Logout */}

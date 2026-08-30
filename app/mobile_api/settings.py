@@ -44,6 +44,8 @@ def register_settings_routes(bp):
                     "phone": gym.phone,
                     "address": gym.address,
                     "timezone": gym.timezone,
+                    "country": gym.country,
+                    "currency": gym.currency,
                     "whatsapp_enabled": gym.whatsapp_enabled,
                     "max_members": gym.max_members,
                     "subscription_status": gym.subscription_status,

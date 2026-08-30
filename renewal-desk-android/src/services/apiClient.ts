@@ -83,9 +83,11 @@ async function attemptRefresh(baseUrl: string): Promise<MobileSession | undefine
     });
 
     if (!response.ok) {
-      // Refresh failed — force re-login.
-      await clearSession();
-      cachedSession = undefined;
+      // Explicit 401/403 means the refresh token is truly expired/invalid -> clear session.
+      if (response.status === 401 || response.status === 403) {
+        await clearSession();
+        cachedSession = undefined;
+      }
       return undefined;
     }
 
@@ -104,14 +106,16 @@ async function attemptRefresh(baseUrl: string): Promise<MobileSession | undefine
       userId: cachedSession.userId,
       userName: cachedSession.userName,
       userRole: cachedSession.userRole,
+      gymTimezone: cachedSession.gymTimezone,
+      gymCurrency: cachedSession.gymCurrency,
+      gymCountry: cachedSession.gymCountry,
     };
 
     await saveSession(newSession);
     cachedSession = newSession;
     return newSession;
   } catch {
-    await clearSession();
-    cachedSession = undefined;
+    // Transient network failure should NOT destroy valid local credentials.
     return undefined;
   }
 }
@@ -228,6 +232,8 @@ export type LoginResponseData = {
     name: string;
     slug: string;
     timezone: string;
+    country?: string;
+    currency?: string;
     whatsapp_enabled: boolean;
   };
 };
@@ -250,6 +256,8 @@ export async function login(email: string, password: string): Promise<ApiResult<
       userName: data.user.full_name,
       userRole: data.user.role,
       gymTimezone: data.gym.timezone,
+      gymCurrency: data.gym.currency,
+      gymCountry: data.gym.country,
     };
     await saveSession(session);
     cachedSession = session;

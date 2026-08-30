@@ -1,7 +1,4 @@
-/**
- * Shared type definitions matching the actual backend API response shapes.
- * These are the source of truth for data types across all screens.
- */
+import { getCachedSession } from './services/apiClient';
 
 // ─── Member ──────────────────────────────────────────────────────────
 
@@ -131,6 +128,8 @@ export type GymSettings = {
   phone: string | null;
   address: string | null;
   timezone: string;
+  country?: string;
+  currency?: string;
   whatsapp_enabled: boolean;
   max_members: number | null;
   subscription_status: string | null;
@@ -307,18 +306,36 @@ export function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—';
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-IN', {
+  return d.toLocaleDateString('en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
   });
 }
 
-/** Format a number as Indian Rupees */
-export function formatCurrency(value: string | number): string {
+/** Format a number according to gym currency or specified currency code */
+export function formatCurrency(value: string | number, customCurrency?: string): string {
   const num = typeof value === 'string' ? Number(value) : value;
-  if (isNaN(num)) return '₹0';
-  return `₹${num.toLocaleString('en-IN')}`;
+  if (isNaN(num)) return '0';
+
+  const currencyCode = (customCurrency || getCachedSession()?.gymCurrency || 'INR').toUpperCase();
+  const symbolMap: Record<string, string> = {
+    INR: '₹',
+    AED: 'AED ',
+    USD: '$',
+    GBP: '£',
+    EUR: '€',
+    AUD: 'A$',
+    CAD: 'C$',
+    SAR: 'SAR ',
+    QAR: 'QAR ',
+    KWD: 'KWD ',
+    OMR: 'OMR ',
+    SGD: 'S$',
+  };
+  const symbol = symbolMap[currencyCode] ?? `${currencyCode} `;
+  const locale = currencyCode === 'INR' ? 'en-IN' : 'en-US';
+  return `${symbol}${num.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
 /** Get days text from days_until_expiry */

@@ -125,7 +125,7 @@ def create_and_dispatch_notification(
                 token_obj = token_map.get(push_token_str)
                 if token_obj:
                     token_obj.is_active = False
-                    logger.info("Deactivated push token %s due to %s", push_token_str, error_code)
+                    logger.info("Deactivated invalid push token for user_id=%s due to %s", token_obj.user_id, error_code)
     try:
         db.session.commit()
     except Exception:
@@ -210,8 +210,10 @@ def notify_trial_requested(gym: Gym, lead: BotLead) -> None:
 def notify_new_payment(gym: Gym, payment: PaymentVerification) -> None:
     """Triggered when a member payment is recorded / awaiting verification."""
     member_name = payment.member.full_name if payment.member else f"Member #{payment.member_id}"
-    title = f"💳 Payment Received: ₹{payment.amount}"
-    body = f"{member_name} paid ₹{payment.amount} via {payment.method.upper()}. Tap to verify."
+    curr_symbols = {"INR": "₹", "USD": "$", "AED": "AED ", "GBP": "£", "EUR": "€", "AUD": "A$", "CAD": "C$", "SAR": "SAR "}
+    symbol = curr_symbols.get(gym.currency or "INR", f"{gym.currency or 'INR'} ")
+    title = f"💳 Payment Received: {symbol}{payment.amount}"
+    body = f"{member_name} paid {symbol}{payment.amount} via {payment.method.upper()}. Tap to verify."
 
     create_and_dispatch_notification(
         gym_id=gym.id,

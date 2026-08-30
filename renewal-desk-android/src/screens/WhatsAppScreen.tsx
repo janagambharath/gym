@@ -527,7 +527,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
 
             {/* WhatsApp Live Preview */}
             <Text style={styles.sectionHeaderTitle}>WhatsApp Preview</Text>
-            <View style={styles.waMockupCard}>
+            <View style={styles.waPreviewCard}>
               <View style={styles.waHeader}>
                 <Icon name="whatsapp" size={18} color={colors.whatsapp} />
                 <Text style={styles.waHeaderText}>Gym Verified Announcement</Text>
@@ -879,7 +879,7 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     fontWeight: fontWeight.semibold,
   },
-  waMockupCard: {
+  waPreviewCard: {
     backgroundColor: '#0b141a',
     borderRadius: radius.lg,
     padding: spacing.md,

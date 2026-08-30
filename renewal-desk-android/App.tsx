@@ -650,7 +650,6 @@ export default function App() {
     // Listen to push notification tap responses
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       const payload = response.notification.request.content.data as any;
-      console.log('[Notification Tap]', payload);
       if (navigationRef.isReady()) {
         if (payload?.screen === 'BotConversationDetail' && payload?.conversation_id) {
           navigationRef.navigate('Dashboard', {

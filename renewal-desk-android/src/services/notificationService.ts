@@ -54,7 +54,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 
   if (!Device.isDevice) {
-    console.log('[Push] Must use physical device for push notifications');
     return null;
   }
 
@@ -67,7 +66,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 
   if (finalStatus !== 'granted') {
-    console.log('[Push] Notification permission not granted');
     return null;
   }
 
@@ -75,7 +73,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     const projectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
       Constants?.easConfig?.projectId ??
-      '79a55ce6-b333-4f9e-beec-ee7eb08d7ea3';
+      '7eef8559-b676-40bc-a7e0-faa9424765db';
 
     const tokenData = await Notifications.getExpoPushTokenAsync({
       projectId,
@@ -95,10 +93,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       },
     });
 
-    console.log('[Push] Registered push token:', token);
     return token;
-  } catch (error) {
-    console.warn('[Push] Error getting push token:', error);
+  } catch {
     return null;
   }
 }
@@ -111,8 +107,8 @@ export async function unregisterPushNotificationsAsync(): Promise<void> {
         body: { push_token: cachedPushToken },
       });
       cachedPushToken = null;
-    } catch (error) {
-      console.warn('[Push] Error unregistering push token:', error);
+    } catch {
+      // Safe no-op on logout
     }
   }
 }

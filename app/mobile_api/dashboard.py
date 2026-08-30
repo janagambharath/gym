@@ -1,7 +1,7 @@
 """Mobile API dashboard endpoint."""
 from __future__ import annotations
 
-from flask import g, jsonify
+from flask import current_app, g, jsonify
 
 from app.extensions import db, limiter
 from app.mobile_api.middleware import roles_required, token_required
