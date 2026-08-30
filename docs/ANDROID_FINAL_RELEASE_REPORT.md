@@ -98,8 +98,9 @@
 ## EAS BUILD
 **PASS**
 - Latest EAS Release Build:
-  - Build ID: `c04e1295-9cd5-4fdd-9a8f-4c9983737758` (Build 5 Release Candidate — In Progress / Active)
-  - Build Logs: [expo.dev build logs](https://expo.dev/accounts/bharath1818/projects/renewal-desk-android/builds/c04e1295-9cd5-4fdd-9a8f-4c9983737758)
+  - Build ID: `c04e1295-9cd5-4fdd-9a8f-4c9983737758` (Build 5 Release Candidate — Finished)
+  - Direct APK Download: [Download Renewal Desk Build 5 APK](https://expo.dev/artifacts/eas/udcpEl-aq39SYYPkKOxdp743lpeFe_XmYuQ-am6L3uc.apk)
+  - Build Page & QR: [expo.dev build page](https://expo.dev/accounts/bharath1818/projects/renewal-desk-android/builds/c04e1295-9cd5-4fdd-9a8f-4c9983737758)
 - Previous Verified Builds:
   - Build ID: `9d4ca5fd-64c3-4335-b8b6-fe414ab98119` (Build 4 Preview APK — Finished)
   - Build ID: `43e7d6a5-0251-40b7-820c-9eb35ff88560` (Build 4 Preview APK — Finished)
