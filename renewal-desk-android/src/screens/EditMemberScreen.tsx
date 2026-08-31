@@ -18,6 +18,7 @@ import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Plan } from '../types';
+import { formatCurrency } from '../types';
 
 type EditMemberScreenProps = {
   memberId: number;
@@ -191,7 +192,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
                 {plans.map((p) => (
                   <PrimaryButton
                     key={p.id}
-                    title={`${p.name}\n₹${p.price} · ${p.duration_days}d`}
+                    title={`${p.name}\n${formatCurrency(p.price)} · ${p.duration_days}d`}
                     variant={planId === p.id ? 'primary' : 'outline'}
                     size="sm"
                     onPress={() => setPlanId(p.id)}

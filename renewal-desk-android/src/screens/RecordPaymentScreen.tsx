@@ -19,6 +19,7 @@ import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Payment } from '../types';
+import { formatCurrency, getCurrencySymbol } from '../types';
 
 const PAYMENT_METHODS = ['cash', 'upi', 'bank_transfer', 'card', 'other'] as const;
 
@@ -110,7 +111,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
     setSaving(false);
 
     if (result.ok) {
-      Alert.alert('Success', `Payment of ₹${parsedAmount} recorded for ${selectedMember.full_name}.`);
+      Alert.alert('Success', `Payment of ${formatCurrency(parsedAmount)} recorded for ${selectedMember.full_name}.`);
       onCreated?.(result.data);
       onBack();
     } else {
@@ -195,7 +196,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
             </View>
 
             <FormField
-              label="Amount (₹) *"
+              label={`Amount (${getCurrencySymbol().trim()}) *`}
               value={amount}
               onChangeText={setAmount}
               placeholder="0.00"

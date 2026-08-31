@@ -15,6 +15,7 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Plan } from '../types';
+import { formatCurrency } from '../types';
 
 /** Map gym timezone to a phone country prefix. */
 function getCountryPrefix(timezone?: string): string {
@@ -171,7 +172,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
                 {plans.map((plan) => (
                   <PrimaryButton
                     key={plan.id}
-                    label={`${plan.name} · ${plan.duration_days}d · ₹${plan.price}`}
+                    label={`${plan.name} · ${plan.duration_days}d · ${formatCurrency(plan.price)}`}
                     onPress={() => setSelectedPlanId(plan.id)}
                     variant={selectedPlanId === plan.id ? 'primary' : 'secondary'}
                     size="md"

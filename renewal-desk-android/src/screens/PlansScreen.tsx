@@ -17,6 +17,7 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Plan } from '../types';
+import { formatCurrency, getCurrencySymbol } from '../types';
 
 type PlansScreenProps = {
   onBack: () => void;
@@ -154,7 +155,7 @@ export function PlansScreen({ onBack }: PlansScreenProps) {
             <View style={styles.editRow}>
               <View style={styles.editHalf}>
                 <FormField
-                  label="Price (₹)"
+                  label={`Price (${getCurrencySymbol().trim()})`}
                   value={editPrice}
                   onChangeText={setEditPrice}
                   placeholder="0"
@@ -202,7 +203,7 @@ export function PlansScreen({ onBack }: PlansScreenProps) {
             <Text style={styles.planName}>{item.name}</Text>
             <Text style={styles.planDuration}>{item.duration_days} days</Text>
           </View>
-          <Text style={styles.planPrice}>₹{item.price}</Text>
+          <Text style={styles.planPrice}>{formatCurrency(item.price)}</Text>
         </View>
         {canEdit ? (
           <View style={styles.cardActions}>
@@ -264,7 +265,7 @@ export function PlansScreen({ onBack }: PlansScreenProps) {
             <View style={styles.editRow}>
               <View style={styles.editHalf}>
                 <FormField
-                  label="Price (₹)"
+                  label={`Price (${getCurrencySymbol().trim()})`}
                   value={newPrice}
                   onChangeText={setNewPrice}
                   placeholder="e.g. 1500"

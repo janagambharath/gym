@@ -338,6 +338,26 @@ export function formatCurrency(value: string | number, customCurrency?: string):
   return `${symbol}${num.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
+/** Return the currency symbol for the current gym (e.g. '₹', '$', 'AED '). */
+export function getCurrencySymbol(): string {
+  const currencyCode = (getCachedSession()?.gymCurrency || 'INR').toUpperCase();
+  const symbolMap: Record<string, string> = {
+    INR: '₹',
+    AED: 'AED ',
+    USD: '$',
+    GBP: '£',
+    EUR: '€',
+    AUD: 'A$',
+    CAD: 'C$',
+    SAR: 'SAR ',
+    QAR: 'QAR ',
+    KWD: 'KWD ',
+    OMR: 'OMR ',
+    SGD: 'S$',
+  };
+  return symbolMap[currencyCode] ?? `${currencyCode} `;
+}
+
 /** Get days text from days_until_expiry */
 export function getDaysText(days: number | null | undefined): string | null {
   if (days === null || days === undefined) return null;
