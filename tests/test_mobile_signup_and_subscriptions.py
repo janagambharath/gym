@@ -7,25 +7,24 @@ from flask import Flask
 
 from app.extensions import db
 from app.models import Gym, Member, MembershipPlan, User
-from app.models.bot import FeatureEntitlement
-from app.services.subscription_service import PLAN_CATALOG, get_available_plans, get_gym_subscription
+from app.services.mobile_billing_service import catalog_for
 
 
-def test_plan_catalog_structure():
+def test_plan_catalog_structure(app):
     """Verify central 3-tier catalog has Starter, Growth, and Pro across supported currencies."""
-    inr_plans = get_available_plans("INR")
+    with app.app_context():
+        inr_plans = catalog_for("IN", "INR")
+        aed_plans = catalog_for("AE", "AED")
     assert len(inr_plans) == 3
-    assert [p["id"] for p in inr_plans] == ["starter", "growth", "pro"]
-    assert inr_plans[0]["price"] == "999"
-    assert inr_plans[1]["price"] == "1499"
-    assert inr_plans[1]["recommended"] is True
-    assert inr_plans[2]["price"] == "2499"
+    assert [p["id"] for p in inr_plans] == [
+        "online.revorax.renewaldesk.sub.starter",
+        "online.revorax.renewaldesk.sub.growth",
+        "online.revorax.renewaldesk.sub.pro",
+    ]
+    assert [p["price"] for p in inr_plans] == ["999.00", "1499.00", "2499.00"]
 
-    aed_plans = get_available_plans("AED")
     assert len(aed_plans) == 3
-    assert aed_plans[0]["price"] == "99"
-    assert aed_plans[1]["price"] == "199"
-    assert aed_plans[2]["price"] == "299"
+    assert [p["price"] for p in aed_plans] == ["99.00", "199.00", "299.00"]
 
 
 def test_self_service_signup_success(client, app):
@@ -91,11 +90,11 @@ def test_self_service_signup_validation_and_conflicts(client, app):
         "full_name": "New Owner",
         "email": "existing@example.com",
         "phone": "+919888888888",
-        "password": "ValidPassword123",
+        "password": "ValidPassword123!",
         "gym_name": "New Gym",
     })
     assert resp.status_code == 409
-    assert resp.get_json()["error"]["code"] == "CONFLICT"
+    assert resp.get_json()["error"]["code"] == "DUPLICATE_EMAIL"
 
 
 def test_subscription_status_and_plans(client, app):
@@ -128,11 +127,11 @@ def test_subscription_status_and_plans(client, app):
     p_data = plans_resp.get_json()["data"]
     assert p_data["currency"] == "AED"
     assert len(p_data["plans"]) == 3
-    assert p_data["plans"][0]["price"] == "99"
+    assert p_data["plans"][0]["price"] == "99.00"
 
 
-def test_google_play_purchase_verification(client, app):
-    """Test POST /api/mobile/v1/subscription/verify upgrades plan and feature entitlements."""
+def test_google_play_purchase_verification_requires_provider_configuration(client, app):
+    """The legacy adapter must not activate a client-supplied Play token."""
     with app.app_context():
         gym = Gym(name="Play Gym", slug="play-gym", country="India", currency="INR", phone="+919123456789", subscription_status="trial")
         db.session.add(gym)
@@ -148,20 +147,15 @@ def test_google_play_purchase_verification(client, app):
 
     verify_payload = {
         "purchase_token": "mock_google_play_token_xyz",
-        "product_id": "online.revorax.renewaldesk.pro.inr",
-        "order_id": "GPA.1234-5678-9012",
+        "product_id": "online.revorax.renewaldesk.sub.pro",
     }
     verify_resp = client.post("/api/mobile/v1/subscription/verify", json=verify_payload, headers=headers)
-    assert verify_resp.status_code == 200
-    v_data = verify_resp.get_json()["data"]
-    assert v_data["success"] is True
+    assert verify_resp.status_code == 503
+    assert verify_resp.get_json()["error"]["code"] == "BILLING_NOT_CONFIGURED"
 
     with app.app_context():
         updated_gym = Gym.query.filter_by(name="Play Gym").first()
-        assert updated_gym.subscription_status == "active"
-        entitlements = FeatureEntitlement.query.filter_by(gym_id=updated_gym.id, enabled=True).all()
-        ent_names = [e.feature for e in entitlements]
-        assert "ai_receptionist" in ent_names
+        assert updated_gym.subscription_status == "trial"
 
 
 def test_whatsapp_onboarding_and_connection(client, app):

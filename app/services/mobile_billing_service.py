@@ -24,14 +24,14 @@ SUPPORTED_LOCALES: dict[str, dict[str, str]] = {
 
 DEFAULT_CATALOG: dict[str, list[dict[str, str]]] = {
     "IN": [
-        {"id": "renewal_desk_in_999", "name": "Starter", "price": "999.00", "currency": "INR"},
-        {"id": "renewal_desk_in_1499", "name": "Growth", "price": "1499.00", "currency": "INR"},
-        {"id": "renewal_desk_in_2499", "name": "Pro", "price": "2499.00", "currency": "INR"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "999.00", "currency": "INR"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "1499.00", "currency": "INR"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "2499.00", "currency": "INR"},
     ],
     "AE": [
-        {"id": "renewal_desk_ae_99", "name": "Starter", "price": "99.00", "currency": "AED"},
-        {"id": "renewal_desk_ae_199", "name": "Growth", "price": "199.00", "currency": "AED"},
-        {"id": "renewal_desk_ae_299", "name": "Pro", "price": "299.00", "currency": "AED"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "99.00", "currency": "AED"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "199.00", "currency": "AED"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "299.00", "currency": "AED"},
     ],
 }
 

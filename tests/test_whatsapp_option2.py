@@ -416,8 +416,10 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             f"Renew Member One at Gym One by {self.expiry.strftime('%d %b %Y')} (3 days).",
         )
 
-    def test_scheduler_with_template_includes_unopted_members(self) -> None:
+    @patch.object(WhatsAppService, "send_template")
+    def test_scheduler_with_template_includes_unopted_members(self, send_template: Mock) -> None:
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-provider-message")
 
         self.assertEqual(
             [member.id for member in due_members_for_gym(self.gym_one.id, 3)],
@@ -426,6 +428,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         result = run_due_reminders_for_gym(self.gym_one.id, [3])
 
         self.assertEqual(result["sent"], 2)
+        self.assertEqual(send_template.call_count, 2)
         logs = ReminderLog.query.filter_by(
             gym_id=self.gym_one.id,
             reminder_stage="3_days_before_expiry",

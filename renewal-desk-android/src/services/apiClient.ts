@@ -1,5 +1,6 @@
 import { getRuntimeConfiguration } from '../config/runtime';
 import { clearSession, loadSession, MobileSession, saveSession } from '../storage/secureSessionStore';
+import { configureDisplayPreferences } from '../types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,6 +46,13 @@ let refreshInFlight: Promise<MobileSession | undefined> | undefined;
 /** Called by the auth flow after login or refresh. */
 export function setCachedSession(session: MobileSession | undefined): void {
   cachedSession = session;
+  if (session) {
+    configureDisplayPreferences({
+      country: session.gymCountry,
+      currency: session.gymCurrency,
+      timezone: session.gymTimezone,
+    });
+  }
 }
 
 /** Called by navigation to check if the user has a cached session. */
@@ -55,6 +63,13 @@ export function getCachedSession(): MobileSession | undefined {
 /** Load session from SecureStore into memory. Call once at app startup. */
 export async function restoreSession(): Promise<MobileSession | undefined> {
   cachedSession = await loadSession();
+  if (cachedSession) {
+    configureDisplayPreferences({
+      country: cachedSession.gymCountry,
+      currency: cachedSession.gymCurrency,
+      timezone: cachedSession.gymTimezone,
+    });
+  }
   return cachedSession;
 }
 
@@ -238,6 +253,56 @@ export type LoginResponseData = {
   };
 };
 
+export type RegistrationInput = {
+  owner_name: string;
+  email: string;
+  phone: string;
+  password: string;
+  gym_name: string;
+  country: string;
+  currency: string;
+  timezone: string;
+  terms_accepted: true;
+};
+
+export type RegistrationResponseData = LoginResponseData & {
+  registration: {
+    gym_id: number;
+    owner_id: number;
+    setup_state: 'PLAN_SELECTION';
+    billing: { subscription_status: string };
+  };
+};
+
+async function persistAuthenticatedSession(data: LoginResponseData): Promise<void> {
+  const session: MobileSession = {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    tenantId: String(data.gym.id),
+    tenantName: data.gym.name,
+    userId: String(data.user.id),
+    userName: data.user.full_name,
+    userRole: data.user.role,
+    gymTimezone: data.gym.timezone,
+    gymCurrency: data.gym.currency,
+    gymCountry: data.gym.country,
+  };
+  await saveSession(session);
+  setCachedSession(session);
+}
+
+export async function registerAccount(
+  input: RegistrationInput,
+): Promise<ApiResult<RegistrationResponseData>> {
+  const result = await apiRequest<RegistrationResponseData>('/api/mobile/v1/auth/register', {
+    method: 'POST',
+    body: input,
+    anonymous: true,
+  });
+  if (result.ok) await persistAuthenticatedSession(result.data);
+  return result;
+}
+
 export async function login(email: string, password: string): Promise<ApiResult<LoginResponseData>> {
   const result = await apiRequest<LoginResponseData>('/api/mobile/v1/auth/login', {
     method: 'POST',
@@ -246,21 +311,7 @@ export async function login(email: string, password: string): Promise<ApiResult<
   });
 
   if (result.ok) {
-    const { data } = result;
-    const session: MobileSession = {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      tenantId: String(data.gym.id),
-      tenantName: data.gym.name,
-      userId: String(data.user.id),
-      userName: data.user.full_name,
-      userRole: data.user.role,
-      gymTimezone: data.gym.timezone,
-      gymCurrency: data.gym.currency,
-      gymCountry: data.gym.country,
-    };
-    await saveSession(session);
-    cachedSession = session;
+    await persistAuthenticatedSession(result.data);
   }
 
   return result;
@@ -301,21 +352,7 @@ export async function signup(params: {
   });
 
   if (result.ok) {
-    const { data } = result;
-    const session: MobileSession = {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      tenantId: String(data.gym.id),
-      tenantName: data.gym.name,
-      userId: String(data.user.id),
-      userName: data.user.full_name,
-      userRole: data.user.role,
-      gymTimezone: data.gym.timezone,
-      gymCurrency: data.gym.currency,
-      gymCountry: data.gym.country,
-    };
-    await saveSession(session);
-    cachedSession = session;
+    await persistAuthenticatedSession(result.data);
   }
 
   return result;
@@ -337,72 +374,54 @@ export async function logout(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Subscription & Google Play Billing
+// Google Play Billing
 // ---------------------------------------------------------------------------
 
-export type SubscriptionPlan = {
+export type BillingCatalogPlan = {
   id: string;
   name: string;
-  tagline: string;
-  recommended: boolean;
-  max_members: number | null;
   price: string;
   currency: string;
-  currency_symbol: string;
-  product_id: string;
-  billing_period: string;
-  features: string[];
-  entitlements: string[];
 };
 
-export type SubscriptionStatusData = {
+export type BillingEntitlement = {
   billing_source: 'MANUAL' | 'GOOGLE_PLAY';
   subscription_status: 'ACTIVE' | 'TRIAL' | 'PENDING' | 'PAYMENT_FAILED' | 'GRACE_PERIOD' | 'CANCELLED' | 'EXPIRED';
-  plan: {
-    id: string;
-    name: string;
-    price: string;
-    currency: string;
-    currency_symbol: string;
-    product_id: string;
-    billing_period: string;
-  };
+  plan_id: string | null;
+  plan_name: string | null;
   started_at: string | null;
   renews_at: string | null;
   expires_at: string | null;
   grace_period_end: string | null;
   purchase_management_available: boolean;
-  max_members: number | null;
-  active_entitlements: string[];
 };
 
-export async function getSubscriptionStatus(): Promise<ApiResult<SubscriptionStatusData>> {
-  return apiRequest<SubscriptionStatusData>('/api/mobile/v1/subscription/status');
+export async function getBillingEntitlement(): Promise<ApiResult<BillingEntitlement>> {
+  return apiRequest<BillingEntitlement>('/api/mobile/v1/billing/entitlement');
 }
 
-export async function getSubscriptionPlans(currency?: string): Promise<ApiResult<{ currency: string; plans: SubscriptionPlan[] }>> {
-  const query = currency ? `?currency=${encodeURIComponent(currency)}` : '';
-  return apiRequest<{ currency: string; plans: SubscriptionPlan[] }>(`/api/mobile/v1/subscription/plans${query}`);
+export async function getBillingCatalog(): Promise<ApiResult<{ country: string; currency: string; plans: BillingCatalogPlan[] }>> {
+  return apiRequest<{ country: string; currency: string; plans: BillingCatalogPlan[] }>('/api/mobile/v1/billing/catalog');
 }
 
-export async function verifySubscriptionPurchase(purchaseToken: string, productId: string, orderId?: string): Promise<ApiResult<{ success: boolean; message: string; subscription: SubscriptionStatusData }>> {
-  return apiRequest<{ success: boolean; message: string; subscription: SubscriptionStatusData }>('/api/mobile/v1/subscription/verify', {
+export async function getGooglePlayPurchaseContext(): Promise<ApiResult<{ obfuscated_account_id: string }>> {
+  return apiRequest<{ obfuscated_account_id: string }>('/api/mobile/v1/billing/purchase-context');
+}
+
+export async function verifyGooglePlayPurchase(productId: string, purchaseToken: string): Promise<ApiResult<BillingEntitlement>> {
+  return apiRequest<BillingEntitlement>('/api/mobile/v1/billing/purchases/verify', {
     method: 'POST',
     body: {
-      purchase_token: purchaseToken,
       product_id: productId,
-      order_id: orderId,
+      purchase_token: purchaseToken,
     },
   });
 }
 
-export async function restoreSubscriptionPurchase(purchaseToken: string, productId: string): Promise<ApiResult<{ success: boolean; message: string; subscription: SubscriptionStatusData }>> {
-  return apiRequest<{ success: boolean; message: string; subscription: SubscriptionStatusData }>('/api/mobile/v1/subscription/restore', {
+export async function restoreGooglePlayPurchases(purchases: { product_id: string; purchase_token: string }[]): Promise<ApiResult<BillingEntitlement>> {
+  return apiRequest<BillingEntitlement>('/api/mobile/v1/billing/restore', {
     method: 'POST',
-    body: {
-      purchase_token: purchaseToken,
-      product_id: productId,
-    },
+    body: { purchases },
   });
 }
 

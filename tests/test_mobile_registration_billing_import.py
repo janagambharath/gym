@@ -89,7 +89,7 @@ def test_google_purchase_never_activates_without_provider_verification(client, s
     response = client.post(
         "/api/mobile/v1/billing/purchases/verify",
         headers=_headers(seed_gym),
-        json={"product_id": "renewal_desk_in_1499", "purchase_token": "x" * 32},
+        json={"product_id": "online.revorax.renewaldesk.sub.growth", "purchase_token": "x" * 32},
     )
     assert response.status_code == 503
     assert response.get_json()["error"]["code"] == "BILLING_NOT_CONFIGURED"

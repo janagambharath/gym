@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from unittest.mock import patch
 from app.extensions import db
 from app.models import (
     BridgeAttendance,
@@ -15,6 +16,7 @@ from app.models import (
     User,
 )
 from app.models.bot import BotConversation, BotLead, BotMessage, BotFAQ, GymBotConfig
+from app.services.whatsapp_service import WhatsAppResult
 
 
 def _login_owner(client, seed_gym):
@@ -140,7 +142,11 @@ def test_web_biometric_control_center(client, seed_gym, app):
     assert data["bridge"]["device_serial"] == "X990-TEST-99"
 
 
-def test_web_bot_ai_receptionist_desk(client, seed_gym, app):
+@patch(
+    "app.bot_web.routes.WhatsAppService.send_text",
+    return_value=WhatsAppResult(ok=True, provider_message_id="provider-test-message"),
+)
+def test_web_bot_ai_receptionist_desk(send_text, client, seed_gym, app):
     _login_owner(client, seed_gym)
 
     with app.app_context():
@@ -201,6 +207,7 @@ def test_web_bot_ai_receptionist_desk(client, seed_gym, app):
     )
     assert res.status_code == 200
     assert b"Message sent to WhatsApp" in res.data
+    send_text.assert_called_once()
 
     # 5. Leads Pipeline
     res = client.get("/bot/leads")

@@ -1,5 +1,3 @@
-import { getCachedSession } from './services/apiClient';
-
 // ─── Member ──────────────────────────────────────────────────────────
 
 export type MemberPlan = {
@@ -128,11 +126,38 @@ export type GymSettings = {
   phone: string | null;
   address: string | null;
   timezone: string;
-  country?: string;
-  currency?: string;
+  country: string;
+  currency: string;
   whatsapp_enabled: boolean;
+  whatsapp_connection_status: 'NOT_CONNECTED' | 'PENDING' | 'ACTION_REQUIRED' | 'CONNECTED' | 'FAILED';
   max_members: number | null;
   subscription_status: string | null;
+  billing: BillingEntitlement;
+};
+
+export type BillingEntitlement = {
+  billing_source: 'MANUAL' | 'GOOGLE_PLAY';
+  plan_id: string | null;
+  plan_name: string | null;
+  subscription_status: 'TRIAL' | 'ACTIVE' | 'PAYMENT_FAILED' | 'CANCELLED' | 'EXPIRED' | 'PENDING';
+  started_at: string | null;
+  renews_at: string | null;
+  expires_at: string | null;
+  grace_period_end: string | null;
+  purchase_management_available: boolean;
+};
+
+export type BillingCatalogPlan = {
+  id: string;
+  name: string;
+  price: string;
+  currency: string;
+};
+
+export type BillingCatalogResponse = {
+  country: string;
+  currency: string;
+  plans: BillingCatalogPlan[];
 };
 
 export type Plan = {
@@ -301,46 +326,110 @@ export function getMemberDisplayStatus(member: Member): 'active' | 'expiring' | 
   return member.status === 'active' ? 'active' : 'expired';
 }
 
-/** Format a date string to "DD Mon YYYY" */
+type DisplayPreferences = {
+  country: string;
+  currency: string;
+  timezone: string;
+};
+
+const localeByCountry: Record<string, string> = {
+  AE: 'en-AE', AU: 'en-AU', GB: 'en-GB', IN: 'en-IN', US: 'en-US',
+};
+
+let displayPreferences: DisplayPreferences = {
+  country: 'IN', currency: 'INR', timezone: 'Asia/Kolkata',
+};
+
+/** Configure output from the authenticated gym's server-provided locale. */
+export function configureDisplayPreferences(preferences: Partial<DisplayPreferences>): void {
+  displayPreferences = {
+    country: preferences.country?.toUpperCase() || displayPreferences.country,
+    currency: preferences.currency?.toUpperCase() || displayPreferences.currency,
+    timezone: preferences.timezone || displayPreferences.timezone,
+  };
+}
+
+function displayLocale(): string {
+  return localeByCountry[displayPreferences.country] ?? 'en-US';
+}
+
+/** Format a date in the gym's configured country and timezone. */
 export function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—';
-  const d = new Date(dateStr);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    ? new Date(`${dateStr}T12:00:00.000Z`)
+    : new Date(dateStr);
   if (isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  try {
+    return new Intl.DateTimeFormat(displayLocale(), {
+      day: '2-digit', month: 'short', year: 'numeric', timeZone: displayPreferences.timezone,
+    }).format(d);
+  } catch {
+    return d.toLocaleDateString(displayLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+  }
 }
 
 /** Format a number according to gym currency or specified currency code */
 export function formatCurrency(value: string | number, customCurrency?: string): string {
-  const num = typeof value === 'string' ? Number(value) : value;
-  if (isNaN(num)) return '0';
+  const amount = typeof value === 'string' ? Number(value) : value;
+  const currency = (customCurrency || displayPreferences.currency || 'INR').toUpperCase();
+  try {
+    return new Intl.NumberFormat(displayLocale(), {
+      style: 'currency', currency, maximumFractionDigits: 2,
+    }).format(Number.isFinite(amount) ? amount : 0);
+  } catch {
+    return `${currency} ${(Number.isFinite(amount) ? amount : 0).toFixed(2)}`;
+  }
+}
 
-  const currencyCode = (customCurrency || getCachedSession()?.gymCurrency || 'INR').toUpperCase();
-  const symbolMap: Record<string, string> = {
-    INR: '₹',
-    AED: 'AED ',
-    USD: '$',
-    GBP: '£',
-    EUR: '€',
-    AUD: 'A$',
-    CAD: 'C$',
-    SAR: 'SAR ',
-    QAR: 'QAR ',
-    KWD: 'KWD ',
-    OMR: 'OMR ',
-    SGD: 'S$',
-  };
-  const symbol = symbolMap[currencyCode] ?? `${currencyCode} `;
-  const locale = currencyCode === 'INR' ? 'en-IN' : 'en-US';
-  return `${symbol}${num.toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+export function formatDateTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat(displayLocale(), {
+      day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+      timeZone: displayPreferences.timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleString(displayLocale());
+  }
+}
+
+export function formatShortDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat(displayLocale(), {
+      day: 'numeric', month: 'short', timeZone: displayPreferences.timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleDateString(displayLocale());
+  }
+}
+
+export function formatInteger(value: number): string {
+  return new Intl.NumberFormat(displayLocale()).format(value);
+}
+
+export function getGymTodayISO(): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit', timeZone: displayPreferences.timezone,
+    }).formatToParts(new Date());
+    const find = (type: string) => parts.find((part) => part.type === type)?.value;
+    const year = find('year'); const month = find('month'); const day = find('day');
+    if (year && month && day) return `${year}-${month}-${day}`;
+  } catch {
+    // Fall through only if timezone-aware Intl support is unavailable.
+  }
+  return new Date().toISOString().slice(0, 10);
 }
 
 /** Return the currency symbol for the current gym (e.g. '₹', '$', 'AED '). */
 export function getCurrencySymbol(): string {
-  const currencyCode = (getCachedSession()?.gymCurrency || 'INR').toUpperCase();
+  const currencyCode = (displayPreferences.currency || 'INR').toUpperCase();
   const symbolMap: Record<string, string> = {
     INR: '₹',
     AED: 'AED ',

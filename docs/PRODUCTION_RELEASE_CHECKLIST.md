@@ -1,52 +1,39 @@
 # Renewal Desk — Production Release Checklist
 
-## 1. Code Quality & Automated Tests
-- [x] Working repository clean (`git status` clean, no uncommitted files)
-- [x] TypeScript compiler check passed (`tsc --noEmit` — 0 errors)
-- [x] Linter passed (`expo lint` — 0 warnings, 0 errors)
-- [x] Mobile unit & integration tests passed (`tsx --test` — 10/10 passed)
-- [x] Backend automated test suite passed (`python -m pytest` — 140/140 passed)
-- [x] Dependency audit verified (`npm audit` — 0 runtime bundle vulnerabilities)
+## Current gate status
 
----
+- [x] Android package: `online.revorax.renewaldesk`
+- [x] Version/versionCode: `1.0.0` / `6`
+- [x] Production EAS profile is configured to request an Android App Bundle.
+- [x] Native Play Billing dependency and Expo config plugin are configured.
+- [x] `npm run verify`: 17 passed, TypeScript and lint clean.
+- [x] `python -m pytest -q`: 165 passed, 0 failed (40 deprecation warnings).
+- [x] `git diff --check` was clean before documentation updates.
+- [ ] EAS production API: **BLOCKED**. `eas env:list --environment production` reported no variables.
+- [ ] Server Google Play verification configuration: not verified.
+- [ ] Google Play products/base plans/offers: not verified.
+- [ ] Signed production AAB: not created.
+- [ ] Physical Android release-candidate smoke test: not performed.
+- [ ] Google Play Internal Test purchase/restore/cancellation: not performed.
+- [ ] Play Console listing/content/data-safety/reviewer instructions: not verified.
+- [ ] Account-specific Play testing requirement: not inspected.
+- [ ] Meta/WhatsApp production approval and provider test: not performed.
+- [ ] AI provider production validation: not performed.
 
-## 2. Environment & Build Configuration
-- [x] Production API endpoint configured (`https://gym-production-910c.up.railway.app`)
-- [x] Package identifier verified (`online.revorax.renewaldesk`)
-- [x] Version string verified (`1.0.0`)
-- [x] Version code bumped for release (`versionCode: 6`)
-- [x] Remote keystore and signing credentials configured on EAS
-- [x] Release Candidate APK built and verified (`Build ID: c04e1295-9cd5-4fdd-9a8f-4c9983737758`)
-- [ ] Next EAS cloud AAB build execution (Awaiting free-tier quota reset on Sep 01 2026 or EAS plan upgrade)
+## Required environment action
 
----
+Set the following EAS **production** variable with the real deployed public endpoint:
 
-## 3. Core Functional Capabilities
-- [x] Self-service account signup with conflict detection (`POST /auth/signup`)
-- [x] Founder manual customer mode (`billing_source: MANUAL`) bypassing paywalls
-- [x] Standardized 3-tier subscription catalog (Starter, Growth [Recommended], Pro)
-- [x] Server-authoritative Google Play purchase verification & restoration
-- [x] 8-step setup checklist progress card on Dashboard
-- [x] CSV bulk member import with schema preview and validation
-- [x] Internationalization across 7 currencies with timezone-aware calculations
-- [x] WhatsApp status state machine (`NOT_CONNECTED` → `CONNECTED`)
-- [x] Meta Embedded Signup wizard and profile management endpoints
-- [x] Grounded AI receptionist inquiries with 1-hour human takeover cooldown
-- [x] Android 13+ push notification permissions and allowlisted routing
+```text
+EXPO_PUBLIC_API_BASE_URL=https://<actual-production-api-host>
+```
 
----
+It must be HTTPS and must not be a localhost, staging endpoint, credential-bearing URL, or server secret. Do not add Google service-account JSON, Meta credentials, AI keys, token-encryption keys, or other private server configuration to EAS public variables.
 
-## 4. Security & Compliance
-- [x] Multi-tenant isolation verified (cross-gym requests strictly return 403/404)
-- [x] Role-based access control verified (server-enforced role boundaries)
-- [x] Zero API keys, private credentials, or auth tokens committed to git
-- [x] Encrypted session storage at rest via `expo-secure-store`
-- [x] HTTPS transport strictly enforced for all non-local API calls
+## Only after the production API is configured
 
----
-
-## 5. Physical Device & External Platforms
-- [x] Physical Android 13/14 device testing (UI layout, safe insets, keyboard avoidance)
-- [ ] Google Play Console Closed Testing track upload (Awaiting Play Console developer credentials)
-- [ ] Google Play 20-tester / 14-day closed testing requirement (Pending external Play Console milestone)
-- [ ] Meta Business Manager App Review for WhatsApp permissions (Pending external Meta review)
+1. Run `npm run verify`, `npx expo-doctor`, `npm audit --omit=dev`, `python -m pytest -q`, and `git diff --check`.
+2. Run `eas build --platform android --profile production`.
+3. Verify the actual artifact signature, package, version, versionCode, production runtime value, build ID, and artifact URL.
+4. Install through Google Play Internal Testing and record physical-device, billing, notification, deep-link, CSV, WhatsApp, and AI evidence.
+5. Complete Google Play Console declarations and track requirements truthfully before any production submission.

@@ -94,12 +94,39 @@ def _registration_error(data: dict) -> str | None:
     return None
 
 
+def _normalize_registration_payload(data: dict) -> tuple[dict, bool]:
+    """Accept the legacy signup payload while keeping one registration flow."""
+    if "full_name" not in data:
+        return data, False
+
+    locales = {
+        "India": ("IN", "INR", "Asia/Kolkata"),
+        "UAE": ("AE", "AED", "Asia/Dubai"),
+        "United States": ("US", "USD", "America/New_York"),
+        "United Kingdom": ("GB", "GBP", "Europe/London"),
+        "Australia": ("AU", "AUD", "Australia/Sydney"),
+    }
+    country_name = (data.get("country") or "India").strip()
+    country, default_currency, default_timezone = locales.get(country_name, locales["India"])
+    return {
+        "owner_name": data.get("full_name"),
+        "email": data.get("email"),
+        "phone": data.get("phone"),
+        "password": data.get("password"),
+        "gym_name": data.get("gym_name"),
+        "country": country,
+        "currency": data.get("currency") or default_currency,
+        "timezone": data.get("timezone") or default_timezone,
+        "terms_accepted": True,
+    }, True
+
+
 def register_auth_routes(bp):
     @bp.route("/auth/register", methods=["POST"])
     @limiter.limit("5 per hour")
     def register():
         """Create a gym owner with the same token/session shape as login."""
-        data = request.get_json(silent=True) or {}
+        data, legacy_signup = _normalize_registration_payload(request.get_json(silent=True) or {})
         validation_error = _registration_error(data)
         if validation_error:
             return error_response("VALIDATION_ERROR", validation_error, 400)
@@ -145,7 +172,21 @@ def register_auth_routes(bp):
             )
             owner.set_password(data["password"])
             db.session.add(owner)
-            db.session.add(MembershipPlan(gym_id=gym.id, name="Monthly", duration_days=30, price=0))
+            if legacy_signup:
+                for name, duration_days, price in (
+                    ("1 Month Membership", 30, 1000),
+                    ("3 Months Membership", 90, 2700),
+                    ("1 Year Annual Plan", 365, 9000),
+                ):
+                    db.session.add(MembershipPlan(
+                        gym_id=gym.id,
+                        name=name,
+                        duration_days=duration_days,
+                        price=price,
+                    ))
+                gym.subscription_status = "trial"
+            else:
+                db.session.add(MembershipPlan(gym_id=gym.id, name="Monthly", duration_days=30, price=0))
             db.session.add(QRSettings(gym_id=gym.id, payment_label=gym.name))
             db.session.add(NotificationTemplate(
                 gym_id=gym.id,
@@ -180,7 +221,14 @@ def register_auth_routes(bp):
             "setup_state": "PLAN_SELECTION",
             "billing": entitlement_for(gym),
         }
+        if legacy_signup:
+            payload["is_new_signup"] = True
         return jsonify({"success": True, "data": payload}), 201
+
+    @bp.route("/auth/signup", methods=["POST"])
+    @limiter.limit("5 per minute")
+    def signup():
+        return register()
 
     @bp.route("/auth/login", methods=["POST"])
     @limiter.limit("5 per minute")

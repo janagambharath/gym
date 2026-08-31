@@ -12,10 +12,19 @@ function getStatusStyle(status: string): BadgeStyle {
   switch (status.toLowerCase()) {
     case 'active':
       return { bg: colors.statusActiveSurface, text: colors.statusActive, label: 'ACTIVE' };
+    case 'trial':
+      return { bg: colors.warningSurface, text: colors.warning, label: 'TRIAL' };
     case 'expiring':
       return { bg: colors.statusExpiringSurface, text: colors.statusExpiring, label: 'EXPIRING' };
     case 'expired':
       return { bg: colors.statusExpiredSurface, text: colors.statusExpired, label: 'EXPIRED' };
+    case 'cancelled':
+    case 'canceled':
+      return { bg: colors.warningSurface, text: colors.warning, label: 'CANCELLED' };
+    case 'grace_period':
+      return { bg: colors.warningSurface, text: colors.warning, label: 'GRACE PERIOD' };
+    case 'payment_failed':
+      return { bg: colors.statusFailedSurface, text: colors.statusFailed, label: 'PAYMENT FAILED' };
     case 'pending':
       return { bg: colors.statusPendingSurface, text: colors.statusPending, label: 'PENDING' };
     case 'verified':
