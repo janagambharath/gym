@@ -34,6 +34,12 @@ def register_dashboard_routes(bp):
         else:
             collected = str(collected)
 
+        revenue_at_risk = stats.get("revenue_at_risk", 0)
+        if hasattr(revenue_at_risk, "is_finite"):
+            revenue_at_risk = str(revenue_at_risk)
+        else:
+            revenue_at_risk = str(revenue_at_risk)
+
         # Revenue breakdown (today / week / month).
         try:
             revenue = gym_revenue_breakdown(g.gym_id, gym_timezone)
@@ -102,6 +108,7 @@ def register_dashboard_routes(bp):
                 "sent_reminders": stats.get("sent_reminders", 0),
                 "failed_reminders": stats.get("failed_reminders", 0),
                 "total_collected": collected,
+                "revenue_at_risk": revenue_at_risk,
                 "revenue_today": revenue.get("revenue_today", "0"),
                 "revenue_week": revenue.get("revenue_week", "0"),
                 "revenue_month": revenue.get("revenue_month", "0"),
@@ -116,32 +123,31 @@ def register_dashboard_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def onboarding_progress():
-        """Track new customer onboarding setup checklist progress."""
+        """Track new customer onboarding setup checklist progress ordered by Time to First Value."""
         from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
-        
+        from app.models.bot import GymBotConfig
+
         gym = g.current_user.gym
 
         account_created = True
-        plan_active = bool(gym.subscription_status in ("active", "trial"))
-        gym_profile_complete = bool(gym.phone and (gym.address or gym.city))
-        plans_configured = MembershipPlan.query.filter_by(gym_id=gym.id, is_active=True).count() > 0
         members_imported = Member.query.filter_by(gym_id=gym.id).filter(Member.deleted_at.is_(None)).count() > 0
-        whatsapp_connected = bool(gym.whatsapp_enabled and gym.phone_number_id)
-        reminders_configured = bool(gym.renewal_reminder_template)
+        plans_configured = MembershipPlan.query.filter_by(gym_id=gym.id, is_active=True).count() > 0
         first_renewal_completed = (
             RenewalHistory.query.filter_by(gym_id=gym.id).count() > 0
             or PaymentVerification.query.filter_by(gym_id=gym.id).count() > 0
         )
+        whatsapp_connected = bool(gym.whatsapp_enabled and gym.phone_number_id)
+        bot_configured = bool(
+            GymBotConfig.query.filter_by(gym_id=gym.id).first()
+            and (gym.address or gym.phone)
+        )
 
         steps = [
-            {"id": "account_created", "title": "Account Created", "completed": account_created, "route": None},
-            {"id": "plan_active", "title": "Subscription Plan Active", "completed": plan_active, "route": "Subscription"},
-            {"id": "gym_profile", "title": "Gym Profile & Location", "completed": gym_profile_complete, "route": "Settings"},
-            {"id": "plans_configured", "title": "Membership Pricing Plans", "completed": plans_configured, "route": "Plans"},
             {"id": "members_imported", "title": "Add or Import Members", "completed": members_imported, "route": "Members"},
+            {"id": "plans_configured", "title": "Confirm Membership Pricing Plans", "completed": plans_configured, "route": "Plans"},
+            {"id": "first_renewal_completed", "title": "Record First Renewal or Payment", "completed": first_renewal_completed, "route": "Renewals"},
             {"id": "whatsapp_connected", "title": "Connect WhatsApp Business", "completed": whatsapp_connected, "route": "WhatsApp"},
-            {"id": "reminders_configured", "title": "Configure Renewal Templates", "completed": reminders_configured, "route": "WhatsApp"},
-            {"id": "first_renewal_completed", "title": "Complete First Renewal / Payment", "completed": first_renewal_completed, "route": "Renewals"},
+            {"id": "bot_configured", "title": "Configure AI Receptionist", "completed": bot_configured, "route": "Bot"},
         ]
 
         completed_count = sum(1 for s in steps if s["completed"])
@@ -152,7 +158,7 @@ def register_dashboard_routes(bp):
             "data": {
                 "completed_count": completed_count,
                 "total_count": total_count,
-                "percentage": int((completed_count / total_count) * 100),
+                "percentage": int((completed_count / total_count) * 100) if total_count > 0 else 100,
                 "is_complete": completed_count == total_count,
                 "steps": steps,
             },

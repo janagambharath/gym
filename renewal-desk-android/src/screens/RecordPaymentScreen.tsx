@@ -179,7 +179,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
                     <View style={styles.searchResultInfo}>
                       <Text style={styles.searchResultName}>{m.full_name}</Text>
                       <Text style={styles.searchResultPhone}>
-                        {m.phone} · {m.plan?.name ?? 'No plan'}
+                        {m.phone} · {m.plan?.name ?? 'Plan not set'}
                       </Text>
                     </View>
                   </TouchableOpacity>

@@ -45,25 +45,25 @@ function knowledgeItemsFor(config: BotConfig, faqs: BotFAQ[]): KnowledgeItem[] {
     {
       icon: 'chatbubble',
       label: 'Welcome message',
-      detail: config.greeting_message?.trim() ? 'Configured' : 'Add a greeting',
+      detail: config.greeting_message?.trim() ? 'Configured greeting' : 'Greeting not configured',
       ready: Boolean(config.greeting_message?.trim()),
     },
     {
       icon: 'time',
       label: 'Opening hours',
-      detail: config.opening_hours?.trim() ? 'Configured' : 'Add your hours',
+      detail: config.opening_hours?.trim() ? 'Configured hours' : 'Operating hours not configured',
       ready: Boolean(config.opening_hours?.trim()),
     },
     {
       icon: 'location',
       label: 'Location details',
-      detail: config.map_link?.trim() ? 'Configured' : 'Add a map link',
+      detail: config.map_link?.trim() ? 'Configured map link' : 'Location link not configured',
       ready: Boolean(config.map_link?.trim()),
     },
     {
       icon: 'help',
       label: 'FAQ answers',
-      detail: enabledFaqs ? `${enabledFaqs} active` : 'No active FAQs',
+      detail: enabledFaqs ? `${enabledFaqs} active FAQs` : 'No FAQs configured',
       ready: enabledFaqs > 0,
     },
   ];
@@ -99,18 +99,22 @@ export function BotOverviewScreen({
         : undefined;
 
     if (resultError) {
-      if (resultError.status === 401 && onLogout) {
-        onLogout();
-      } else {
-        setError(resultError);
+      if (resultError.status === 401) {
+        onLogout?.();
+        return;
       }
-    } else if (statsResult.ok && configResult.ok) {
-      setStats(statsResult.data);
-      setConfig(configResult.data.config);
-      setFaqs(configResult.data.faqs ?? []);
-      setError(undefined);
+      setError(resultError);
+      setLoading(false);
+      setRefreshing(false);
+      return;
     }
 
+    if (statsResult.ok) setStats(statsResult.data);
+    if (configResult.ok) {
+      setConfig(configResult.data.config);
+      setFaqs(configResult.data.faqs);
+    }
+    setError(undefined);
     setLoading(false);
     setRefreshing(false);
   }, [onLogout]);
@@ -126,7 +130,10 @@ export function BotOverviewScreen({
     () => (config ? knowledgeItemsFor(config, faqs) : []),
     [config, faqs],
   );
-  const configuredCount = knowledgeItems.filter((item) => item.ready).length;
+  const configuredCount = useMemo(
+    () => knowledgeItems.filter((item) => item.ready).length,
+    [knowledgeItems],
+  );
 
   if (loading && !stats) {
     return (
@@ -147,11 +154,12 @@ export function BotOverviewScreen({
   }
 
   const botReady = config.handover_enabled;
+  const remainingEssentials = knowledgeItems.length - configuredCount;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <AppHeader
-        title="WhatsApp Bot"
+        title="WhatsApp AI Receptionist"
         onBack={onBack}
         rightAction={(
           <TouchableOpacity
@@ -179,10 +187,12 @@ export function BotOverviewScreen({
         <View style={styles.statusRow}>
           <View style={[styles.statusDot, { backgroundColor: botReady ? colors.success : colors.warning }]} />
           <Text style={[styles.statusText, { color: botReady ? colors.successDark : colors.warningDark }]}>
-            {botReady ? 'Staff handover enabled' : 'Setup needs attention'}
+            {botReady ? 'AI Receptionist Active · Staff Handover Enabled' : 'Setup Needs Attention'}
           </Text>
         </View>
-        <Text style={styles.introText}>Monitor membership enquiries, configure bot knowledge, and route real leads to your team.</Text>
+        <Text style={styles.introText}>
+          Automate 24/7 membership inquiries, capture prospective member leads, and route urgent chats to staff.
+        </Text>
 
         <View style={styles.metricsRow}>
           <BotMetric
@@ -224,21 +234,67 @@ export function BotOverviewScreen({
             <View style={styles.attentionBody}>
               <Text style={styles.attentionTitle}>Staff attention needed</Text>
               <Text style={styles.attentionText}>
-                {stats.handover_requested} conversation{stats.handover_requested === 1 ? '' : 's'} waiting for a handover.
+                {stats.handover_requested} conversation{stats.handover_requested === 1 ? '' : 's'} waiting for staff reply.
               </Text>
             </View>
             <Icon name="forward" size={18} color={colors.warningDark} />
           </TouchableOpacity>
         ) : null}
 
+        <View style={styles.inboxCard}>
+          <View style={styles.inboxIcon}>
+            <Icon name="chatbubble" size={20} color={colors.brand} />
+          </View>
+          <View style={styles.inboxCopy}>
+            <Text style={styles.inboxTitle}>Conversation Inbox</Text>
+            <Text style={styles.inboxText}>
+              {stats.total_conversations > 0
+                ? `${stats.total_conversations} live WhatsApp chat${stats.total_conversations === 1 ? '' : 's'} recorded.`
+                : 'Customer inquiries received on WhatsApp will appear here.'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            accessibilityLabel="Open WhatsApp Bot conversations"
+            accessibilityRole="button"
+            onPress={onOpenConversations}
+            style={styles.inboxAction}
+          >
+            <Text style={styles.inboxActionText}>View All</Text>
+            <Icon name="forward" size={16} color={colors.brand} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.operationGrid}>
+          <OperationCard
+            detail={stats.contacted_leads > 0
+              ? `${stats.contacted_leads} lead${stats.contacted_leads === 1 ? '' : 's'} contacted`
+              : 'Track and convert new leads'}
+            icon="lead"
+            label="Lead Follow-up"
+            onPress={onOpenLeads}
+            tone="brand"
+          />
+          <OperationCard
+            detail={botReady ? 'Staff takeover enabled' : 'Enable in bot settings'}
+            icon="handshake"
+            label="Human Handover"
+            onPress={onOpenSetup}
+            tone={botReady ? 'success' : 'warning'}
+          />
+        </View>
+
         <View style={styles.sectionCard}>
           <SectionHeader
-            actionLabel="Manage"
+            actionLabel="Edit Settings"
             icon={<Icon name="brain" size={18} color={colors.brand} />}
             onAction={onOpenSetup}
-            title="BOT KNOWLEDGE"
+            title="GET YOUR AI RECEPTIONIST READY"
           />
-          <Text style={styles.sectionHint}>{configuredCount} of {knowledgeItems.length} essentials configured</Text>
+          <Text style={styles.sectionHint}>
+            {remainingEssentials > 0
+              ? `${configuredCount} / ${knowledgeItems.length} complete · ${remainingEssentials} essentials remaining`
+              : '✓ All 4 essentials configured and ready'}
+          </Text>
           <View style={styles.knowledgeList}>
             {knowledgeItems.map((item, index) => (
               <KnowledgeRow
@@ -253,59 +309,17 @@ export function BotOverviewScreen({
 
         <View style={styles.sectionCard}>
           <SectionHeader
-            actionLabel="Manage"
+            actionLabel="View All"
             icon={<Icon name="lead" size={18} color={colors.brand} />}
             onAction={onOpenLeads}
-            title="LEAD CAPTURE"
+            title="LEAD CAPTURE PIPELINE"
           />
           <View style={styles.captureRow}>
-            <CaptureStat icon="lead" label="Leads" value={stats.total_leads} />
+            <CaptureStat icon="lead" label="Total Leads" value={stats.total_leads} />
             <CaptureStat icon="messageReply" label="Contacted" value={stats.contacted_leads} />
             <CaptureStat icon="star" label="Converted" value={stats.converted_leads} />
-            <CaptureStat icon="calendar" label="Trials" value={stats.trial_requests} />
+            <CaptureStat icon="calendar" label="Free Trials" value={stats.trial_requests} />
           </View>
-        </View>
-
-        <View style={styles.operationGrid}>
-          <OperationCard
-            detail={stats.contacted_leads > 0
-              ? `${stats.contacted_leads} lead${stats.contacted_leads === 1 ? '' : 's'} contacted`
-              : 'Track every lead'}
-            icon="lead"
-            label="Lead follow-up"
-            onPress={onOpenLeads}
-            tone="brand"
-          />
-          <OperationCard
-            detail={botReady ? 'Staff takeover enabled' : 'Enable in bot setup'}
-            icon="handshake"
-            label="Human handover"
-            onPress={onOpenSetup}
-            tone={botReady ? 'success' : 'warning'}
-          />
-        </View>
-
-        <View style={styles.inboxCard}>
-          <View style={styles.inboxIcon}>
-            <Icon name="chatbubble" size={20} color={colors.brand} />
-          </View>
-          <View style={styles.inboxCopy}>
-            <Text style={styles.inboxTitle}>Conversation inbox</Text>
-            <Text style={styles.inboxText}>
-              {stats.total_conversations > 0
-                ? `${stats.total_conversations} recorded conversation${stats.total_conversations === 1 ? '' : 's'} available to review.`
-                : 'New customer conversations will appear here.'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            accessibilityLabel="Open WhatsApp Bot conversations"
-            accessibilityRole="button"
-            onPress={onOpenConversations}
-            style={styles.inboxAction}
-          >
-            <Text style={styles.inboxActionText}>View all</Text>
-            <Icon name="forward" size={16} color={colors.brand} />
-          </TouchableOpacity>
         </View>
 
         <View style={styles.bottomActions}>
@@ -314,7 +328,7 @@ export function BotOverviewScreen({
               icon={<Icon name="settings" size={17} color={colors.brand} />}
               onPress={onOpenSetup}
               size="md"
-              title="Customize bot"
+              title="Customize AI Settings"
               variant="outline"
             />
           </View>
@@ -370,14 +384,19 @@ function KnowledgeRow({
       onPress={onPress}
       style={[styles.knowledgeRow, !isLast && styles.knowledgeRowBorder]}
     >
-      <View style={[styles.knowledgeIcon, { backgroundColor: item.ready ? colors.brandSubtle : colors.gray100 }]}>
-        <Icon name={item.icon} size={18} color={item.ready ? colors.brand : colors.gray500} />
+      <View style={[styles.knowledgeIcon, { backgroundColor: item.ready ? colors.successSurface : colors.gray100 }]}>
+        <Icon name={item.ready ? 'checkmark' : item.icon} size={18} color={item.ready ? colors.success : colors.gray500} />
       </View>
       <View style={styles.knowledgeCopy}>
         <Text style={styles.knowledgeTitle}>{item.label}</Text>
         <Text style={styles.knowledgeDetail}>{item.detail}</Text>
       </View>
-      <Icon name="forward" size={17} color={colors.gray400} />
+      <View style={[styles.knowledgeBadge, { backgroundColor: item.ready ? colors.successSurface : colors.gray100 }]}>
+        <Text style={[styles.knowledgeBadgeText, { color: item.ready ? colors.successDark : colors.textSecondary }]}>
+          {item.ready ? '✓ COMPLETE' : 'NOT CONFIGURED'}
+        </Text>
+      </View>
+      <Icon name="forward" size={15} color={colors.gray400} />
     </TouchableOpacity>
   );
 }
@@ -563,6 +582,17 @@ const styles = StyleSheet.create({
   },
   knowledgeCopy: {
     flex: 1,
+  },
+  knowledgeBadge: {
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 3,
+    marginRight: spacing.xs,
+  },
+  knowledgeBadgeText: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.extrabold,
+    letterSpacing: 0.3,
   },
   knowledgeDetail: {
     color: colors.muted,

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account Deletion Request — Renewal Desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --brand: #2563EB;
+      --brand-dark: #1D4ED8;
+      --brand-subtle: #EFF6FF;
+      --bg: #F8F9FB;
+      --card: #FFFFFF;
+      --text: #0F172A;
+      --text-muted: #64748B;
+      --border: #E2E8F0;
+      --critical: #DC2626;
+      --critical-surface: #FEF2F2;
+      --critical-border: #FECACA;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); line-height: 1.6; padding: 24px 16px; }
+    .container { max-width: 720px; margin: 0 auto; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px 28px; box-shadow: 0 4px 12px rgba(15,23,42,0.04); }
+    .header { margin-bottom: 24px; text-align: center; }
+    .logo { font-size: 22px; font-weight: 800; color: var(--brand); letter-spacing: -0.5px; margin-bottom: 8px; }
+    .title { font-size: 24px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+    .subtitle { color: var(--text-muted); font-size: 14px; }
+    .card-section { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 20px 0; }
+    .section-title { font-size: 16px; font-weight: 700; margin-bottom: 10px; color: var(--text); }
+    ol, ul { padding-left: 20px; margin-bottom: 12px; font-size: 14px; color: var(--text); }
+    li { margin-bottom: 8px; }
+    .alert-critical { background: var(--critical-surface); border: 1px solid var(--critical-border); border-radius: 8px; padding: 16px; margin: 20px 0; }
+    .alert-critical-title { font-weight: 700; color: var(--critical); font-size: 14px; margin-bottom: 4px; }
+    .alert-critical-text { font-size: 13px; color: #991B1B; }
+    .contact-box { text-align: center; margin-top: 24px; font-size: 14px; color: var(--text-muted); }
+    .contact-box a { color: var(--brand); font-weight: 600; text-decoration: none; }
+    .contact-box a:hover { text-decoration: underline; }
+    .footer { text-align: center; margin-top: 28px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">Renewal Desk</div>
+      <h1 class="title">Account Deletion & Data Removal</h1>
+      <p class="subtitle">Instructions for deleting your Renewal Desk account and associated gym data</p>
+    </div>
+
+    <div class="alert-critical">
+      <div class="alert-critical-title">Permanent Deletion Warning</div>
+      <div class="alert-critical-text">
+        Deleting your account is permanent. All your gym records, member directory, membership plans, message history, and payment logs will be deleted from our active databases.
+      </div>
+    </div>
+
+    <div class="card-section">
+      <div class="section-title">Method 1: Direct In-App Deletion (Instant)</div>
+      <p style="font-size: 14px; margin-bottom: 10px;">You can instantly delete your account directly inside the Renewal Desk Android mobile app:</p>
+      <ol>
+        <li>Open the <strong>Renewal Desk</strong> app on your Android device.</li>
+        <li>Tap the <strong>More / Settings</strong> icon in the bottom navigation bar.</li>
+        <li>Scroll down to the <strong>Account Management</strong> section.</li>
+        <li>Tap <strong>Delete Account & Data</strong>.</li>
+        <li>Confirm the deletion prompt. Your account and gym data will be immediately removed and you will be signed out.</li>
+      </ol>
+    </div>
+
+    <div class="card-section">
+      <div class="section-title">Method 2: Email Deletion Request</div>
+      <p style="font-size: 14px; margin-bottom: 10px;">If you have uninstalled the app or cannot access your account, submit a deletion request by email:</p>
+      <ul>
+        <li>Send an email to <a href="mailto:support@revorax.online">support@revorax.online</a> from your registered account email.</li>
+        <li>Use the subject line: <code>Account Deletion Request - Renewal Desk</code></li>
+        <li>Include your registered gym name and email address.</li>
+      </ul>
+      <p style="font-size: 13px; color: var(--text-muted);">Email deletion requests are processed within 48 hours of verification.</p>
+    </div>
+
+    <div class="card-section">
+      <div class="section-title">What Data Is Deleted?</div>
+      <ul>
+        <li><strong>Account Profile:</strong> Owner/staff names, email addresses, password hashes, and session tokens.</li>
+        <li><strong>Gym Records:</strong> Gym profile, address, operating hours, and configuration.</li>
+        <li><strong>Member Database:</strong> All member contact details, attendance, and expiry dates.</li>
+        <li><strong>Payment & Messages:</strong> Manual payment records and WhatsApp conversation logs.</li>
+      </ul>
+      <p style="font-size: 13px; color: var(--text-muted);">
+        Aggregated transactional financial logs required by applicable tax or commercial accounting regulations may be retained for the minimum statutory period.
+      </p>
+    </div>
+
+    <div class="contact-box">
+      Questions about your data or privacy? Contact our Data Protection Team at <a href="mailto:support@revorax.online">support@revorax.online</a>.
+    </div>
+
+    <div class="footer">
+      &copy; 2026 Renewal Desk. Built by Revorax Online. All rights reserved.
+    </div>
+  </div>
+</body>
+</html>

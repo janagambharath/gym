@@ -12,8 +12,8 @@ import { formatCurrency } from '../types';
 type ReportData = {
   period: string;
   members: { total: number; active: number; expired: number; new: number };
-  revenue: { collected: string; pending: string };
-  renewals: { completed: number };
+  revenue: { collected: string; pending: string; at_risk?: string };
+  renewals: { completed: number; renewal_rate?: number };
   whatsapp: { sent: number; failed: number };
 };
 
@@ -106,17 +106,25 @@ export function ReportsScreen({ onBack }: ReportsScreenProps) {
               <View style={styles.statsGrid}>
                 <StatItem label="Collected" value={formatCurrency(data.revenue.collected)} valueColor={colors.success} />
                 <StatItem label="Pending" value={formatCurrency(data.revenue.pending)} valueColor={colors.statusPending} />
+                {data.revenue.at_risk ? (
+                  <StatItem label="At Risk (7d)" value={formatCurrency(data.revenue.at_risk)} valueColor={colors.critical} />
+                ) : null}
               </View>
             </View>
 
-            {/* Renewals */}
+            {/* Renewals & Retention */}
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Icon name="renewals" size={18} color={colors.brand} />
-                <Text style={styles.cardTitle}>Renewals</Text>
+                <Text style={styles.cardTitle}>Renewals & Retention</Text>
               </View>
               <View style={styles.statsGrid}>
                 <StatItem label="Completed" value={data.renewals.completed} valueColor={colors.success} />
+                <StatItem
+                  label="Renewal Rate"
+                  value={data.renewals.renewal_rate !== undefined ? `${data.renewals.renewal_rate}%` : '—'}
+                  valueColor={colors.brand}
+                />
               </View>
             </View>
 

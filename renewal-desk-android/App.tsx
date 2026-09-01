@@ -17,9 +17,13 @@ import { BotSetupScreen } from './src/screens/BotSetupScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
 import { BotTestScreen } from './src/screens/BotTestScreen';
 import { EditMemberScreen } from './src/screens/EditMemberScreen';
+import { ImportMembersScreen } from './src/screens/ImportMembersScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { MemberDetailScreen } from './src/screens/MemberDetailScreen';
+import { MemberImportScreen } from './src/screens/MemberImportScreen';
 import { MembersScreen } from './src/screens/MembersScreen';
+import { MemberScanReviewScreen } from './src/screens/MemberScanReviewScreen';
+import { MemberScanScreen } from './src/screens/MemberScanScreen';
 import * as Notifications from 'expo-notifications';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { PaymentDetailScreen } from './src/screens/PaymentDetailScreen';
@@ -34,7 +38,7 @@ import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
 import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
-import { apiRequest, restoreSession } from './src/services/apiClient';
+import { apiRequest, restoreSession, type ScanDocumentResult } from './src/services/apiClient';
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
 import { colors, fontSize, fontWeight, spacing } from './src/theme/tokens';
@@ -47,6 +51,10 @@ type DashboardStackParamList = {
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
   AddMember: undefined;
+  ImportMembers: undefined;
+  MemberImport: undefined;
+  MemberScan: undefined;
+  MemberScanReview: { scanResult: ScanDocumentResult };
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
   WhatsApp: undefined;
@@ -63,6 +71,10 @@ type MembersStackParamList = {
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
   AddMember: undefined;
+  ImportMembers: undefined;
+  MemberImport: undefined;
+  MemberScan: undefined;
+  MemberScanReview: { scanResult: ScanDocumentResult };
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
 };
@@ -154,6 +166,7 @@ function DashboardStackScreen({
               props.navigation.navigate('MemberDetail', { member })
             }
             onNavigateAddMember={() => props.navigation.navigate('AddMember')}
+            onNavigateImportMembers={() => props.navigation.navigate('ImportMembers')}
             onNavigateRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
             onNavigateWhatsApp={() => props.navigation.navigate('WhatsApp')}
             onNavigateBotOverview={() => props.navigation.navigate('BotOverview')}
@@ -167,6 +180,53 @@ function DashboardStackScreen({
             }
             onNavigateNotifications={() => props.navigation.navigate('Notifications')}
             refreshToken={refreshToken}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="ImportMembers">
+        {(props) => (
+          <ImportMembersScreen
+            onBack={() => props.navigation.goBack()}
+            onNavigateCSV={() => props.navigation.navigate('MemberImport')}
+            onNavigateScan={() => props.navigation.navigate('MemberScan')}
+            onNavigateManual={() => props.navigation.navigate('AddMember')}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="MemberImport">
+        {(props) => (
+          <MemberImportScreen
+            onBack={() => props.navigation.goBack()}
+            onComplete={() => refresh()}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="MemberScan">
+        {(props) => (
+          <MemberScanScreen
+            onBack={() => props.navigation.goBack()}
+            onScanComplete={(scanResult) =>
+              props.navigation.navigate('MemberScanReview', { scanResult })
+            }
+            onNavigateCSV={() => props.navigation.replace('MemberImport')}
+            onNavigateManual={() => props.navigation.replace('AddMember')}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="MemberScanReview">
+        {(props) => (
+          <MemberScanReviewScreen
+            scanResult={props.route.params.scanResult}
+            onBack={() => props.navigation.goBack()}
+            onImportComplete={() => refresh()}
+            onViewMembers={() => {
+              refresh();
+              onNavigateMembers();
+            }}
+            onViewRenewals={() => {
+              refresh();
+              onNavigateRenewals();
+            }}
           />
         )}
       </DashboardStackNav.Screen>
@@ -397,6 +457,53 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
             onMemberCreated={(member) => {
               refresh();
               props.navigation.replace('MemberDetail', { member });
+            }}
+          />
+        )}
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="ImportMembers">
+        {(props) => (
+          <ImportMembersScreen
+            onBack={() => props.navigation.goBack()}
+            onNavigateCSV={() => props.navigation.navigate('MemberImport')}
+            onNavigateScan={() => props.navigation.navigate('MemberScan')}
+            onNavigateManual={() => props.navigation.navigate('AddMember')}
+          />
+        )}
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="MemberImport">
+        {(props) => (
+          <MemberImportScreen
+            onBack={() => props.navigation.goBack()}
+            onComplete={() => refresh()}
+          />
+        )}
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="MemberScan">
+        {(props) => (
+          <MemberScanScreen
+            onBack={() => props.navigation.goBack()}
+            onScanComplete={(scanResult) =>
+              props.navigation.navigate('MemberScanReview', { scanResult })
+            }
+            onNavigateCSV={() => props.navigation.replace('MemberImport')}
+            onNavigateManual={() => props.navigation.replace('AddMember')}
+          />
+        )}
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="MemberScanReview">
+        {(props) => (
+          <MemberScanReviewScreen
+            scanResult={props.route.params.scanResult}
+            onBack={() => props.navigation.goBack()}
+            onImportComplete={() => refresh()}
+            onViewMembers={() => {
+              refresh();
+              props.navigation.navigate('MembersList');
+            }}
+            onViewRenewals={() => {
+              refresh();
+              props.navigation.navigate('MembersList');
             }}
           />
         )}

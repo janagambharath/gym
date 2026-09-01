@@ -25,8 +25,9 @@
 - [x] `npm run test` — PASS (17/17)
 - [x] `npx expo-doctor` — PASS (21/21)
 - [x] `git diff --check` — PASS
+- [x] AI Member Scan & Batch Import — PASS
 - [x] `npm audit --omit=dev` — 18 moderate (framework transitive, documented)
-- [x] `python -m pytest -q` — 164/165 passed (1 backend-only failure, documented)
+- [x] `python -m pytest -q` — 184/184 passed
 
 ## Production Build
 

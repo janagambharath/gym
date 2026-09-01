@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   Image,
   ScrollView,
   StyleSheet,
@@ -13,7 +14,7 @@ import { InfoRow } from '../components/InfoRow';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { apiRequest, getCachedSession, logout } from '../services/apiClient';
+import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { GymSettings, SettingsResponse } from '../types';
@@ -57,6 +58,28 @@ export function SettingsScreen({
     onLogout();
   }, [onLogout]);
 
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      'Delete Account & Data',
+      'Are you sure you want to permanently delete your account and all associated gym records? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Permanently',
+          style: 'destructive',
+          onPress: async () => {
+            const res = await deleteAccount();
+            if (res.ok) {
+              onLogout();
+            } else {
+              Alert.alert('Error', res.error.message || 'Could not delete account. Please try again.');
+            }
+          },
+        },
+      ],
+    );
+  }, [onLogout]);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
@@ -86,14 +109,14 @@ export function SettingsScreen({
           <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
             <MenuItem icon="wallet" label="Subscription & Billing" onPress={onNavigateSubscription} />
-            <MenuItem icon="whatsapp" label="WhatsApp reminders" onPress={onNavigateWhatsApp} />
-            <MenuItem icon="robot" label="WhatsApp Bot" onPress={onNavigateBot} />
-            <MenuItem icon="testTube" label="Bot test sandbox" onPress={onNavigateBotTest} />
+            <MenuItem icon="whatsapp" label="WhatsApp Reminders" onPress={onNavigateWhatsApp} />
+            <MenuItem icon="robot" label="AI Receptionist (Bot)" onPress={onNavigateBot} />
+            <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
             <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
             {session?.userRole === 'gym_owner' ? (
-              <MenuItem icon="staff" label="Staff" onPress={onNavigateStaff} />
+              <MenuItem icon="staff" label="Staff Management" onPress={onNavigateStaff} />
             ) : null}
-            <MenuItem icon="analytics" label="Reports" onPress={onNavigateReports} />
+            <MenuItem icon="analytics" label="Analytics & Reports" onPress={onNavigateReports} />
           </View>
         </View>
 
@@ -160,12 +183,28 @@ export function SettingsScreen({
           <InfoRow label="Build" value="Production Release (Build 5)" />
         </View>
 
+        {/* Account Management & Danger Zone */}
+        <View style={styles.card}>
+          <SectionHeader title="Account Management" icon={<Icon name="shield" size={18} color={colors.critical} />} />
+          <Text style={styles.dangerZoneText}>
+            Permanently delete your account, gym records, member database, and message logs.
+          </Text>
+          <TouchableOpacity
+            style={styles.deleteAccountBtn}
+            onPress={handleDeleteAccount}
+            activeOpacity={0.7}
+          >
+            <Icon name="delete" size={16} color={colors.critical} />
+            <Text style={styles.deleteAccountBtnText}>Delete Account & Data</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Logout */}
         <PrimaryButton
           title="Sign Out"
           icon={<Icon name="logout" size={18} color={colors.textInverse} />}
           onPress={() => void handleLogout()}
-          variant="danger"
+          variant="secondary"
         />
       </ScrollView>
     </SafeAreaView>
@@ -314,5 +353,28 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.base,
     fontWeight: fontWeight.medium,
+  },
+  dangerZoneText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
+    marginTop: spacing.xs,
+  },
+  deleteAccountBtn: {
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  deleteAccountBtnText: {
+    color: colors.critical,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
   },
 });

@@ -331,6 +331,12 @@ def _register_health_check(app: Flask) -> None:
             app.logger.exception("Health check DB failure")
             return jsonify({"status": "error", "db": str(exc)}), 503
 
+    @app.route("/delete-account")
+    @app.route("/account-deletion")
+    def root_delete_account():
+        return render_template("auth/delete_account.html")
+
+
 
 def _register_upload_route(app: Flask) -> None:
     @app.route("/uploads/<path:filename>")

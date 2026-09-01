@@ -220,8 +220,9 @@ def test_onboarding_progress_checklist(client, app):
     resp = client.get("/api/mobile/v1/onboarding/progress", headers=headers)
     assert resp.status_code == 200
     data = resp.get_json()["data"]
-    assert data["total_count"] == 8
-    assert data["completed_count"] >= 2  # account_created + plan_active
+    assert data["total_count"] == 5
+    assert len(data["steps"]) == 5
+    assert data["steps"][0]["id"] == "members_imported"
 
 
 def test_google_auth_validation(client):
@@ -291,4 +292,83 @@ def test_google_auth_new_user_and_existing_user(client, app, monkeypatch):
     login_data = login_resp.get_json()["data"]
     assert login_data["user"]["email"] == "new.owner@gmail.com"
     assert "access_token" in login_data
+
+
+def test_delete_account_owner_and_staff(client, app):
+    """Verify DELETE /api/mobile/v1/auth/account deletes owner gym or staff user."""
+    # 1. Sign up owner
+    resp = client.post("/api/mobile/v1/auth/signup", json={
+        "full_name": "Delete Owner",
+        "email": "delete.owner@example.com",
+        "phone": "+919876543288",
+        "password": "SecurePassword123!",
+        "gym_name": "To Delete Gym",
+        "country": "India",
+        "currency": "INR",
+    })
+    assert resp.status_code == 201
+    token = resp.get_json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with app.app_context():
+        gym = Gym.query.filter_by(name="To Delete Gym").first()
+        gym_id = gym.id
+        owner = User.query.filter_by(email="delete.owner@example.com").first()
+        owner_id = owner.id
+
+    # 2. Delete account
+    del_resp = client.delete("/api/mobile/v1/auth/account", headers=headers)
+    assert del_resp.status_code == 200
+    assert del_resp.get_json()["success"] is True
+
+    # 3. Assert gym and owner no longer exist
+    with app.app_context():
+        assert db.session.get(Gym, gym_id) is None
+        assert db.session.get(User, owner_id) is None
+
+    # 4. Token should no longer be usable
+    after_resp = client.get("/api/mobile/v1/dashboard", headers=headers)
+    assert after_resp.status_code == 401
+
+    # 5. Public account deletion web resource returns 200 HTML
+    web_del_resp = client.get("/delete-account")
+    assert web_del_resp.status_code == 200
+    assert b"Account Deletion" in web_del_resp.data
+
+    auth_del_resp = client.get("/auth/delete-account")
+    assert auth_del_resp.status_code == 200
+    assert b"Account Deletion" in auth_del_resp.data
+
+
+def test_empty_dashboard_and_zero_renewal_rate(client, app):
+    """Verify empty dashboard return structures and reports renewal_rate is 0.0 when 0 due."""
+    resp = client.post("/api/mobile/v1/auth/signup", json={
+        "full_name": "Zero Owner",
+        "email": "zero.owner@example.com",
+        "phone": "+919876543277",
+        "password": "SecurePassword123!",
+        "gym_name": "Zero Gym",
+        "country": "India",
+        "currency": "INR",
+    })
+    assert resp.status_code == 201
+    token = resp.get_json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Query empty dashboard
+    dash_resp = client.get("/api/mobile/v1/dashboard", headers=headers)
+    assert dash_resp.status_code == 200
+    dash_data = dash_resp.get_json()["data"]
+    assert dash_data["total_active"] == 0
+    assert dash_data["expiring_soon"] == 0
+    assert Decimal(dash_data["revenue_at_risk"]) == Decimal("0.00")
+    assert Decimal(dash_data["total_collected"]) == Decimal("0.00")
+
+    # Query reports for 0 due renewals
+    rep_resp = client.get("/api/mobile/v1/reports/summary?period=30d", headers=headers)
+    assert rep_resp.status_code == 200
+    rep_data = rep_resp.get_json()["data"]
+    assert rep_data["renewals"]["renewal_rate"] == 0.0
+    assert rep_data["renewals"]["completed"] == 0
+
 

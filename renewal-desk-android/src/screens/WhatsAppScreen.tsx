@@ -129,12 +129,17 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
   const [broadcastSuccess, setBroadcastSuccess] = useState<string | null>(null);
 
-  const [whatsappEnabled, setWhatsappEnabled] = useState(false);
+  const [whatsappStatus, setWhatsappStatus] = useState<string>('not_connected');
 
   // Fetch WhatsApp connection status & broadcast stats
   useEffect(() => {
-    void apiRequest<{ gym: { whatsapp_enabled: boolean } }>('/api/mobile/v1/settings').then((res) => {
-      if (res.ok) setWhatsappEnabled(res.data.gym.whatsapp_enabled);
+    void apiRequest<{ gym: { whatsapp_enabled: boolean; whatsapp_connection_status?: string } }>('/api/mobile/v1/settings').then((res) => {
+      if (res.ok) {
+        setWhatsappStatus(
+          res.data.gym.whatsapp_connection_status ??
+          (res.data.gym.whatsapp_enabled ? 'connected' : 'not_connected')
+        );
+      }
     });
 
     void apiRequest<{ counts: { active: number; expired: number; all: number } }>(
@@ -376,15 +381,52 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           activeOpacity={0.8}
         >
           <View style={styles.statusRow}>
-            <Icon name="whatsapp" size={24} color={whatsappEnabled ? colors.whatsapp : colors.muted} />
+            <Icon
+              name="whatsapp"
+              size={24}
+              color={
+                whatsappStatus === 'connected'
+                  ? colors.whatsapp
+                  : whatsappStatus === 'action_required'
+                    ? colors.warning
+                    : whatsappStatus === 'failed'
+                      ? colors.critical
+                      : colors.muted
+              }
+            />
             <View style={styles.statusInfo}>
-              <Text style={styles.statusTitle}>WhatsApp Business</Text>
-              <Text style={[styles.statusState, whatsappEnabled ? { color: colors.success } : undefined]}>
-                {whatsappEnabled ? 'Integration Active & Connected' : 'Not Connected — Tap to Setup'}
+              <Text style={styles.statusTitle}>WhatsApp Business Account</Text>
+              <Text
+                style={[
+                  styles.statusState,
+                  whatsappStatus === 'connected'
+                    ? { color: colors.success }
+                    : whatsappStatus === 'action_required'
+                      ? { color: colors.warningDark }
+                      : whatsappStatus === 'failed'
+                        ? { color: colors.critical }
+                        : undefined,
+                ]}
+              >
+                {whatsappStatus === 'connected'
+                  ? 'WhatsApp is ready. Renewal Desk can send approved messages.'
+                  : whatsappStatus === 'action_required'
+                    ? 'Action Required — Finish WhatsApp setup in Meta to continue.'
+                    : whatsappStatus === 'failed'
+                      ? 'Connection Failed — We couldn’t complete the connection. Tap to retry.'
+                      : whatsappStatus === 'pending'
+                        ? 'Verification in Progress — Meta is reviewing your account.'
+                        : 'Not Connected — Connect your business number to automate reminders.'}
               </Text>
             </View>
             <View style={styles.setupActionBadge}>
-              <Text style={styles.setupActionBadgeText}>{whatsappEnabled ? 'Settings' : 'Connect'}</Text>
+              <Text style={styles.setupActionBadgeText}>
+                {whatsappStatus === 'connected'
+                  ? 'Settings'
+                  : whatsappStatus === 'failed'
+                    ? 'Retry'
+                    : 'Connect'}
+              </Text>
               <Icon name="forward" size={16} color={colors.whatsapp} />
             </View>
           </View>

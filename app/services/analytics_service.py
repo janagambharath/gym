@@ -7,7 +7,7 @@ from flask import current_app
 from sqlalchemy import case, func
 
 from app.extensions import db
-from app.models import Gym, Member, PaymentVerification, ReminderLog
+from app.models import Gym, Member, MembershipPlan, PaymentVerification, ReminderLog
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
@@ -83,6 +83,29 @@ def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
         .one()
     )
 
+    risk_stats = (
+        db.session.query(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            (Member.membership_end >= today)
+                            & (Member.membership_end <= soon)
+                            & (Member.status == "active"),
+                            MembershipPlan.price,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("revenue_at_risk")
+        )
+        .select_from(Member)
+        .outerjoin(MembershipPlan, Member.plan_id == MembershipPlan.id)
+        .filter(Member.gym_id == gym_id, Member.deleted_at.is_(None))
+        .one()
+    )
+
     return {
         "total_active": int(member_stats.total_active or 0),
         "expiring_soon": int(member_stats.expiring_soon or 0),
@@ -91,6 +114,7 @@ def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
         "sent_reminders": int(reminder_stats.sent or 0),
         "failed_reminders": int(reminder_stats.failed or 0),
         "collected": payment_stats.collected,
+        "revenue_at_risk": risk_stats.revenue_at_risk,
     }
 
 

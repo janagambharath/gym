@@ -392,6 +392,17 @@ export async function logout(): Promise<void> {
   }
 }
 
+export async function deleteAccount(): Promise<ApiResult<{ message: string }>> {
+  try {
+    return await apiRequest<{ message: string }>('/api/mobile/v1/auth/account', {
+      method: 'DELETE',
+    });
+  } finally {
+    await clearSession();
+    cachedSession = undefined;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Google Play Billing
 // ---------------------------------------------------------------------------
@@ -526,5 +537,78 @@ export type OnboardingProgressData = {
 
 export async function getOnboardingProgress(): Promise<ApiResult<OnboardingProgressData>> {
   return apiRequest<OnboardingProgressData>('/api/mobile/v1/onboarding/progress');
+}
+
+// ---------------------------------------------------------------------------
+// AI Member Document Scanner & Batch Import
+// ---------------------------------------------------------------------------
+
+export type ScannedMember = {
+  temp_id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  plan_id: number | null;
+  plan_name: string | null;
+  membership_start: string | null;
+  membership_end: string | null;
+  status: 'active' | 'expired' | 'paused';
+  amount: string | null;
+  notes: string | null;
+  confidence: number;
+  confidence_level: 'HIGH' | 'MEDIUM' | 'LOW';
+  warnings: string[];
+  is_duplicate: boolean;
+  is_ready: boolean;
+  selected: boolean;
+};
+
+export type ScanDocumentResult = {
+  members: ScannedMember[];
+  plans: { id: number; name: string; duration_days: number; price: string }[];
+  summary: {
+    total: number;
+    ready: number;
+    needs_review: number;
+    duplicates: number;
+  };
+  document_warnings: string[];
+};
+
+export type BatchCreateMemberPayload = {
+  name: string;
+  phone: string;
+  email?: string | null;
+  plan_id?: number | null;
+  membership_start?: string | null;
+  membership_end?: string | null;
+  status?: string;
+  amount?: string | null;
+  notes?: string | null;
+};
+
+export type BatchCreateResult = {
+  imported: number;
+  upcoming_renewals_count: number;
+  revenue_at_risk: string;
+  message: string;
+};
+
+export async function scanMemberDocuments(
+  images: { data: string; mime_type?: string; filename?: string }[]
+): Promise<ApiResult<ScanDocumentResult>> {
+  return apiRequest<ScanDocumentResult>('/api/mobile/v1/members/scan', {
+    method: 'POST',
+    body: { images },
+  });
+}
+
+export async function batchCreateMembers(
+  members: BatchCreateMemberPayload[]
+): Promise<ApiResult<BatchCreateResult>> {
+  return apiRequest<BatchCreateResult>('/api/mobile/v1/members/batch-create', {
+    method: 'POST',
+    body: { members },
+  });
 }
 

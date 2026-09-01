@@ -33,6 +33,21 @@ DEFAULT_CATALOG: dict[str, list[dict[str, str]]] = {
         {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "199.00", "currency": "AED"},
         {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "299.00", "currency": "AED"},
     ],
+    "US": [
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "19.99", "currency": "USD"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "39.99", "currency": "USD"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "69.99", "currency": "USD"},
+    ],
+    "GB": [
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "15.99", "currency": "GBP"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "29.99", "currency": "GBP"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "54.99", "currency": "GBP"},
+    ],
+    "AU": [
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "29.00", "currency": "AUD"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "59.00", "currency": "AUD"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "99.00", "currency": "AUD"},
+    ],
 }
 
 

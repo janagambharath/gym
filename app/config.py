@@ -112,6 +112,14 @@ class Config:
     BOT_SYSTEM_PROMPT_VERSION = "v1.2.0"
     BOT_BEHAVIOR_VERSION = "2026.08"
 
+    # ── AI Document Scanner & Vision Configuration ────────────────────────
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", os.getenv("BOT_AI_API_KEY", ""))
+    OPENROUTER_VISION_MODEL_PRIMARY = os.getenv("OPENROUTER_VISION_MODEL_PRIMARY", "google/gemini-2.0-flash-exp:free")
+    OPENROUTER_VISION_MODEL_FALLBACK = os.getenv("OPENROUTER_VISION_MODEL_FALLBACK", "meta-llama/llama-3.2-11b-vision-instruct:free")
+    DOCUMENT_SCAN_MAX_IMAGES = int(os.getenv("DOCUMENT_SCAN_MAX_IMAGES", "5"))
+    DOCUMENT_SCAN_MAX_IMAGE_SIZE_MB = int(os.getenv("DOCUMENT_SCAN_MAX_IMAGE_SIZE_MB", "5"))
+    DOCUMENT_SCAN_TIMEOUT_SECONDS = int(os.getenv("DOCUMENT_SCAN_TIMEOUT_SECONDS", "25"))
+
 
 
 class DevelopmentConfig(Config):

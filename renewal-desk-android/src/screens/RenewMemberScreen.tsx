@@ -254,7 +254,7 @@ export function RenewMemberScreen({
           />
           <View style={styles.memberCardInfo}>
             <Text style={styles.memberCardName} numberOfLines={1}>{member.full_name}</Text>
-            <Text style={styles.memberCardPlan}>{member.plan?.name ?? 'No plan'}</Text>
+            <Text style={styles.memberCardPlan}>{member.plan?.name ?? 'Plan not set'}</Text>
           </View>
           <StatusBadge status={displayStatus} size="md" />
         </View>

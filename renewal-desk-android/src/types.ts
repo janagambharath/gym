@@ -67,6 +67,7 @@ export type DashboardData = {
   revenue_today?: string;
   revenue_week?: string;
   revenue_month?: string;
+  revenue_at_risk?: string;
   expiring_today?: number;
   pending_payment_amount?: string;
   bot_summary?: BotSummary;

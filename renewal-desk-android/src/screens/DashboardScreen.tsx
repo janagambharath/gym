@@ -29,6 +29,7 @@ type DashboardScreenProps = {
   onNavigateSettings?: () => void;
   onNavigateMemberDetail?: (member: Member) => void;
   onNavigateAddMember?: () => void;
+  onNavigateImportMembers?: () => void;
   onNavigateRecordPayment?: () => void;
   onNavigateWhatsApp?: () => void;
   onNavigateBotOverview?: () => void;
@@ -48,6 +49,7 @@ export function DashboardScreen({
   onNavigateSettings,
   onNavigateMemberDetail,
   onNavigateAddMember,
+  onNavigateImportMembers,
   onNavigateRecordPayment,
   onNavigateWhatsApp,
   onNavigateBotOverview,
@@ -172,6 +174,49 @@ export function DashboardScreen({
               </Text>
             </View>
 
+            {/* 🚀 First Action Hero for New Gyms */}
+            {data.total_active === 0 ? (
+              <View style={styles.firstActionCard}>
+                <View style={styles.firstActionHeader}>
+                  <View style={styles.firstActionBadge}>
+                    <Text style={styles.firstActionBadgeText}>GET STARTED</Text>
+                  </View>
+                  <Text style={styles.firstActionTitle}>Bring Your Members In</Text>
+                </View>
+                <Text style={styles.firstActionSub}>
+                  Import spreadsheets, scan paper registers, or add members to track upcoming expiries, prevent churn, and collect fees.
+                </Text>
+                <View style={styles.firstActionButtons}>
+                  <TouchableOpacity
+                    style={styles.firstActionPrimaryBtn}
+                    onPress={onNavigateImportMembers || onNavigateAddMember}
+                    activeOpacity={0.8}
+                  >
+                    <Icon name="document" size={16} color={colors.textInverse} />
+                    <Text style={styles.firstActionPrimaryBtnText}>Import Existing Members</Text>
+                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: spacing.xs, width: '100%' }}>
+                    <TouchableOpacity
+                      style={[styles.firstActionSecondaryBtn, { flex: 1 }]}
+                      onPress={onNavigateImportMembers || onNavigateAddMember}
+                      activeOpacity={0.8}
+                    >
+                      <Icon name="camera" size={15} color={colors.brand} />
+                      <Text style={styles.firstActionSecondaryBtnText}>Scan Records</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.firstActionSecondaryBtn, { flex: 1 }]}
+                      onPress={onNavigateAddMember}
+                      activeOpacity={0.8}
+                    >
+                      <Icon name="personAdd" size={15} color={colors.text} />
+                      <Text style={[styles.firstActionSecondaryBtnText, { color: colors.text }]}>Add Manually</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ) : null}
+
             {/* 📋 Onboarding Setup Checklist */}
             <OnboardingChecklistCard
               onNavigate={(route) => {
@@ -181,6 +226,7 @@ export function DashboardScreen({
                 else if (route === 'Members') onNavigateMembers();
                 else if (route === 'WhatsApp') onNavigateWhatsApp?.();
                 else if (route === 'Renewals') onNavigateRenewals?.();
+                else if (route === 'Bot') onNavigateBotOverview?.();
               }}
             />
 
@@ -239,14 +285,14 @@ export function DashboardScreen({
                   iconBg={colors.brandSubtle}
                   label="Active Members"
                   value={data.total_active}
-                  detail="Current total"
+                  detail={data.total_active === 0 ? 'No members added yet' : 'Current total'}
                 />
                 <DashboardMetric
                   icon={<Icon name="time" size={18} color={colors.statusExpiring} />}
                   iconBg={colors.statusExpiringSurface}
                   label="Expiring Soon"
                   value={data.expiring_soon}
-                  detail={data.expiring_today ? `${data.expiring_today} today` : 'Next 7 days'}
+                  detail={data.expiring_today ? `${data.expiring_today} today` : data.expiring_soon > 0 ? 'Next 7 days' : 'None expiring'}
                   detailColor={colors.statusExpiring}
                 />
               </View>
@@ -256,7 +302,7 @@ export function DashboardScreen({
                   iconBg={colors.statusExpiredSurface}
                   label="Expired"
                   value={data.expired}
-                  detail="Need attention"
+                  detail={data.expired > 0 ? 'Need attention' : 'None expired'}
                   detailColor={colors.statusExpired}
                 />
                 <DashboardMetric
@@ -264,7 +310,7 @@ export function DashboardScreen({
                   iconBg={colors.statusPendingSurface}
                   label="Pending Payments"
                   value={data.pending_payments}
-                  detail="Awaiting review"
+                  detail={data.pending_payments > 0 ? 'Awaiting review' : 'All clear'}
                   detailColor={colors.statusPending}
                 />
               </View>
@@ -372,6 +418,29 @@ export function DashboardScreen({
                   </Text>
                 </View>
               </View>
+
+              {data.revenue_today === '0' && data.revenue_week === '0' && data.revenue_month === '0' ? (
+                <Text style={styles.revenueEmptyHint}>
+                  No payments recorded yet. Live totals will update as member fee collections are verified.
+                </Text>
+              ) : null}
+
+              {data.revenue_at_risk && Number(data.revenue_at_risk) > 0 ? (
+                <TouchableOpacity
+                  style={styles.revenueAtRiskBanner}
+                  onPress={onNavigateRenewals}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.riskIconWrap}>
+                    <Icon name="warning" size={16} color={colors.critical} />
+                  </View>
+                  <View style={styles.riskTextWrap}>
+                    <Text style={styles.riskLabel}>Revenue at Risk (7 Days)</Text>
+                    <Text style={styles.riskSubtext}>{data.expiring_soon} memberships expiring soon</Text>
+                  </View>
+                  <Text style={styles.riskAmount}>{formatCurrency(data.revenue_at_risk)}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {/* Attention Required */}
@@ -413,50 +482,64 @@ export function DashboardScreen({
             ) : null}
 
             {/* Upcoming Renewals */}
-            {upcoming.length > 0 ? (
-              <View style={styles.card}>
-                <SectionHeader
-                  title="Upcoming Renewals"
-                  icon={<Icon name="renewals" size={18} color={colors.brand} />}
-                  actionLabel="View All"
-                  onAction={onNavigateRenewals}
-                />
-                {upcoming.map((m) => {
+            <View style={styles.card}>
+              <SectionHeader
+                title="Upcoming Renewals"
+                icon={<Icon name="renewals" size={18} color={colors.brand} />}
+                actionLabel="View All"
+                onAction={onNavigateRenewals}
+              />
+              {upcoming.length > 0 ? (
+                upcoming.map((m) => {
                   const daysText = getDaysText(m.days_until_expiry);
                   return (
-                    <TouchableOpacity
-                    key={m.id}
-                    style={styles.upcomingRow}
-                    onPress={() => onNavigateMemberDetail?.(m)}
-                  >
-                    <Avatar name={m.full_name} size={38} />
-                    <View style={styles.upcomingInfo}>
-                      <Text style={styles.upcomingName} numberOfLines={1}>{m.full_name}</Text>
-                      <Text style={styles.upcomingDetail}>
-                        {m.plan?.name ?? 'No plan'} · {m.plan?.duration_days ? `${m.plan.duration_days}d` : ''}
-                      </Text>
+                    <View key={m.id} style={styles.upcomingRow}>
+                      <TouchableOpacity
+                        style={styles.upcomingRowMain}
+                        onPress={() => onNavigateMemberDetail?.(m)}
+                        activeOpacity={0.6}
+                      >
+                        <Avatar name={m.full_name} size={38} />
+                        <View style={styles.upcomingInfo}>
+                          <Text style={styles.upcomingName} numberOfLines={1}>{m.full_name}</Text>
+                          <Text style={[styles.upcomingDetail, !m.plan && { color: colors.statusExpiring }]}>
+                            {m.plan?.name ?? 'Plan not set'} · {m.plan?.duration_days ? `${m.plan.duration_days}d` : ''}
+                          </Text>
+                        </View>
+                        <View style={styles.upcomingRight}>
+                          <Text style={styles.upcomingDate}>{formatDate(m.membership_end)}</Text>
+                          {daysText ? <Text style={styles.upcomingDays}>{daysText}</Text> : null}
+                          <StatusBadge status={getMemberDisplayStatus(m)} />
+                        </View>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.upcomingRenewBtn}
+                        onPress={onNavigateRenewals}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.upcomingRenewBtnText}>Renew</Text>
+                      </TouchableOpacity>
                     </View>
-                    <View style={styles.upcomingRight}>
-                      <Text style={styles.upcomingDate}>{formatDate(m.membership_end)}</Text>
-                      {daysText ? <Text style={styles.upcomingDays}>{daysText}</Text> : null}
-                      <StatusBadge status={getMemberDisplayStatus(m)} />
-                    </View>
-                    </TouchableOpacity>
                   );
-                })}
-              </View>
-            ) : null}
+                })
+              ) : (
+                <View style={styles.emptyCardBox}>
+                  <Text style={styles.emptyCardTitle}>No memberships expiring in the next 7 days</Text>
+                  <Text style={styles.emptyCardSub}>When member expiries approach, they will appear here with 1-tap renewal actions.</Text>
+                </View>
+              )}
+            </View>
 
             {/* Recent Payments */}
-            {recentPayments.length > 0 ? (
-              <View style={styles.card}>
-                <SectionHeader
-                  title="Recent Payments"
-                  icon={<Icon name="cash" size={18} color={colors.brand} />}
-                  actionLabel="View All"
-                  onAction={onNavigatePayments}
-                />
-                {recentPayments.map((p) => (
+            <View style={styles.card}>
+              <SectionHeader
+                title="Recent Payments"
+                icon={<Icon name="cash" size={18} color={colors.brand} />}
+                actionLabel="View All"
+                onAction={onNavigatePayments}
+              />
+              {recentPayments.length > 0 ? (
+                recentPayments.map((p) => (
                   <View key={p.id} style={styles.paymentRow}>
                     <Avatar name={p.member_name ?? 'M'} size={36} />
                     <View style={styles.paymentInfo}>
@@ -472,9 +555,14 @@ export function DashboardScreen({
                       <StatusBadge status={p.status} />
                     </View>
                   </View>
-                ))}
-              </View>
-            ) : null}
+                ))
+              ) : (
+                <View style={styles.emptyCardBox}>
+                  <Text style={styles.emptyCardTitle}>No payments recorded yet</Text>
+                  <Text style={styles.emptyCardSub}>Tap Payment below to record your first member fee collection.</Text>
+                </View>
+              )}
+            </View>
 
             {/* Quick Actions */}
             <View style={styles.quickActionsCard}>
@@ -1041,5 +1129,168 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     fontSize: fontSize.xs,
     fontWeight: fontWeight.semibold,
+  },
+  // ─── Revenue at Risk Styles ─────────────────────────────────────────
+  revenueAtRiskBanner: {
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    padding: spacing.md,
+  },
+  revenueEmptyHint: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    lineHeight: 16,
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  riskIconWrap: {
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    borderRadius: radius.full,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  riskTextWrap: {
+    flex: 1,
+  },
+  riskLabel: {
+    color: '#991B1B',
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+  },
+  riskSubtext: {
+    color: '#B91C1C',
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  riskAmount: {
+    color: '#991B1B',
+    fontSize: fontSize.base,
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
+  },
+  // ─── First Action Hero Styles ───────────────────────────────────────
+  firstActionCard: {
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.brand,
+    borderRadius: radius.xl,
+    borderWidth: 1.5,
+    padding: spacing.lg,
+    ...shadows.sm,
+  },
+  firstActionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  firstActionBadge: {
+    backgroundColor: colors.brand,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  firstActionBadgeText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.extrabold,
+    letterSpacing: 0.5,
+  },
+  firstActionTitle: {
+    color: colors.text,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+  },
+  firstActionSub: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 19,
+    marginTop: spacing.xs,
+  },
+  firstActionButtons: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  firstActionPrimaryBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+  },
+  firstActionPrimaryBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+  },
+  firstActionSecondaryBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+  },
+  firstActionSecondaryBtnText: {
+    color: colors.text,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
+  // ─── Empty Card Styles ──────────────────────────────────────────────
+  emptyCardBox: {
+    alignItems: 'center',
+    backgroundColor: colors.gray50,
+    borderRadius: radius.md,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+  },
+  emptyCardTitle: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    textAlign: 'center',
+  },
+  emptyCardSub: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    lineHeight: 16,
+    marginTop: spacing.xxs,
+    textAlign: 'center',
+  },
+  // ─── Upcoming Row With Action ───────────────────────────────────────
+  upcomingRowMain: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+  },
+  upcomingRenewBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.brand,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  upcomingRenewBtnText: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
   },
 });

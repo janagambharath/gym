@@ -519,3 +519,55 @@ def register_auth_routes(bp):
                 },
             },
         })
+
+    @bp.route("/auth/account", methods=["DELETE"])
+    @token_required
+    def delete_account():
+        user = g.current_user
+        gym = user.gym
+
+        if user.role == "gym_owner" and gym:
+            # Revoke all refresh tokens for all users belonging to this gym
+            gym_users = User.query.filter_by(gym_id=gym.id).all()
+            for u in gym_users:
+                revoke_all_user_tokens(u.id)
+
+            audit(
+                action="mobile_account_deleted",
+                resource_type="gym",
+                resource_id=gym.id,
+                gym_id=gym.id,
+                actor_id=user.id,
+                metadata={"owner_email": user.email, "gym_name": gym.name},
+            )
+
+            # Cascade delete gym and its users/data
+            db.session.delete(gym)
+            db.session.commit()
+
+            return jsonify({
+                "success": True,
+                "data": {
+                    "message": "Gym account and all associated data deleted successfully.",
+                },
+            })
+
+        # Staff user deletion
+        revoke_all_user_tokens(user.id)
+        audit(
+            action="mobile_staff_account_deleted",
+            resource_type="user",
+            resource_id=user.id,
+            gym_id=g.gym_id,
+            actor_id=user.id,
+            metadata={"staff_email": user.email},
+        )
+        db.session.delete(user)
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "message": "Staff account deleted successfully.",
+            },
+        })

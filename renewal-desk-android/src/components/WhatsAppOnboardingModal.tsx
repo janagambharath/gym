@@ -199,24 +199,25 @@ export function WhatsAppOnboardingModal({
               setTimeout(pollConnection, 3000); // Poll every 3 seconds, up to 5 times
             } else {
               setLoading(false);
-              // Fallback: ask for manual entry if webhook hasn't arrived
               Alert.alert(
-                'Almost Done',
-                'Meta signup completed but the connection details haven\'t arrived yet. You can enter your Phone Number ID manually, or wait and refresh later.',
-              );
+              'Waiting for Meta Verification',
+              'Meta signup completed but the connection details haven\'t arrived yet. You can enter your WhatsApp Phone Number ID manually, or wait and refresh later.',
+              [{ text: 'OK' }]
+            );
+            return;
             }
           };
           await pollConnection();
         }
       }
-    } catch {
-      // Ignore non-JSON messages from WebView
+    } catch (err: any) {
+        console.log('Embedded signup error/fallback:', err);
     }
   }, [onClose, onConnected]);
 
   const handleSaveConnection = async () => {
     if (!phoneNumberId.trim()) {
-      Alert.alert('Validation Error', 'Please enter your Meta Phone Number ID.');
+      Alert.alert('Validation Error', 'Please enter your WhatsApp Phone Number ID.');
       return;
     }
 
@@ -352,10 +353,10 @@ export function WhatsAppOnboardingModal({
                   <Text style={styles.metaLaunchBtnText}>Launch Meta Embedded Signup</Text>
                 </TouchableOpacity>
 
-                <Text style={styles.orDivider}>— OR ENTER META IDS DIRECTLY —</Text>
+                <Text style={styles.orDivider}>— OR ENTER WHATSAPP BUSINESS DETAILS DIRECTLY —</Text>
 
                 {/* Direct ID input fields */}
-                <Text style={styles.inputLabel}>Meta Phone Number ID *</Text>
+                <Text style={styles.inputLabel}>WhatsApp Phone Number ID *</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="e.g. 1711816793132513"

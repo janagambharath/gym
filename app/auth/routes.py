@@ -283,3 +283,10 @@ def reset_password(token: str):
         flash("Password has been reset. Sign in with your new password.", "success")
         return redirect(url_for("auth.login"))
     return render_template("auth/reset_password.html", form=form)
+
+
+@auth_bp.route("/delete-account", methods=["GET"])
+def delete_account_page():
+    """Public web page explaining account deletion instructions for Google Play policy compliance."""
+    return render_template("auth/delete_account.html")
+

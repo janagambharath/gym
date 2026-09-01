@@ -112,7 +112,11 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
             <Text style={styles.memberPlan}>
               {item.plan.name} · {item.plan.duration_days}d
             </Text>
-          ) : null}
+          ) : (
+            <Text style={[styles.memberPlan, { color: colors.statusExpiring }]}>
+              Plan not set
+            </Text>
+          )}
         </View>
         <View style={styles.memberRight}>
           <Text style={styles.memberExpiry}>{formatDate(item.membership_end)}</Text>

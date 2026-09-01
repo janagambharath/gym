@@ -98,7 +98,9 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken
           <View style={styles.memberInfo}>
             <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
             <Text style={styles.memberDetail}>{item.phone}</Text>
-            <Text style={styles.memberDetail}>{item.plan?.name ?? 'No plan'}</Text>
+            <Text style={[styles.memberDetail, !item.plan && { color: colors.statusExpiring }]}>
+              {item.plan?.name ?? 'Plan not set'}
+            </Text>
           </View>
           <View style={styles.memberRight}>
             <Text style={styles.memberExpiry}>{formatDate(item.membership_end)}</Text>

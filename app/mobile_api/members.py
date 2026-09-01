@@ -8,17 +8,17 @@ from flask import g, jsonify, request
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, Member, MembershipPlan
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
+from app.services.document_scan_service import DocumentScanService
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.mobile_member_import_service import validate_csv
 from app.utils.helpers import normalize_phone_e164
-
 
 
 def _serialize_member(m: Member) -> dict:
@@ -41,6 +41,185 @@ def _serialize_member(m: Member) -> dict:
 
 
 def register_members_routes(bp):
+    @bp.route("/members/scan", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
+    def scan_member_records():
+        """Process document images with OpenRouter Vision AI and return candidate member records for review."""
+        data = request.get_json(silent=True) or {}
+        images = data.get("images") or []
+        if not images:
+            return error_response("VALIDATION_ERROR", "Please provide at least one document image to scan.", 400)
+
+        result = DocumentScanService.scan_member_documents(
+            gym_id=g.gym_id,
+            gym_timezone=g.current_user.gym.timezone,
+            images=images,
+        )
+
+        if not result.get("ok"):
+            return error_response(
+                result.get("error_code", "AI_SCAN_FAILED"),
+                result.get("message", "Document scanning failed. Please try CSV import or add members manually."),
+                400,
+            )
+
+        return jsonify({"success": True, "data": result["data"]})
+
+    @bp.route("/members/batch-create", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def batch_create_members():
+        """Atomically import reviewed candidate members and discover upcoming renewals."""
+        data = request.get_json(silent=True) or {}
+        candidates = data.get("members") or []
+        if not candidates:
+            return error_response("VALIDATION_ERROR", "No members provided for import.", 400)
+
+        if len(candidates) > 2000:
+            return error_response("VALIDATION_ERROR", "Cannot import more than 2,000 members at once.", 400)
+
+        gym = db.session.execute(select(Gym).where(Gym.id == g.gym_id).with_for_update()).scalar_one()
+        current_count = db.session.query(func.count(Member.id)).filter(
+            Member.gym_id == g.gym_id, Member.deleted_at.is_(None)
+        ).scalar() or 0
+
+        if gym.max_members is not None and current_count + len(candidates) > gym.max_members:
+            return error_response(
+                "MEMBER_LIMIT",
+                f"Importing {len(candidates)} members would exceed your plan limit of {gym.max_members}. Current count: {current_count}.",
+                409,
+            )
+
+        gym_today = today_for_gym(gym.timezone)
+        active_plans = {p.id: p for p in MembershipPlan.query.filter_by(gym_id=g.gym_id, is_active=True).all()}
+        existing_phones = {
+            phone for (phone,) in Member.query.with_entities(Member.phone).filter_by(gym_id=g.gym_id).filter(Member.deleted_at.is_(None))
+        }
+
+        created_members: list[Member] = []
+        seen_phones: set[str] = set()
+        validation_errors: list[dict[str, Any]] = []
+
+        for idx, item in enumerate(candidates, start=1):
+            name = (item.get("name") or item.get("full_name") or "").strip()
+            phone = normalize_phone_e164(item.get("phone") or "")
+            raw_start = item.get("membership_start") or item.get("start_date")
+            raw_end = item.get("membership_end") or item.get("expiry_date")
+            plan_id = item.get("plan_id")
+            email = (item.get("email") or "").strip() or None
+            gender = (item.get("gender") or "").strip().lower() or None
+            notes = (item.get("notes") or "").strip() or None
+            status = (item.get("status") or "active").strip().lower()
+
+            item_errors = []
+            if not name:
+                item_errors.append("Name is required")
+            if not phone:
+                item_errors.append("Valid E.164 phone number is required")
+            elif phone in existing_phones:
+                item_errors.append(f"Phone {phone} already belongs to an existing member")
+            elif phone in seen_phones:
+                item_errors.append(f"Duplicate phone {phone} in import payload")
+            seen_phones.add(phone)
+
+            start_d = None
+            end_d = None
+            if raw_start:
+                try:
+                    start_d = date.fromisoformat(str(raw_start).strip())
+                except ValueError:
+                    item_errors.append("membership_start must be YYYY-MM-DD")
+            if raw_end:
+                try:
+                    end_d = date.fromisoformat(str(raw_end).strip())
+                except ValueError:
+                    item_errors.append("membership_end must be YYYY-MM-DD")
+
+            if start_d and end_d and end_d < start_d:
+                item_errors.append("membership_end must be on or after membership_start")
+
+            if plan_id and plan_id not in active_plans:
+                item_errors.append(f"Plan ID {plan_id} is not valid for this gym")
+
+            if status not in {"active", "expired", "paused"}:
+                status = "active"
+
+            if end_d and status == "active" and end_d < gym_today:
+                status = "expired"
+
+            if gender and gender not in {"male", "female", "other"}:
+                gender = None
+
+            if item_errors:
+                validation_errors.append({"index": idx, "name": name, "phone": phone, "errors": item_errors})
+                continue
+
+            member = Member(
+                gym_id=g.gym_id,
+                full_name=name,
+                phone=phone,
+                email=email,
+                gender=gender,
+                plan_id=plan_id,
+                membership_start=start_d or gym_today,
+                membership_end=end_d or gym_today,
+                status=status,
+                notes=notes,
+                joined_on=start_d or gym_today,
+            )
+            created_members.append(member)
+            db.session.add(member)
+
+        if validation_errors:
+            db.session.rollback()
+            return error_response(
+                "BATCH_VALIDATION_FAILED",
+                f"{len(validation_errors)} member records failed validation. Please correct errors and retry.",
+                422,
+                {"errors": validation_errors},
+            )
+
+        db.session.flush()
+
+        # Compute immediate post-import metrics (upcoming renewals & revenue at risk)
+        from datetime import timedelta
+        soon_end = gym_today + timedelta(days=7)
+        upcoming_count = 0
+        revenue_at_risk = Decimal("0.00")
+
+        for m in created_members:
+            if m.status == "active" and gym_today <= m.membership_end <= soon_end:
+                upcoming_count += 1
+                if m.plan_id and m.plan_id in active_plans:
+                    revenue_at_risk += active_plans[m.plan_id].price or Decimal("0.00")
+
+        audit(
+            action="mobile_ai_scan_import_members",
+            resource_type="member",
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={
+                "created": len(created_members),
+                "upcoming_renewals": upcoming_count,
+                "revenue_at_risk": str(revenue_at_risk),
+            },
+        )
+
+        invalidate_dashboard_cache(g.gym_id)
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "imported": len(created_members),
+                "upcoming_renewals_count": upcoming_count,
+                "revenue_at_risk": str(revenue_at_risk),
+                "message": f"Successfully imported {len(created_members)} members.",
+            },
+        }), 201
+
     @bp.route("/members/import/preview", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")

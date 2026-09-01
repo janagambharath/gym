@@ -187,7 +187,9 @@ export function MemberDetailScreen({
           <View style={styles.membershipGrid}>
             <View style={styles.membershipItem}>
               <Text style={styles.membershipLabel}>Plan</Text>
-              <Text style={styles.membershipValue}>{member.plan?.name ?? 'No plan'}</Text>
+              <Text style={[styles.membershipValue, !member.plan && { color: colors.statusExpiring }]}>
+                {member.plan?.name ?? 'Plan not set'}
+              </Text>
               {member.plan ? <Text style={styles.membershipSub}>{member.plan.duration_days} days</Text> : null}
             </View>
             <View style={[styles.membershipItem, styles.membershipItemBorder]}>
