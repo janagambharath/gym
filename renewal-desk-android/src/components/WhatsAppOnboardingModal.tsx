@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import { connectWaba, updateWhatsAppProfile } from '../services/apiClient';
+import { connectWaba, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
 
 interface WhatsAppOnboardingModalProps {
   visible: boolean;
@@ -44,7 +44,11 @@ export function WhatsAppOnboardingModal({
 
   const handleLaunchEmbeddedSignup = async () => {
     try {
-      const onboardingUrl = 'https://www.facebook.com/v19.0/dialog/oauth?client_id=1098320491823901&redirect_uri=https://gym-production-910c.up.railway.app/whatsapp/embedded-callback&scope=whatsapp_business_management,whatsapp_business_messaging';
+      setLoading(true);
+      const res = await getWhatsAppOnboardingConfig();
+      const metaAppId = res.ok ? res.data.meta_app_id : '1711816793132513';
+      const configId = res.ok ? res.data.config_id : '107597391155167';
+      const onboardingUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=${metaAppId}&config_id=${configId}`;
       const supported = await Linking.canOpenURL(onboardingUrl);
       if (supported) {
         await Linking.openURL(onboardingUrl);
@@ -53,6 +57,8 @@ export function WhatsAppOnboardingModal({
       }
     } catch {
       Alert.alert('Error', 'Failed to launch Meta Embedded Signup dialog.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -200,7 +206,7 @@ export function WhatsAppOnboardingModal({
                 <Text style={styles.inputLabel}>Meta Phone Number ID *</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. 1098320491823901"
+                  placeholder="e.g. 1711816793132513"
                   placeholderTextColor={colors.muted}
                   value={phoneNumberId}
                   onChangeText={setPhoneNumberId}

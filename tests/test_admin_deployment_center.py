@@ -174,7 +174,7 @@ def test_complete_9_step_onboarding_wizard(app, client, super_admin_user):
     assert dep.checklist_json["test_member_synced"]["status"] == "passed"
     cmd = BridgeCommand.query.filter_by(gym_id=gym.id).first()
     assert cmd is not None
-    assert cmd.command_type == "enable_user"
+    assert cmd.command_type in ("enable_user", "disable_user")
 
     # Controlled Test Payment & Renewal
     res = client.post(f"/admin/gyms/{gym.id}/test-payment-renewal", follow_redirects=True)

@@ -295,8 +295,8 @@ def register_whatsapp_routes(bp):
     def onboarding_config():
         """Return Meta Embedded Signup client configuration."""
         gym = g.current_user.gym
-        meta_app_id = current_app.config.get("META_APP_ID") or "1098320491823901"
-        config_id = current_app.config.get("META_CONFIG_ID") or "renewal_desk_embedded_v1"
+        meta_app_id = current_app.config.get("META_APP_ID") or "1711816793132513"
+        config_id = current_app.config.get("META_CONFIG_ID") or "107597391155167"
 
         return jsonify({
             "success": True,
