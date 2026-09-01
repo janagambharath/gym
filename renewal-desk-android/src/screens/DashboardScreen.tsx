@@ -15,7 +15,7 @@ import { DashboardSkeleton } from '../components/LoadingSkeleton';
 import { OnboardingChecklistCard } from '../components/OnboardingChecklistCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { apiRequest, getCachedSession, logout } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
@@ -114,11 +114,6 @@ export function DashboardScreen({
     setRevision((n) => n + 1);
   }, []);
 
-  const handleLogout = useCallback(async () => {
-    await logout();
-    onLogout();
-  }, [onLogout]);
-
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* Top Bar */}
@@ -145,8 +140,8 @@ export function DashboardScreen({
             {hasAttention ? <View style={styles.notificationDot} /> : null}
           </TouchableOpacity>
           <TouchableOpacity
-            accessibilityLabel="Sign out"
-            onPress={() => void handleLogout()}
+            accessibilityLabel="Account settings"
+            onPress={onNavigateSettings}
             style={styles.avatarButton}
           >
             <Avatar name={session?.userName ?? 'U'} size={34} />
