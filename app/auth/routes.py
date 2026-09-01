@@ -19,6 +19,7 @@ from app.forms import (
     ResetPasswordForm,
 )
 from app.models import Gym, MembershipPlan, NotificationTemplate, QRSettings, User
+from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.services.audit_service import audit
 from app.utils.helpers import slugify
 
@@ -152,7 +153,7 @@ def register():
             email=form.email.data.lower().strip(),
             phone=form.phone.data.strip(),
             status="active",
-            trial_ends_at=date.today() + timedelta(days=14),
+            trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
             max_members=50,
         )
         db.session.add(gym)

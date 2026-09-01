@@ -239,7 +239,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
               <View style={styles.infoBox}>
                 <Icon name="checkmark" size={16} color={colors.success} />
                 <Text style={styles.infoBoxText}>
-                  Includes a free 30-day trial with full access to automated renewals and AI receptionist.
+                  Includes a free 7-day trial with full access to automated renewals and AI receptionist.
                 </Text>
               </View>
 
@@ -263,7 +263,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     <>
-                      <Text style={styles.primaryButtonText}>Start 30-Day Trial</Text>
+                      <Text style={styles.primaryButtonText}>Start 7-Day Trial</Text>
                       <Icon name="checkmark" size={18} color="#fff" />
                     </>
                   )}

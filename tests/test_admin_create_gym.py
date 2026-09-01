@@ -90,7 +90,7 @@ def test_super_admin_can_update_gym_settings_and_clear_trial(client, seed_gym):
     gym = seed_gym["gym"]
     gym.subscription_status = "trial"
     from datetime import date, timedelta
-    gym.trial_ends_at = date.today() + timedelta(days=14)
+    gym.trial_ends_at = date.today() + timedelta(days=7)
     db.session.commit()
 
     # Update to active and clear trial

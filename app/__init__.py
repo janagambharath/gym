@@ -498,6 +498,7 @@ def _register_cli(app: Flask) -> None:
         from datetime import date, timedelta
 
         from app.models import Member, MembershipPlan, NotificationTemplate, QRSettings
+        from app.models.gym import DEFAULT_TRIAL_DAYS
 
         gym = Gym.query.filter_by(slug="demo-gym").first()
         if not gym:
@@ -505,12 +506,12 @@ def _register_cli(app: Flask) -> None:
                 name="Demo Fitness",
                 slug="demo-gym",
                 email="owner@example.com",
-                trial_ends_at=date.today() + timedelta(days=14),
+                trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
             )
             db.session.add(gym)
             db.session.flush()
         elif gym.subscription_status == "trial" and not gym.trial_ends_at:
-            gym.trial_ends_at = date.today() + timedelta(days=14)
+            gym.trial_ends_at = date.today() + timedelta(days=DEFAULT_TRIAL_DAYS)
 
         owner = User.query.filter_by(email="owner@example.com").first()
         if not owner:

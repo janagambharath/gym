@@ -145,7 +145,7 @@
                         <label class="form-label fw-bold" for="subscription_status">SaaS Subscription Status</label>
                         <select class="form-select" id="subscription_status" name="subscription_status">
                             <option value="active" {% if gym and gym.subscription_status == 'active' %}selected{% endif %}>Active (Paid)</option>
-                            <option value="trial" {% if not gym or gym.subscription_status == 'trial' %}selected{% endif %}>Trial (30 Days)</option>
+                            <option value="trial" {% if not gym or gym.subscription_status == 'trial' %}selected{% endif %}>Trial (7 Days)</option>
                             <option value="suspended" {% if gym and gym.subscription_status == 'suspended' %}selected{% endif %}>Suspended</option>
                         </select>
                     </div>

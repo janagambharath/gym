@@ -18,6 +18,7 @@ from app.mobile_api.token_service import (
     rotate_refresh_token,
 )
 from app.models import Gym, MembershipPlan, NotificationTemplate, QRSettings
+from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.models.user import User
 from app.services.audit_service import audit
 from app.services.mobile_billing_service import SUPPORTED_LOCALES, entitlement_for
@@ -157,9 +158,9 @@ def register_auth_routes(bp):
                 country=country,
                 currency=currency,
                 status="active",
-                subscription_status="TRIAL",
+                subscription_status="trial",
                 billing_source="MANUAL",
-                trial_ends_at=date.today() + timedelta(days=14),
+                trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
                 max_members=50,
             )
             db.session.add(gym)

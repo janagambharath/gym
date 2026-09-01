@@ -142,7 +142,7 @@ def test_conversation_detail_requires_entitlement_and_never_crosses_tenant_bound
         email="owner@other-gym.test",
         status="active",
         subscription_status="trial",
-        trial_ends_at=date.today() + timedelta(days=14),
+        trial_ends_at=date.today() + timedelta(days=7),
     )
     db.session.add(other_gym)
     db.session.flush()

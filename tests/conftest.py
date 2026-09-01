@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from app import create_app
 from app.extensions import db
 from app.models import Gym, User, Member, MembershipPlan
+from app.models.gym import DEFAULT_TRIAL_DAYS
 
 
 @pytest.fixture
@@ -29,7 +30,7 @@ def seed_gym(app):
         phone="+919876543210",
         status="active",
         subscription_status="trial",
-        trial_ends_at=date.today() + timedelta(days=14),
+        trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
         max_members=50,
     )
     db.session.add(gym)

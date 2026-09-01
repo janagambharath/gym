@@ -49,6 +49,7 @@ from app.models import (
     RenewalHistory,
     User,
 )
+from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.models.bot import (
     BotConversation,
     BotFAQ,
@@ -622,6 +623,7 @@ def create_gym():
             phone=phone,
             address=address,
             subscription_status=sub_status,
+            trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS) if sub_status == "trial" else None,
             max_members=max_members,
             status="active",
             onboarding_status="live",
@@ -773,7 +775,7 @@ def onboard_step(gym_id: int, step_num: int):
                     status="active",
                     onboarding_status="configuring",
                     subscription_status=sub_status,
-                    trial_ends_at=date.today() + timedelta(days=30) if sub_status == "trial" else None,
+                    trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS) if sub_status == "trial" else None,
                     max_members=max_members_val,
                 )
                 db.session.add(gym)

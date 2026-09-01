@@ -99,7 +99,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.gym_one = Gym(
             name="Gym One",
             slug="gym-one",
-            trial_ends_at=date.today() + timedelta(days=14),
+            trial_ends_at=date.today() + timedelta(days=7),
             whatsapp_business_account_id="100001",
             phone_number_id="111111",
             business_phone_number="+919000000001",
@@ -113,7 +113,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         self.gym_two = Gym(
             name="Gym Two",
             slug="gym-two",
-            trial_ends_at=date.today() + timedelta(days=14),
+            trial_ends_at=date.today() + timedelta(days=7),
             whatsapp_business_account_id="100002",
             phone_number_id="222222",
             business_phone_number="+919000000002",
