@@ -222,3 +222,73 @@ def test_onboarding_progress_checklist(client, app):
     data = resp.get_json()["data"]
     assert data["total_count"] == 8
     assert data["completed_count"] >= 2  # account_created + plan_active
+
+
+def test_google_auth_validation(client):
+    """Test validation errors for /api/mobile/v1/auth/google."""
+    # Missing token
+    resp = client.post("/api/mobile/v1/auth/google", json={})
+    assert resp.status_code == 400
+    assert resp.get_json()["error"]["code"] == "VALIDATION_ERROR"
+
+    # Invalid token
+    resp = client.post("/api/mobile/v1/auth/google", json={"id_token": "invalid_mock_token"})
+    assert resp.status_code == 401
+    assert resp.get_json()["error"]["code"] == "GOOGLE_AUTH_FAILED"
+
+
+def test_google_auth_new_user_and_existing_user(client, app, monkeypatch):
+    """Test Google sign up for a new user and login for an existing user."""
+    import io
+    import json
+    import urllib.request
+
+    mock_google_response = {
+        "email": "new.owner@gmail.com",
+        "email_verified": "true",
+        "name": "Google Gym Owner",
+        "aud": "",
+    }
+
+    class MockResponse:
+        def __init__(self, data):
+            self.data = json.dumps(data).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self):
+            return self.data
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=10: MockResponse(mock_google_response))
+
+    # 1. New user registration via Google
+    resp = client.post("/api/mobile/v1/auth/google", json={
+        "id_token": "valid_mock_token",
+        "gym_name": "Google Fit Arena",
+        "country": "IN",
+    })
+    assert resp.status_code == 201
+    data = resp.get_json()["data"]
+    assert data["user"]["email"] == "new.owner@gmail.com"
+    assert data["user"]["full_name"] == "Google Gym Owner"
+    assert data["user"]["role"] == "gym_owner"
+    assert data["gym"]["name"] == "Google Fit Arena"
+    assert data["is_new_signup"] is True
+    assert "access_token" in data
+    assert "refresh_token" in data
+
+    with app.app_context():
+        gym = Gym.query.filter_by(name="Google Fit Arena").first()
+        assert gym is not None
+        assert gym.subscription_status == "trial"
+
+    # 2. Existing user login via Google
+    login_resp = client.post("/api/mobile/v1/auth/google", json={
+        "id_token": "valid_mock_token",
+    })
+    assert login_resp.status_code == 200
+    login_data = login_resp.get_json()["data"]
+    assert login_data["user"]["email"] == "new.owner@gmail.com"
+    assert "access_token" in login_data
+

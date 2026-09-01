@@ -96,6 +96,9 @@ class Config:
         "GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL", ""
     )
 
+    # ── Google OAuth (mobile sign-in) ────────────────────────────────────
+    GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+
     # ── WhatsApp AI Bot & OpenRouter Multi-Tier Configuration ────────────
     BOT_AI_ENABLED = os.getenv("BOT_AI_ENABLED", "true").lower() == "true"
     BOT_AI_PROVIDER = os.getenv("BOT_AI_PROVIDER", "openrouter")

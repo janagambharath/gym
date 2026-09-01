@@ -54,7 +54,8 @@
           "backgroundColor": "#FFFFFF"
         }
       ],
-      "expo-iap"
+      "expo-iap",
+      "expo-web-browser"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

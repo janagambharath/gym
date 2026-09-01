@@ -226,6 +226,152 @@ def register_auth_routes(bp):
             payload["is_new_signup"] = True
         return jsonify({"success": True, "data": payload}), 201
 
+    @bp.route("/auth/google", methods=["POST"])
+    @limiter.limit("10 per minute")
+    def google_auth():
+        """Authenticate or register via Google ID token."""
+        import secrets
+        import string
+        import urllib.request
+        import json as json_mod
+
+        from flask import current_app
+
+        data = request.get_json(silent=True) or {}
+        id_token = (data.get("id_token") or "").strip()
+        if not id_token:
+            return error_response("VALIDATION_ERROR", "Google ID token is required.", 400)
+
+        # Verify token with Google
+        try:
+            verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
+            req = urllib.request.Request(verify_url)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                google_data = json_mod.loads(resp.read().decode())
+        except Exception:
+            return error_response("GOOGLE_AUTH_FAILED", "Could not verify Google token.", 401)
+
+        # Validate audience matches our client ID
+        expected_client_id = current_app.config.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        if expected_client_id and google_data.get("aud") != expected_client_id:
+            return error_response("GOOGLE_AUTH_FAILED", "Google token audience mismatch.", 401)
+
+        google_email = (google_data.get("email") or "").strip().lower()
+        email_verified = google_data.get("email_verified") == "true"
+        if not google_email or not email_verified:
+            return error_response("GOOGLE_AUTH_FAILED", "Google account email is not verified.", 401)
+
+        google_name = google_data.get("name") or google_email.split("@")[0]
+
+        # Check if user already exists → login
+        existing_user = User.query.filter_by(email=google_email).first()
+        if existing_user is not None:
+            if not existing_user.is_active:
+                return error_response("ACCOUNT_DISABLED", "Account is disabled.", 403)
+            if existing_user.role not in ("gym_owner", "staff"):
+                return error_response("FORBIDDEN", "Mobile access is not available for this account type.", 403)
+            if existing_user.gym is None or not existing_user.gym.is_operational():
+                return error_response("GYM_INACTIVE", "Gym account is not active.", 403)
+
+            existing_user.reset_failed_logins()
+            existing_user.mark_login()
+            access_token = create_access_token(existing_user.id, existing_user.gym_id, existing_user.role)
+            refresh_token = create_refresh_token(existing_user.id, existing_user.gym_id)
+            audit(
+                action="mobile_google_login",
+                resource_type="user",
+                resource_id=existing_user.id,
+                gym_id=existing_user.gym_id,
+                actor_id=existing_user.id,
+            )
+            db.session.commit()
+            return jsonify({"success": True, "data": _mobile_auth_payload(existing_user, access_token, refresh_token)})
+
+        # New user → create gym owner account
+        gym_name = data.get("gym_name", "").strip() or f"{google_name}'s Gym"
+        country_code = (data.get("country") or "IN").strip().upper()
+        phone = (data.get("phone") or "").strip()
+
+        locale = SUPPORTED_LOCALES.get(country_code)
+        if locale is None:
+            locale = SUPPORTED_LOCALES["IN"]
+            country_code = "IN"
+        currency = locale["currency"]
+        timezone = data.get("timezone") or locale.get("timezone", "Asia/Kolkata")
+
+        slug_base = slugify(gym_name) or "gym"
+        slug = slug_base
+        suffix = 2
+        while Gym.query.filter_by(slug=slug).first() is not None:
+            slug = f"{slug_base}-{suffix}"
+            suffix += 1
+
+        # Generate a secure random password for Google-created accounts
+        random_password = ''.join(secrets.choice(string.ascii_letters + string.digits + "!@#$%") for _ in range(24))
+
+        try:
+            gym = Gym(
+                name=gym_name,
+                slug=slug,
+                email=google_email,
+                phone=phone or None,
+                timezone=timezone,
+                country=country_code,
+                currency=currency,
+                status="active",
+                subscription_status="trial",
+                billing_source="MANUAL",
+                trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
+                max_members=50,
+            )
+            db.session.add(gym)
+            db.session.flush()
+            owner = User(
+                gym_id=gym.id,
+                email=google_email,
+                full_name=google_name,
+                role="gym_owner",
+            )
+            owner.set_password(random_password)
+            db.session.add(owner)
+            db.session.add(MembershipPlan(gym_id=gym.id, name="Monthly", duration_days=30, price=0))
+            db.session.add(QRSettings(gym_id=gym.id, payment_label=gym.name))
+            db.session.add(NotificationTemplate(
+                gym_id=gym.id,
+                name="Default renewal reminder",
+                days_before=3,
+                message_body=(
+                    "Hi {{ member_name }}, your {{ gym_name }} membership expires on "
+                    "{{ expiry_date }}. Please complete your renewal payment to keep access active."
+                ),
+            ))
+            db.session.flush()
+            owner.reset_failed_logins()
+            owner.mark_login()
+            access_token = create_access_token(owner.id, gym.id, owner.role)
+            refresh_token = create_refresh_token(owner.id, gym.id)
+            audit(
+                action="mobile_google_register",
+                resource_type="gym",
+                resource_id=gym.id,
+                gym_id=gym.id,
+                actor_id=owner.id,
+            )
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return error_response("DUPLICATE_ACCOUNT", "An account with these details already exists.", 409)
+
+        payload = _mobile_auth_payload(owner, access_token, refresh_token)
+        payload["registration"] = {
+            "gym_id": gym.id,
+            "owner_id": owner.id,
+            "setup_state": "PLAN_SELECTION",
+            "billing": entitlement_for(gym),
+        }
+        payload["is_new_signup"] = True
+        return jsonify({"success": True, "data": payload}), 201
+
     @bp.route("/auth/signup", methods=["POST"])
     @limiter.limit("5 per minute")
     def signup():

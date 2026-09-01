@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -10,9 +11,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as Google from 'expo-auth-session/providers/google';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import { signup } from '../services/apiClient';
+import { googleLogin, signup } from '../services/apiClient';
 
 interface SignupScreenProps {
   onSignupSuccess: () => void;
@@ -38,7 +40,42 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
   const [gymName, setGymName] = useState('');
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [, , promptAsync] = Google.useIdTokenAuthRequest({
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || undefined,
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || undefined,
+  });
+
+  const handleGoogleSignUp = async () => {
+    setGoogleLoading(true);
+    setErrorMessage(null);
+    try {
+      const res = await promptAsync();
+      if (res?.type === 'success') {
+        const idToken = res.params.id_token;
+        if (idToken) {
+          const result = await googleLogin(idToken, {
+            country: selectedCountry.name,
+            timezone: selectedCountry.timezone,
+          });
+          if (result.ok) {
+            onSignupSuccess();
+            return;
+          } else {
+            setErrorMessage(result.error.message);
+          }
+        }
+      } else if (res?.type === 'error') {
+        setErrorMessage('Google sign-in failed. Please try again.');
+      }
+    } catch {
+      setErrorMessage('An error occurred during Google sign-in.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
 
   const handleNextStep = () => {
     setErrorMessage(null);
@@ -193,6 +230,29 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
               <TouchableOpacity style={styles.primaryButton} onPress={handleNextStep} activeOpacity={0.8}>
                 <Text style={styles.primaryButtonText}>Next: Gym Details</Text>
                 <Icon name="forward" size={18} color="#fff" />
+              </TouchableOpacity>
+
+              {/* Divider */}
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              {/* Google Sign-Up */}
+              <TouchableOpacity
+                style={[styles.googleBtn, googleLoading && styles.googleBtnDisabled]}
+                onPress={() => void handleGoogleSignUp()}
+                disabled={googleLoading || loading}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
+                  style={styles.googleIcon}
+                />
+                <Text style={styles.googleBtnText}>
+                  {googleLoading ? 'Signing up...' : 'Continue with Google'}
+                </Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -494,6 +554,44 @@ const styles = StyleSheet.create({
     fontSize: fontSize.base,
     fontWeight: fontWeight.semibold,
     marginRight: spacing.xs,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.md,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginHorizontal: spacing.md,
+  },
+  googleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    height: 48,
+    gap: 10,
+  },
+  googleBtnDisabled: {
+    opacity: 0.6,
+  },
+  googleBtnText: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  googleIcon: {
+    width: 20,
+    height: 20,
   },
   footer: {
     flexDirection: 'row',

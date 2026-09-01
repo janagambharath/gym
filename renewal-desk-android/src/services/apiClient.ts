@@ -358,6 +358,25 @@ export async function signup(params: {
   return result;
 }
 
+export async function googleLogin(idToken: string, extras?: {
+  gym_name?: string;
+  country?: string;
+  phone?: string;
+  timezone?: string;
+}): Promise<ApiResult<LoginResponseData>> {
+  const result = await apiRequest<LoginResponseData>('/api/mobile/v1/auth/google', {
+    method: 'POST',
+    body: { id_token: idToken, ...extras },
+    anonymous: true,
+  });
+
+  if (result.ok) {
+    await persistAuthenticatedSession(result.data);
+  }
+
+  return result;
+}
+
 export async function logout(): Promise<void> {
   try {
     const refreshToken = cachedSession?.refreshToken;

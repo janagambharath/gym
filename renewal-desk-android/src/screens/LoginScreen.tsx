@@ -9,10 +9,14 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { login } from '../services/apiClient';
+import { googleLogin, login } from '../services/apiClient';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+
+WebBrowser.maybeCompleteAuthSession();
 
 type LoginScreenProps = {
   onLogin: () => void;
@@ -23,7 +27,39 @@ export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
+
+  const [, , promptAsync] = Google.useIdTokenAuthRequest({
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || undefined,
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || undefined,
+  });
+
+  const handleGoogleSignIn = useCallback(async () => {
+    setGoogleLoading(true);
+    setError(undefined);
+    try {
+      const res = await promptAsync();
+      if (res?.type === 'success') {
+        const idToken = res.params.id_token;
+        if (idToken) {
+          const result = await googleLogin(idToken);
+          if (result.ok) {
+            onLogin();
+            return;
+          } else {
+            setError(result.error.message);
+          }
+        }
+      } else if (res?.type === 'error') {
+        setError('Google sign-in failed. Please try again.');
+      }
+    } catch {
+      setError('An error occurred during Google sign-in.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  }, [promptAsync, onLogin]);
 
   const handleLogin = useCallback(async () => {
     if (loading) return;
@@ -108,6 +144,29 @@ export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
                 loading={loading}
                 disabled={!email.trim() || !password}
               />
+
+              {/* Divider */}
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              {/* Google Sign-In */}
+              <TouchableOpacity
+                style={[styles.googleBtn, googleLoading && styles.googleBtnDisabled]}
+                onPress={() => void handleGoogleSignIn()}
+                disabled={googleLoading || loading}
+                activeOpacity={0.8}
+              >
+                <Image
+                  source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
+                  style={styles.googleIcon}
+                />
+                <Text style={styles.googleBtnText}>
+                  {googleLoading ? 'Signing in...' : 'Continue with Google'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -154,6 +213,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.xxl,
   },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.xs,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginHorizontal: spacing.md,
+  },
   errorBanner: {
     backgroundColor: colors.criticalSurface,
     borderColor: colors.criticalBorder,
@@ -167,6 +241,29 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  googleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    height: 50,
+    gap: 10,
+  },
+  googleBtnDisabled: {
+    opacity: 0.6,
+  },
+  googleBtnText: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  googleIcon: {
+    width: 20,
+    height: 20,
   },
   signupRow: {
     flexDirection: 'row',
