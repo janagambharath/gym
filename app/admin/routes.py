@@ -773,7 +773,7 @@ def onboard_step(gym_id: int, step_num: int):
                     status="active",
                     onboarding_status="configuring",
                     subscription_status=sub_status,
-                    trial_ends_at=date.today() + timedelta(days=30),
+                    trial_ends_at=date.today() + timedelta(days=30) if sub_status == "trial" else None,
                     max_members=max_members_val,
                 )
                 db.session.add(gym)
@@ -1671,6 +1671,19 @@ def update_gym_settings(gym_id: int):
     gym.timezone = (request.form.get("timezone") or gym.timezone).strip()
     gym.currency = (request.form.get("currency") or gym.currency).strip()
     gym.subscription_status = (request.form.get("subscription_status") or gym.subscription_status).strip()
+
+    trial_ends_str = request.form.get("trial_ends_at")
+    if trial_ends_str is not None:
+        trial_ends_str = trial_ends_str.strip()
+        if not trial_ends_str:
+            gym.trial_ends_at = None
+        else:
+            try:
+                gym.trial_ends_at = datetime.strptime(trial_ends_str, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+    elif gym.subscription_status == "active":
+        gym.trial_ends_at = None
 
     max_members_str = request.form.get("max_members")
     if max_members_str is not None:

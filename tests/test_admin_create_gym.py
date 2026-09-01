@@ -78,3 +78,35 @@ def test_super_admin_can_create_gym_and_provision_owner(client):
     entitlement = FeatureEntitlement.query.filter_by(gym_id=gym.id, feature="whatsapp_bot").first()
     assert entitlement is not None
     assert entitlement.enabled is True
+
+
+def test_super_admin_can_update_gym_settings_and_clear_trial(client, seed_gym):
+    _create_super_admin()
+    client.post(
+        "/auth/login",
+        data={"email": "superadmin@renewaldesk.com", "password": "AdminPass123!"},
+        follow_redirects=True,
+    )
+    gym = seed_gym["gym"]
+    gym.subscription_status = "trial"
+    from datetime import date, timedelta
+    gym.trial_ends_at = date.today() + timedelta(days=14)
+    db.session.commit()
+
+    # Update to active and clear trial
+    res = client.post(
+        f"/admin/gyms/{gym.id}/update-settings",
+        data={
+            "name": gym.name,
+            "subscription_status": "active",
+            "trial_ends_at": "",
+            "max_members": "250",
+        },
+        follow_redirects=True,
+    )
+    assert res.status_code == 200
+    db.session.refresh(gym)
+    assert gym.subscription_status == "active"
+    assert gym.trial_ends_at is None
+    assert gym.max_members == 250
+

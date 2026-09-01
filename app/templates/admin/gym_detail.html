@@ -145,7 +145,7 @@
                     <div class="col-6"><small class="text-muted d-block">Subscription Status</small><strong class="badge bg-primary-subtle text-primary">{{ gym.subscription_status.title() }}</strong></div>
                     <div class="col-6"><small class="text-muted d-block">Member Capacity Limit</small><strong class="badge {% if gym.max_members and stats.active_members >= gym.max_members %}bg-danger{% else %}bg-success-subtle text-success{% endif %} fs-6">{{ gym.max_members if gym.max_members is not none else 'Unlimited' }}</strong></div>
                     <div class="col-6"><small class="text-muted d-block">Deployment Version</small><strong>{{ gym.deployment_version }}</strong></div>
-                    <div class="col-6"><small class="text-muted d-block">Trial Ends At</small><strong>{{ gym.trial_ends_at.strftime('%d %b %Y') if gym.trial_ends_at else '—' }}</strong></div>
+                    <div class="col-6"><small class="text-muted d-block">Trial Ends At</small><strong>{% if gym.subscription_status == 'trial' %}{{ gym.trial_ends_at.strftime('%d %b %Y') if gym.trial_ends_at else '—' }}{% else %}— <small class="text-muted fw-normal">(Active)</small>{% endif %}</strong></div>
                 </div>
                 {% if gym.address %}
                 <div class="small text-muted mb-2"><strong>Address:</strong> {{ gym.address }}</div>
@@ -819,6 +819,11 @@
                                 <option value="trial" {% if gym.subscription_status == 'trial' %}selected{% endif %}>Trial</option>
                                 <option value="suspended" {% if gym.subscription_status == 'suspended' %}selected{% endif %}>Suspended</option>
                             </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold" for="modal_trial_ends_at">Trial Expiry Date</label>
+                            <input class="form-control" id="modal_trial_ends_at" name="trial_ends_at" type="date" value="{{ gym.trial_ends_at.strftime('%Y-%m-%d') if gym.trial_ends_at else '' }}">
+                            <div class="form-text">Used for trial accounts. Leave blank for active paid plans.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold" for="modal_phone">Contact Phone</label>

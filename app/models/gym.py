@@ -31,10 +31,6 @@ class Gym(TimestampMixin, db.Model):
     email = db.Column(db.String(255), nullable=True)
     phone = db.Column(db.String(40), nullable=True)
     timezone = db.Column(db.String(64), nullable=False, default="Asia/Kolkata")
-    # Locale and entitlement values are server-owned.  The mobile client uses
-    # these fields only for presentation and must never infer an entitlement.
-    country = db.Column(db.String(2), nullable=False, default="IN")
-    currency = db.Column(db.String(3), nullable=False, default="INR")
     status = db.Column(db.String(32), nullable=False, default="active", index=True)
     subscription_status = db.Column(
         db.String(32), nullable=False, default="trial", index=True

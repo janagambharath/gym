@@ -103,7 +103,7 @@ def entitlement_for(gym: Gym) -> dict[str, Any]:
     # existing manual end date in the new read model rather than displaying a
     # misleading "no expiry" state.
     legacy_manual_expiry = None
-    if source == "MANUAL" and gym.billing_expires_at is None and gym.trial_ends_at:
+    if source == "MANUAL" and gym.billing_expires_at is None and gym.trial_ends_at and status == "TRIAL":
         legacy_manual_expiry = datetime.combine(
             gym.trial_ends_at, time.max, tzinfo=timezone.utc
         )
