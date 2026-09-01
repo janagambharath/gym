@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { WebView, type WebViewNavigation } from 'react-native-webview';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import { connectWaba, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
@@ -41,6 +41,7 @@ export function WhatsAppOnboardingModal({
   const [addressText, setAddressText] = useState(currentProfile?.address || '');
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'connect' | 'profile'>('connect');
+  const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
 
   const handleLaunchEmbeddedSignup = async () => {
     try {
@@ -49,18 +50,32 @@ export function WhatsAppOnboardingModal({
       const metaAppId = res.ok ? res.data.meta_app_id : '1711816793132513';
       const configId = res.ok ? res.data.config_id : '107597391155167';
       const onboardingUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=${metaAppId}&config_id=${configId}`;
-      const supported = await Linking.canOpenURL(onboardingUrl);
-      if (supported) {
-        await Linking.openURL(onboardingUrl);
-      } else {
-        Alert.alert('Browser Error', 'Could not open Meta signup URL in browser.');
-      }
+      setWebViewUrl(onboardingUrl);
     } catch {
       Alert.alert('Error', 'Failed to launch Meta Embedded Signup dialog.');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleWebViewClose = useCallback(() => {
+    setWebViewUrl(null);
+    Alert.alert(
+      'Meta Signup Complete?',
+      'If you completed Meta signup, enter your Phone Number ID and WABA ID below to finish connecting.',
+    );
+  }, []);
+
+  const handleNavigationChange = useCallback((navState: WebViewNavigation) => {
+    // If Meta redirects back or shows a success/error page, auto-close the WebView
+    if (navState.url?.includes('/oauth/error') || navState.url?.includes('oauth_error')) {
+      setWebViewUrl(null);
+      Alert.alert(
+        'Meta Signup Issue',
+        'Meta reported an error. Check your Meta App configuration (Live mode, App Review) and try again.',
+      );
+    }
+  }, []);
 
   const handleSaveConnection = async () => {
     if (!phoneNumberId.trim()) {
@@ -290,6 +305,33 @@ export function WhatsAppOnboardingModal({
           </ScrollView>
         </View>
       </View>
+
+      {/* In-App WebView for Meta Embedded Signup */}
+      {webViewUrl ? (
+        <View style={styles.webViewOverlay}>
+          <View style={styles.webViewHeader}>
+            <Text style={styles.webViewTitle}>Meta WhatsApp Signup</Text>
+            <TouchableOpacity onPress={handleWebViewClose} style={styles.webViewCloseBtn}>
+              <Icon name="close" size={22} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          <WebView
+            source={{ uri: webViewUrl }}
+            style={styles.webView}
+            javaScriptEnabled
+            domStorageEnabled
+            thirdPartyCookiesEnabled
+            startInLoadingState
+            renderLoading={() => (
+              <View style={styles.webViewLoading}>
+                <ActivityIndicator size="large" color={colors.brand} />
+                <Text style={styles.webViewLoadingText}>Loading Meta Signup...</Text>
+              </View>
+            )}
+            onNavigationStateChange={handleNavigationChange}
+          />
+        </View>
+      ) : null}
     </Modal>
   );
 }
@@ -474,5 +516,42 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.6,
+  },
+  webViewOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: colors.card,
+    zIndex: 10,
+  },
+  webViewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+    backgroundColor: colors.card,
+  },
+  webViewTitle: {
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.bold,
+    color: colors.text,
+  },
+  webViewCloseBtn: {
+    padding: spacing.xs,
+  },
+  webView: {
+    flex: 1,
+  },
+  webViewLoading: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+  },
+  webViewLoadingText: {
+    marginTop: spacing.md,
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
   },
 });
