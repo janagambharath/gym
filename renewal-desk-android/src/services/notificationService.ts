@@ -18,58 +18,68 @@ Notifications.setNotificationHandler({
 let cachedPushToken: string | null = null;
 
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
-  if (Platform.OS === 'android') {
-    // 1. Setup urgent-alerts channel (for Handover Requests)
-    await Notifications.setNotificationChannelAsync('urgent-alerts', {
-      name: 'Urgent Staff Handovers',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#EF4444',
-      sound: 'default',
-      enableVibrate: true,
-    });
-
-    // 2. Setup leads channel
-    await Notifications.setNotificationChannelAsync('leads', {
-      name: 'WhatsApp Leads & Inquiries',
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 200, 200],
-      lightColor: '#2563EB',
-      sound: 'default',
-    });
-
-    // 3. Setup payments channel
-    await Notifications.setNotificationChannelAsync('payments', {
-      name: 'Payments & Verifications',
-      importance: Notifications.AndroidImportance.HIGH,
-      lightColor: '#10B981',
-      sound: 'default',
-    });
-
-    // 4. Setup renewals channel
-    await Notifications.setNotificationChannelAsync('renewals', {
-      name: 'Renewals & Reminders',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
-  }
-
-  if (!Device.isDevice) {
-    return null;
-  }
-
-  // Request permissions
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-
-  if (finalStatus !== 'granted') {
-    return null;
-  }
-
   try {
+    if (Platform.OS === 'android') {
+      try {
+        // 1. Setup urgent-alerts channel (for Handover Requests)
+        await Notifications.setNotificationChannelAsync('urgent-alerts', {
+          name: 'Urgent Staff Handovers',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#EF4444',
+          sound: 'default',
+          enableVibrate: true,
+        });
+
+        // 2. Setup leads channel
+        await Notifications.setNotificationChannelAsync('leads', {
+          name: 'WhatsApp Leads & Inquiries',
+          importance: Notifications.AndroidImportance.HIGH,
+          vibrationPattern: [0, 200, 200],
+          lightColor: '#2563EB',
+          sound: 'default',
+        });
+
+        // 3. Setup payments channel
+        await Notifications.setNotificationChannelAsync('payments', {
+          name: 'Payments & Verifications',
+          importance: Notifications.AndroidImportance.HIGH,
+          lightColor: '#10B981',
+          sound: 'default',
+        });
+
+        // 4. Setup renewals channel
+        await Notifications.setNotificationChannelAsync('renewals', {
+          name: 'Renewals & Reminders',
+          importance: Notifications.AndroidImportance.DEFAULT,
+        });
+      } catch (channelErr) {
+        console.warn('Could not configure notification channels:', channelErr);
+      }
+    }
+
+    if (!Device.isDevice) {
+      return null;
+    }
+
+    // Request permissions
+    let finalStatus: Notifications.PermissionStatus = Notifications.PermissionStatus.UNDETERMINED;
+    try {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      finalStatus = existingStatus;
+      if (existingStatus !== Notifications.PermissionStatus.GRANTED) {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+    } catch (permErr) {
+      console.warn('Could not query notification permissions:', permErr);
+      return null;
+    }
+
+    if (finalStatus !== Notifications.PermissionStatus.GRANTED) {
+      return null;
+    }
+
     const projectId =
       Constants?.expoConfig?.extra?.eas?.projectId ??
       Constants?.easConfig?.projectId;
@@ -96,7 +106,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     });
 
     return token;
-  } catch {
+  } catch (err) {
+    console.warn('Push notification registration failed gracefully:', err);
     return null;
   }
 }

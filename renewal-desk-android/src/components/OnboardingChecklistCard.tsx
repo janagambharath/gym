@@ -10,14 +10,16 @@ interface OnboardingChecklistCardProps {
 
 export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardProps) {
   const [data, setData] = useState<OnboardingProgressData | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     getOnboardingProgress().then((res) => {
-      if (res.ok) {
+      if (!cancelled && res.ok) {
         setData(res.data);
       }
     });
+    return () => { cancelled = true; };
   }, []);
 
   if (!data || data.is_complete) {
@@ -29,7 +31,7 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
       <TouchableOpacity
         style={styles.header}
         onPress={() => setExpanded(!expanded)}
-        activeOpacity={0.8}
+        activeOpacity={0.7}
       >
         <View style={styles.headerLeft}>
           <View style={styles.progressBadge}>
@@ -42,12 +44,14 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
             </Text>
           </View>
         </View>
-        <Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={20} color={colors.textSecondary} />
+        <View style={styles.expandIconCircle}>
+          <Icon name={expanded ? 'chevronUp' : 'chevronDown'} size={18} color={colors.textSecondary} />
+        </View>
       </TouchableOpacity>
 
       {/* Progress Bar */}
       <View style={styles.progressBarBg}>
-        <View style={[styles.progressBarFill, { width: `${data.percentage}%` }]} />
+        <View style={[styles.progressBarFill, { width: `${Math.max(data.percentage, 4)}%` }]} />
       </View>
 
       {/* Expanded Checklist Steps */}
@@ -56,7 +60,7 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
           {data.steps.map((step) => (
             <TouchableOpacity
               key={step.id}
-              style={styles.stepRow}
+              style={[styles.stepRow, step.completed && styles.stepRowCompleted]}
               onPress={() => {
                 if (step.route) {
                   onNavigate(step.route);
@@ -65,11 +69,13 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
               disabled={!step.route || step.completed}
               activeOpacity={0.7}
             >
-              <Icon
-                name={step.completed ? 'checkmark' : 'time'}
-                size={18}
-                color={step.completed ? colors.success : colors.muted}
-              />
+              <View style={styles.stepIconWrap}>
+                <Icon
+                  name={step.completed ? 'checkmark' : 'time'}
+                  size={18}
+                  color={step.completed ? colors.success : colors.muted}
+                />
+              </View>
               <Text
                 style={[
                   styles.stepTitle,
@@ -79,7 +85,9 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
                 {step.title}
               </Text>
               {!step.completed && step.route && (
-                <Icon name="forward" size={14} color={colors.brand} />
+                <View style={styles.stepForwardWrap}>
+                  <Icon name="forward" size={14} color={colors.brand} />
+                </View>
               )}
             </TouchableOpacity>
           ))}
@@ -92,76 +100,103 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    borderWidth: 1,
     borderColor: colors.borderLight,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+    padding: spacing.lg,
     ...shadows.sm,
   },
-  header: {
-    flexDirection: 'row',
+  expandIconCircle: {
     alignItems: 'center',
+    backgroundColor: colors.gray100,
+    borderRadius: radius.full,
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
+  header: {
+    alignItems: 'center',
+    flexDirection: 'row',
     justifyContent: 'space-between',
   },
   headerLeft: {
-    flexDirection: 'row',
     alignItems: 'center',
-  },
-  progressBadge: {
-    backgroundColor: colors.brandSubtle,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-    marginRight: spacing.md,
-  },
-  progressBadgeText: {
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
-    color: colors.brandDark,
-  },
-  title: {
-    fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
-    color: colors.text,
-  },
-  subtitle: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    marginTop: 2,
+    flexDirection: 'row',
+    gap: spacing.md,
   },
   progressBarBg: {
-    height: 4,
-    backgroundColor: colors.background,
+    backgroundColor: colors.gray100,
     borderRadius: radius.full,
-    marginTop: spacing.sm,
+    height: 6,
+    marginTop: spacing.md,
     overflow: 'hidden',
   },
   progressBarFill: {
-    height: 4,
     backgroundColor: colors.brand,
     borderRadius: radius.full,
+    height: 6,
+  },
+  progressBadge: {
+    alignItems: 'center',
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.infoBorder,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minWidth: 44,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  progressBadgeText: {
+    color: colors.brandDark,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.extrabold,
+  },
+  stepForwardWrap: {
+    marginLeft: spacing.xs,
+  },
+  stepIconWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 22,
   },
   stepList: {
-    marginTop: spacing.md,
-    borderTopWidth: 1,
     borderTopColor: colors.borderLight,
-    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    gap: spacing.xxs,
+    marginTop: spacing.md,
+    paddingTop: spacing.sm,
   },
   stepRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  stepRowCompleted: {
+    opacity: 0.75,
   },
   stepTitle: {
-    fontSize: fontSize.xs,
     color: colors.text,
+    flex: 1,
+    fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
     marginLeft: spacing.sm,
-    flex: 1,
   },
   stepTitleCompleted: {
     color: colors.muted,
     textDecorationLine: 'line-through',
+  },
+  subtitle: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  title: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
   },
 });

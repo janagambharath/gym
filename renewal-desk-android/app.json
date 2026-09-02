@@ -5,23 +5,19 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "scheme": "renewaldesk",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "online.revorax.renewaldesk"
     },
     "android": {
       "package": "online.revorax.renewaldesk",
-      "versionCode": 9,
+      "versionCode": 11,
       "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.VIBRATE"
-      ],
-      "blockedPermissions": [
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",

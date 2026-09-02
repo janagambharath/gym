@@ -27,6 +27,7 @@ type DashboardScreenProps = {
   onNavigatePayments?: () => void;
   onNavigateRenewals?: () => void;
   onNavigateSettings?: () => void;
+  onNavigatePlans?: () => void;
   onNavigateMemberDetail?: (member: Member) => void;
   onNavigateAddMember?: () => void;
   onNavigateImportMembers?: () => void;
@@ -47,6 +48,7 @@ export function DashboardScreen({
   onNavigatePayments,
   onNavigateRenewals,
   onNavigateSettings,
+  onNavigatePlans,
   onNavigateMemberDetail,
   onNavigateAddMember,
   onNavigateImportMembers,
@@ -179,6 +181,7 @@ export function DashboardScreen({
               <View style={styles.firstActionCard}>
                 <View style={styles.firstActionHeader}>
                   <View style={styles.firstActionBadge}>
+                    <Icon name="flash" size={12} color={colors.textInverse} />
                     <Text style={styles.firstActionBadgeText}>GET STARTED</Text>
                   </View>
                   <Text style={styles.firstActionTitle}>Bring Your Members In</Text>
@@ -193,11 +196,11 @@ export function DashboardScreen({
                     activeOpacity={0.8}
                   >
                     <Icon name="document" size={16} color={colors.textInverse} />
-                    <Text style={styles.firstActionPrimaryBtnText}>Import Existing Members</Text>
+                    <Text style={styles.firstActionPrimaryBtnText}>Import Existing Members (Excel / CSV)</Text>
                   </TouchableOpacity>
-                  <View style={{ flexDirection: 'row', gap: spacing.xs, width: '100%' }}>
+                  <View style={styles.firstActionSecondaryRow}>
                     <TouchableOpacity
-                      style={[styles.firstActionSecondaryBtn, { flex: 1 }]}
+                      style={styles.firstActionSecondaryBtn}
                       onPress={onNavigateImportMembers || onNavigateAddMember}
                       activeOpacity={0.8}
                     >
@@ -205,7 +208,7 @@ export function DashboardScreen({
                       <Text style={styles.firstActionSecondaryBtnText}>Scan Records</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.firstActionSecondaryBtn, { flex: 1 }]}
+                      style={styles.firstActionSecondaryBtn}
                       onPress={onNavigateAddMember}
                       activeOpacity={0.8}
                     >
@@ -222,10 +225,19 @@ export function DashboardScreen({
               onNavigate={(route) => {
                 if (route === 'Subscription') onNavigateSettings?.();
                 else if (route === 'Settings') onNavigateSettings?.();
-                else if (route === 'Plans') onNavigateSettings?.();
-                else if (route === 'Members') onNavigateMembers();
+                else if (route === 'Plans') {
+                  if (onNavigatePlans) onNavigatePlans();
+                  else onNavigateSettings?.();
+                }
+                else if (route === 'Members') {
+                  if (onNavigateImportMembers) onNavigateImportMembers();
+                  else onNavigateMembers();
+                }
                 else if (route === 'WhatsApp') onNavigateWhatsApp?.();
-                else if (route === 'Renewals') onNavigateRenewals?.();
+                else if (route === 'Renewals') {
+                  if (onNavigateRecordPayment) onNavigateRecordPayment();
+                  else onNavigateRenewals?.();
+                }
                 else if (route === 'Bot') onNavigateBotOverview?.();
               }}
             />
@@ -1178,23 +1190,28 @@ const styles = StyleSheet.create({
   },
   // ─── First Action Hero Styles ───────────────────────────────────────
   firstActionCard: {
-    backgroundColor: colors.brandSubtle,
-    borderColor: colors.brand,
+    backgroundColor: '#F0F7FF',
+    borderColor: '#BFDBFE',
     borderRadius: radius.xl,
     borderWidth: 1.5,
+    marginBottom: spacing.md,
     padding: spacing.lg,
     ...shadows.sm,
   },
   firstActionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
   },
   firstActionBadge: {
+    alignItems: 'center',
     backgroundColor: colors.brand,
     borderRadius: radius.full,
+    flexDirection: 'row',
+    gap: 4,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
+    paddingVertical: 4,
   },
   firstActionBadgeText: {
     color: colors.textInverse,
@@ -1210,45 +1227,55 @@ const styles = StyleSheet.create({
   firstActionSub: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
-    lineHeight: 19,
+    lineHeight: 20,
     marginTop: spacing.xs,
   },
   firstActionButtons: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: spacing.sm,
     marginTop: spacing.md,
   },
   firstActionPrimaryBtn: {
     alignItems: 'center',
     backgroundColor: colors.brand,
-    borderRadius: radius.md,
-    flex: 1,
+    borderRadius: radius.lg,
     flexDirection: 'row',
     gap: spacing.xs,
     justifyContent: 'center',
-    paddingVertical: spacing.sm,
+    minHeight: 46,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    ...shadows.sm,
   },
   firstActionPrimaryBtnText: {
     color: colors.textInverse,
-    fontSize: fontSize.xs,
+    fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,
+  },
+  firstActionSecondaryRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    width: '100%',
   },
   firstActionSecondaryBtn: {
     alignItems: 'center',
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     borderWidth: 1,
     flex: 1,
     flexDirection: 'row',
     gap: spacing.xs,
     justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
+    ...shadows.sm,
   },
   firstActionSecondaryBtnText: {
     color: colors.text,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.semibold,
+    fontWeight: fontWeight.bold,
   },
   // ─── Empty Card Styles ──────────────────────────────────────────────
   emptyCardBox: {

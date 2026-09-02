@@ -105,7 +105,7 @@ class Config:
     BOT_AI_BASE_URL = os.getenv("BOT_AI_BASE_URL", "https://openrouter.ai/api/v1")
     BOT_AI_API_KEY = os.getenv("BOT_AI_API_KEY", "")
     BOT_AI_MODEL_PRIMARY = os.getenv("BOT_AI_MODEL_PRIMARY", "meta-llama/llama-3.3-70b-instruct:free")
-    BOT_AI_MODEL_FALLBACK_1 = os.getenv("BOT_AI_MODEL_FALLBACK_1", "google/gemini-2.0-flash-exp:free")
+    BOT_AI_MODEL_FALLBACK_1 = os.getenv("BOT_AI_MODEL_FALLBACK_1", "google/gemini-2.0-flash-001")
     BOT_AI_MODEL_FALLBACK_2 = os.getenv("BOT_AI_MODEL_FALLBACK_2", "mistralai/mistral-7b-instruct:free")
     BOT_AI_TIMEOUT_SECONDS = int(os.getenv("BOT_AI_TIMEOUT_SECONDS", "10"))
     BOT_AI_MAX_TOKENS = int(os.getenv("BOT_AI_MAX_TOKENS", "450"))
@@ -114,8 +114,8 @@ class Config:
 
     # ── AI Document Scanner & Vision Configuration ────────────────────────
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", os.getenv("BOT_AI_API_KEY", ""))
-    OPENROUTER_VISION_MODEL_PRIMARY = os.getenv("OPENROUTER_VISION_MODEL_PRIMARY", "google/gemini-2.0-flash-exp:free")
-    OPENROUTER_VISION_MODEL_FALLBACK = os.getenv("OPENROUTER_VISION_MODEL_FALLBACK", "meta-llama/llama-3.2-11b-vision-instruct:free")
+    OPENROUTER_VISION_MODEL_PRIMARY = os.getenv("OPENROUTER_VISION_MODEL_PRIMARY", "google/gemini-2.0-flash-001")
+    OPENROUTER_VISION_MODEL_FALLBACK = os.getenv("OPENROUTER_VISION_MODEL_FALLBACK", "qwen/qwen-2.5-vl-72b-instruct:free")
     DOCUMENT_SCAN_MAX_IMAGES = int(os.getenv("DOCUMENT_SCAN_MAX_IMAGES", "5"))
     DOCUMENT_SCAN_MAX_IMAGE_SIZE_MB = int(os.getenv("DOCUMENT_SCAN_MAX_IMAGE_SIZE_MB", "5"))
     DOCUMENT_SCAN_TIMEOUT_SECONDS = int(os.getenv("DOCUMENT_SCAN_TIMEOUT_SECONDS", "25"))

@@ -267,9 +267,23 @@ class DocumentScanService:
             "X-Title": "Renewal Desk AI Member Scanner",
         }
 
-        models_to_try = [primary_model]
-        if fallback_model and fallback_model != primary_model:
-            models_to_try.append(fallback_model)
+        # Multi-tier resilient vision models
+        default_vision_models = [
+            "google/gemini-2.0-flash-001",
+            "google/gemini-2.0-flash:free",
+            "qwen/qwen-2.5-vl-72b-instruct:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "mistralai/pixtral-12b:free",
+        ]
+
+        configured_models = [primary_model]
+        if fallback_model and fallback_model not in configured_models:
+            configured_models.append(fallback_model)
+
+        models_to_try: list[str] = []
+        for m in configured_models + default_vision_models:
+            if m and m not in models_to_try:
+                models_to_try.append(m)
 
         last_error_msg = "Could not read records from this document."
 
@@ -303,11 +317,18 @@ class DocumentScanService:
                     last_error_msg = "AI scanning rate limit reached. Please wait a moment and try again."
                     continue
 
+                current_app.logger.warning(
+                    "OpenRouter vision model %s returned HTTP %s: %s",
+                    model, resp.status_code, resp.text[:200]
+                )
                 last_error_msg = f"AI Provider returned status {resp.status_code}."
+                continue
             except requests.Timeout:
                 last_error_msg = "Document scanning timed out. Please try with clearer or fewer images."
+                continue
             except Exception as exc:
                 last_error_msg = f"Network or processing error during AI scan: {str(exc)}"
+                continue
 
         return {}, {"code": "AI_PROCESSING_ERROR", "message": last_error_msg}
 

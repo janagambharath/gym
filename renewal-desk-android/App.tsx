@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
 import { BotConversationsScreen } from './src/screens/BotConversationsScreen';
@@ -64,6 +65,7 @@ type DashboardStackParamList = {
   BotLeads: undefined;
   BotLeadDetail: { leadId: number };
   Notifications: undefined;
+  Plans: undefined;
 };
 
 type MembersStackParamList = {
@@ -162,6 +164,7 @@ function DashboardStackScreen({
             onNavigatePayments={onNavigatePayments}
             onNavigateRenewals={onNavigateRenewals}
             onNavigateSettings={onNavigateSettings}
+            onNavigatePlans={() => props.navigation.navigate('Plans')}
             onNavigateMemberDetail={(member) =>
               props.navigation.navigate('MemberDetail', { member })
             }
@@ -381,6 +384,9 @@ function DashboardStackScreen({
             onLogout={onLogout}
           />
         )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="Plans">
+        {(props) => <PlansScreen onBack={() => props.navigation.goBack()} />}
       </DashboardStackNav.Screen>
     </DashboardStackNav.Navigator>
   );
@@ -831,36 +837,39 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <SafeAreaProvider>
-        <StatusBar style="dark" />
-        <NavigationContainer ref={navigationRef}>
-          <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
-            <AuthStackNav.Screen name="Login">
-              {(props) => (
-                <LoginScreen
-                  onLogin={handleLoginSuccess}
-                  onNavigateSignup={() => props.navigation.navigate('Signup')}
-                />
-              )}
-            </AuthStackNav.Screen>
-            <AuthStackNav.Screen name="Signup">
-              {(props) => (
-                <SignupScreen
-                  onSignupSuccess={handleLoginSuccess}
-                  onNavigateLogin={() => props.navigation.navigate('Login')}
-                />
-              )}
-            </AuthStackNav.Screen>
-          </AuthStackNav.Navigator>
-        </NavigationContainer>
-      </SafeAreaProvider>
+      <ErrorBoundary>
+        <SafeAreaProvider>
+          <StatusBar style="dark" />
+          <NavigationContainer ref={navigationRef}>
+            <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
+              <AuthStackNav.Screen name="Login">
+                {(props) => (
+                  <LoginScreen
+                    onLogin={handleLoginSuccess}
+                    onNavigateSignup={() => props.navigation.navigate('Signup')}
+                  />
+                )}
+              </AuthStackNav.Screen>
+              <AuthStackNav.Screen name="Signup">
+                {(props) => (
+                  <SignupScreen
+                    onSignupSuccess={handleLoginSuccess}
+                    onNavigateLogin={() => props.navigation.navigate('Login')}
+                  />
+                )}
+              </AuthStackNav.Screen>
+            </AuthStackNav.Navigator>
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </ErrorBoundary>
     );
   }
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <NavigationContainer ref={navigationRef}>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <NavigationContainer ref={navigationRef}>
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
@@ -919,6 +928,7 @@ export default function App() {
         </Tab.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
 
