@@ -4,16 +4,20 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { apiRequest } from './apiClient';
 
-// Configure foreground notification behavior
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Configure foreground notification behavior safely
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+} catch (handlerErr) {
+  console.warn('[NotificationService] Failed to configure notification handler:', handlerErr);
+}
 
 let cachedPushToken: string | null = null;
 

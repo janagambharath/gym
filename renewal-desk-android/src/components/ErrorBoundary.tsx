@@ -1,5 +1,5 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 import { Icon } from '../theme/icons';
 
@@ -18,11 +18,11 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, errorMessage: error.message };
+    return { hasError: true, errorMessage: error?.message || 'An unexpected error occurred.' };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Uncaught error captured by ErrorBoundary:', error, errorInfo);
+    console.warn('[ErrorBoundary] Caught runtime component error:', error?.message, errorInfo);
   }
 
   private handleReset = () => {
@@ -32,7 +32,7 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <View style={styles.container}>
+        <SafeAreaView style={styles.container}>
           <View style={styles.iconCircle}>
             <Icon name="alert" size={32} color={colors.critical} />
           </View>
@@ -51,7 +51,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <Icon name="refresh" size={16} color={colors.textInverse} />
             <Text style={styles.buttonText}>Reload Application</Text>
           </TouchableOpacity>
-        </View>
+        </SafeAreaView>
       );
     }
 

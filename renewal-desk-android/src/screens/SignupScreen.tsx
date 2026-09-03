@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -11,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import * as Google from 'expo-auth-session/providers/google';
+import { GoogleAuthButton } from '../components/GoogleAuthButton';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import { googleLogin, signup } from '../services/apiClient';
@@ -40,42 +39,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
   const [gymName, setGymName] = useState('');
   const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const [, , promptAsync] = Google.useIdTokenAuthRequest({
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || undefined,
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || undefined,
-  });
-
-  const handleGoogleSignUp = async () => {
-    setGoogleLoading(true);
-    setErrorMessage(null);
-    try {
-      const res = await promptAsync();
-      if (res?.type === 'success') {
-        const idToken = res.params.id_token;
-        if (idToken) {
-          const result = await googleLogin(idToken, {
-            country: selectedCountry.name,
-            timezone: selectedCountry.timezone,
-          });
-          if (result.ok) {
-            onSignupSuccess();
-            return;
-          } else {
-            setErrorMessage(result.error.message);
-          }
-        }
-      } else if (res?.type === 'error') {
-        setErrorMessage('Google sign-in failed. Please try again.');
-      }
-    } catch {
-      setErrorMessage('An error occurred during Google sign-in.');
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
 
   const handleNextStep = () => {
     setErrorMessage(null);
@@ -240,20 +204,25 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
               </View>
 
               {/* Google Sign-Up */}
-              <TouchableOpacity
-                style={[styles.googleBtn, googleLoading && styles.googleBtnDisabled]}
-                onPress={() => void handleGoogleSignUp()}
-                disabled={googleLoading || loading}
-                activeOpacity={0.8}
-              >
-                <Image
-                  source={{ uri: 'https://developers.google.com/identity/images/g-logo.png' }}
-                  style={styles.googleIcon}
-                />
-                <Text style={styles.googleBtnText}>
-                  {googleLoading ? 'Signing up...' : 'Continue with Google'}
-                </Text>
-              </TouchableOpacity>
+              <GoogleAuthButton
+                text="Continue with Google"
+                disabled={loading}
+                onError={(msg) => setErrorMessage(msg)}
+                onSuccess={async (idToken) => {
+                  setLoading(true);
+                  setErrorMessage(null);
+                  const result = await googleLogin(idToken, {
+                    country: selectedCountry.name,
+                    timezone: selectedCountry.timezone,
+                  });
+                  setLoading(false);
+                  if (result.ok) {
+                    onSignupSuccess();
+                  } else {
+                    setErrorMessage(result.error.message);
+                  }
+                }}
+              />
             </View>
           ) : (
             /* STEP 2: Gym Details */

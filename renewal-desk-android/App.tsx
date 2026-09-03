@@ -744,18 +744,36 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
 
 // ─── Main App ────────────────────────────────────────────────────────
 
-export default function App() {
+// ─── Main App ────────────────────────────────────────────────────────
+
+function AppRoot() {
   const [isReady, setIsReady] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
 
   useEffect(() => {
+    let active = true;
     async function bootstrap() {
-      const session = await restoreSession();
-      setIsAuthenticated(!!session);
-      setIsReady(true);
+      try {
+        const session = await restoreSession();
+        if (active) {
+          setIsAuthenticated(!!session);
+        }
+      } catch (err) {
+        console.warn('[AppRoot] Error restoring session:', err);
+        if (active) {
+          setIsAuthenticated(false);
+        }
+      } finally {
+        if (active) {
+          setIsReady(true);
+        }
+      }
     }
     void bootstrap();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Fetch plans & register push notifications once authenticated
@@ -765,46 +783,57 @@ export default function App() {
       if (res.ok) setPlans(res.data.plans);
     });
 
-    // Register device for native push notifications
-    void registerForPushNotificationsAsync();
-
-    // Listen to push notification tap responses
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const payload = response.notification.request.content.data as any;
-      if (navigationRef.isReady()) {
-        if (payload?.screen === 'BotConversationDetail' && payload?.conversation_id) {
-          navigationRef.navigate('Dashboard', {
-            screen: 'BotConversationDetail',
-            params: {
-              conversation: {
-                id: payload.conversation_id,
-                phone: payload.phone ?? '',
-                customer_name: payload.customer_name ?? '',
-                handover_status: 'human_requested',
-                state: 'active',
-              },
-            },
-          });
-        } else if (payload?.screen === 'BotLeadDetail' && payload?.lead_id) {
-          navigationRef.navigate('Dashboard', {
-            screen: 'BotLeadDetail',
-            params: { leadId: payload.lead_id },
-          });
-        } else if (payload?.screen === 'PaymentDetail' && payload?.payment_id) {
-          navigationRef.navigate('Payments', {
-            screen: 'PaymentDetail',
-            params: { paymentId: payload.payment_id },
-          });
-        } else if (payload?.screen === 'RenewalsHome') {
-          navigationRef.navigate('Renewals');
-        } else if (payload?.screen === 'Notifications') {
-          navigationRef.navigate('Dashboard', { screen: 'Notifications' });
-        }
-      }
+    // Register device for native push notifications safely
+    void registerForPushNotificationsAsync().catch((err) => {
+      console.warn('[AppRoot] Push registration error:', err);
     });
 
+    // Listen to push notification tap responses safely
+    let subscription: Notifications.Subscription | undefined;
+    try {
+      subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        try {
+          const payload = response.notification.request.content.data as any;
+          if (navigationRef.isReady()) {
+            if (payload?.screen === 'BotConversationDetail' && payload?.conversation_id) {
+              navigationRef.navigate('Dashboard', {
+                screen: 'BotConversationDetail',
+                params: {
+                  conversation: {
+                    id: payload.conversation_id,
+                    phone: payload.phone ?? '',
+                    customer_name: payload.customer_name ?? '',
+                    handover_status: 'human_requested',
+                    state: 'active',
+                  },
+                },
+              });
+            } else if (payload?.screen === 'BotLeadDetail' && payload?.lead_id) {
+              navigationRef.navigate('Dashboard', {
+                screen: 'BotLeadDetail',
+                params: { leadId: payload.lead_id },
+              });
+            } else if (payload?.screen === 'PaymentDetail' && payload?.payment_id) {
+              navigationRef.navigate('Payments', {
+                screen: 'PaymentDetail',
+                params: { paymentId: payload.payment_id },
+              });
+            } else if (payload?.screen === 'RenewalsHome') {
+              navigationRef.navigate('Renewals');
+            } else if (payload?.screen === 'Notifications') {
+              navigationRef.navigate('Dashboard', { screen: 'Notifications' });
+            }
+          }
+        } catch (navErr) {
+          console.warn('[AppRoot] Push notification navigation failed:', navErr);
+        }
+      });
+    } catch (listenerErr) {
+      console.warn('[AppRoot] Failed to register notification response listener:', listenerErr);
+    }
+
     return () => {
-      subscription.remove();
+      subscription?.remove();
     };
   }, [isAuthenticated]);
 
@@ -813,7 +842,7 @@ export default function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
-    void unregisterPushNotificationsAsync();
+    void unregisterPushNotificationsAsync().catch(() => {});
     setIsAuthenticated(false);
     setPlans([]);
   }, []);
@@ -837,39 +866,36 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <ErrorBoundary>
-        <SafeAreaProvider>
-          <StatusBar style="dark" />
-          <NavigationContainer ref={navigationRef}>
-            <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
-              <AuthStackNav.Screen name="Login">
-                {(props) => (
-                  <LoginScreen
-                    onLogin={handleLoginSuccess}
-                    onNavigateSignup={() => props.navigation.navigate('Signup')}
-                  />
-                )}
-              </AuthStackNav.Screen>
-              <AuthStackNav.Screen name="Signup">
-                {(props) => (
-                  <SignupScreen
-                    onSignupSuccess={handleLoginSuccess}
-                    onNavigateLogin={() => props.navigation.navigate('Login')}
-                  />
-                )}
-              </AuthStackNav.Screen>
-            </AuthStackNav.Navigator>
-          </NavigationContainer>
-        </SafeAreaProvider>
-      </ErrorBoundary>
+      <>
+        <StatusBar style="dark" />
+        <NavigationContainer ref={navigationRef}>
+          <AuthStackNav.Navigator screenOptions={{ headerShown: false }}>
+            <AuthStackNav.Screen name="Login">
+              {(props) => (
+                <LoginScreen
+                  onLogin={handleLoginSuccess}
+                  onNavigateSignup={() => props.navigation.navigate('Signup')}
+                />
+              )}
+            </AuthStackNav.Screen>
+            <AuthStackNav.Screen name="Signup">
+              {(props) => (
+                <SignupScreen
+                  onSignupSuccess={handleLoginSuccess}
+                  onNavigateLogin={() => props.navigation.navigate('Login')}
+                />
+              )}
+            </AuthStackNav.Screen>
+          </AuthStackNav.Navigator>
+        </NavigationContainer>
+      </>
     );
   }
 
   return (
-    <ErrorBoundary>
-      <SafeAreaProvider>
-        <StatusBar style="dark" />
-        <NavigationContainer ref={navigationRef}>
+    <>
+      <StatusBar style="dark" />
+      <NavigationContainer ref={navigationRef}>
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
@@ -927,8 +953,17 @@ export default function App() {
           </Tab.Screen>
         </Tab.Navigator>
       </NavigationContainer>
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <AppRoot />
+      </ErrorBoundary>
     </SafeAreaProvider>
-    </ErrorBoundary>
   );
 }
 
