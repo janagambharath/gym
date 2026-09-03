@@ -12,7 +12,7 @@
     },
     "android": {
       "package": "online.revorax.renewaldesk",
-      "versionCode": 15,
+      "versionCode": 16,
       "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",
