@@ -8,7 +8,9 @@
       "distribution": "internal",
       "environment": "development",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "development"
+        "EXPO_PUBLIC_APP_ENV": "development",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "416224142900-ef33olltfr2ljk5nggb3ft4kjt9pq1o5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "416224142900-9n2llen5ifntg2bhccpk8ii6jienlu4d.apps.googleusercontent.com"
       }
     },
     "preview": {
@@ -19,7 +21,9 @@
       },
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "416224142900-ef33olltfr2ljk5nggb3ft4kjt9pq1o5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "416224142900-9n2llen5ifntg2bhccpk8ii6jienlu4d.apps.googleusercontent.com"
       }
     },
     "staging": {
@@ -28,7 +32,9 @@
       "environment": "preview",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "416224142900-ef33olltfr2ljk5nggb3ft4kjt9pq1o5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "416224142900-9n2llen5ifntg2bhccpk8ii6jienlu4d.apps.googleusercontent.com"
       }
     },
     "production": {
@@ -40,7 +46,9 @@
       },
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://gym-production-910c.up.railway.app",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "416224142900-ef33olltfr2ljk5nggb3ft4kjt9pq1o5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "416224142900-9n2llen5ifntg2bhccpk8ii6jienlu4d.apps.googleusercontent.com"
       }
     }
   },
