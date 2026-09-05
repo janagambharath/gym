@@ -58,7 +58,7 @@ function ActiveGoogleAuthButton({
     try {
       const res = await promptAsync();
       if (res?.type === 'success') {
-        const idToken = res.params?.id_token;
+        const idToken = res.params?.id_token || (res as any)?.authentication?.idToken;
         if (idToken) {
           await onSuccess(idToken);
         } else {

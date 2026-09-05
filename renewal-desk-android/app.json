@@ -5,14 +5,14 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "renewaldesk",
+    "scheme": ["renewaldesk", "online.revorax.renewaldesk"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "online.revorax.renewaldesk"
     },
     "android": {
       "package": "online.revorax.renewaldesk",
-      "versionCode": 16,
+      "versionCode": 17,
       "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",

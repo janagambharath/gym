@@ -252,8 +252,12 @@ def register_auth_routes(bp):
             return error_response("GOOGLE_AUTH_FAILED", "Could not verify Google token.", 401)
 
         # Validate audience matches our client ID
-        expected_client_id = current_app.config.get("GOOGLE_OAUTH_CLIENT_ID", "")
-        if expected_client_id and google_data.get("aud") != expected_client_id:
+        configured_client_ids = [
+            cid.strip()
+            for cid in current_app.config.get("GOOGLE_OAUTH_CLIENT_ID", "").split(",")
+            if cid.strip()
+        ]
+        if configured_client_ids and google_data.get("aud") not in configured_client_ids:
             return error_response("GOOGLE_AUTH_FAILED", "Google token audience mismatch.", 401)
 
         google_email = (google_data.get("email") or "").strip().lower()
