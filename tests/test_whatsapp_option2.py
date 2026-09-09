@@ -599,39 +599,41 @@ class WhatsAppOption2TestCase(unittest.TestCase):
     @patch.object(WhatsAppService, "send_template")
     @patch.object(WhatsAppService, "send_text")
     @patch.object(WhatsAppService, "send_image")
-    def test_reminder_uses_settings_qr_image_before_template_fallback(
+    def test_reminder_uses_template_before_qr_image_when_configured(
         self,
         send_image: Mock,
         send_text: Mock,
         send_template: Mock,
     ) -> None:
+        """When a verified template is configured, it is tried before QR image."""
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
-        send_image.return_value = WhatsAppResult(ok=True, provider_message_id="settings-image")
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-first")
         self._opt_in(self.member_one)
         log = self._reminder_log(self.gym_one, self.member_one)
         db.session.commit()
 
         send_reminder(log, force=True)
 
-        send_image.assert_called_once()
+        send_template.assert_called_once()
+        send_image.assert_not_called()
         send_text.assert_not_called()
-        send_template.assert_not_called()
         self.assertEqual(log.status, "sent")
-        self.assertEqual(log.provider_message_id, "settings-image")
+        self.assertEqual(log.provider_message_id, "template-first")
 
     @patch.object(WhatsAppService, "send_template")
     @patch.object(WhatsAppService, "send_text")
     @patch.object(WhatsAppService, "send_image")
-    def test_reminder_uses_settings_message_before_template_fallback(
+    def test_reminder_uses_template_before_session_message(
         self,
         send_image: Mock,
         send_text: Mock,
         send_template: Mock,
     ) -> None:
+        """When a verified template is configured, it is always tried first."""
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
-        send_text.return_value = WhatsAppResult(ok=True, provider_message_id="settings-message")
+        send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-first")
         self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).delete()
         log = self._reminder_log(self.gym_one, self.member_one)
@@ -639,11 +641,11 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         send_reminder(log, force=True)
 
-        send_text.assert_called_once()
-        send_template.assert_not_called()
+        send_template.assert_called_once()
+        send_text.assert_not_called()
         send_image.assert_not_called()
         self.assertEqual(log.status, "sent")
-        self.assertEqual(log.provider_message_id, "settings-message")
+        self.assertEqual(log.provider_message_id, "template-first")
 
     @patch.object(WhatsAppService, "send_template")
     @patch.object(WhatsAppService, "send_text")
@@ -727,15 +729,15 @@ class WhatsAppOption2TestCase(unittest.TestCase):
     @patch.object(WhatsAppService, "send_template")
     @patch.object(WhatsAppService, "send_text")
     @patch.object(WhatsAppService, "send_image")
-    def test_reminder_uses_template_fallback_when_settings_message_fails(
+    def test_reminder_template_succeeds_without_session_fallback(
         self,
         send_image: Mock,
         send_text: Mock,
         send_template: Mock,
     ) -> None:
+        """Template succeeds first — session message is never attempted."""
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_NAME"] = "renewal_reminder"
         self.app.config["WHATSAPP_REMINDER_TEMPLATE_LANGUAGE"] = "en_US"
-        send_text.return_value = WhatsAppResult(ok=False, error="24-hour window closed")
         send_template.return_value = WhatsAppResult(ok=True, provider_message_id="template-message")
         self._opt_in(self.member_one)
         QRSettings.query.filter_by(gym_id=self.gym_one.id).update({"is_active": False})
@@ -744,7 +746,6 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         send_reminder(log, force=True)
 
-        send_text.assert_called_once()
         send_template.assert_called_once()
         self.assertEqual(
             send_template.call_args.kwargs["body_parameters"],
@@ -755,6 +756,7 @@ class WhatsAppOption2TestCase(unittest.TestCase):
                 "gymone@ybl",
             ],
         )
+        send_text.assert_not_called()
         send_image.assert_not_called()
         self.assertEqual(log.status, "sent")
         self.assertEqual(log.provider_message_id, "template-message")
@@ -779,16 +781,14 @@ class WhatsAppOption2TestCase(unittest.TestCase):
 
         send_reminder(log, force=True)
 
-        send_text.assert_called_once()
+        # Template is tried first (new priority), session as fallback
         send_template.assert_called_once()
+        send_text.assert_called_once()
         send_image.assert_not_called()
         self.assertEqual(log.status, "failed")
+        # Error comes from the template result since it was tried first
         self.assertIn(
-            "WhatsApp Settings message failed: 24-hour window closed",
-            log.error_message or "",
-        )
-        self.assertIn(
-            "template fallback failed: template missing",
+            "template missing",
             log.error_message or "",
         )
 

@@ -38,6 +38,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [filtersVisible, setFiltersVisible] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -148,6 +149,9 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
           <Text style={styles.headerSubtitle}>{formatInteger(totalCount)} members</Text>
         </View>
         <View style={styles.headerActions}>
+          <View accessibilityLabel="Notifications" style={styles.notificationButton}>
+            <Icon name="notifications" size={21} color={colors.text} />
+          </View>
           {onAddMember ? (
             <TouchableOpacity
               accessibilityLabel="Add member"
@@ -164,19 +168,32 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
 
       {/* Search */}
       <View style={styles.searchContainer}>
-        <SearchBar
-          value={search}
-          onChangeText={handleSearch}
-          placeholder="Search name, phone or member ID"
-        />
+        <View style={styles.searchField}>
+          <SearchBar
+            value={search}
+            onChangeText={handleSearch}
+            placeholder="Search name, phone or member ID"
+          />
+        </View>
+        <TouchableOpacity
+          accessibilityLabel={filtersVisible ? 'Hide member filters' : 'Show member filters'}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: filtersVisible }}
+          onPress={() => setFiltersVisible((visible) => !visible)}
+          style={[styles.filterButton, filtersVisible && styles.filterButtonActive]}
+        >
+          <Icon name="filter" size={20} color={filtersVisible ? colors.brand : colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
-      {/* Filters — always visible */}
-      <FilterChips
-        options={FILTER_OPTIONS}
-        selected={statusFilter}
-        onSelect={(key) => { setStatusFilter(key); setPage(1); }}
-      />
+      {/* Filters */}
+      {filtersVisible ? (
+        <FilterChips
+          options={FILTER_OPTIONS}
+          selected={statusFilter}
+          onSelect={(key) => { setStatusFilter(key); setPage(1); }}
+        />
+      ) : null}
 
       {/* List */}
       {loading ? (
@@ -321,7 +338,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.bottomTabSafe,
+    paddingBottom: spacing.sm,
   },
   memberDays: {
     fontSize: fontSize.sm,

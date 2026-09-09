@@ -354,54 +354,57 @@ def _send_whatsapp_message(
     template_context: dict[str, object],
     has_open_session: bool,
 ) -> WhatsAppResult:
+    """Send a WhatsApp renewal reminder.
+
+    Priority order:
+      1. Meta-verified template message (always preferred when configured)
+      2. Session message (fallback — only works within 24-hour window)
+
+    Using the verified template first ensures higher delivery rates and
+    compliance with Meta's Business API policies.
+    """
     template_name = current_app.config.get("WHATSAPP_REMINDER_TEMPLATE_NAME", "")
 
-    if not has_open_session:
-        if template_name:
-            return _send_template_message(whatsapp, to=to, template_context=template_context)
-        _logger.info(
-            "No open WhatsApp session and no template configured for %s. "
-            "Attempting session message; Meta will reject with 131047 if the window is closed.",
-            to,
-        )
-        return _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
-
-    session_result = _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
-    if session_result.ok:
-        return session_result
-
+    # ── 1. Always try the Meta-verified template first when configured ──
     if template_name:
-        template_result = _send_template_message(whatsapp, to=to, template_context=template_context)
+        template_result = _send_template_message(
+            whatsapp, to=to, template_context=template_context,
+        )
         if template_result.ok:
+            return template_result
+
+        # Template failed — fall back to session message if window is open
+        _logger.warning(
+            "WhatsApp verified template failed for %s: %s; "
+            "attempting session message fallback",
+            to,
+            template_result.error or "Unknown error",
+        )
+        if has_open_session:
+            session_result = _send_session_message(
+                whatsapp, to=to, message=message, qr_url=qr_url,
+            )
+            if session_result.ok:
+                return session_result
+
             _logger.warning(
-                "WhatsApp settings reminder failed for %s: %s; template fallback succeeded",
+                "WhatsApp session fallback also failed for %s: %s",
                 to,
                 session_result.error or "Unknown error",
             )
-            return template_result
-        _logger.warning(
-            "WhatsApp settings reminder failed for %s: %s; template fallback also failed: %s",
-            to,
-            session_result.error or "Unknown error",
-            template_result.error or "Unknown error",
-        )
-        return WhatsAppResult(
-            ok=False,
-            provider_message_id=(
-                template_result.provider_message_id or session_result.provider_message_id
-            ),
-            error=(
-                f"WhatsApp Settings message failed: {session_result.error or 'Unknown error'}; "
-                f"template fallback failed: {template_result.error or 'Unknown error'}"
-            )[:500],
-        )
 
-    _logger.warning(
-        "WhatsApp settings reminder failed for %s and no template fallback is configured: %s",
-        to,
-        session_result.error or "Unknown error",
-    )
-    return session_result
+        return template_result
+
+    # ── 2. No template configured — use session message directly ──
+    if not has_open_session:
+        _logger.info(
+            "No open WhatsApp session and no template configured for %s. "
+            "Attempting session message; Meta will reject with 131047 "
+            "if the window is closed.",
+            to,
+        )
+    return _send_session_message(whatsapp, to=to, message=message, qr_url=qr_url)
+
 
 
 def _send_session_message(

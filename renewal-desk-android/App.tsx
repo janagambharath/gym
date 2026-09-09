@@ -6,7 +6,7 @@ export const navigationRef = createNavigationContainerRef<any>();
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
@@ -39,7 +39,6 @@ import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
 import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
-import { WhatsAppSetupScreen } from './src/screens/WhatsAppSetupScreen';
 import { apiRequest, restoreSession, type ScanDocumentResult } from './src/services/apiClient';
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
@@ -60,7 +59,6 @@ type DashboardStackParamList = {
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
   WhatsApp: undefined;
-  WhatsAppSetup: undefined;
   BotOverview: undefined;
   BotConversations: undefined;
   BotConversationDetail: { conversation: BotConversation };
@@ -101,7 +99,6 @@ type MoreStackParamList = {
   MoreHome: undefined;
   Subscription: undefined;
   WhatsApp: undefined;
-  WhatsAppSetup: undefined;
   BotOverview: undefined;
   BotConversations: undefined;
   BotConversationDetail: { conversation: BotConversation };
@@ -334,18 +331,7 @@ function DashboardStackScreen({
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="WhatsApp">
         {(props) => (
-          <WhatsAppScreen
-            onBack={() => props.navigation.goBack()}
-            onNavigateSetup={() => props.navigation.navigate('WhatsAppSetup')}
-          />
-        )}
-      </DashboardStackNav.Screen>
-      <DashboardStackNav.Screen name="WhatsAppSetup">
-        {(props) => (
-          <WhatsAppSetupScreen
-            onBack={() => props.navigation.goBack()}
-            onConnected={refresh}
-          />
+          <WhatsAppScreen onBack={() => props.navigation.goBack()} />
         )}
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="BotOverview">
@@ -687,15 +673,7 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
         {(props) => <SubscriptionScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="WhatsApp">
-        {(props) => (
-          <WhatsAppScreen
-            onBack={() => props.navigation.goBack()}
-            onNavigateSetup={() => props.navigation.navigate('WhatsAppSetup')}
-          />
-        )}
-      </MoreStackNav.Screen>
-      <MoreStackNav.Screen name="WhatsAppSetup">
-        {(props) => <WhatsAppSetupScreen onBack={() => props.navigation.goBack()} />}
+        {(props) => <WhatsAppScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="BotOverview">
         {(props) => (
@@ -772,6 +750,7 @@ function AppRoot() {
   const [isReady, setIsReady] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     let active = true;
@@ -932,8 +911,8 @@ function AppRoot() {
               backgroundColor: colors.surface,
               borderTopColor: colors.border,
               borderTopWidth: 1,
-              height: Platform.OS === 'ios' ? 88 : 64,
-              paddingBottom: Platform.OS === 'ios' ? 28 : 8,
+              height: Platform.OS === 'ios' ? 84 : 64 + Math.max(insets.bottom, 0),
+              paddingBottom: Platform.OS === 'ios' ? 24 : Math.max(insets.bottom, 8),
               paddingTop: 8,
             },
             tabBarIcon: ({ focused, color }) => {

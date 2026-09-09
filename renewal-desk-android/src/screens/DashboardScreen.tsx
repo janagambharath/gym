@@ -242,16 +242,6 @@ export function DashboardScreen({
               }}
             />
 
-            {/* Quick Actions — moved up for fastest access */}
-            <View style={styles.quickActionsCard}>
-              <View style={styles.quickActions}>
-                <QuickAction icon={<Icon name="personAdd" size={21} color={colors.brand} />} label="Add Member" onPress={onNavigateAddMember} />
-                <QuickAction icon={<Icon name="renewals" size={21} color={colors.brand} />} label="Renew" onPress={onNavigateRenewals} />
-                <QuickAction icon={<Icon name="receipt" size={21} color={colors.brand} />} label="Payment" onPress={onNavigateRecordPayment ?? onNavigatePayments} />
-                <QuickAction icon={<Icon name="whatsapp" size={21} color={colors.whatsapp} />} label="WhatsApp" onPress={onNavigateWhatsApp ?? onNavigateSettings} />
-              </View>
-            </View>
-
             {/* 🚨 Urgent Staff Handover Alert Box */}
             {data.bot_summary?.recent_handovers && data.bot_summary.recent_handovers.length > 0 ? (
               <View style={[styles.card, styles.handoverAlertCard]}>
@@ -299,43 +289,154 @@ export function DashboardScreen({
               </View>
             ) : null}
 
-            {/* Action Summary — single scannable card replacing 3 separate sections */}
+            {/* Key Metrics - 2x2 Balanced Grid */}
+            <View style={styles.metricsGrid}>
+              <View style={styles.metricsRow}>
+                <DashboardMetric
+                  icon={<Icon name="members" size={18} color={colors.brand} />}
+                  iconBg={colors.brandSubtle}
+                  label="Active Members"
+                  value={data.total_active}
+                  detail={data.total_active === 0 ? 'No members added yet' : 'Current total'}
+                />
+                <DashboardMetric
+                  icon={<Icon name="time" size={18} color={colors.statusExpiring} />}
+                  iconBg={colors.statusExpiringSurface}
+                  label="Expiring Soon"
+                  value={data.expiring_soon}
+                  detail={data.expiring_today ? `${data.expiring_today} today` : data.expiring_soon > 0 ? 'Next 7 days' : 'None expiring'}
+                  detailColor={colors.statusExpiring}
+                />
+              </View>
+              <View style={styles.metricsRow}>
+                <DashboardMetric
+                  icon={<Icon name="alert" size={18} color={colors.statusExpired} />}
+                  iconBg={colors.statusExpiredSurface}
+                  label="Expired"
+                  value={data.expired}
+                  detail={data.expired > 0 ? 'Need attention' : 'None expired'}
+                  detailColor={colors.statusExpired}
+                />
+                <DashboardMetric
+                  icon={<Icon name="wallet" size={18} color={colors.statusPending} />}
+                  iconBg={colors.statusPendingSurface}
+                  label="Pending Payments"
+                  value={data.pending_payments}
+                  detail={data.pending_payments > 0 ? 'Awaiting review' : 'All clear'}
+                  detailColor={colors.statusPending}
+                />
+              </View>
+            </View>
+
+            {/* Inbound Leads & WhatsApp AI Card */}
             <View style={styles.card}>
               <SectionHeader
-                title="At a Glance"
-                icon={<Icon name="analytics" size={18} color={colors.brand} />}
+                title="Inbound Leads & AI Bot"
+                icon={<Icon name="robot" size={18} color={colors.brand} />}
+                actionLabel="View All Leads"
+                onAction={onNavigateBotLeads}
               />
-              <View style={styles.actionSummaryGrid}>
-                <TouchableOpacity style={styles.actionSummaryItem} onPress={onNavigateMembers} activeOpacity={0.7}>
-                  <Text style={[styles.actionSummaryValue, { color: colors.brand }]}>{data.total_active}</Text>
-                  <Text style={styles.actionSummaryLabel}>Active</Text>
+              <View style={styles.leadsStatsRow}>
+                <TouchableOpacity
+                  style={styles.leadStatTile}
+                  onPress={onNavigateBotLeads}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.leadStatValue}>{data.bot_summary?.total_leads ?? 0}</Text>
+                  <Text style={styles.leadStatLabel}>Total Leads</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionSummaryItem, styles.actionSummaryBorder]} onPress={onNavigateRenewals} activeOpacity={0.7}>
-                  <Text style={[styles.actionSummaryValue, { color: data.expiring_soon > 0 ? colors.statusExpiring : colors.muted }]}>{data.expiring_soon}</Text>
-                  <Text style={styles.actionSummaryLabel}>Expiring</Text>
+                <TouchableOpacity
+                  style={[styles.leadStatTile, styles.leadStatBorder]}
+                  onPress={onNavigateBotLeads}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.leadStatValue, { color: colors.brand }]}>
+                    {data.bot_summary?.new_leads ?? 0}
+                  </Text>
+                  <Text style={styles.leadStatLabel}>New Inquiries</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionSummaryItem, styles.actionSummaryBorder]} onPress={onNavigateRenewals} activeOpacity={0.7}>
-                  <Text style={[styles.actionSummaryValue, { color: data.expired > 0 ? colors.statusExpired : colors.muted }]}>{data.expired}</Text>
-                  <Text style={styles.actionSummaryLabel}>Expired</Text>
+                <TouchableOpacity
+                  style={[styles.leadStatTile, styles.leadStatBorder]}
+                  onPress={onNavigateBotLeads}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.leadStatValue, { color: colors.success }]}>
+                    {data.bot_summary?.trial_requests ?? 0}
+                  </Text>
+                  <Text style={styles.leadStatLabel}>Free Trials</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.actionSummaryItem, styles.actionSummaryBorder]} onPress={onNavigateBotLeads} activeOpacity={0.7}>
-                  <Text style={[styles.actionSummaryValue, { color: (data.bot_summary?.new_leads ?? 0) > 0 ? colors.brand : colors.muted }]}>{data.bot_summary?.new_leads ?? 0}</Text>
-                  <Text style={styles.actionSummaryLabel}>New Leads</Text>
+                <TouchableOpacity
+                  style={[styles.leadStatTile, styles.leadStatBorder]}
+                  onPress={onNavigateBotConversations}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.leadStatValue,
+                      { color: (data.bot_summary?.handover_count ?? 0) > 0 ? colors.critical : colors.textSecondary },
+                    ]}
+                  >
+                    {data.bot_summary?.handover_count ?? 0}
+                  </Text>
+                  <Text style={styles.leadStatLabel}>Handovers</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Revenue row — compact inline */}
-              {(data.revenue_today !== '0' || data.revenue_week !== '0' || data.revenue_month !== '0') ? (
-                <View style={styles.revenueInlineRow}>
-                  <Icon name="trendUp" size={14} color={colors.success} />
-                  <Text style={styles.revenueInlineLabel}>Revenue</Text>
-                  <Text style={styles.revenueInlineValue}>{formatCurrency(data.revenue_today ?? '0')} today</Text>
-                  <Text style={styles.revenueInlineSep}>·</Text>
-                  <Text style={styles.revenueInlineValue}>{formatCurrency(data.revenue_month ?? '0')} month</Text>
+              <View style={styles.leadsActionsRow}>
+                <TouchableOpacity
+                  style={styles.leadsQuickBtn}
+                  onPress={onNavigateBotConversations}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="chatbubble" size={16} color={colors.brand} />
+                  <Text style={styles.leadsQuickBtnText}>Open AI Chats</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.leadsQuickBtn, styles.leadsQuickBtnPrimary]}
+                  onPress={onNavigateWhatsApp}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="send" size={16} color={colors.textInverse} />
+                  <Text style={styles.leadsQuickBtnTextPrimary}>Broadcast / WhatsApp</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Revenue */}
+            <View style={styles.card}>
+              <View style={styles.revenueHeading}>
+                <SectionHeader title="Revenue Overview" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+                <View style={styles.periodPill}>
+                  <Text style={styles.periodPillText}>Live totals</Text>
                 </View>
+              </View>
+              <View style={styles.revenueGrid}>
+                <View style={styles.revenueItem}>
+                  <Text style={styles.revenueLabel}>Today</Text>
+                  <Text style={styles.revenueValue}>
+                    {formatCurrency(data.revenue_today ?? '0')}
+                  </Text>
+                </View>
+                <View style={[styles.revenueItem, styles.revenueItemBorder]}>
+                  <Text style={styles.revenueLabel}>This Week</Text>
+                  <Text style={styles.revenueValue}>
+                    {formatCurrency(data.revenue_week ?? '0')}
+                  </Text>
+                </View>
+                <View style={[styles.revenueItem, styles.revenueItemBorder]}>
+                  <Text style={styles.revenueLabel}>This Month</Text>
+                  <Text style={styles.revenueValue}>
+                    {formatCurrency(data.revenue_month ?? '0')}
+                  </Text>
+                </View>
+              </View>
+
+              {data.revenue_today === '0' && data.revenue_week === '0' && data.revenue_month === '0' ? (
+                <Text style={styles.revenueEmptyHint}>
+                  No payments recorded yet. Live totals will update as member fee collections are verified.
+                </Text>
               ) : null}
 
-              {/* Revenue at risk banner */}
               {data.revenue_at_risk && Number(data.revenue_at_risk) > 0 ? (
                 <TouchableOpacity
                   style={styles.revenueAtRiskBanner}
@@ -353,6 +454,44 @@ export function DashboardScreen({
                 </TouchableOpacity>
               ) : null}
             </View>
+
+            {/* Attention Required */}
+            {(data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0) ? (
+              <View style={styles.card}>
+                <SectionHeader
+                  title="Attention Required"
+                  icon={<Icon name="warning" size={18} color={colors.statusExpiring} />}
+                  actionLabel="View all"
+                  onAction={onNavigateRenewals}
+                />
+                <View style={styles.attentionGrid}>
+                  {data.expiring_soon > 0 ? (
+                    <AttentionTile
+                      color={colors.statusExpiring}
+                      label="Expiring soon"
+                      onPress={onNavigateRenewals}
+                      value={data.expiring_soon}
+                    />
+                  ) : null}
+                  {data.pending_payments > 0 ? (
+                    <AttentionTile
+                      color={colors.statusPending}
+                      label="Pending payments"
+                      onPress={onNavigatePayments}
+                      value={data.pending_payments}
+                    />
+                  ) : null}
+                  {data.expired > 0 ? (
+                    <AttentionTile
+                      color={colors.statusExpired}
+                      label="Expired members"
+                      onPress={onNavigateRenewals}
+                      value={data.expired}
+                    />
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
 
             {/* Upcoming Renewals */}
             <View style={styles.card}>
@@ -435,6 +574,16 @@ export function DashboardScreen({
                   <Text style={styles.emptyCardSub}>Tap Payment below to record your first member fee collection.</Text>
                 </View>
               )}
+            </View>
+
+            {/* Quick Actions */}
+            <View style={styles.quickActionsCard}>
+              <View style={styles.quickActions}>
+                <QuickAction icon={<Icon name="personAdd" size={21} color={colors.brand} />} label="Add Member" onPress={onNavigateAddMember} />
+                <QuickAction icon={<Icon name="renewals" size={21} color={colors.brand} />} label="Renew" onPress={onNavigateRenewals} />
+                <QuickAction icon={<Icon name="receipt" size={21} color={colors.brand} />} label="Payment" onPress={onNavigateRecordPayment ?? onNavigatePayments} />
+                <QuickAction icon={<Icon name="whatsapp" size={21} color={colors.whatsapp} />} label="WhatsApp" onPress={onNavigateWhatsApp ?? onNavigateSettings} />
+              </View>
             </View>
           </>
         ) : null}
@@ -572,7 +721,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.bottomTabSafe,
+    paddingBottom: spacing.section,
   },
   greeting: {
     paddingTop: spacing.xs,
@@ -651,59 +800,6 @@ const styles = StyleSheet.create({
   metricsRow: {
     flexDirection: 'row',
     gap: spacing.sm,
-  },
-  actionSummaryGrid: {
-    borderColor: colors.borderLight,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: 'row',
-    marginTop: spacing.md,
-    overflow: 'hidden',
-  },
-  actionSummaryItem: {
-    alignItems: 'center',
-    flex: 1,
-    paddingVertical: spacing.md,
-  },
-  actionSummaryBorder: {
-    borderLeftColor: colors.borderLight,
-    borderLeftWidth: 1,
-  },
-  actionSummaryValue: {
-    fontSize: fontSize['3xl'],
-    fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
-  },
-  actionSummaryLabel: {
-    color: colors.muted,
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.medium,
-    marginTop: spacing.xxs,
-  },
-  revenueInlineRow: {
-    alignItems: 'center',
-    backgroundColor: colors.gray50,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  revenueInlineLabel: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.semibold,
-  },
-  revenueInlineValue: {
-    color: colors.text,
-    fontSize: fontSize.sm,
-    fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.bold,
-  },
-  revenueInlineSep: {
-    color: colors.muted,
-    fontSize: fontSize.sm,
   },
   notificationButton: {
     alignItems: 'center',
