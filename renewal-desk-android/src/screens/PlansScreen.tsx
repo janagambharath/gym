@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 40,
   },
-  list: { gap: spacing.md, padding: spacing.lg, paddingBottom: spacing.section },
+  list: { gap: spacing.md, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   loadingWrap: { gap: spacing.md, padding: spacing.lg },
   notice: {
     alignItems: 'center',

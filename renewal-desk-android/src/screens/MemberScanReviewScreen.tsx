@@ -613,7 +613,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.md,
     padding: spacing.md,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   summaryCard: {
     backgroundColor: colors.card,

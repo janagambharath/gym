@@ -196,7 +196,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken
             {today.length > 0 ? (
               <View style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
-                  <View style={[styles.sectionDot, { backgroundColor: colors.statusExpired }]} />
+                  <View style={[styles.sectionDot, { backgroundColor: colors.statusExpiring }]} />
                   <Text style={styles.sectionTitle}>Expiring Today</Text>
                   <View style={styles.countBadge}>
                     <Text style={styles.countText}>{today.length}</Text>
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.xxl,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   countBadge: {
     backgroundColor: colors.gray200,
@@ -335,10 +335,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.brandSubtle,
     borderRadius: radius.md,
-    height: 36,
+    height: 44,
     justifyContent: 'center',
     marginLeft: spacing.sm,
-    width: 36,
+    width: 44,
   },
   safeArea: {
     backgroundColor: colors.background,

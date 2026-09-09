@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
   },
   changeMember: { paddingHorizontal: spacing.sm },
   changeMemberText: { color: colors.brand, fontSize: fontSize.base, fontWeight: fontWeight.semibold },
-  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.section },
+  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   fieldLabel: { color: colors.textSecondary, fontSize: fontSize.base, fontWeight: fontWeight.medium, marginBottom: spacing.sm, marginTop: spacing.md },
   flex: { flex: 1 },
   methodChip: {

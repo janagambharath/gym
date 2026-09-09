@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   },
   email: { color: colors.muted, fontSize: fontSize.sm },
   info: { flex: 1, marginLeft: spacing.md },
-  list: { gap: spacing.md, padding: spacing.lg, paddingBottom: spacing.section },
+  list: { gap: spacing.md, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   loadingWrap: { gap: spacing.md, padding: spacing.lg },
   meta: { color: colors.muted, fontSize: fontSize.xs, marginTop: spacing.xs },
   name: { color: colors.text, fontSize: fontSize.lg, fontWeight: fontWeight.semibold },

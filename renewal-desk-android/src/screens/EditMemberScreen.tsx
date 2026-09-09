@@ -244,7 +244,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   flex: { flex: 1 },
   planButton: {

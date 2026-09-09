@@ -20,7 +20,6 @@ import { ErrorState } from '../components/ErrorState';
 import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
-import { WhatsAppOnboardingModal } from '../components/WhatsAppOnboardingModal';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
@@ -59,6 +58,7 @@ type BotMessage = {
 type WhatsAppScreenProps = {
   onBack: () => void;
   onNavigateMemberDetail?: (memberId: number) => void;
+  onNavigateSetup?: () => void;
 };
 
 const REMINDER_FILTERS = [
@@ -95,8 +95,8 @@ const PRESETS = [
   },
 ];
 
-export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScreenProps) {
-  const [activeTab, setActiveTab] = useState<'reminders' | 'broadcast' | 'leads'>('reminders');
+export function WhatsAppScreen({ onBack, onNavigateMemberDetail, onNavigateSetup }: WhatsAppScreenProps) {
+  const [activeTab, setActiveTab] = useState<'reminders' | 'broadcast'>('reminders');
 
   // Reminders state
   const [reminders, setReminders] = useState<ReminderLog[]>([]);
@@ -118,7 +118,6 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [selectedLead, setSelectedLead] = useState<BotLead | null>(null);
   const [leadMessages, setLeadMessages] = useState<BotMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
-  const [onboardingModalVisible, setOnboardingModalVisible] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
 
@@ -205,15 +204,12 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   useEffect(() => {
     if (activeTab === 'reminders') {
       void fetchReminders(1, reminderFilter);
-    } else if (activeTab === 'leads') {
-      void fetchLeads(leadFilter);
     }
-  }, [activeTab, reminderFilter, leadFilter, fetchReminders, fetchLeads]);
+  }, [activeTab, reminderFilter, fetchReminders]);
 
-  const handleTabChange = useCallback((tab: 'reminders' | 'broadcast' | 'leads') => {
+  const handleTabChange = useCallback((tab: 'reminders' | 'broadcast') => {
     if (tab === activeTab) return;
     if (tab === 'reminders') setRemindersLoading(true);
-    else if (tab === 'leads') setLeadsLoading(true);
     setActiveTab(tab);
   }, [activeTab]);
 
@@ -375,11 +371,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
 
       <View style={styles.container}>
         {/* Connection Status */}
-        <TouchableOpacity
-          style={styles.statusCard}
-          onPress={() => setOnboardingModalVisible(true)}
-          activeOpacity={0.8}
-        >
+        <View style={styles.statusCard}>
           <View style={styles.statusRow}>
             <Icon
               name="whatsapp"
@@ -413,26 +405,36 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
                   : whatsappStatus === 'action_required'
                     ? 'Action Required — Finish WhatsApp setup in Meta to continue.'
                     : whatsappStatus === 'failed'
-                      ? 'Connection Failed — We couldn’t complete the connection. Tap to retry.'
+                      ? 'Connection Failed — Meta template delivery issue.'
                       : whatsappStatus === 'pending'
                         ? 'Verification in Progress — Meta is reviewing your account.'
                         : 'Not Connected — Connect your business number to automate reminders.'}
               </Text>
             </View>
-            <View style={styles.setupActionBadge}>
-              <Text style={styles.setupActionBadgeText}>
-                {whatsappStatus === 'connected'
-                  ? 'Settings'
-                  : whatsappStatus === 'failed'
-                    ? 'Retry'
-                    : 'Connect'}
-              </Text>
-              <Icon name="forward" size={16} color={colors.whatsapp} />
-            </View>
           </View>
-        </TouchableOpacity>
+        </View>
 
-        {/* 3-Tab Toggle */}
+        {/* Connect WhatsApp CTA — shown when not connected */}
+        {(whatsappStatus === 'not_connected' || whatsappStatus === 'NOT_CONNECTED') && onNavigateSetup ? (
+          <TouchableOpacity
+            style={styles.connectCta}
+            onPress={onNavigateSetup}
+            activeOpacity={0.8}
+          >
+            <View style={styles.connectCtaIcon}>
+              <Icon name="whatsapp" size={22} color={colors.textInverse} />
+            </View>
+            <View style={styles.connectCtaContent}>
+              <Text style={styles.connectCtaTitle}>Connect Your WhatsApp Business</Text>
+              <Text style={styles.connectCtaSubtext}>
+                Link your number to enable automated reminders, AI receptionist, and broadcasts.
+              </Text>
+            </View>
+            <Icon name="forward" size={18} color={colors.textInverse} />
+          </TouchableOpacity>
+        ) : null}
+
+        {/* 2-Tab Toggle */}
         <View style={styles.tabToggle}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'reminders' && styles.tabButtonActive]}
@@ -448,14 +450,6 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           >
             <Text style={[styles.tabText, activeTab === 'broadcast' && styles.tabTextActive]}>
               📢 Broadcast
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'leads' && styles.tabButtonActive]}
-            onPress={() => handleTabChange('leads')}
-          >
-            <Text style={[styles.tabText, activeTab === 'leads' && styles.tabTextActive]}>
-              AI Leads
             </Text>
           </TouchableOpacity>
         </View>
@@ -611,41 +605,6 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           </ScrollView>
         ) : null}
 
-        {/* TAB 3: LEADS */}
-        {activeTab === 'leads' ? (
-          <>
-            <FilterChips
-              options={LEAD_FILTERS}
-              selected={leadFilter}
-              onSelect={handleLeadFilterChange}
-            />
-
-            {leadsLoading && !leadsRefreshing ? (
-              <View style={styles.loadingWrap}>
-                <CardSkeleton />
-                <CardSkeleton />
-              </View>
-            ) : leadsError ? (
-              <ErrorState message={leadsError} onRetry={refreshLeads} />
-            ) : leads.length === 0 ? (
-              <EmptyState
-                icon={<Icon name="members" size={40} color={colors.muted} />}
-                title="No AI leads yet"
-                subtitle="New prospect inquiries from WhatsApp will appear here."
-              />
-            ) : (
-              <FlatList
-                data={leads}
-                keyExtractor={(item) => String(item.id)}
-                renderItem={renderLead}
-                contentContainerStyle={styles.listContent}
-                refreshControl={
-                  <RefreshControl refreshing={leadsRefreshing} onRefresh={refreshLeads} tintColor={colors.brand} />
-                }
-              />
-            )}
-          </>
-        ) : null}
       </View>
 
       {/* Selected Lead Modal */}
@@ -690,14 +649,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
         </SafeAreaView>
       </Modal>
 
-      <WhatsAppOnboardingModal
-        visible={onboardingModalVisible}
-        onClose={() => setOnboardingModalVisible(false)}
-        onConnected={() => {
-          refreshReminders();
-          refreshLeads();
-        }}
-      />
+
     </SafeAreaView>
   );
 }
@@ -744,7 +696,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   broadcastContainer: {
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   broadcastInput: {
     backgroundColor: colors.card,
@@ -814,7 +766,7 @@ const styles = StyleSheet.create({
   dotDisconnected: { backgroundColor: colors.muted },
   errorText: { color: colors.critical, fontSize: fontSize.xs, marginTop: 2 },
   leadHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs },
-  listContent: { gap: spacing.xs, paddingBottom: spacing.section },
+  listContent: { gap: spacing.xs, paddingBottom: spacing.bottomTabSafe },
   loadingWrap: { gap: spacing.md },
   messageBubble: {
     borderRadius: radius.lg,
@@ -963,5 +915,37 @@ const styles = StyleSheet.create({
     color: '#8696a0',
     fontSize: fontSize.xs,
     marginBottom: spacing.xs,
+  },
+  connectCta: {
+    alignItems: 'center',
+    backgroundColor: colors.whatsapp,
+    borderRadius: radius.lg,
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+    padding: spacing.lg,
+    ...shadows.md,
+  },
+  connectCtaIcon: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: radius.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  connectCtaContent: {
+    flex: 1,
+  },
+  connectCtaTitle: {
+    color: colors.textInverse,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+  },
+  connectCtaSubtext: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: fontSize.xs,
+    lineHeight: 16,
+    marginTop: spacing.xxs,
   },
 });

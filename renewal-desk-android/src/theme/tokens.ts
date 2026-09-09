@@ -104,6 +104,7 @@ export const spacing = {
   xxxl: 32,
   xxxxl: 40,
   section: 48,
+  bottomTabSafe: 80,
 } as const;
 
 // ─── Radius Scale ────────────────────────────────────────────────────

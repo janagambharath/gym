@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
   listContent: {
     gap: spacing.sm,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   markAllBtn: {
     paddingHorizontal: spacing.sm,

@@ -3,6 +3,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -53,7 +54,11 @@ export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
       >
-        <View style={styles.container}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           {/* Branding */}
           <View style={styles.branding}>
             <View style={styles.logoContainer}>
@@ -151,7 +156,7 @@ export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
           <Text style={styles.footer}>
             Secure login · Data encrypted in transit
           </Text>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -176,9 +181,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.xxl,
+    paddingBottom: spacing.bottomTabSafe,
   },
   divider: {
     flexDirection: 'row',

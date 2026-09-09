@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
   },
   cardHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   cardTitle: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold },
-  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.section },
+  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   periodChip: {
     borderColor: colors.border,
     borderRadius: radius.md,

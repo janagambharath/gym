@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     ...shadows.sm,
   },
-  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.section },
+  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   headerCard: {
     backgroundColor: colors.card,
     borderColor: colors.border,

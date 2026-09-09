@@ -14,6 +14,7 @@ import { GoogleAuthButton } from '../components/GoogleAuthButton';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import { googleLogin, signup } from '../services/apiClient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 interface SignupScreenProps {
   onSignupSuccess: () => void;
@@ -92,6 +93,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
   };
 
   return (
+    <SafeAreaView style={styles.safeArea}>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -311,11 +313,15 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  safeArea: {
     flex: 1,
     backgroundColor: colors.background,
   },
@@ -323,6 +329,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     padding: spacing.xl,
+    paddingBottom: spacing.bottomTabSafe,
   },
   header: {
     alignItems: 'center',

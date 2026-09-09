@@ -169,6 +169,10 @@ def test_whatsapp_onboarding_and_connection(client, app):
         db.session.add(owner)
         db.session.commit()
 
+    # Set Meta config for embedded signup
+    app.config["META_APP_ID"] = "test_meta_app_id"
+    app.config["META_CONFIG_ID"] = "test_meta_config_id"
+
     login_resp = client.post("/api/mobile/v1/auth/login", json={"email": "wa.owner@example.com", "password": "password123"})
     token = login_resp.get_json()["data"]["access_token"]
     headers = {"Authorization": f"Bearer {token}"}

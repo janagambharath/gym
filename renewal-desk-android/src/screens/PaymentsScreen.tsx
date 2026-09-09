@@ -331,6 +331,7 @@ const styles = StyleSheet.create({
   listContent: {
     gap: spacing.md,
     padding: spacing.lg,
+    paddingBottom: spacing.bottomTabSafe,
   },
   memberName: {
     color: colors.text,

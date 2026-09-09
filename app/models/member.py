@@ -85,7 +85,6 @@ class Member(TenantMixin, TimestampMixin, db.Model):
         return value
 
     @property
-
     def days_until_expiry(self) -> int:
         gym_timezone = self.gym.timezone if self.gym else "Asia/Kolkata"
         return (self.membership_end - today_for_gym(gym_timezone)).days

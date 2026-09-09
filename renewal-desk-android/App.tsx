@@ -39,6 +39,7 @@ import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
 import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
+import { WhatsAppSetupScreen } from './src/screens/WhatsAppSetupScreen';
 import { apiRequest, restoreSession, type ScanDocumentResult } from './src/services/apiClient';
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
@@ -59,6 +60,7 @@ type DashboardStackParamList = {
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
   WhatsApp: undefined;
+  WhatsAppSetup: undefined;
   BotOverview: undefined;
   BotConversations: undefined;
   BotConversationDetail: { conversation: BotConversation };
@@ -99,6 +101,7 @@ type MoreStackParamList = {
   MoreHome: undefined;
   Subscription: undefined;
   WhatsApp: undefined;
+  WhatsAppSetup: undefined;
   BotOverview: undefined;
   BotConversations: undefined;
   BotConversationDetail: { conversation: BotConversation };
@@ -331,7 +334,18 @@ function DashboardStackScreen({
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="WhatsApp">
         {(props) => (
-          <WhatsAppScreen onBack={() => props.navigation.goBack()} />
+          <WhatsAppScreen
+            onBack={() => props.navigation.goBack()}
+            onNavigateSetup={() => props.navigation.navigate('WhatsAppSetup')}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="WhatsAppSetup">
+        {(props) => (
+          <WhatsAppSetupScreen
+            onBack={() => props.navigation.goBack()}
+            onConnected={refresh}
+          />
         )}
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="BotOverview">
@@ -673,7 +687,15 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
         {(props) => <SubscriptionScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="WhatsApp">
-        {(props) => <WhatsAppScreen onBack={() => props.navigation.goBack()} />}
+        {(props) => (
+          <WhatsAppScreen
+            onBack={() => props.navigation.goBack()}
+            onNavigateSetup={() => props.navigation.navigate('WhatsAppSetup')}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="WhatsAppSetup">
+        {(props) => <WhatsAppSetupScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="BotOverview">
         {(props) => (
@@ -910,8 +932,8 @@ function AppRoot() {
               backgroundColor: colors.surface,
               borderTopColor: colors.border,
               borderTopWidth: 1,
-              height: Platform.OS === 'ios' ? 84 : 64,
-              paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+              height: Platform.OS === 'ios' ? 88 : 64,
+              paddingBottom: Platform.OS === 'ios' ? 28 : 8,
               paddingTop: 8,
             },
             tabBarIcon: ({ focused, color }) => {

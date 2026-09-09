@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.bottomTabSafe,
   },
   daysBar: {
     alignItems: 'center',

@@ -90,7 +90,7 @@ function Summary({ label, value }: { label: string; value: number }) { return <V
 
 const styles = StyleSheet.create({
   card: { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, gap: spacing.md, padding: spacing.lg },
-  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.section },
+  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   error: { color: colors.critical, fontSize: fontSize.sm, lineHeight: 20 },
   errorCard: { backgroundColor: colors.criticalSurface, borderColor: colors.criticalBorder, borderRadius: radius.md, borderWidth: 1, padding: spacing.md },
   fileName: { color: colors.success, fontSize: fontSize.sm, fontWeight: fontWeight.medium },

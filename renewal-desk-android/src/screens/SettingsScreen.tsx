@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
-  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,9 +9,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
-import { InfoRow } from '../components/InfoRow';
+
 import { PrimaryButton } from '../components/PrimaryButton';
-import { SectionHeader } from '../components/SectionHeader';
+
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
@@ -92,7 +91,6 @@ export function SettingsScreen({
       >
         {/* Account */}
         <View style={styles.card}>
-          <SectionHeader title="Account" icon={<Icon name="person" size={18} color={colors.brand} />} />
           <View style={styles.accountInfo}>
             <Avatar name={session?.userName ?? 'U'} size={56} />
             <View style={styles.accountDetails}>
@@ -100,18 +98,20 @@ export function SettingsScreen({
               <Text style={styles.accountRole}>
                 {session?.userRole === 'gym_owner' ? 'Gym Owner' : 'Staff'}
               </Text>
+              {gym ? (
+                <View style={styles.gymNameRow}>
+                  <Icon name="fitness" size={13} color={colors.muted} />
+                  <Text style={styles.gymNameInline} numberOfLines={1}>{gym.name}</Text>
+                </View>
+              ) : null}
             </View>
           </View>
         </View>
 
-        {/* Quick Navigation */}
+        {/* Gym Operations */}
         <View style={styles.card}>
-          <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
+          <Text style={styles.sectionGroupTitle}>GYM OPERATIONS</Text>
           <View style={styles.menuList}>
-            <MenuItem icon="wallet" label="Subscription & Billing" onPress={onNavigateSubscription} />
-            <MenuItem icon="whatsapp" label="WhatsApp Reminders" onPress={onNavigateWhatsApp} />
-            <MenuItem icon="robot" label="AI Receptionist (Bot)" onPress={onNavigateBot} />
-            <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
             <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
             {session?.userRole === 'gym_owner' ? (
               <MenuItem icon="staff" label="Staff Management" onPress={onNavigateStaff} />
@@ -120,92 +120,65 @@ export function SettingsScreen({
           </View>
         </View>
 
-        {/* Gym Information */}
-        {gym ? (
-          <View style={styles.card}>
-            <SectionHeader title="Gym Information" icon={<Icon name="business" size={18} color={colors.brand} />} />
-            <View style={styles.infoList}>
-              <InfoRow label="Name" value={gym.name} />
-              <InfoRow label="Email" value={gym.email ?? '—'} />
-              <InfoRow label="Phone" value={gym.phone ?? '—'} />
-              <InfoRow label="Address" value={gym.address ?? '—'} />
-              <InfoRow label="Timezone" value={gym.timezone ?? 'Asia/Kolkata'} />
-            </View>
-          </View>
-        ) : null}
-
-        {/* Subscription */}
-        {gym ? (
-          <View style={styles.card}>
-            <SectionHeader title="Subscription" icon={<Icon name="shield" size={18} color={colors.brand} />} />
-            <View style={styles.subscriptionRow}>
-              <Text style={styles.subscriptionLabel}>Status</Text>
-              <StatusBadge
-                status={gym.subscription_status === 'active' ? 'active' : gym.subscription_status ?? 'pending'}
-                size="md"
-              />
-            </View>
-            {gym.max_members ? (
-              <InfoRow label="Member Limit" value={String(gym.max_members)} />
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* WhatsApp */}
-        {gym ? (
-          <TouchableOpacity style={styles.card} onPress={onNavigateWhatsApp} activeOpacity={0.7}>
-            <SectionHeader title="WhatsApp" icon={<Icon name="whatsapp" size={18} color={colors.whatsapp} />} />
-            <View style={styles.whatsappRow}>
-              <View style={[styles.whatsappDot, { backgroundColor: gym.whatsapp_enabled ? colors.whatsapp : colors.gray300 }]} />
-              <Text style={styles.whatsappStatus}>
-                {gym.whatsapp_enabled ? 'Connected & Active' : 'Not Configured'}
-              </Text>
-              <View style={styles.flex} />
+        {/* Integrations */}
+        <View style={styles.card}>
+          <Text style={styles.sectionGroupTitle}>INTEGRATIONS</Text>
+          <View style={styles.menuList}>
+            <TouchableOpacity style={styles.menuItem} onPress={onNavigateWhatsApp} activeOpacity={0.6}>
+              <View style={[styles.menuIconWrap, { backgroundColor: '#ECFDF5' }]}>
+                <Icon name="whatsapp" size={18} color={colors.whatsapp} />
+              </View>
+              <Text style={styles.menuLabel}>WhatsApp Reminders</Text>
+              <View style={[styles.statusDotInline, { backgroundColor: gym?.whatsapp_enabled ? colors.whatsapp : colors.gray300 }]} />
               <Icon name="forward" size={16} color={colors.muted} />
-            </View>
-          </TouchableOpacity>
-        ) : null}
-
-        {/* About */}
-        <View style={styles.card}>
-          <View style={styles.aboutHeader}>
-            <Image
-              source={require('../../assets/logo.png')}
-              style={styles.aboutLogo}
-              resizeMode="contain"
-            />
-            <View style={styles.aboutInfo}>
-              <Text style={styles.aboutTitle}>Renewal Desk</Text>
-              <Text style={styles.aboutSubtitle}>Gym Management & AI Receptionist</Text>
-            </View>
+            </TouchableOpacity>
+            <MenuItem icon="robot" label="AI Receptionist" onPress={onNavigateBot} />
+            <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
           </View>
-          <InfoRow label="Version" value="1.0.0" />
-          <InfoRow label="Build" value="Production Release (Build 5)" />
         </View>
 
-        {/* Account Management & Danger Zone */}
+        {/* Billing */}
         <View style={styles.card}>
-          <SectionHeader title="Account Management" icon={<Icon name="shield" size={18} color={colors.critical} />} />
-          <Text style={styles.dangerZoneText}>
-            Permanently delete your account, gym records, member database, and message logs.
-          </Text>
-          <TouchableOpacity
-            style={styles.deleteAccountBtn}
-            onPress={handleDeleteAccount}
-            activeOpacity={0.7}
-          >
-            <Icon name="delete" size={16} color={colors.critical} />
-            <Text style={styles.deleteAccountBtnText}>Delete Account & Data</Text>
-          </TouchableOpacity>
+          <Text style={styles.sectionGroupTitle}>BILLING</Text>
+          <View style={styles.menuList}>
+            <TouchableOpacity style={styles.menuItem} onPress={onNavigateSubscription} activeOpacity={0.6}>
+              <View style={styles.menuIconWrap}>
+                <Icon name="shield" size={18} color={colors.brand} />
+              </View>
+              <Text style={styles.menuLabel}>Subscription & Billing</Text>
+              {gym ? (
+                <StatusBadge
+                  status={gym.subscription_status === 'active' ? 'active' : gym.subscription_status ?? 'pending'}
+                  size="sm"
+                />
+              ) : null}
+              <Icon name="forward" size={16} color={colors.muted} />
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* Logout */}
+        {/* About footer */}
+        <View style={styles.aboutFooter}>
+          <Text style={styles.aboutFooterText}>Renewal Desk v1.0.0 · Build 5</Text>
+        </View>
+
+        {/* Sign Out */}
         <PrimaryButton
           title="Sign Out"
           icon={<Icon name="logout" size={18} color={colors.textInverse} />}
           onPress={() => void handleLogout()}
           variant="secondary"
         />
+
+        {/* Delete Account — separated visually */}
+        <TouchableOpacity
+          style={styles.deleteAccountBtn}
+          onPress={handleDeleteAccount}
+          activeOpacity={0.7}
+        >
+          <Icon name="delete" size={16} color={colors.critical} />
+          <Text style={styles.deleteAccountBtnText}>Delete Account & Data</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -257,7 +230,6 @@ const styles = StyleSheet.create({
   accountInfo: {
     alignItems: 'center',
     flexDirection: 'row',
-    marginTop: spacing.lg,
   },
   accountName: {
     color: colors.text,
@@ -280,7 +252,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   flex: { flex: 1 },
   header: {
@@ -376,5 +348,36 @@ const styles = StyleSheet.create({
     color: colors.critical,
     fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,
+  },
+  sectionGroupTitle: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    letterSpacing: 0.8,
+    marginBottom: spacing.xs,
+  },
+  gymNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  gymNameInline: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+  },
+  statusDotInline: {
+    borderRadius: 5,
+    height: 8,
+    marginRight: spacing.sm,
+    width: 8,
+  },
+  aboutFooter: {
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  aboutFooterText: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
   },
 });

@@ -232,6 +232,34 @@ export function BotConversationDetailScreen({
             <StatusBadge status={currentConversation.handover_status} />
           </View>
 
+          {/* Conversation Mode Indicator */}
+          <View style={[
+            styles.modeIndicator,
+            isClosed
+              ? styles.modeIndicatorClosed
+              : isStaffActive
+                ? styles.modeIndicatorHuman
+                : styles.modeIndicatorAI,
+          ]}>
+            <Icon
+              name={isClosed ? 'lock' : isStaffActive ? 'person' : 'robot'}
+              size={16}
+              color={isClosed ? colors.muted : isStaffActive ? colors.info : colors.success}
+            />
+            <Text style={[
+              styles.modeIndicatorText,
+              { color: isClosed ? colors.muted : isStaffActive ? colors.info : colors.successDark },
+            ]}>
+              {isClosed
+                ? 'Conversation closed'
+                : isStaffActive
+                  ? 'Staff is handling this conversation'
+                  : currentConversation.handover_status === 'human_requested'
+                    ? '⚡ Customer requested staff — AI paused'
+                    : 'AI Receptionist is handling this conversation'}
+            </Text>
+          </View>
+
           {notice ? (
             <View style={[styles.notice, notice.kind === 'success' ? styles.successNotice : styles.errorNotice]}>
               <Icon
@@ -366,7 +394,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.section,
+    paddingBottom: spacing.bottomTabSafe,
   },
   customerName: {
     color: colors.text,
@@ -530,5 +558,30 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     fontWeight: fontWeight.medium,
     flex: 1,
+  },
+  modeIndicator: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  modeIndicatorAI: {
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+  },
+  modeIndicatorHuman: {
+    backgroundColor: colors.infoSurface,
+    borderColor: colors.infoBorder,
+  },
+  modeIndicatorClosed: {
+    backgroundColor: colors.gray100,
+    borderColor: colors.border,
+  },
+  modeIndicatorText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
   },
 });

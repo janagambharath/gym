@@ -441,7 +441,7 @@ const styles = StyleSheet.create({
   content: {
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.bottomTabSafe,
   },
   duplicateNotice: {
     alignItems: 'flex-start',
@@ -592,7 +592,7 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     gap: spacing.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    paddingBottom: spacing.bottomTabSafe,
   },
   successExpiry: {
     color: colors.statusPending,

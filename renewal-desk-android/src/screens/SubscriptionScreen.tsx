@@ -421,7 +421,7 @@ export function SubscriptionScreen({ onBack }: SubscriptionScreenProps) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  scrollContent: { padding: spacing.md, paddingBottom: spacing.xxl },
+  scrollContent: { padding: spacing.md, paddingBottom: spacing.bottomTabSafe },
   feedbackBanner: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, borderRadius: radius.md, marginBottom: spacing.md },
   feedbackSuccess: { backgroundColor: colors.successSurface },
   feedbackError: { backgroundColor: colors.criticalSurface },

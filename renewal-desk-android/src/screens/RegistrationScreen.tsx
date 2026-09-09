@@ -136,7 +136,7 @@ export function RegistrationScreen({ onBack, onRegistered }: RegistrationScreenP
 
 const styles = StyleSheet.create({
   card: { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.lg, borderWidth: 1, gap: spacing.md, padding: spacing.lg },
-  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.section },
+  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   country: { borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', padding: spacing.md },
   countrySelected: { borderColor: colors.brand, backgroundColor: colors.brandSubtle },
   error: { backgroundColor: colors.criticalSurface, borderColor: colors.criticalBorder, borderRadius: radius.md, borderWidth: 1, padding: spacing.md },

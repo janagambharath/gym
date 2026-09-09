@@ -295,8 +295,21 @@ def register_whatsapp_routes(bp):
     def onboarding_config():
         """Return Meta Embedded Signup client configuration."""
         gym = g.current_user.gym
-        meta_app_id = current_app.config.get("META_APP_ID") or "1711816793132513"
-        config_id = current_app.config.get("META_CONFIG_ID") or "107597391155167"
+        meta_app_id = current_app.config.get("META_APP_ID", "")
+        config_id = current_app.config.get("META_CONFIG_ID", "")
+
+        if not meta_app_id or not config_id:
+            current_app.logger.warning(
+                "META_APP_ID or META_CONFIG_ID is not set in environment for gym %s. "
+                "Embedded Signup will not work.",
+                gym.id,
+            )
+            return error_response(
+                "CONFIGURATION_ERROR",
+                "Meta App ID or Configuration ID is not configured. "
+                "Please contact support to complete WhatsApp setup.",
+                500,
+            )
 
         return jsonify({
             "success": True,
@@ -321,6 +334,45 @@ def register_whatsapp_routes(bp):
                 ],
             },
         })
+
+    @bp.route("/whatsapp/embedded-signup-page", methods=["GET"])
+    def embedded_signup_page():
+        """Serve the Meta Embedded Signup HTML page for the mobile WebView.
+
+        This is intentionally unauthenticated — the React Native WebView
+        cannot easily forward Bearer tokens for HTML page loads. The Meta
+        App ID and Config ID are passed as query parameters from the
+        authenticated onboarding-config endpoint.
+        """
+        meta_app_id = request.args.get("meta_app_id", "")
+        config_id = request.args.get("config_id", "")
+
+        if not meta_app_id or not config_id:
+            return "<h1>Configuration Error</h1><p>Meta App ID or Configuration ID is missing.</p>", 400
+
+        html = _EMBEDDED_SIGNUP_HTML.replace("{{META_APP_ID}}", meta_app_id).replace(
+            "{{META_CONFIG_ID}}", config_id
+        )
+
+        from flask import make_response
+
+        resp = make_response(html, 200)
+        resp.headers["Content-Type"] = "text/html; charset=utf-8"
+        # Relax CSP for this page only — Meta SDK requires connect-src and script-src
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://connect.facebook.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' data: https: blob:; "
+            "connect-src 'self' https://graph.facebook.com https://www.facebook.com https://web.facebook.com; "
+            "frame-src https://www.facebook.com https://web.facebook.com; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self';"
+        )
+        # Allow framing by self for Meta popup
+        resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+        return resp
 
     @bp.route("/whatsapp/connect-waba", methods=["POST"])
     @token_required
@@ -402,3 +454,208 @@ def register_whatsapp_routes(bp):
             },
         })
 
+
+# ---------------------------------------------------------------------------
+# Embedded Signup HTML — self-contained page loaded inside the mobile WebView.
+# Placeholders {{META_APP_ID}} and {{META_CONFIG_ID}} are replaced at serve time.
+# ---------------------------------------------------------------------------
+
+_EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Connect WhatsApp Business</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #F8F9FB; color: #0F172A;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 32px 24px;
+  }
+  .logo { font-size: 28px; font-weight: 800; margin-bottom: 8px; color: #0F172A; }
+  .subtitle { font-size: 14px; color: #64748B; margin-bottom: 32px; text-align: center; }
+  .card {
+    background: #fff; border: 1px solid #E2E8F0; border-radius: 16px;
+    padding: 28px 24px; width: 100%; max-width: 420px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .card h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .card p { font-size: 13px; color: #475569; line-height: 1.5; margin-bottom: 20px; }
+  .steps { list-style: none; margin-bottom: 24px; }
+  .steps li {
+    padding: 10px 0; border-bottom: 1px solid #F1F5F9;
+    font-size: 13px; color: #334155; display: flex; align-items: flex-start; gap: 10px;
+  }
+  .steps li:last-child { border-bottom: none; }
+  .step-num {
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+    background: #2563EB; color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn-connect {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 14px 0; border: none; border-radius: 12px;
+    background: #25D366; color: #fff; font-size: 16px; font-weight: 700;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn-connect:hover { opacity: 0.9; }
+  .btn-connect:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-cancel {
+    display: block; width: 100%; text-align: center;
+    margin-top: 16px; padding: 10px; border: none; background: none;
+    color: #94A3B8; font-size: 13px; cursor: pointer;
+  }
+  .status { text-align: center; margin-top: 20px; font-size: 13px; color: #64748B; }
+  .status.error { color: #DC2626; }
+</style>
+</head>
+<body>
+
+<div class="logo">Renewal Desk</div>
+<p class="subtitle">Connect your WhatsApp Business account</p>
+
+<div class="card">
+  <h2>WhatsApp Setup</h2>
+  <p>Connect your existing WhatsApp Business number to enable automated renewal reminders, AI receptionist, and broadcast messages.</p>
+
+  <ol class="steps">
+    <li><span class="step-num">1</span> Tap <strong>Connect WhatsApp</strong> below</li>
+    <li><span class="step-num">2</span> Sign in with your Facebook/Meta Business account</li>
+    <li><span class="step-num">3</span> Select or create a WhatsApp Business account</li>
+    <li><span class="step-num">4</span> Choose the phone number to connect</li>
+  </ol>
+
+  <button id="connectBtn" class="btn-connect" onclick="startSignup()" disabled>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.11.546 4.093 1.502 5.817L0 24l6.334-1.478A11.94 11.94 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.82a9.78 9.78 0 01-5.282-1.546l-.38-.226-3.935.918.975-3.843-.248-.395A9.776 9.776 0 012.18 12 9.82 9.82 0 0112 2.18 9.82 9.82 0 0121.82 12 9.82 9.82 0 0112 21.82z"/></svg>
+    Connect WhatsApp
+  </button>
+  <button class="btn-cancel" onclick="cancelSetup()">Cancel</button>
+  <p id="statusText" class="status"></p>
+</div>
+
+<!-- Meta Facebook SDK -->
+<script async defer crossorigin="anonymous"
+  src="https://connect.facebook.net/en_US/sdk.js"></script>
+
+<script>
+  var META_APP_ID = '{{META_APP_ID}}';
+  var META_CONFIG_ID = '{{META_CONFIG_ID}}';
+
+  // Post message helper — works in React Native WebView
+  function postToApp(data) {
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(data));
+    }
+  }
+
+  function setStatus(msg, isError) {
+    var el = document.getElementById('statusText');
+    el.textContent = msg;
+    el.className = isError ? 'status error' : 'status';
+  }
+
+  // Initialize Facebook SDK
+  window.fbAsyncInit = function() {
+    FB.init({
+      appId: META_APP_ID,
+      autoLogAppEvents: true,
+      xfbml: false,
+      version: 'v21.0'
+    });
+    document.getElementById('connectBtn').disabled = false;
+    setStatus('Ready. Tap Connect WhatsApp to begin.', false);
+  };
+
+  function startSignup() {
+    document.getElementById('connectBtn').disabled = true;
+    setStatus('Opening Meta Business login...', false);
+
+    FB.login(function(response) {
+      if (response.authResponse) {
+        var code = response.authResponse.code;
+        setStatus('Signed in. Retrieving WhatsApp Business details...', false);
+
+        // The Embedded Signup flow returns the selected WABA and phone number
+        // via the sessionInfoListener callback set in the login extras.
+        // We also pass the auth code so the backend can exchange it if needed.
+        // Note: The actual WABA/phone info comes from the sessionInfoListener.
+
+        // If we got here without sessionInfoListener firing, handle it via the code
+        if (code) {
+          setStatus('Authentication successful. Please complete business selection...', false);
+        }
+      } else {
+        document.getElementById('connectBtn').disabled = false;
+        setStatus('Login was cancelled or failed.', true);
+      }
+    }, {
+      config_id: META_CONFIG_ID,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: {
+        setup: {},
+        featureType: 'only_waba_sharing',
+        sessionInfoVersion: 2
+      }
+    });
+  }
+
+  // Meta Embedded Signup session info listener
+  // This fires when the user completes business/phone selection
+  window.addEventListener('message', function(event) {
+    // Only process messages from Facebook domain
+    if (!event.origin || (!event.origin.includes('facebook.com') && event.origin !== window.location.origin)) {
+      return;
+    }
+
+    try {
+      var data;
+      if (typeof event.data === 'string') {
+        data = JSON.parse(event.data);
+      } else {
+        data = event.data;
+      }
+
+      // Handle the session info from Meta Embedded Signup
+      if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
+        var setupData = data.data;
+        if (setupData && setupData.phone_number_id) {
+          setStatus('WhatsApp Business connected! Saving...', false);
+          postToApp({
+            type: 'embedded_signup_complete',
+            waba_id: setupData.waba_id || '',
+            phone_number_id: setupData.phone_number_id,
+            business_phone_number: setupData.display_phone_number || ''
+          });
+          return;
+        }
+
+        if (setupData && setupData.current_step === 'success') {
+          setStatus('Setup complete. Finalizing...', false);
+          return;
+        }
+      }
+
+      // Also handle the newer callback format
+      if (data && (data.waba_id || data.phone_number_id)) {
+        setStatus('WhatsApp Business connected! Saving...', false);
+        postToApp({
+          type: 'embedded_signup_complete',
+          waba_id: data.waba_id || '',
+          phone_number_id: data.phone_number_id || '',
+          business_phone_number: data.display_phone_number || ''
+        });
+      }
+    } catch (e) {
+      // Ignore non-JSON messages from other frames
+    }
+  });
+
+  function cancelSetup() {
+    postToApp({ type: 'embedded_signup_cancel' });
+  }
+</script>
+</body>
+</html>"""
