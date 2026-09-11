@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "online.revorax.renewaldesk",
-      "versionCode": 24,
+      "versionCode": 25,
       "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",
@@ -61,9 +61,9 @@
     },
     "extra": {
       "eas": {
-        "projectId": "7eef8559-b676-40bc-a7e0-faa9424765db"
+        "projectId": "29f40173-df80-4eeb-b214-d701a12c9b38"
       }
     },
-    "owner": "bharath1818"
+    "owner": "bharath1818s-team"
   }
 }
