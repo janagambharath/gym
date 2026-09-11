@@ -56,23 +56,6 @@ export type BotSummary = {
   recent_handovers: RecentHandover[];
 };
 
-export type DashboardData = {
-  total_active: number;
-  expiring_soon: number;
-  expired: number;
-  pending_payments: number;
-  sent_reminders: number;
-  failed_reminders: number;
-  total_collected: string;
-  revenue_today?: string;
-  revenue_week?: string;
-  revenue_month?: string;
-  revenue_at_risk?: string;
-  expiring_today?: number;
-  pending_payment_amount?: string;
-  bot_summary?: BotSummary;
-};
-
 // ─── Payment ─────────────────────────────────────────────────────────
 
 export type Payment = {
@@ -455,3 +438,285 @@ export function getDaysText(days: number | null | undefined): string | null {
   if (days === 0) return 'Today';
   return `${Math.abs(days)}d overdue`;
 }
+
+// ─── Access / Live Access ────────────────────────────────────────────
+
+export type AccessSummary = {
+  inside_now: number;
+  entries_today: number;
+  exits_today: number;
+  denied_today: number;
+  last_event_at: string | null;
+  device_online: boolean;
+  device_name: string | null;
+  last_heartbeat: string | null;
+};
+
+export type AccessEvent = {
+  id: number;
+  event_type: 'ENTRY' | 'EXIT' | 'ACCESS_DENIED' | 'ATTENDANCE' | 'UNKNOWN';
+  direction: 'IN' | 'OUT' | 'UNKNOWN';
+  event_timestamp: string;
+  member_id: number | null;
+  member_name: string | null;
+  membership_status: string | null;
+  device_name: string | null;
+  device_enroll_number: string;
+  is_invalid: boolean;
+  verify_method: number | null;
+};
+
+export type AccessEventsResponse = {
+  events: AccessEvent[];
+  pagination: Pagination;
+};
+
+export type InsideMember = {
+  id: number;
+  full_name: string;
+  phone: string;
+  status: string;
+  entered_at: string | null;
+  has_biometric: boolean;
+};
+
+export type InsideMembersResponse = {
+  members: InsideMember[];
+  pagination: Pagination;
+};
+
+// ─── Campaigns ───────────────────────────────────────────────────────
+
+export type CampaignType = 'recovery' | 'promotion';
+
+export type PromoPreset =
+  | 'special_offer'
+  | 'festival_offer'
+  | 'referral_offer'
+  | 'pt_offer'
+  | 'new_membership'
+  | 'announcement';
+
+export type CampaignSegmentType =
+  | 'expiring_today'
+  | 'expiring_3d'
+  | 'expiring_7d'
+  | 'expiring_14d'
+  | 'expiring_30d'
+  | 'recently_expired'
+  | 'inactive_30d'
+  | 'inactive_60d'
+  | 'inactive_90d'
+  | 'all_active'
+  | 'all_expired'
+  | 'all_customers'
+  | 'custom_import';
+
+export type CampaignStatus = 'draft' | 'sending' | 'sent' | 'completed' | 'failed';
+
+export type Campaign = {
+  id: number;
+  name: string;
+  campaign_type?: CampaignType;
+  promo_preset?: PromoPreset | null;
+  segment_type: CampaignSegmentType;
+  status: CampaignStatus;
+  total_recipients: number;
+  total_sent: number;
+  total_delivered: number;
+  total_read: number;
+  total_replied: number;
+  total_renewed: number;
+  total_revenue_recovered: string;
+  sent_at: string | null;
+  completed_at: string | null;
+  created_by: string | null;
+  created_at: string | null;
+  error_message: string | null;
+};
+
+export type CampaignRecipient = {
+  id: number;
+  member_id: number;
+  member_name: string | null;
+  member_phone: string | null;
+  member_status: string | null;
+  plan_name: string | null;
+  plan_price: string | null;
+  membership_end: string | null;
+  status: string;
+  sent_at: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+  reply_at: string | null;
+  payment_claimed_at: string | null;
+  renewed_at: string | null;
+  renewal_amount: string | null;
+  error_message: string | null;
+};
+
+export type CampaignSegment = {
+  type: CampaignSegmentType;
+  label: string;
+};
+
+export type SegmentPreview = {
+  segment_type: CampaignSegmentType;
+  total: number;
+  preview: {
+    id: number;
+    full_name: string;
+    phone: string;
+    membership_end: string | null;
+    days_until_expiry: number | null;
+    plan_name: string | null;
+    plan_price: string | null;
+  }[];
+};
+
+export type CampaignsResponse = {
+  campaigns: Campaign[];
+  pagination: Pagination;
+};
+
+export type CampaignRecipientsResponse = {
+  recipients: CampaignRecipient[];
+  pagination: Pagination;
+};
+
+export type CampaignTemplate = {
+  name: string;
+  purpose: 'recovery' | 'promotion' | 'system';
+  title: string;
+  variables: string[];
+  description: string;
+  body_preview: string;
+};
+
+export type ImportedContact = {
+  name: string;
+  phone: string;
+  expiry_date?: string | null;
+  plan?: string | null;
+  renewal_amount?: number | null;
+};
+
+export type ImportValidationRow = {
+  row: number;
+  raw: Record<string, string>;
+  error?: string;
+  normalized?: ImportedContact;
+};
+
+export type ImportValidationResult = {
+  valid: boolean;
+  valid_count: number;
+  invalid_count: number;
+  duplicate_count: number;
+  valid_contacts: ImportedContact[];
+  errors: ImportValidationRow[];
+};
+
+export type CooldownCheckResult = {
+  total_checked: number;
+  in_cooldown_count: number;
+  in_cooldown_phones: string[];
+  days: number;
+};
+
+// ─── Revenue Recovered ───────────────────────────────────────────────
+
+export type RevenueRecovered = {
+  total_renewals: number;
+  total_amount: string;
+  campaign_renewals: number;
+  campaign_amount: string;
+};
+
+export type RecoveryRate = {
+  revenue_at_risk: string;
+  revenue_recovered: string;
+  recovery_rate: string;
+  risk_breakdown: {
+    total: string;
+    expiring_count: number;
+    expiring_amount: string;
+    expired_count: number;
+    expired_amount: string;
+  };
+  recovered_breakdown: RevenueRecovered;
+};
+
+export type TodaysAction = {
+  type: 'expiring_today' | 'pending_payments' | 'new_leads';
+  count: number;
+  label: string;
+  action: string;
+};
+
+export type LatestCampaign = {
+  id: number;
+  name: string;
+  segment_type: CampaignSegmentType;
+  total_sent: number;
+  total_delivered: number;
+  total_read: number;
+  total_replied: number;
+  total_renewed: number;
+  total_revenue_recovered: string;
+  sent_at: string | null;
+};
+
+// ─── Enhanced Dashboard ──────────────────────────────────────────────
+
+export type DashboardData = {
+  total_active: number;
+  expiring_soon: number;
+  expired: number;
+  pending_payments: number;
+  sent_reminders: number;
+  failed_reminders: number;
+  total_collected: string;
+  revenue_at_risk: string;
+  revenue_today: string;
+  revenue_week: string;
+  revenue_month: string;
+  expiring_today: number;
+  revenue_recovered: RevenueRecovered | null;
+  recovery_rate: RecoveryRate | null;
+  todays_actions: TodaysAction[];
+  latest_campaign: LatestCampaign | null;
+  bot_summary: {
+    handover_count: number;
+    total_leads: number;
+    new_leads: number;
+    trial_requests: number;
+    recent_handovers: {
+      id: number;
+      phone: string;
+      customer_name: string;
+      state: string;
+      handover_status: string;
+      last_message: string;
+      last_message_at: string | null;
+    }[];
+  };
+  access_summary: AccessSummary | null;
+};
+
+/** Segment label mapping for display purposes. */
+export const SEGMENT_LABELS: Record<CampaignSegmentType, string> = {
+  expiring_today: 'Expiring Today',
+  expiring_3d: 'Expiring in 3 Days',
+  expiring_7d: 'Expiring in 7 Days',
+  expiring_14d: 'Expiring in 14 Days',
+  expiring_30d: 'Expiring in 30 Days',
+  recently_expired: 'Recently Expired',
+  inactive_30d: 'Inactive 30+ Days',
+  inactive_60d: 'Inactive 60+ Days',
+  inactive_90d: 'Inactive 90+ Days',
+  all_active: 'All Active Members',
+  all_expired: 'All Expired Members',
+  all_customers: 'All Customers (Active + Expired)',
+  custom_import: 'Custom Contact List',
+};

@@ -89,6 +89,14 @@ def _process_status(gym_id: int, status: dict) -> bool:
     if not provider_id or not whatsapp_status:
         return False
 
+    # Track campaign delivery statuses
+    try:
+        from app.services.campaign_service import update_campaign_delivery
+        if update_campaign_delivery(provider_id, whatsapp_status):
+            pass  # Campaign recipient updated; continue to also update ReminderLog if applicable
+    except Exception:
+        current_app.logger.exception("Campaign delivery tracking failed for %s", provider_id)
+
     log = ReminderLog.query.filter_by(
         gym_id=gym_id,
         provider_message_id=provider_id,
@@ -200,6 +208,13 @@ def _process_message(gym: Gym, message: dict) -> bool:
         member.last_inbound_at = utcnow()
         if not member.whatsapp_opted_in_at:
             member.whatsapp_opted_in_at = member.last_inbound_at
+
+        # Track campaign replies
+        try:
+            from app.services.campaign_service import track_campaign_reply
+            track_campaign_reply(gym.id, whatsapp_phone)
+        except Exception:
+            current_app.logger.exception("Campaign reply tracking failed for gym %s", gym.id)
 
         # Route existing member messages through AI bot (if entitled)
         if is_feature_enabled(gym, WHATSAPP_BOT_FEATURE):

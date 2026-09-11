@@ -60,19 +60,23 @@ export function LoadingSkeleton({ lines = 3, height = 14 }: LoadingSkeletonProps
   );
 }
 
-export function CardSkeleton() {
+export function CardSkeleton({ count = 1 }: { count?: number } = {}) {
   return (
-    <View style={styles.card}>
-      <View style={styles.row}>
-        <SkeletonLine width={40} height={40} />
-        <View style={styles.textBlock}>
-          <SkeletonLine width="60%" height={16} />
-          <SkeletonLine width="40%" height={12} />
+    <>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={styles.card}>
+          <View style={styles.row}>
+            <SkeletonLine width={40} height={40} />
+            <View style={styles.textBlock}>
+              <SkeletonLine width="60%" height={16} />
+              <SkeletonLine width="40%" height={12} />
+            </View>
+          </View>
+          <SkeletonLine width="90%" height={12} />
+          <SkeletonLine width="70%" height={12} />
         </View>
-      </View>
-      <SkeletonLine width="90%" height={12} />
-      <SkeletonLine width="70%" height={12} />
-    </View>
+      ))}
+    </>
   );
 }
 

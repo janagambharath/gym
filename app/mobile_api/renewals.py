@@ -214,6 +214,21 @@ def register_renewals_routes(bp):
         )
         db.session.add(renewal)
         db.session.flush()
+
+        # Campaign attribution
+        try:
+            from app.services.campaign_service import attribute_renewal_to_campaign
+            campaign_id = attribute_renewal_to_campaign(
+                member_id=member.id,
+                gym_id=g.gym_id,
+                renewal_id=renewal.id,
+                renewal_amount=amount,
+            )
+            if campaign_id:
+                renewal.campaign_id = campaign_id
+        except Exception:
+            pass
+
         audit(
             action="renew_member",
             resource_type="member",

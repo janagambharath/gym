@@ -23,10 +23,11 @@ type RenewalsScreenProps = {
   onLogout: () => void;
   onSelectMember?: (member: Member) => void;
   onRenew?: (member: Member) => void;
+  onNavigateCampaigns?: () => void;
   refreshToken?: number;
 };
 
-export function RenewalsScreen({ onLogout, onSelectMember, onRenew, refreshToken }: RenewalsScreenProps) {
+export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCampaigns, refreshToken }: RenewalsScreenProps) {
   const [upcoming, setUpcoming] = useState<Member[]>([]);
   const [expired, setExpired] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);

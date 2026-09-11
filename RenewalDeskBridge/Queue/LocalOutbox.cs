@@ -44,6 +44,7 @@ namespace RenewalDeskBridge.Queue
                             enroll_number TEXT NOT NULL,
                             event_time TEXT NOT NULL,
                             verify_method INTEGER NOT NULL,
+                            att_state INTEGER NOT NULL DEFAULT 0,
                             is_invalid INTEGER NOT NULL,
                             created_at TEXT NOT NULL,
                             sent INTEGER NOT NULL DEFAULT 0
@@ -65,6 +66,7 @@ namespace RenewalDeskBridge.Queue
                     // here, so add it nullable, backfill every row transactionally,
                     // then enforce uniqueness with an index.
                     EnsureColumn(conn, transaction, "attendance_outbox", "event_id", "TEXT");
+                    EnsureColumn(conn, transaction, "attendance_outbox", "att_state", "INTEGER NOT NULL DEFAULT 0");
                     BackfillAttendanceEventIds(conn, transaction);
 
                     ExecuteNonQuery(conn, transaction, @"
@@ -161,7 +163,7 @@ namespace RenewalDeskBridge.Queue
         /// Persists a scan before it is sent.  The generated event ID is never changed
         /// by retry logic, which is what makes an at-least-once HTTP upload safe.
         /// </summary>
-        public string Enqueue(string enrollNumber, DateTime eventTime, int verifyMethod, bool isInvalid)
+        public string Enqueue(string enrollNumber, DateTime eventTime, int verifyMethod, int attState, bool isInvalid)
         {
             lock (_databaseLock)
             {
@@ -172,12 +174,13 @@ namespace RenewalDeskBridge.Queue
                     var cmd = conn.CreateCommand();
                     cmd.CommandText = @"
                     INSERT INTO attendance_outbox
-                        (event_id, enroll_number, event_time, verify_method, is_invalid, created_at, sent)
-                    VALUES (@eventId, @enroll, @time, @method, @invalid, @created, 0)";
+                        (event_id, enroll_number, event_time, verify_method, att_state, is_invalid, created_at, sent)
+                    VALUES (@eventId, @enroll, @time, @method, @attState, @invalid, @created, 0)";
                     cmd.Parameters.AddWithValue("@eventId", eventId);
                     cmd.Parameters.AddWithValue("@enroll", enrollNumber);
                     cmd.Parameters.AddWithValue("@time", eventTime.ToString("o", CultureInfo.InvariantCulture));
                     cmd.Parameters.AddWithValue("@method", verifyMethod);
+                    cmd.Parameters.AddWithValue("@attState", attState);
                     cmd.Parameters.AddWithValue("@invalid", isInvalid ? 1 : 0);
                     cmd.Parameters.AddWithValue("@created", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
                     cmd.ExecuteNonQuery();
@@ -195,7 +198,7 @@ namespace RenewalDeskBridge.Queue
                 {
                     conn.Open();
                     var cmd = conn.CreateCommand();
-                    cmd.CommandText = "SELECT id, event_id, enroll_number, event_time, verify_method, is_invalid " +
+                    cmd.CommandText = "SELECT id, event_id, enroll_number, event_time, verify_method, att_state, is_invalid " +
                                   "FROM attendance_outbox WHERE sent = 0 ORDER BY id ASC LIMIT @limit";
                     cmd.Parameters.AddWithValue("@limit", limit);
 
@@ -211,7 +214,8 @@ namespace RenewalDeskBridge.Queue
                                 EventTime = DateTime.Parse(reader.GetString(3), CultureInfo.InvariantCulture,
                                                            DateTimeStyles.RoundtripKind),
                                 VerifyMethod = reader.GetInt32(4),
-                                IsInvalid = reader.GetInt32(5) == 1
+                                AttState = reader.GetInt32(5),
+                                IsInvalid = reader.GetInt32(6) == 1
                             });
                         }
                     }
@@ -341,6 +345,7 @@ namespace RenewalDeskBridge.Queue
         public string EnrollNumber { get; set; }
         public DateTime EventTime { get; set; }
         public int VerifyMethod { get; set; }
+        public int AttState { get; set; }
         public bool IsInvalid { get; set; }
     }
 

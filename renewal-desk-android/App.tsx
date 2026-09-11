@@ -12,10 +12,16 @@ import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
 import { BotConversationsScreen } from './src/screens/BotConversationsScreen';
 import { BotLeadDetailScreen } from './src/screens/BotLeadDetailScreen';
+import { AccessScreen } from './src/screens/AccessScreen';
 import { BotLeadsScreen } from './src/screens/BotLeadsScreen';
 import { BotOverviewScreen } from './src/screens/BotOverviewScreen';
 import { BotSetupScreen } from './src/screens/BotSetupScreen';
+import { CampaignsScreen } from './src/screens/CampaignsScreen';
+import { CampaignCreateScreen } from './src/screens/CampaignCreateScreen';
+import { CampaignDetailScreen } from './src/screens/CampaignDetailScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
+import { FastRenewalScreen } from './src/screens/FastRenewalScreen';
+import { InboxScreen } from './src/screens/InboxScreen';
 import { BotTestScreen } from './src/screens/BotTestScreen';
 import { EditMemberScreen } from './src/screens/EditMemberScreen';
 import { ImportMembersScreen } from './src/screens/ImportMembersScreen';
@@ -43,9 +49,19 @@ import { apiRequest, restoreSession, type ScanDocumentResult } from './src/servi
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
 import { colors, fontSize, fontWeight, spacing } from './src/theme/tokens';
-import type { BotConversation, Member, Plan, SettingsResponse } from './src/types';
+import type { BotConversation, Campaign, CampaignType, Member, Plan, SettingsResponse } from './src/types';
 
 // ─── Navigation Types ────────────────────────────────────────────────
+
+type FastRenewalParams = {
+  paymentId: number;
+  memberName: string;
+  amount: string;
+  planName?: string;
+  paymentMethod?: string;
+  paymentReference?: string;
+  membershipEnd?: string;
+};
 
 type DashboardStackParamList = {
   DashboardHome: undefined;
@@ -66,6 +82,11 @@ type DashboardStackParamList = {
   BotLeadDetail: { leadId: number };
   Notifications: undefined;
   Plans: undefined;
+  Campaigns: undefined;
+  CampaignCreate: { initialPurpose?: CampaignType } | undefined;
+  CampaignDetail: { campaign: Campaign };
+  FastRenewal: FastRenewalParams;
+  Inbox: undefined;
 };
 
 type MembersStackParamList = {
@@ -87,12 +108,22 @@ type RenewalsStackParamList = {
   RenewMember: { member: Member };
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
+  Campaigns: undefined;
+  CampaignCreate: { initialPurpose?: CampaignType } | undefined;
+  CampaignDetail: { campaign: Campaign };
+  FastRenewal: FastRenewalParams;
 };
 
 type PaymentsStackParamList = {
   PaymentsHome: undefined;
   PaymentDetail: { paymentId: number };
   RecordPayment: { memberId?: number };
+  FastRenewal: FastRenewalParams;
+};
+
+type AccessStackParamList = {
+  AccessHome: undefined;
+  MemberDetail: { member: Member };
 };
 
 type MoreStackParamList = {
@@ -109,6 +140,16 @@ type MoreStackParamList = {
   Plans: undefined;
   Staff: undefined;
   Reports: undefined;
+  Campaigns: undefined;
+  CampaignCreate: { initialPurpose?: CampaignType } | undefined;
+  CampaignDetail: { campaign: Campaign };
+  AccessHome: undefined;
+  MemberDetail: { member: Member };
+  PaymentsHome: undefined;
+  PaymentDetail: { paymentId: number };
+  RecordPayment: { memberId?: number };
+  Inbox: undefined;
+  FastRenewal: FastRenewalParams;
 };
 
 type AuthStackParamList = {
@@ -123,6 +164,7 @@ const DashboardStackNav = createNativeStackNavigator<DashboardStackParamList>();
 const MembersStackNav = createNativeStackNavigator<MembersStackParamList>();
 const RenewalsStackNav = createNativeStackNavigator<RenewalsStackParamList>();
 const PaymentsStackNav = createNativeStackNavigator<PaymentsStackParamList>();
+const AccessStackNav = createNativeStackNavigator<AccessStackParamList>();
 const MoreStackNav = createNativeStackNavigator<MoreStackParamList>();
 const AuthStackNav = createNativeStackNavigator<AuthStackParamList>();
 
@@ -144,6 +186,7 @@ function DashboardStackScreen({
   onNavigatePayments,
   onNavigateRenewals,
   onNavigateSettings,
+  onNavigateAccess,
 }: {
   onLogout: () => void;
   plans: Plan[];
@@ -151,6 +194,7 @@ function DashboardStackScreen({
   onNavigatePayments: () => void;
   onNavigateRenewals: () => void;
   onNavigateSettings: () => void;
+  onNavigateAccess?: () => void;
 }) {
   const { refresh, refreshToken } = useRefreshToken();
 
@@ -164,6 +208,7 @@ function DashboardStackScreen({
             onNavigatePayments={onNavigatePayments}
             onNavigateRenewals={onNavigateRenewals}
             onNavigateSettings={onNavigateSettings}
+            onNavigateAccess={onNavigateAccess}
             onNavigatePlans={() => props.navigation.navigate('Plans')}
             onNavigateMemberDetail={(member) =>
               props.navigation.navigate('MemberDetail', { member })
@@ -182,6 +227,8 @@ function DashboardStackScreen({
               props.navigation.navigate('BotLeadDetail', { leadId })
             }
             onNavigateNotifications={() => props.navigation.navigate('Notifications')}
+            onNavigateCampaigns={() => props.navigation.navigate('Campaigns')}
+            onNavigateInbox={() => props.navigation.navigate('Inbox')}
             refreshToken={refreshToken}
           />
         )}
@@ -388,6 +435,59 @@ function DashboardStackScreen({
       <DashboardStackNav.Screen name="Plans">
         {(props) => <PlansScreen onBack={() => props.navigation.goBack()} />}
       </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="Campaigns">
+        {(props) => (
+          <CampaignsScreen
+            onBack={() => props.navigation.goBack()}
+            onCreateCampaign={(purpose) => props.navigation.navigate('CampaignCreate', { initialPurpose: purpose })}
+            onSelectCampaign={(campaign) => props.navigation.navigate('CampaignDetail', { campaign })}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="CampaignCreate">
+        {(props) => (
+          <CampaignCreateScreen
+            initialPurpose={props.route.params?.initialPurpose}
+            onBack={() => props.navigation.goBack()}
+            onCampaignCreated={() => props.navigation.navigate('Campaigns')}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="CampaignDetail">
+        {(props) => (
+          <CampaignDetailScreen
+            campaign={props.route.params.campaign}
+            onBack={() => props.navigation.goBack()}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="FastRenewal">
+        {(props) => (
+          <FastRenewalScreen
+            paymentId={props.route.params.paymentId}
+            memberName={props.route.params.memberName}
+            amount={props.route.params.amount}
+            planName={props.route.params.planName}
+            paymentMethod={props.route.params.paymentMethod}
+            paymentReference={props.route.params.paymentReference}
+            membershipEnd={props.route.params.membershipEnd}
+            onBack={() => props.navigation.goBack()}
+            onConfirmed={() => {
+              refresh();
+              props.navigation.goBack();
+            }}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="Inbox">
+        {(props) => (
+          <InboxScreen
+            onLogout={onLogout}
+            onNavigateBotConversations={() => props.navigation.navigate('BotConversations')}
+            refreshToken={refreshToken}
+          />
+        )}
+      </DashboardStackNav.Screen>
     </DashboardStackNav.Navigator>
   );
 }
@@ -545,6 +645,7 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
             onRenew={(member) =>
               props.navigation.navigate('RenewMember', { member })
             }
+            onNavigateCampaigns={() => props.navigation.navigate('Campaigns')}
             refreshToken={refreshToken}
           />
         )}
@@ -606,6 +707,50 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
           );
         }}
       </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="Campaigns">
+        {(props) => (
+          <CampaignsScreen
+            onBack={() => props.navigation.goBack()}
+            onCreateCampaign={(purpose) => props.navigation.navigate('CampaignCreate', { initialPurpose: purpose })}
+            onSelectCampaign={(campaign) => props.navigation.navigate('CampaignDetail', { campaign })}
+          />
+        )}
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="CampaignCreate">
+        {(props) => (
+          <CampaignCreateScreen
+            initialPurpose={props.route.params?.initialPurpose}
+            onBack={() => props.navigation.goBack()}
+            onCampaignCreated={() => props.navigation.navigate('Campaigns')}
+          />
+        )}
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="CampaignDetail">
+        {(props) => (
+          <CampaignDetailScreen
+            campaign={props.route.params.campaign}
+            onBack={() => props.navigation.goBack()}
+          />
+        )}
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="FastRenewal">
+        {(props) => (
+          <FastRenewalScreen
+            paymentId={props.route.params.paymentId}
+            memberName={props.route.params.memberName}
+            amount={props.route.params.amount}
+            planName={props.route.params.planName}
+            paymentMethod={props.route.params.paymentMethod}
+            paymentReference={props.route.params.paymentReference}
+            membershipEnd={props.route.params.membershipEnd}
+            onBack={() => props.navigation.goBack()}
+            onConfirmed={() => {
+              refresh();
+              props.navigation.goBack();
+            }}
+          />
+        )}
+      </RenewalsStackNav.Screen>
     </RenewalsStackNav.Navigator>
   );
 }
@@ -648,11 +793,67 @@ function PaymentsStackScreen({ onLogout }: { onLogout: () => void }) {
           );
         }}
       </PaymentsStackNav.Screen>
+      <PaymentsStackNav.Screen name="FastRenewal">
+        {(props) => (
+          <FastRenewalScreen
+            paymentId={props.route.params.paymentId}
+            memberName={props.route.params.memberName}
+            amount={props.route.params.amount}
+            planName={props.route.params.planName}
+            paymentMethod={props.route.params.paymentMethod}
+            paymentReference={props.route.params.paymentReference}
+            membershipEnd={props.route.params.membershipEnd}
+            onBack={() => props.navigation.goBack()}
+            onConfirmed={() => {
+              refresh();
+              props.navigation.goBack();
+            }}
+          />
+        )}
+      </PaymentsStackNav.Screen>
     </PaymentsStackNav.Navigator>
   );
 }
 
+function AccessStackScreen({ onLogout }: { onLogout: () => void }) {
+  const { refresh, refreshToken } = useRefreshToken();
+
+  return (
+    <AccessStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <AccessStackNav.Screen name="AccessHome">
+        {(props) => (
+          <AccessScreen
+            refreshToken={refreshToken}
+            onNavigateMemberDetail={(member) =>
+              props.navigation.navigate('MemberDetail', { member })
+            }
+          />
+        )}
+      </AccessStackNav.Screen>
+      <AccessStackNav.Screen name="MemberDetail">
+        {(props) => {
+          const member = (props.route.params as { member: Member })?.member;
+          return (
+            <MemberDetailScreen
+              member={member}
+              onBack={() => props.navigation.goBack()}
+              onLogout={onLogout}
+              onRenew={() => {}}
+              onEdit={() => {}}
+              onRecordPayment={() => {}}
+              onMemberUpdated={refresh}
+              refreshToken={refreshToken}
+            />
+          );
+        }}
+      </AccessStackNav.Screen>
+    </AccessStackNav.Navigator>
+  );
+}
+
 function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
+  const { refresh, refreshToken } = useRefreshToken();
+
   return (
     <MoreStackNav.Navigator screenOptions={{ headerShown: false }}>
       <MoreStackNav.Screen name="MoreHome">
@@ -666,6 +867,9 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
             onNavigatePlans={() => props.navigation.navigate('Plans')}
             onNavigateStaff={() => props.navigation.navigate('Staff')}
             onNavigateReports={() => props.navigation.navigate('Reports')}
+            onNavigateCampaigns={() => props.navigation.navigate('Campaigns')}
+            onNavigateAccess={() => props.navigation.navigate('AccessHome')}
+            onNavigatePayments={() => props.navigation.navigate('PaymentsHome')}
           />
         )}
       </MoreStackNav.Screen>
@@ -737,6 +941,87 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="Reports">
         {(props) => <ReportsScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="Campaigns">
+        {(props) => (
+          <CampaignsScreen
+            onBack={() => props.navigation.goBack()}
+            onCreateCampaign={(purpose) => props.navigation.navigate('CampaignCreate', { initialPurpose: purpose })}
+            onSelectCampaign={(campaign) => props.navigation.navigate('CampaignDetail', { campaign })}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="CampaignCreate">
+        {(props) => (
+          <CampaignCreateScreen
+            initialPurpose={props.route.params?.initialPurpose}
+            onBack={() => props.navigation.goBack()}
+            onCampaignCreated={() => props.navigation.navigate('Campaigns')}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="CampaignDetail">
+        {(props) => (
+          <CampaignDetailScreen
+            campaign={props.route.params.campaign}
+            onBack={() => props.navigation.goBack()}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="AccessHome">
+        {(props) => <AccessScreen onBack={() => props.navigation.goBack()} onLogout={onLogout} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="PaymentsHome">
+        {(props) => (
+          <PaymentsScreen
+            onLogout={onLogout}
+            onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
+            onRecordPayment={() => props.navigation.navigate('RecordPayment', {})}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="PaymentDetail">
+        {(props) => (
+          <PaymentDetailScreen
+            paymentId={props.route.params.paymentId}
+            onBack={() => props.navigation.goBack()}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="RecordPayment">
+        {(props) => (
+          <RecordPaymentScreen
+            onBack={() => props.navigation.goBack()}
+            preselectedMemberId={props.route.params?.memberId}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="Inbox">
+        {(props) => (
+          <InboxScreen
+            onLogout={onLogout}
+            onNavigateBotConversations={() => props.navigation.navigate('BotConversations')}
+            refreshToken={refreshToken}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="FastRenewal">
+        {(props) => (
+          <FastRenewalScreen
+            paymentId={props.route.params.paymentId}
+            memberName={props.route.params.memberName}
+            amount={props.route.params.amount}
+            planName={props.route.params.planName}
+            paymentMethod={props.route.params.paymentMethod}
+            paymentReference={props.route.params.paymentReference}
+            membershipEnd={props.route.params.membershipEnd}
+            onBack={() => props.navigation.goBack()}
+            onConfirmed={() => {
+              refresh();
+              props.navigation.goBack();
+            }}
+          />
+        )}
       </MoreStackNav.Screen>
     </MoreStackNav.Navigator>
   );
@@ -823,6 +1108,23 @@ function AppRoot() {
               navigationRef.navigate('Renewals');
             } else if (payload?.screen === 'Notifications') {
               navigationRef.navigate('Dashboard', { screen: 'Notifications' });
+            } else if (payload?.screen === 'FastRenewal' && payload?.payment_id) {
+              navigationRef.navigate('Renewals', {
+                screen: 'FastRenewal',
+                params: {
+                  paymentId: payload.payment_id,
+                  memberName: payload.member_name ?? 'Member',
+                  amount: payload.amount ?? '0',
+                  planName: payload.plan_name,
+                  paymentMethod: payload.payment_method,
+                  paymentReference: payload.payment_reference,
+                  membershipEnd: payload.membership_end,
+                },
+              });
+            } else if (payload?.screen === 'Inbox') {
+              navigationRef.navigate('Dashboard', { screen: 'Inbox' });
+            } else if (payload?.screen === 'Campaigns') {
+              navigationRef.navigate('Dashboard', { screen: 'Campaigns' });
             }
           }
         } catch (navErr) {
@@ -916,9 +1218,10 @@ function AppRoot() {
               paddingTop: 8,
             },
             tabBarIcon: ({ focused, color }) => {
-              const iconMap: Record<string, 'dashboard' | 'members' | 'renewals' | 'payments' | 'more'> = {
+              const iconMap: Record<string, 'dashboard' | 'members' | 'access' | 'renewals' | 'payments' | 'more'> = {
                 Dashboard: 'dashboard',
                 Members: 'members',
+                Access: 'access',
                 Renewals: 'renewals',
                 Payments: 'payments',
                 More: 'more',
@@ -937,11 +1240,15 @@ function AppRoot() {
                 onNavigatePayments={() => props.navigation.navigate('Payments')}
                 onNavigateRenewals={() => props.navigation.navigate('Renewals')}
                 onNavigateSettings={() => props.navigation.navigate('More')}
+                onNavigateAccess={() => props.navigation.navigate('Access')}
               />
             )}
           </Tab.Screen>
           <Tab.Screen name="Members">
             {() => <MembersStackScreen onLogout={handleLogout} plans={plans} />}
+          </Tab.Screen>
+          <Tab.Screen name="Access">
+            {() => <AccessStackScreen onLogout={handleLogout} />}
           </Tab.Screen>
           <Tab.Screen name="Renewals">
             {() => <RenewalsStackScreen onLogout={handleLogout} />}

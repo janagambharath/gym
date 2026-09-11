@@ -2,8 +2,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 
 type StatusBadgeProps = {
-  status: string;
+  status?: string;
   size?: 'sm' | 'md';
+  label?: string;
+  color?: string;
+  backgroundColor?: string;
 };
 
 type BadgeStyle = { bg: string; text: string; label: string };
@@ -59,31 +62,40 @@ function getStatusStyle(status: string): BadgeStyle {
     case 'human_active':
       return { bg: colors.statusPendingSurface, text: colors.statusPending, label: 'STAFF ACTIVE' };
     default:
-      return { bg: colors.gray100, text: colors.muted, label: status.toUpperCase() };
+      return { bg: colors.gray100, text: colors.muted, label: status ? status.toUpperCase() : 'UNKNOWN' };
   }
 }
 
-export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
+export function StatusBadge({
+  status = '',
+  size = 'sm',
+  label,
+  color,
+  backgroundColor,
+}: StatusBadgeProps) {
   const style = getStatusStyle(status);
+  const badgeLabel = label ?? style.label;
+  const badgeBg = backgroundColor ?? style.bg;
+  const badgeTextColor = color ?? style.text;
   const isSmall = size === 'sm';
 
   return (
     <View
-      accessibilityLabel={`Status: ${style.label}`}
+      accessibilityLabel={`Status: ${badgeLabel}`}
       style={[
         styles.badge,
-        { backgroundColor: style.bg },
+        { backgroundColor: badgeBg },
         isSmall ? styles.badgeSm : styles.badgeMd,
       ]}
     >
       <Text
         style={[
           styles.badgeText,
-          { color: style.text },
+          { color: badgeTextColor },
           isSmall ? styles.textSm : styles.textMd,
         ]}
       >
-        {style.label}
+        {badgeLabel}
       </Text>
     </View>
   );

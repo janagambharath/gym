@@ -579,7 +579,7 @@ namespace RenewalDeskBridge
                 // Buffer locally first - this is the step that makes attendance survive an
                 // internet outage. We attempt an immediate push after, but the buffer write
                 // happens regardless of whether that push succeeds.
-                _outbox.Enqueue(evt.EnrollNumber, evt.Timestamp, evt.VerifyMethod, evt.IsInvalid);
+                _outbox.Enqueue(evt.EnrollNumber, evt.Timestamp, evt.VerifyMethod, evt.AttState, evt.IsInvalid);
 
                 // Observe failures explicitly instead of allowing a faulted task to
                 // disappear without a diagnostic on the gym laptop.
@@ -630,6 +630,7 @@ namespace RenewalDeskBridge
                 DeviceEnrollNumber = row.EnrollNumber,
                 EventTime = row.EventTime,
                 VerifyMethod = row.VerifyMethod,
+                AttState = row.AttState,
                 IsInvalid = row.IsInvalid
             };
         }

@@ -16,6 +16,7 @@ const ICON_MAP = {
   // Navigation / Tabs
   dashboard: { family: 'ion', name: 'grid-outline', activeName: 'grid' },
   members: { family: 'ion', name: 'people-outline', activeName: 'people' },
+  access: { family: 'ion', name: 'finger-print-outline', activeName: 'finger-print' },
   renewals: { family: 'ion', name: 'refresh-outline', activeName: 'refresh' },
   payments: { family: 'ion', name: 'card-outline', activeName: 'card' },
   more: { family: 'ion', name: 'ellipsis-horizontal-outline', activeName: 'ellipsis-horizontal' },
@@ -83,6 +84,16 @@ const ICON_MAP = {
   lead: { family: 'mci', name: 'account-plus-outline' },
   bookClock: { family: 'mci', name: 'book-clock-outline' },
   testTube: { family: 'mci', name: 'test-tube' },
+  revenue: { family: 'mci', name: 'cash-multiple' },
+  clock: { family: 'ion', name: 'time-outline' },
+  sent: { family: 'ion', name: 'send-outline' },
+  delivered: { family: 'mci', name: 'check-all' },
+  read: { family: 'mci', name: 'eye-outline' },
+  reply: { family: 'ion', name: 'chatbox-ellipses-outline' },
+  renewed: { family: 'ion', name: 'checkmark-done-circle-outline' },
+  megaphone: { family: 'ion', name: 'megaphone-outline' },
+  gift: { family: 'ion', name: 'gift-outline' },
+  sparkles: { family: 'ion', name: 'sparkles-outline' },
 } as const;
 
 export type IconName = keyof typeof ICON_MAP;

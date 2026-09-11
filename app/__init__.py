@@ -245,6 +245,13 @@ def _register_blueprints(app: Flask) -> None:
     else:
         app.logger.info("Mobile API v1 disabled (set MOBILE_API_ENABLED=true to enable)")
 
+    # Member-facing API — public endpoints with OTP auth.
+    from app.mobile_api.member_api import member_bp
+
+    csrf.exempt(member_bp)
+    app.register_blueprint(member_bp)
+    app.logger.info("Member API v1 enabled at /api/member/v1")
+
 
 def _register_error_handlers(app: Flask) -> None:
     def _is_api_request():

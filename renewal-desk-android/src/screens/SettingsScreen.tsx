@@ -28,6 +28,9 @@ type SettingsScreenProps = {
   onNavigateBot?: () => void;
   onNavigateBotTest?: () => void;
   onNavigateSubscription?: () => void;
+  onNavigateCampaigns?: () => void;
+  onNavigateAccess?: () => void;
+  onNavigatePayments?: () => void;
 };
 
 export function SettingsScreen({
@@ -39,6 +42,9 @@ export function SettingsScreen({
   onNavigateBot,
   onNavigateBotTest,
   onNavigateSubscription,
+  onNavigateCampaigns,
+  onNavigateAccess,
+  onNavigatePayments,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const session = getCachedSession();
@@ -109,9 +115,12 @@ export function SettingsScreen({
           <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
             <MenuItem icon="wallet" label="Subscription & Billing" onPress={onNavigateSubscription} />
+            <MenuItem icon="target" label="Campaigns" onPress={onNavigateCampaigns} />
+            <MenuItem icon="revenue" label="Payments" onPress={onNavigatePayments} />
             <MenuItem icon="whatsapp" label="WhatsApp Reminders" onPress={onNavigateWhatsApp} />
             <MenuItem icon="robot" label="AI Receptionist (Bot)" onPress={onNavigateBot} />
             <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
+            <MenuItem icon="access" label="Access Control" onPress={onNavigateAccess} />
             <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
             {session?.userRole === 'gym_owner' ? (
               <MenuItem icon="staff" label="Staff Management" onPress={onNavigateStaff} />

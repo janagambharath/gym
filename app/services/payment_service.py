@@ -69,6 +69,25 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         notes=locked_payment.notes,
     )
     db.session.add(renewal)
+    db.session.flush()
+
+    # Campaign attribution — check if this renewal was prompted by a campaign
+    try:
+        from app.services.campaign_service import attribute_renewal_to_campaign
+        campaign_id = attribute_renewal_to_campaign(
+            member_id=member.id,
+            gym_id=locked_payment.gym_id,
+            renewal_id=renewal.id,
+            renewal_amount=locked_payment.amount,
+        )
+        if campaign_id:
+            renewal.campaign_id = campaign_id
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Campaign attribution failed for renewal %s", renewal.id
+        )
+
     invalidate_dashboard_cache(locked_payment.gym_id)
     return renewal
 

@@ -197,6 +197,16 @@ def attendance():
     if not isinstance(raw_invalid, bool):
         return _json_error(422, "invalid_attendance", "isInvalid must be true or false.")
 
+    # AttState: ZKTeco attendance state (0=CheckIn, 1=CheckOut, ...).
+    # Optional for backward compatibility with older bridge versions.
+    raw_att_state = _payload_value(payload, "attState", "AttState")
+    att_state = None
+    if raw_att_state is not None:
+        try:
+            att_state = int(raw_att_state)
+        except (TypeError, ValueError):
+            pass  # Ignore invalid att_state silently — old bridges won't send it.
+
     event_id = _payload_value(payload, "eventId", "EventId")
     if not isinstance(event_id, str) or not event_id.strip():
         # Compatibility with the first bridge build.  The upgraded bridge
@@ -216,18 +226,36 @@ def attendance():
     if existing is not None:
         return jsonify({"ok": True, "duplicate": True})
 
-    db.session.add(
-        BridgeAttendance(
-            bridge_id=installation.id,
-            gym_id=installation.gym_id,
-            member_id=member.id if member else None,
-            event_id=event_id,
-            device_enroll_number=enroll_number,
-            event_time=event_time,
-            verify_method=verify_method,
-            is_invalid=raw_invalid,
-        )
+    bridge_attendance = BridgeAttendance(
+        bridge_id=installation.id,
+        gym_id=installation.gym_id,
+        member_id=member.id if member else None,
+        event_id=event_id,
+        device_enroll_number=enroll_number,
+        event_time=event_time,
+        verify_method=verify_method,
+        att_state=att_state,
+        is_invalid=raw_invalid,
     )
+    db.session.add(bridge_attendance)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"ok": True, "duplicate": True})
+
+    # Process into a semantic AccessEvent for the Live Access feature.
+    from app.services.access_event_service import process_attendance_to_access_event
+
+    try:
+        process_attendance_to_access_event(bridge_attendance)
+    except Exception:
+        # Access event processing must never block attendance ingestion.
+        import logging
+        logging.getLogger(__name__).exception(
+            "AccessEvent processing failed for attendance event_id=%s", event_id
+        )
+
     try:
         db.session.commit()
     except IntegrityError:

@@ -28,17 +28,9 @@ def register_dashboard_routes(bp):
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         stats = gym_dashboard_stats(g.gym_id, gym_timezone)
         # Ensure Decimal values are serialized as strings for JSON safety.
-        collected = stats.get("collected", 0)
-        if hasattr(collected, "is_finite"):
-            collected = str(collected)
-        else:
-            collected = str(collected)
+        collected = str(stats.get("collected", 0))
 
-        revenue_at_risk = stats.get("revenue_at_risk", 0)
-        if hasattr(revenue_at_risk, "is_finite"):
-            revenue_at_risk = str(revenue_at_risk)
-        else:
-            revenue_at_risk = str(revenue_at_risk)
+        revenue_at_risk_val = str(stats.get("revenue_at_risk", 0))
 
         # Revenue breakdown (today / week / month).
         try:
@@ -58,6 +50,75 @@ def register_dashboard_routes(bp):
         except Exception:
             expiring_today = 0
 
+        # Revenue Recovered metrics
+        revenue_recovered_data = None
+        recovery_rate_data = None
+        try:
+            from app.services.revenue_service import revenue_recovered, recovery_rate as calc_recovery_rate
+            revenue_recovered_data = revenue_recovered(g.gym_id, gym_timezone, period_days=30)
+            recovery_rate_data = calc_recovery_rate(g.gym_id, gym_timezone)
+        except Exception:
+            current_app.logger.warning("Could not load revenue recovered for dashboard gym=%s", g.gym_id)
+
+        # Today's Revenue Actions
+        todays_actions = []
+        try:
+            from app.models.bot import BotLead
+
+            if expiring_today > 0:
+                todays_actions.append({
+                    "type": "expiring_today",
+                    "count": expiring_today,
+                    "label": f"{expiring_today} membership{'s' if expiring_today != 1 else ''} expire today",
+                    "action": "renewals",
+                })
+
+            pending_count = stats.get("pending_payments", 0)
+            if pending_count > 0:
+                todays_actions.append({
+                    "type": "pending_payments",
+                    "count": pending_count,
+                    "label": f"{pending_count} payment confirmation{'s' if pending_count != 1 else ''} pending",
+                    "action": "payments",
+                })
+
+            new_leads = BotLead.query.filter_by(gym_id=g.gym_id, status="new").count()
+            if new_leads > 0:
+                todays_actions.append({
+                    "type": "new_leads",
+                    "count": new_leads,
+                    "label": f"{new_leads} lead{'s' if new_leads != 1 else ''} waiting for follow-up",
+                    "action": "inbox",
+                })
+        except Exception:
+            current_app.logger.warning("Could not compute today's actions for gym=%s", g.gym_id)
+
+        # Latest campaign
+        latest_campaign = None
+        try:
+            from app.models.campaign import Campaign
+            campaign = (
+                Campaign.query.filter_by(gym_id=g.gym_id)
+                .filter(Campaign.status.in_(("sent", "completed")))
+                .order_by(Campaign.sent_at.desc())
+                .first()
+            )
+            if campaign:
+                latest_campaign = {
+                    "id": campaign.id,
+                    "name": campaign.name,
+                    "segment_type": campaign.segment_type,
+                    "total_sent": campaign.total_sent,
+                    "total_delivered": campaign.total_delivered,
+                    "total_read": campaign.total_read,
+                    "total_replied": campaign.total_replied,
+                    "total_renewed": campaign.total_renewed,
+                    "total_revenue_recovered": str(campaign.total_revenue_recovered),
+                    "sent_at": campaign.sent_at.isoformat() if campaign.sent_at else None,
+                }
+        except Exception:
+            current_app.logger.warning("Could not load latest campaign for dashboard gym=%s", g.gym_id)
+
         # Inbound Leads & Bot Handovers summary
         bot_summary = {
             "handover_count": 0,
@@ -67,16 +128,16 @@ def register_dashboard_routes(bp):
             "recent_handovers": [],
         }
         try:
-            from app.models.bot import BotConversation, BotLead, BotMessage
+            from app.models.bot import BotConversation, BotLead as BotLeadModel, BotMessage
             handover_convs = (
                 BotConversation.query.filter_by(gym_id=g.gym_id, handover_status="human_requested")
                 .order_by(BotConversation.last_message_at.desc())
                 .all()
             )
             bot_summary["handover_count"] = len(handover_convs)
-            bot_summary["total_leads"] = BotLead.query.filter_by(gym_id=g.gym_id).count()
-            bot_summary["new_leads"] = BotLead.query.filter_by(gym_id=g.gym_id, status="new").count()
-            bot_summary["trial_requests"] = BotLead.query.filter_by(gym_id=g.gym_id, trial_requested=True).count()
+            bot_summary["total_leads"] = BotLeadModel.query.filter_by(gym_id=g.gym_id).count()
+            bot_summary["new_leads"] = BotLeadModel.query.filter_by(gym_id=g.gym_id, status="new").count()
+            bot_summary["trial_requests"] = BotLeadModel.query.filter_by(gym_id=g.gym_id, trial_requested=True).count()
 
             recent_list = []
             for c in handover_convs[:3]:
@@ -98,6 +159,14 @@ def register_dashboard_routes(bp):
         except Exception:
             current_app.logger.warning("Could not load bot summary for dashboard gym=%s", g.gym_id)
 
+        # Live Access summary
+        access_summary = None
+        try:
+            from app.services.access_event_service import get_access_summary
+            access_summary = get_access_summary(g.gym_id, gym_timezone)
+        except Exception:
+            current_app.logger.warning("Could not load access summary for dashboard gym=%s", g.gym_id)
+
         resp = jsonify({
             "success": True,
             "data": {
@@ -108,16 +177,22 @@ def register_dashboard_routes(bp):
                 "sent_reminders": stats.get("sent_reminders", 0),
                 "failed_reminders": stats.get("failed_reminders", 0),
                 "total_collected": collected,
-                "revenue_at_risk": revenue_at_risk,
+                "revenue_at_risk": revenue_at_risk_val,
                 "revenue_today": revenue.get("revenue_today", "0"),
                 "revenue_week": revenue.get("revenue_week", "0"),
                 "revenue_month": revenue.get("revenue_month", "0"),
                 "expiring_today": expiring_today,
+                "revenue_recovered": revenue_recovered_data,
+                "recovery_rate": recovery_rate_data,
+                "todays_actions": todays_actions,
+                "latest_campaign": latest_campaign,
                 "bot_summary": bot_summary,
+                "access_summary": access_summary,
             },
         })
         resp.headers["Cache-Control"] = "no-store"
         return resp
+
 
     @bp.route("/onboarding/progress", methods=["GET"])
     @token_required

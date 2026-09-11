@@ -195,6 +195,7 @@ class BridgeAttendance(db.Model):
     device_enroll_number = db.Column(db.String(32), nullable=False)
     event_time = db.Column(db.DateTime(timezone=True), nullable=False)
     verify_method = db.Column(db.Integer, nullable=False)
+    att_state = db.Column(db.Integer, nullable=True)
     is_invalid = db.Column(db.Boolean, nullable=False, default=False)
     received_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
 

@@ -1,4 +1,5 @@
 from app.extensions import db
+from app.models.access_event import AccessEvent
 from app.models.app_notification import AppNotification
 from app.models.audit_log import AuditLog
 from app.models.bot import (
@@ -15,11 +16,13 @@ from app.models.bot import (
 )
 from app.models.bridge import BridgeAttendance, BridgeCommand, BridgeInstallation
 from app.models.bridge_release import BridgeRelease
+from app.models.campaign import Campaign, CampaignRecipient
 from app.models.gym import Gym
 from app.models.google_play_subscription import GooglePlaySubscription
 
 from app.models.gym_deployment import GymDeployment
 from app.models.member import Member, MembershipPlan
+from app.models.member_access_state import MemberAccessState
 from app.models.mobile_token import MobileRefreshToken
 from app.models.mobile_idempotency import MobileIdempotencyKey
 from app.models.payment_verification import PaymentVerification
@@ -31,6 +34,7 @@ from app.models.template import NotificationTemplate
 from app.models.user import User
 
 __all__ = [
+    "AccessEvent",
     "AppNotification",
     "AuditLog",
     "BotBookingRequest",
@@ -45,6 +49,8 @@ __all__ = [
     "BridgeCommand",
     "BridgeInstallation",
     "BridgeRelease",
+    "Campaign",
+    "CampaignRecipient",
     "FeatureEntitlement",
 
     "Gym",
@@ -52,6 +58,7 @@ __all__ = [
     "GymBotConfig",
     "GymDeployment",
     "Member",
+    "MemberAccessState",
     "MembershipPlan",
     "MobileRefreshToken",
     "MobileIdempotencyKey",

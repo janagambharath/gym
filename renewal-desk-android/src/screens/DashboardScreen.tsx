@@ -27,6 +27,7 @@ type DashboardScreenProps = {
   onNavigatePayments?: () => void;
   onNavigateRenewals?: () => void;
   onNavigateSettings?: () => void;
+  onNavigateAccess?: () => void;
   onNavigatePlans?: () => void;
   onNavigateMemberDetail?: (member: Member) => void;
   onNavigateAddMember?: () => void;
@@ -39,6 +40,8 @@ type DashboardScreenProps = {
   onNavigateConversationDetail?: (conversation: any) => void;
   onNavigateLeadDetail?: (leadId: number) => void;
   onNavigateNotifications?: () => void;
+  onNavigateCampaigns?: () => void;
+  onNavigateInbox?: () => void;
   refreshToken?: number;
 };
 
@@ -48,6 +51,7 @@ export function DashboardScreen({
   onNavigatePayments,
   onNavigateRenewals,
   onNavigateSettings,
+  onNavigateAccess,
   onNavigatePlans,
   onNavigateMemberDetail,
   onNavigateAddMember,
@@ -60,6 +64,8 @@ export function DashboardScreen({
   onNavigateConversationDetail,
   onNavigateLeadDetail,
   onNavigateNotifications,
+  onNavigateCampaigns,
+  onNavigateInbox,
   refreshToken,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
@@ -292,6 +298,110 @@ export function DashboardScreen({
             {/* Key Metrics - 2x2 Balanced Grid */}
             <View style={styles.metricsGrid}>
               <View style={styles.metricsRow}>
+
+                {/* 💰 Revenue Recovery Hero Card — THE signature metric */}
+                {data.total_active > 0 ? (
+                  <View style={styles.revenueHeroCard}>
+                    <View style={styles.revenueHeroHeader}>
+                      <View style={styles.revenueHeroBadge}>
+                        <Icon name="revenue" size={12} color={colors.textInverse} />
+                        <Text style={styles.revenueHeroBadgeText}>REVENUE RECOVERY</Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.revenueHeroRow}>
+                      <View style={styles.revenueHeroStat}>
+                        <Text style={styles.revenueHeroLabel}>At Risk</Text>
+                        <Text style={[styles.revenueHeroValue, { color: colors.critical }]}>
+                          {formatCurrency(data.revenue_at_risk || '0')}
+                        </Text>
+                      </View>
+                      <View style={styles.revenueHeroDivider} />
+                      <View style={styles.revenueHeroStat}>
+                        <Text style={styles.revenueHeroLabel}>Recovered (30d)</Text>
+                        <Text style={[styles.revenueHeroValue, { color: colors.success }]}>
+                          {formatCurrency(data.revenue_recovered?.total_amount || '0')}
+                        </Text>
+                      </View>
+                      <View style={styles.revenueHeroDivider} />
+                      <View style={styles.revenueHeroStat}>
+                        <Text style={styles.revenueHeroLabel}>Rate</Text>
+                        <Text style={[styles.revenueHeroValue, { color: colors.brand }]}>
+                          {data.recovery_rate?.recovery_rate ?? '0'}%
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Campaign attribution callout */}
+                    {data.latest_campaign ? (
+                      <View style={styles.campaignCallout}>
+                        <Icon name="target" size={14} color={colors.brand} />
+                        <Text style={styles.campaignCalloutText} numberOfLines={1}>
+                          {`Last campaign "${data.latest_campaign.name}" → ${data.latest_campaign.total_renewed} renewed`}
+                          {parseFloat(data.latest_campaign.total_revenue_recovered || '0') > 0
+                            ? ` · ${formatCurrency(data.latest_campaign.total_revenue_recovered)}`
+                            : ''}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {/* ⚡ Today's Revenue Actions */}
+                {data.todays_actions && data.todays_actions.length > 0 ? (
+                  <View style={styles.todayActionsCard}>
+                    <SectionHeader
+                      title="Today's Actions"
+                      icon={<Icon name="flash" size={18} color={colors.warning} />}
+                    />
+                    {data.todays_actions.map((action, idx) => (
+                      <TouchableOpacity
+                        key={action.type}
+                        style={[styles.actionItem, idx < data.todays_actions.length - 1 && styles.actionItemBorder]}
+                        onPress={() => {
+                          if (action.action === 'renewals') onNavigateRenewals?.();
+                          else if (action.action === 'payments') onNavigatePayments?.();
+                          else if (action.action === 'inbox') {
+                            if (onNavigateInbox) onNavigateInbox();
+                            else onNavigateBotConversations?.();
+                          }
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.actionDot, {
+                          backgroundColor: action.type === 'expiring_today' ? colors.critical
+                            : action.type === 'pending_payments' ? colors.warning
+                            : colors.brand
+                        }]} />
+                        <Text style={styles.actionLabel}>{action.label}</Text>
+                        <Icon name="forward" size={14} color={colors.muted} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
+
+                {/* Revenue Collected */}
+                <View style={styles.revenueCollectedCard}>
+                  <SectionHeader
+                    title="Revenue Collected"
+                    icon={<Icon name="revenue" size={18} color={colors.success} />}
+                  />
+                  <View style={styles.revenueCollectedRow}>
+                    <View style={styles.revenueCollectedStat}>
+                      <Text style={styles.revenueCollectedLabel}>Today</Text>
+                      <Text style={styles.revenueCollectedValue}>{formatCurrency(data.revenue_today || '0')}</Text>
+                    </View>
+                    <View style={styles.revenueCollectedStat}>
+                      <Text style={styles.revenueCollectedLabel}>This Week</Text>
+                      <Text style={styles.revenueCollectedValue}>{formatCurrency(data.revenue_week || '0')}</Text>
+                    </View>
+                    <View style={styles.revenueCollectedStat}>
+                      <Text style={styles.revenueCollectedLabel}>This Month</Text>
+                      <Text style={styles.revenueCollectedValue}>{formatCurrency(data.revenue_month || '0')}</Text>
+                    </View>
+                  </View>
+                </View>
+
                 <DashboardMetric
                   icon={<Icon name="members" size={18} color={colors.brand} />}
                   iconBg={colors.brandSubtle}
@@ -327,6 +437,84 @@ export function DashboardScreen({
                 />
               </View>
             </View>
+
+            {/* 🟢 Live Access Card */}
+            {data.access_summary ? (
+              <View style={styles.card}>
+                <SectionHeader
+                  title="Live Access"
+                  icon={<Icon name="access" size={18} color={colors.brand} />}
+                  actionLabel="View Feed →"
+                  onAction={onNavigateAccess}
+                />
+
+                <View style={styles.accessStatusRow}>
+                  <View
+                    style={[
+                      styles.accessDeviceIndicator,
+                      { backgroundColor: data.access_summary.device_online ? colors.statusActive : colors.muted },
+                    ]}
+                  />
+                  <Text style={styles.accessDeviceText}>
+                    {data.access_summary.device_name ?? 'Biometric Device'}:{' '}
+                    {data.access_summary.device_online ? 'Online' : 'Offline'}
+                  </Text>
+                  {data.access_summary.last_event_at ? (
+                    <Text style={styles.accessLastEventText}>
+                      Last scan {new Date(data.access_summary.last_event_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <View style={styles.accessStatsRow}>
+                  <TouchableOpacity
+                    style={styles.accessStatTile}
+                    onPress={onNavigateAccess}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.accessStatValue, { color: colors.statusActive }]}>
+                      {data.access_summary.inside_now}
+                    </Text>
+                    <Text style={styles.accessStatLabel}>Inside Now</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.accessStatTile, styles.accessStatBorder]}
+                    onPress={onNavigateAccess}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.accessStatValue, { color: colors.brand }]}>
+                      {data.access_summary.entries_today}
+                    </Text>
+                    <Text style={styles.accessStatLabel}>Entries Today</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.accessStatTile, styles.accessStatBorder]}
+                    onPress={onNavigateAccess}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.accessStatValue, { color: colors.warning }]}>
+                      {data.access_summary.exits_today}
+                    </Text>
+                    <Text style={styles.accessStatLabel}>Exits Today</Text>
+                  </TouchableOpacity>
+
+                  {data.access_summary.denied_today > 0 ? (
+                    <TouchableOpacity
+                      style={[styles.accessStatTile, styles.accessStatBorder]}
+                      onPress={onNavigateAccess}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.accessStatValue, { color: colors.critical }]}>
+                        {data.access_summary.denied_today}
+                      </Text>
+                      <Text style={styles.accessStatLabel}>Denied</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
 
             {/* Inbound Leads & WhatsApp AI Card */}
             <View style={styles.card}>
@@ -1319,5 +1507,184 @@ const styles = StyleSheet.create({
     color: colors.brand,
     fontSize: fontSize.xs,
     fontWeight: fontWeight.bold,
+  },
+  // ─── Live Access Styles ─────────────────────────────────────────────
+  accessStatusRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  accessDeviceIndicator: {
+    borderRadius: 4,
+    height: 8,
+    width: 8,
+  },
+  accessDeviceText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+  },
+  accessLastEventText: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    marginLeft: 'auto',
+  },
+  accessStatsRow: {
+    alignItems: 'center',
+    backgroundColor: colors.gray50,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    paddingVertical: spacing.sm,
+  },
+  accessStatTile: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
+  accessStatBorder: {
+    borderLeftColor: colors.border,
+    borderLeftWidth: 1,
+  },
+  accessStatValue: {
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+  },
+  accessStatLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  // ─── Revenue Recovery Hero ──────────────────────────────────────────
+  revenueHeroCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadows.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.md,
+    width: '100%',
+    marginBottom: spacing.md,
+  },
+  revenueHeroHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  revenueHeroBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
+    borderRadius: radius.sm,
+    gap: spacing.xxs,
+  },
+  revenueHeroBadgeText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    letterSpacing: 1,
+  },
+  revenueHeroRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  revenueHeroStat: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  revenueHeroLabel: {
+    fontSize: fontSize.xs,
+    color: colors.muted,
+    fontWeight: fontWeight.medium,
+  },
+  revenueHeroValue: {
+    fontSize: fontSize['3xl'],
+    fontWeight: fontWeight.extrabold,
+  },
+  revenueHeroDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: colors.border,
+  },
+  campaignCallout: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.brandSubtle,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+  },
+  campaignCalloutText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.brand,
+    fontWeight: fontWeight.medium,
+  },
+  // ─── Today's Actions ────────────────────────────────────────────────
+  todayActionsCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadows.sm,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+    width: '100%',
+    marginBottom: spacing.md,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+  },
+  actionItemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  actionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  actionLabel: {
+    flex: 1,
+    fontSize: fontSize.base,
+    color: colors.text,
+    fontWeight: fontWeight.medium,
+  },
+  // ─── Revenue Collected ──────────────────────────────────────────────
+  revenueCollectedCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...shadows.sm,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    width: '100%',
+    marginBottom: spacing.md,
+  },
+  revenueCollectedRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  revenueCollectedStat: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  revenueCollectedLabel: {
+    fontSize: fontSize.xs,
+    color: colors.muted,
+    fontWeight: fontWeight.medium,
+  },
+  revenueCollectedValue: {
+    fontSize: fontSize.xl,
+    fontWeight: fontWeight.bold,
+    color: colors.success,
   },
 });

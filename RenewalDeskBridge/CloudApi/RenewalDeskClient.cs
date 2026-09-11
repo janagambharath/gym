@@ -221,6 +221,8 @@ namespace RenewalDeskBridge.CloudApi
         public DateTime EventTime { get; set; }
         [JsonProperty("verifyMethod")]
         public int VerifyMethod { get; set; }
+        [JsonProperty("attState")]
+        public int AttState { get; set; }
         [JsonProperty("isInvalid")]
         public bool IsInvalid { get; set; }
     }
