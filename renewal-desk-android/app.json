@@ -7,7 +7,8 @@
     "icon": "./assets/icon.png",
     "scheme": [
       "renewaldesk",
-      "online.revorax.renewaldesk"
+      "online.revorax.renewaldesk",
+      "com.googleusercontent.apps.126496413976-0fiqve1n9eacie14ktam8vbviqt6447g"
     ],
     "ios": {
       "supportsTablet": true,
@@ -15,7 +16,7 @@
     },
     "android": {
       "package": "online.revorax.renewaldesk",
-      "versionCode": 26,
+      "versionCode": 27,
       "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",

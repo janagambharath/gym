@@ -44,12 +44,12 @@ function ActiveGoogleAuthButton({
 }: GoogleAuthButtonProps) {
   const [loading, setLoading] = useState(false);
 
-  const activeClientId = GOOGLE_ANDROID_CLIENT_ID || GOOGLE_WEB_CLIENT_ID;
+  const activeClientId = GOOGLE_WEB_CLIENT_ID || GOOGLE_ANDROID_CLIENT_ID;
 
   const [, , promptAsync] = Google.useIdTokenAuthRequest({
     clientId: activeClientId,
-    androidClientId: GOOGLE_ANDROID_CLIENT_ID || GOOGLE_WEB_CLIENT_ID,
-    webClientId: GOOGLE_WEB_CLIENT_ID || GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
   });
 
   const handlePress = useCallback(async () => {
