@@ -75,6 +75,10 @@ class Config:
         ).split(",")
         if name.strip()
     ]
+    WHATSAPP_OTP_TEMPLATE_NAME = os.getenv("WHATSAPP_OTP_TEMPLATE_NAME", "").strip()
+    WHATSAPP_OTP_TEMPLATE_LANGUAGE = os.getenv(
+        "WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en_US"
+    ).strip()
     META_APP_ID = os.getenv("META_APP_ID", "1711816793132513")
     META_CONFIG_ID = os.getenv("META_CONFIG_ID", "107597391155167")
     REDIS_URL = os.getenv("REDIS_URL", "memory://")

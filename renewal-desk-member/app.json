@@ -1,21 +1,22 @@
 {
   "expo": {
-    "name": "Renewal Desk",
-    "slug": "renewal-desk-android",
+    "name": "VYNLA",
+    "slug": "vynla",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": [
-      "renewaldesk",
-      "online.revorax.renewaldesk"
+      "vynla",
+      "online.revorax.vynla"
     ],
+    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "online.revorax.renewaldesk"
+      "bundleIdentifier": "online.revorax.vynla"
     },
     "android": {
-      "package": "online.revorax.renewaldesk",
-      "versionCode": 26,
+      "package": "online.revorax.vynla",
+      "versionCode": 1,
       "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",
@@ -23,10 +24,9 @@
         "android.permission.VIBRATE"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
+        "backgroundColor": "#0F172A",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundImage": "./assets/android-icon-background.png"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -38,30 +38,20 @@
         }
       ],
       [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png",
-          "color": "#2563EB"
-        }
-      ],
-      "expo-font",
-      [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#FFFFFF"
+          "backgroundColor": "#0F172A"
         }
-      ],
-      "expo-iap",
-      "expo-web-browser"
+      ]
     ],
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
       "eas": {
-        "projectId": "29f40173-df80-4eeb-b214-d701a12c9b38"
+        "projectId": "ccef4346-39e2-4b6d-a555-d8807bb445df"
       }
     },
     "owner": "bharath1818s-team"

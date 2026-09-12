@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Image,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +15,7 @@ import { InfoRow } from '../components/InfoRow';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
+import { getRuntimeConfiguration } from '../config/runtime';
 import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
@@ -85,6 +87,12 @@ export function SettingsScreen({
       ],
     );
   }, [onLogout]);
+
+  const handlePrivacyPolicy = useCallback(() => {
+    const config = getRuntimeConfiguration();
+    const privacyUrl = `${config.apiBaseUrl || 'https://gym-production-910c.up.railway.app'}/privacy`;
+    void Linking.openURL(privacyUrl);
+  }, []);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -190,6 +198,17 @@ export function SettingsScreen({
           </View>
           <InfoRow label="Version" value="1.0.0" />
           <InfoRow label="Build" value="Production Release (Build 5)" />
+          <TouchableOpacity
+            style={styles.privacyRow}
+            onPress={handlePrivacyPolicy}
+            activeOpacity={0.7}
+          >
+            <View style={styles.privacyLeft}>
+              <Icon name="document" size={16} color={colors.brand} />
+              <Text style={styles.privacyText}>Privacy Policy</Text>
+            </View>
+            <Icon name="forward" size={14} color={colors.muted} />
+          </TouchableOpacity>
         </View>
 
         {/* Account Management & Danger Zone */}
@@ -385,5 +404,24 @@ const styles = StyleSheet.create({
     color: colors.critical,
     fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,
+  },
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: spacing.md,
+    marginTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+  },
+  privacyLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  privacyText: {
+    fontSize: fontSize.base,
+    color: colors.brand,
+    fontWeight: fontWeight.semibold,
   },
 });

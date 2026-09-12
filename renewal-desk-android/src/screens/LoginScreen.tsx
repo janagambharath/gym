@@ -19,9 +19,10 @@ import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 type LoginScreenProps = {
   onLogin: () => void;
   onNavigateSignup?: () => void;
+  onNavigateMemberLogin?: () => void;
 };
 
-export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
+export function LoginScreen({ onLogin, onNavigateSignup, onNavigateMemberLogin }: LoginScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -152,6 +153,18 @@ export function LoginScreen({ onLogin, onNavigateSignup }: LoginScreenProps) {
             </View>
           )}
 
+          {/* Member Login Link */}
+          {onNavigateMemberLogin && (
+            <TouchableOpacity
+              style={styles.memberLoginBtn}
+              onPress={onNavigateMemberLogin}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.memberLoginText}>Gym Member? </Text>
+              <Text style={styles.memberLoginLink}>Sign in with WhatsApp OTP →</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Footer */}
           <Text style={styles.footer}>
             Secure login · Data encrypted in transit
@@ -249,6 +262,27 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
   },
   signupLink: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
+  memberLoginBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.brandSubtle,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.infoBorder,
+  },
+  memberLoginText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
+  memberLoginLink: {
     color: colors.brand,
     fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,

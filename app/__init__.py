@@ -343,6 +343,11 @@ def _register_health_check(app: Flask) -> None:
     def root_delete_account():
         return render_template("auth/delete_account.html")
 
+    @app.route("/privacy")
+    @app.route("/privacy-policy")
+    def root_privacy_policy():
+        return render_template("legal/privacy_policy.html")
+
 
 
 def _register_upload_route(app: Flask) -> None:

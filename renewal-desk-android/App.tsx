@@ -45,6 +45,14 @@ import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
 import { SubscriptionScreen } from './src/screens/SubscriptionScreen';
 import { WhatsAppScreen } from './src/screens/WhatsAppScreen';
+import { MemberAccessScreen } from './src/screens/member/MemberAccessScreen';
+import { MemberHomeScreen } from './src/screens/member/MemberHomeScreen';
+import { MemberLoginScreen } from './src/screens/member/MemberLoginScreen';
+import { MemberMembershipScreen } from './src/screens/member/MemberMembershipScreen';
+import { MemberPaymentHistoryScreen } from './src/screens/member/MemberPaymentHistoryScreen';
+import { MemberProfileScreen } from './src/screens/member/MemberProfileScreen';
+import { MemberRenewScreen } from './src/screens/member/MemberRenewScreen';
+import { clearMemberSession, loadMemberSession } from './src/services/memberApiClient';
 import { apiRequest, restoreSession, type ScanDocumentResult } from './src/services/apiClient';
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
@@ -155,11 +163,23 @@ type MoreStackParamList = {
 type AuthStackParamList = {
   Login: undefined;
   Signup: undefined;
+  MemberLogin: undefined;
+};
+
+type MemberHomeStackParamList = {
+  MemberHomeMain: undefined;
+  MemberRenew: undefined;
+};
+
+type MemberMembershipStackParamList = {
+  MemberMembershipMain: undefined;
+  MemberRenew: undefined;
 };
 
 // ─── Navigators ──────────────────────────────────────────────────────
 
 const Tab = createBottomTabNavigator();
+const MemberTab = createBottomTabNavigator();
 const DashboardStackNav = createNativeStackNavigator<DashboardStackParamList>();
 const MembersStackNav = createNativeStackNavigator<MembersStackParamList>();
 const RenewalsStackNav = createNativeStackNavigator<RenewalsStackParamList>();
@@ -167,6 +187,8 @@ const PaymentsStackNav = createNativeStackNavigator<PaymentsStackParamList>();
 const AccessStackNav = createNativeStackNavigator<AccessStackParamList>();
 const MoreStackNav = createNativeStackNavigator<MoreStackParamList>();
 const AuthStackNav = createNativeStackNavigator<AuthStackParamList>();
+const MemberHomeStackNav = createNativeStackNavigator<MemberHomeStackParamList>();
+const MemberMembershipStackNav = createNativeStackNavigator<MemberMembershipStackParamList>();
 
 function useRefreshToken() {
   const [refreshToken, setRefreshToken] = useState(0);
@@ -1027,13 +1049,119 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-// ─── Main App ────────────────────────────────────────────────────────
+// ─── Member Stack Screens ────────────────────────────────────────────
+
+function MemberHomeStackScreen({
+  onNavigatePayments,
+  onNavigateMembership,
+}: {
+  onNavigatePayments: () => void;
+  onNavigateMembership: () => void;
+}) {
+  return (
+    <MemberHomeStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <MemberHomeStackNav.Screen name="MemberHomeMain">
+        {(props) => (
+          <MemberHomeScreen
+            onNavigateRenew={() => props.navigation.navigate('MemberRenew')}
+            onNavigatePayments={onNavigatePayments}
+            onNavigateMembership={onNavigateMembership}
+          />
+        )}
+      </MemberHomeStackNav.Screen>
+      <MemberHomeStackNav.Screen name="MemberRenew">
+        {(props) => (
+          <MemberRenewScreen
+            onBack={() => props.navigation.goBack()}
+            onSuccess={() => props.navigation.goBack()}
+          />
+        )}
+      </MemberHomeStackNav.Screen>
+    </MemberHomeStackNav.Navigator>
+  );
+}
+
+function MemberMembershipStackScreen() {
+  return (
+    <MemberMembershipStackNav.Navigator screenOptions={{ headerShown: false }}>
+      <MemberMembershipStackNav.Screen name="MemberMembershipMain">
+        {(props) => (
+          <MemberMembershipScreen
+            onNavigateRenew={() => props.navigation.navigate('MemberRenew')}
+          />
+        )}
+      </MemberMembershipStackNav.Screen>
+      <MemberMembershipStackNav.Screen name="MemberRenew">
+        {(props) => (
+          <MemberRenewScreen
+            onBack={() => props.navigation.goBack()}
+            onSuccess={() => props.navigation.goBack()}
+          />
+        )}
+      </MemberMembershipStackNav.Screen>
+    </MemberMembershipStackNav.Navigator>
+  );
+}
+
+function MemberTabsNavigator({ onLogout }: { onLogout: () => void }) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <MemberTab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarActiveTintColor: colors.brand,
+        tabBarInactiveTintColor: colors.muted,
+        tabBarLabelStyle: {
+          fontSize: fontSize.xs,
+          fontWeight: fontWeight.semibold,
+          marginTop: -2,
+        },
+        tabBarStyle: {
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
+          borderTopWidth: 1,
+          height: Platform.OS === 'ios' ? 84 : 64 + Math.max(insets.bottom, 0),
+          paddingBottom: Platform.OS === 'ios' ? 24 : Math.max(insets.bottom, 8),
+          paddingTop: 8,
+        },
+        tabBarIcon: ({ focused, color }) => {
+          const iconMap: Record<string, 'dashboard' | 'members' | 'access' | 'payments' | 'more'> = {
+            Home: 'dashboard',
+            Membership: 'members',
+            Payments: 'payments',
+            Access: 'access',
+            Profile: 'more',
+          };
+          const iconName = iconMap[route.name] ?? 'dashboard';
+          return <TabIcon name={iconName} focused={focused} color={color} size={22} />;
+        },
+      })}
+    >
+      <MemberTab.Screen name="Home">
+        {(props) => (
+          <MemberHomeStackScreen
+            onNavigatePayments={() => props.navigation.navigate('Payments')}
+            onNavigateMembership={() => props.navigation.navigate('Membership')}
+          />
+        )}
+      </MemberTab.Screen>
+      <MemberTab.Screen name="Membership" component={MemberMembershipStackScreen} />
+      <MemberTab.Screen name="Payments" component={MemberPaymentHistoryScreen} />
+      <MemberTab.Screen name="Access" component={MemberAccessScreen} />
+      <MemberTab.Screen name="Profile">
+        {() => <MemberProfileScreen onLogout={onLogout} />}
+      </MemberTab.Screen>
+    </MemberTab.Navigator>
+  );
+}
 
 // ─── Main App ────────────────────────────────────────────────────────
 
 function AppRoot() {
   const [isReady, setIsReady] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authRole, setAuthRole] = useState<'owner' | 'member' | 'none'>('none');
   const [plans, setPlans] = useState<Plan[]>([]);
   const insets = useSafeAreaInsets();
 
@@ -1041,13 +1169,24 @@ function AppRoot() {
     let active = true;
     async function bootstrap() {
       try {
-        const session = await restoreSession();
-        if (active) {
-          setIsAuthenticated(!!session);
+        const ownerSession = await restoreSession();
+        if (active && ownerSession) {
+          setAuthRole('owner');
+          setIsAuthenticated(true);
+        } else {
+          const memberSession = await loadMemberSession();
+          if (active && memberSession) {
+            setAuthRole('member');
+            setIsAuthenticated(true);
+          } else if (active) {
+            setAuthRole('none');
+            setIsAuthenticated(false);
+          }
         }
       } catch (err) {
         console.warn('[AppRoot] Error restoring session:', err);
         if (active) {
+          setAuthRole('none');
           setIsAuthenticated(false);
         }
       } finally {
@@ -1062,9 +1201,9 @@ function AppRoot() {
     };
   }, []);
 
-  // Fetch plans & register push notifications once authenticated
+  // Fetch plans & register push notifications once authenticated as owner
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || authRole !== 'owner') return;
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((res) => {
       if (res.ok) setPlans(res.data.plans);
     });
@@ -1138,16 +1277,29 @@ function AppRoot() {
     return () => {
       subscription?.remove();
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authRole]);
 
-  const handleLoginSuccess = useCallback(() => {
+  const handleOwnerLoginSuccess = useCallback(() => {
+    setAuthRole('owner');
     setIsAuthenticated(true);
   }, []);
 
-  const handleLogout = useCallback(() => {
+  const handleMemberLoginSuccess = useCallback(() => {
+    setAuthRole('member');
+    setIsAuthenticated(true);
+  }, []);
+
+  const handleOwnerLogout = useCallback(() => {
     void unregisterPushNotificationsAsync().catch(() => {});
+    setAuthRole('none');
     setIsAuthenticated(false);
     setPlans([]);
+  }, []);
+
+  const handleMemberLogout = useCallback(async () => {
+    await clearMemberSession();
+    setAuthRole('none');
+    setIsAuthenticated(false);
   }, []);
 
   if (!isReady) {
@@ -1167,7 +1319,7 @@ function AppRoot() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || authRole === 'none') {
     return (
       <>
         <StatusBar style="dark" />
@@ -1176,20 +1328,40 @@ function AppRoot() {
             <AuthStackNav.Screen name="Login">
               {(props) => (
                 <LoginScreen
-                  onLogin={handleLoginSuccess}
+                  onLogin={handleOwnerLoginSuccess}
                   onNavigateSignup={() => props.navigation.navigate('Signup')}
+                  onNavigateMemberLogin={() => props.navigation.navigate('MemberLogin')}
+                />
+              )}
+            </AuthStackNav.Screen>
+            <AuthStackNav.Screen name="MemberLogin">
+              {() => (
+                <MemberLoginScreen
+                  onLoginSuccess={handleMemberLoginSuccess}
+                  onSwitchToOwner={() => navigationRef.navigate('Login')}
                 />
               )}
             </AuthStackNav.Screen>
             <AuthStackNav.Screen name="Signup">
               {(props) => (
                 <SignupScreen
-                  onSignupSuccess={handleLoginSuccess}
+                  onSignupSuccess={handleOwnerLoginSuccess}
                   onNavigateLogin={() => props.navigation.navigate('Login')}
                 />
               )}
             </AuthStackNav.Screen>
           </AuthStackNav.Navigator>
+        </NavigationContainer>
+      </>
+    );
+  }
+
+  if (authRole === 'member') {
+    return (
+      <>
+        <StatusBar style="dark" />
+        <NavigationContainer ref={navigationRef}>
+          <MemberTabsNavigator onLogout={handleMemberLogout} />
         </NavigationContainer>
       </>
     );
@@ -1234,7 +1406,7 @@ function AppRoot() {
           <Tab.Screen name="Dashboard">
             {(props) => (
               <DashboardStackScreen
-                onLogout={handleLogout}
+                onLogout={handleOwnerLogout}
                 plans={plans}
                 onNavigateMembers={() => props.navigation.navigate('Members')}
                 onNavigatePayments={() => props.navigation.navigate('Payments')}
@@ -1245,19 +1417,19 @@ function AppRoot() {
             )}
           </Tab.Screen>
           <Tab.Screen name="Members">
-            {() => <MembersStackScreen onLogout={handleLogout} plans={plans} />}
+            {() => <MembersStackScreen onLogout={handleOwnerLogout} plans={plans} />}
           </Tab.Screen>
           <Tab.Screen name="Access">
-            {() => <AccessStackScreen onLogout={handleLogout} />}
+            {() => <AccessStackScreen onLogout={handleOwnerLogout} />}
           </Tab.Screen>
           <Tab.Screen name="Renewals">
-            {() => <RenewalsStackScreen onLogout={handleLogout} />}
+            {() => <RenewalsStackScreen onLogout={handleOwnerLogout} />}
           </Tab.Screen>
           <Tab.Screen name="Payments">
-            {() => <PaymentsStackScreen onLogout={handleLogout} />}
+            {() => <PaymentsStackScreen onLogout={handleOwnerLogout} />}
           </Tab.Screen>
           <Tab.Screen name="More">
-            {() => <MoreStackScreen onLogout={handleLogout} />}
+            {() => <MoreStackScreen onLogout={handleOwnerLogout} />}
           </Tab.Screen>
         </Tab.Navigator>
       </NavigationContainer>
