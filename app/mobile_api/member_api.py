@@ -258,6 +258,12 @@ def request_otp():
                         template_name=otp_template,
                         language_code=current_app.config.get("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"),
                         body_parameters=[otp],
+                        button_parameters=[{
+                            "type": "button",
+                            "sub_type": "url",
+                            "index": "0",
+                            "parameters": [{"type": "text", "text": str(otp)}],
+                        }],
                     )
                     template_sent = template_res.ok
                     if not template_sent:
