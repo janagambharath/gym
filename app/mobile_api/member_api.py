@@ -260,12 +260,16 @@ def request_otp():
                         body_parameters=[otp],
                     )
                     template_sent = template_res.ok
+                    if not template_sent:
+                        _logger.warning("WhatsApp OTP template '%s' failed: %s", otp_template, template_res.error)
 
                 if not template_sent:
-                    wa.send_text(
+                    text_res = wa.send_text(
                         to=wa_phone,
                         body=f"Your VYNLA verification code is: {otp}\n\nValid for 10 minutes.",
                     )
+                    if not text_res.ok:
+                        _logger.warning("WhatsApp OTP text message failed: %s", text_res.error)
     except Exception:
         _logger.exception("Failed to send OTP via WhatsApp for phone %s", phone[-4:])
 

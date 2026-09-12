@@ -35,8 +35,14 @@ class WhatsAppService:
         self.gym_id = gym.id
         self.gym_enabled = gym.whatsapp_enabled
         self.enabled = current_app.config["WHATSAPP_ENABLED"]
-        self.whatsapp_business_account_id = gym.whatsapp_business_account_id
-        self.phone_number_id = gym.phone_number_id
+        self.whatsapp_business_account_id = (
+            gym.whatsapp_business_account_id
+            or current_app.config.get("WHATSAPP_BUSINESS_ACCOUNT_ID")
+        )
+        self.phone_number_id = (
+            gym.phone_number_id
+            or current_app.config.get("WHATSAPP_PHONE_NUMBER_ID")
+        )
         self.access_token = current_app.config["WHATSAPP_ACCESS_TOKEN"]
         self.api_version = current_app.config["WHATSAPP_API_VERSION"]
 
@@ -312,9 +318,10 @@ class WhatsAppService:
                 self._handle_auth_failure(response.status_code)
                 safe_error = self._response_error(response)
                 current_app.logger.warning(
-                    "WhatsApp API error %s for phone_number_id %s",
+                    "WhatsApp API error %s for phone_number_id %s: %s",
                     response.status_code,
                     self.phone_number_id,
+                    safe_error,
                 )
                 return WhatsAppResult(ok=False, error=safe_error)
 

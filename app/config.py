@@ -59,6 +59,8 @@ class Config:
     WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "false").lower() == "true"
     WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
     WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v20.0")
+    WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+    WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "").strip()
     WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
     WHATSAPP_WEBHOOK_SECRET = os.getenv(
         "WHATSAPP_WEBHOOK_SECRET", os.getenv("WHATSAPP_APP_SECRET", "")
