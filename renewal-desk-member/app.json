@@ -24,7 +24,7 @@
         "android.permission.VIBRATE"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#0F172A",
+        "backgroundColor": "#060D24",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png"
       },
@@ -42,7 +42,7 @@
         {
           "image": "./assets/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#0F172A"
+          "backgroundColor": "#060D24"
         }
       ]
     ],
