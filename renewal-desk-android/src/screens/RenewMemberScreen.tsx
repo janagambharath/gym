@@ -103,13 +103,6 @@ export function RenewMemberScreen({
   }, [hasPlan, member.id, renewalDays, amount, paymentMethod, renewing, onLogout, onComplete]);
 
   const handleSendWhatsApp = useCallback(async () => {
-    if (!member.whatsapp_opted_in) {
-      setWhatsAppFeedback({
-        message: 'This member has not opted in to WhatsApp reminders.',
-        type: 'error',
-      });
-      return;
-    }
     if (sendingWhatsApp) return;
 
     setSendingWhatsApp(true);
@@ -130,7 +123,7 @@ export function RenewMemberScreen({
       setWhatsAppFeedback({ message: result.error.message, type: 'error' });
     }
     setSendingWhatsApp(false);
-  }, [member.id, member.whatsapp_opted_in, onLogout, sendingWhatsApp]);
+  }, [member.id, onLogout, sendingWhatsApp]);
 
   if (success && paymentResult) {
     return (
@@ -222,16 +215,16 @@ export function RenewMemberScreen({
           <TouchableOpacity
             accessibilityLabel="Send WhatsApp reminder"
             accessibilityRole="button"
-            disabled={sendingWhatsApp || !member.whatsapp_opted_in}
+            disabled={sendingWhatsApp}
             onPress={() => void handleSendWhatsApp()}
             style={[
               styles.successWhatsAppButton,
-              sendingWhatsApp || !member.whatsapp_opted_in ? styles.successWhatsAppButtonDisabled : undefined,
+              sendingWhatsApp ? styles.successWhatsAppButtonDisabled : undefined,
             ]}
           >
             <Icon name="whatsapp" size={19} color={colors.whatsappDark} />
             <Text style={styles.successWhatsAppText}>
-              {sendingWhatsApp ? 'Sending...' : member.whatsapp_opted_in ? 'Send WhatsApp' : 'WhatsApp not opted in'}
+              {sendingWhatsApp ? 'Sending...' : 'Send WhatsApp'}
             </Text>
           </TouchableOpacity>
         </ScrollView>

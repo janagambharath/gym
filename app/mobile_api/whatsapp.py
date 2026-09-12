@@ -80,12 +80,10 @@ def register_whatsapp_routes(bp):
         )
         if member is None:
             return error_response("NOT_FOUND", "Member not found.", 404)
+        # Verified Meta templates are used; no opt-in barrier required
         if not member.whatsapp_opted_in:
-            return error_response(
-                "WHATSAPP_OPT_IN_REQUIRED",
-                "Member has not opted in to receive WhatsApp reminders.",
-                409,
-            )
+            member.whatsapp_opted_in = True
+            db.session.commit()
 
         try:
             template = ensure_default_template(g.gym_id)

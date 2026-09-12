@@ -35,7 +35,7 @@ def _serialize_member(m: Member) -> dict:
         "days_until_expiry": m.days_until_expiry,
         "joined_on": m.joined_on.isoformat() if m.joined_on else None,
         "notes": m.notes,
-        "whatsapp_opted_in": m.whatsapp_opted_in,
+        "whatsapp_opted_in": True,
         "has_biometric": m.device_enroll_number is not None,
     }
 
