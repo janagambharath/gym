@@ -256,7 +256,7 @@ def request_otp():
                     template_res = wa.send_template(
                         to=wa_phone,
                         template_name=otp_template,
-                        language_code=current_app.config.get("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en_US"),
+                        language_code=current_app.config.get("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"),
                         body_parameters=[otp],
                     )
                     template_sent = template_res.ok

@@ -137,8 +137,9 @@ class WhatsAppService:
         *,
         to: str,
         template_name: str,
-        language_code: str,
+        language_code: str = "en",
         body_parameters: list[str] | None = None,
+        button_parameters: list[dict] | None = None,
     ) -> WhatsAppResult:
         configuration_error = self._configuration_error()
         if configuration_error:
@@ -151,28 +152,67 @@ class WhatsAppService:
                 error="WhatsApp delivery is disabled by the server configuration",
             )
 
-        template: dict = {
-            "name": template_name,
-            "language": {"code": language_code or "en_US"},
-        }
-        if body_parameters:
-            template["components"] = [
-                {
+        def _do_send(lang: str, with_buttons: bool) -> WhatsAppResult:
+            components: list[dict] = []
+            if body_parameters:
+                components.append({
                     "type": "body",
                     "parameters": [
                         {"type": "text", "text": str(parameter)}
                         for parameter in body_parameters
                     ],
-                }
-            ]
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": to.replace("+", ""),
-            "type": "template",
-            "template": template,
-        }
-        return self._post(payload)
+                })
+            if with_buttons:
+                if button_parameters:
+                    components.extend(button_parameters)
+                elif body_parameters:
+                    components.append({
+                        "type": "button",
+                        "sub_type": "url",
+                        "index": "0",
+                        "parameters": [
+                            {"type": "text", "text": str(body_parameters[0])}
+                        ],
+                    })
+            tpl: dict = {
+                "name": template_name,
+                "language": {"code": lang or "en"},
+            }
+            if components:
+                tpl["components"] = components
+            payload = {
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": to.replace("+", ""),
+                "type": "template",
+                "template": tpl,
+            }
+            return self._post(payload)
+
+        # 1. Primary attempt
+        lang = language_code or "en"
+        res = _do_send(lang, with_buttons=bool(button_parameters))
+        if res.ok:
+            return res
+
+        # 2. If translation not found (132001), try fallback English codes
+        if res.error and ("132001" in res.error or "translation" in res.error.lower()):
+            for alt_lang in ["en", "en_US", "en_GB"]:
+                if alt_lang != lang:
+                    res = _do_send(alt_lang, with_buttons=bool(button_parameters))
+                    if res.ok:
+                        return res
+
+        # 3. If button parameter was required, try with button
+        if res.error and not button_parameters and body_parameters:
+            err_lower = res.error.lower()
+            if "button" in err_lower or "component" in err_lower or "parameter" in err_lower:
+                for try_lang in [lang, "en", "en_US"]:
+                    res = _do_send(try_lang, with_buttons=True)
+                    if res.ok:
+                        return res
+
+        return res
 
     def send_image(self, *, to: str, image_url: str, caption: str) -> WhatsAppResult:
         configuration_error = self._configuration_error()
