@@ -19,7 +19,7 @@ import { getRuntimeConfiguration } from '../config/runtime';
 import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { GymSettings, SettingsResponse } from '../types';
+import type { GymSettings, PaymentSettings, SettingsResponse } from '../types';
 
 type SettingsScreenProps = {
   onLogout: () => void;
@@ -33,6 +33,7 @@ type SettingsScreenProps = {
   onNavigateCampaigns?: () => void;
   onNavigateAccess?: () => void;
   onNavigatePayments?: () => void;
+  onNavigatePaymentSetup?: () => void;
 };
 
 export function SettingsScreen({
@@ -47,14 +48,17 @@ export function SettingsScreen({
   onNavigateCampaigns,
   onNavigateAccess,
   onNavigatePayments,
+  onNavigatePaymentSetup,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
+  const [paymentSettings, setPaymentSettings] = useState<PaymentSettings | undefined>();
   const session = getCachedSession();
 
   useEffect(() => {
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((result) => {
       if (result.ok) {
         setGym(result.data.gym);
+        setPaymentSettings(result.data.payment_settings);
       } else if (result.error.status === 401) {
         onLogout();
       }
@@ -125,6 +129,9 @@ export function SettingsScreen({
             <MenuItem icon="wallet" label="Subscription & Billing" onPress={onNavigateSubscription} />
             <MenuItem icon="target" label="Campaigns" onPress={onNavigateCampaigns} />
             <MenuItem icon="revenue" label="Payments" onPress={onNavigatePayments} />
+            {session?.userRole === 'gym_owner' ? (
+              <MenuItem icon="wallet" label="Payment & UPI Setup" onPress={onNavigatePaymentSetup} />
+            ) : null}
             <MenuItem icon="whatsapp" label="WhatsApp Reminders" onPress={onNavigateWhatsApp} />
             <MenuItem icon="robot" label="AI Receptionist (Bot)" onPress={onNavigateBot} />
             <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
@@ -166,6 +173,53 @@ export function SettingsScreen({
               <InfoRow label="Member Limit" value={String(gym.max_members)} />
             ) : null}
           </View>
+        ) : null}
+
+        {/* Payment & UPI Setup */}
+        {session?.userRole === 'gym_owner' ? (
+          <TouchableOpacity style={styles.card} onPress={onNavigatePaymentSetup} activeOpacity={0.7}>
+            <SectionHeader title="Payment & UPI Setup" icon={<Icon name="wallet" size={18} color={colors.brand} />} />
+            <View style={styles.paymentSetupRow}>
+              <View style={styles.flex}>
+                <Text style={styles.paymentUpiText}>
+                  {paymentSettings?.upi_id ? paymentSettings.upi_id : 'No UPI ID Configured'}
+                </Text>
+                <Text style={styles.paymentSubtext}>
+                  {paymentSettings?.upi_id
+                    ? paymentSettings.is_active
+                      ? 'Active • VYNLA members pay directly via UPI'
+                      : 'Disabled • UPI renewals paused'
+                    : 'Tap to configure gym UPI ID & bank account'}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.statusPill,
+                  {
+                    backgroundColor:
+                      paymentSettings?.upi_id && paymentSettings?.is_active
+                        ? '#DCFCE7'
+                        : '#FEF3C7',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusPillText,
+                    {
+                      color:
+                        paymentSettings?.upi_id && paymentSettings?.is_active
+                          ? colors.successDark
+                          : '#B45309',
+                    },
+                  ]}
+                >
+                  {paymentSettings?.upi_id && paymentSettings?.is_active ? 'Active' : 'Setup Needed'}
+                </Text>
+              </View>
+              <Icon name="forward" size={16} color={colors.muted} />
+            </View>
+          </TouchableOpacity>
         ) : null}
 
         {/* WhatsApp */}
@@ -365,6 +419,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: spacing.md,
+  },
+  paymentSetupRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  paymentUpiText: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  paymentSubtext: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    marginTop: 2,
+  },
+  statusPill: {
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  statusPillText: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
   },
   whatsappDot: {
     borderRadius: 5,

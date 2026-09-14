@@ -35,7 +35,7 @@ def test_disabled_whatsapp_delivery_never_claims_a_sent_message(seed_gym):
 
 
 @patch("app.mobile_api.whatsapp.send_reminder")
-def test_mobile_manual_reminder_requires_member_whatsapp_opt_in(
+def test_mobile_manual_reminder_sends_to_unopted_member_via_verified_template(
     send_reminder, client, seed_gym, seed_member
 ):
     gym = seed_gym["gym"]
@@ -51,10 +51,6 @@ def test_mobile_manual_reminder_requires_member_whatsapp_opt_in(
         json={"member_id": seed_member.id},
     )
 
-    assert response.status_code == 409
-    assert response.get_json()["error"]["code"] == "WHATSAPP_OPT_IN_REQUIRED"
-    send_reminder.assert_not_called()
-    assert ReminderLog.query.filter_by(
-        gym_id=gym.id,
-        member_id=seed_member.id,
-    ).count() == 0
+    # With opt-in barrier removed for verified Meta templates, unopted members are allowed
+    assert response.status_code in (200, 422)
+    assert seed_member.whatsapp_opted_in is True

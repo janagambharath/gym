@@ -69,9 +69,11 @@ export const PaymentsScreen: React.FC = () => {
   };
 
   const renderPaymentItem = ({ item }: { item: PaymentRecord }) => {
-    const isPending = item.status.toLowerCase() === 'pending';
+    const isPending = item.status.toLowerCase() === 'pending' || item.status.toLowerCase() === 'processing';
     const isVerified = item.status.toLowerCase() === 'verified';
     const isRejected = item.status.toLowerCase() === 'rejected';
+    const isOnline = item.channel === 'online';
+    const hasDiscount = Boolean(item.discount && parseFloat(item.discount) > 0);
 
     return (
       <View style={styles.paymentCard}>
@@ -92,11 +94,36 @@ export const PaymentsScreen: React.FC = () => {
               />
             </View>
             <View>
-              <Text style={styles.amountText}>₹{item.amount}</Text>
-              <Text style={styles.dateText}>{formatDate(item.paid_on || item.created_at)}</Text>
+              <Text style={styles.planNameText}>{item.plan_name || 'Membership Payment'}</Text>
+              <Text style={styles.dateText}>
+                {item.method?.toUpperCase()} · {formatDate(item.paid_on || item.created_at)}
+              </Text>
             </View>
           </View>
           <StatusBadge status={item.status} size="sm" />
+        </View>
+
+        {/* Pricing Breakdown */}
+        <View style={styles.pricingSection}>
+          <View style={styles.channelRow}>
+            <View style={[styles.channelBadge, isOnline ? styles.onlineBadge : styles.offlineBadge]}>
+              <Text style={[styles.channelBadgeText, isOnline ? styles.onlineBadgeText : styles.offlineBadgeText]}>
+                {isOnline ? 'Online (UPI)' : 'Gym Counter'}
+              </Text>
+            </View>
+            {hasDiscount && item.discount ? (
+              <View style={styles.savingsPill}>
+                <Text style={styles.savingsPillText}>Saved ₹{item.discount}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.amountContainer}>
+            {hasDiscount && item.standard_price ? (
+              <Text style={styles.strikethroughPrice}>₹{item.standard_price}</Text>
+            ) : null}
+            <Text style={styles.amountText}>₹{item.amount}</Text>
+          </View>
         </View>
 
         {item.reference && (
@@ -219,6 +246,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#F1F5F9',
   },
+  planNameText: {
+    ...typography.bodySemibold,
+    color: colors.text,
+  },
   amountText: {
     ...typography.h3,
     color: colors.text,
@@ -227,6 +258,58 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.muted,
     marginTop: 2,
+  },
+  pricingSection: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  channelRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  channelBadge: {
+    borderRadius: radii.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  channelBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  offlineBadge: {
+    backgroundColor: '#F1F5F9',
+  },
+  offlineBadgeText: {
+    color: '#475569',
+  },
+  onlineBadge: {
+    backgroundColor: '#EEF2FF',
+  },
+  onlineBadgeText: {
+    color: '#4F46E5',
+  },
+  savingsPill: {
+    backgroundColor: '#DCFCE7',
+    borderRadius: radii.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  savingsPillText: {
+    color: '#15803D',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  amountContainer: {
+    alignItems: 'flex-end',
+  },
+  strikethroughPrice: {
+    ...typography.caption,
+    color: colors.muted,
+    textDecorationLine: 'line-through',
   },
   referenceRow: {
     flexDirection: 'row',

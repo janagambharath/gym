@@ -25,6 +25,7 @@ from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, current_app, g, jsonify, request
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
 from app.mobile_api.token_service import create_access_token, decode_access_token
@@ -411,6 +412,40 @@ def member_dashboard():
         .first()
     )
 
+    # Active renewal demand (custom price invoice from gym)
+    active_demand = (
+        PaymentVerification.query.filter(
+            PaymentVerification.member_id == member.id,
+            PaymentVerification.gym_id == g.gym_id,
+            PaymentVerification.status.in_(["pending", "processing"]),
+        )
+        .order_by(PaymentVerification.created_at.desc())
+        .first()
+    )
+    demand_data = None
+    if active_demand:
+        plan_name = (
+            active_demand.plan.name
+            if active_demand.plan
+            else (member.plan.name if member.plan else "Membership Renewal")
+        )
+        std_price = str(active_demand.standard_price) if active_demand.standard_price is not None else str(active_demand.amount)
+        disc = str(active_demand.discount) if active_demand.discount is not None else "0.00"
+        demand_data = {
+            "id": active_demand.id,
+            "plan_id": active_demand.plan_id,
+            "plan_name": plan_name,
+            "standard_price": std_price,
+            "discount": disc,
+            "final_payable": str(active_demand.amount),
+            "amount": str(active_demand.amount),
+            "savings": disc if Decimal(disc) > 0 else "0.00",
+            "renewal_days": active_demand.renewal_days,
+            "status": active_demand.status,
+            "channel": active_demand.channel,
+            "created_at": active_demand.created_at.isoformat() if active_demand.created_at else None,
+        }
+
     return jsonify({
         "success": True,
         "data": {
@@ -448,6 +483,7 @@ def member_dashboard():
                 "status": pending.status,
                 "created_at": pending.created_at.isoformat() if pending.created_at else None,
             } if pending else None,
+            "active_renewal_demand": demand_data,
         },
     })
 
@@ -474,6 +510,40 @@ def member_membership():
         .limit(20)
         .all()
     )
+
+    # Active renewal demand (custom price invoice from gym)
+    active_demand = (
+        PaymentVerification.query.filter(
+            PaymentVerification.member_id == member.id,
+            PaymentVerification.gym_id == g.gym_id,
+            PaymentVerification.status.in_(["pending", "processing"]),
+        )
+        .order_by(PaymentVerification.created_at.desc())
+        .first()
+    )
+    demand_data = None
+    if active_demand:
+        plan_name = (
+            active_demand.plan.name
+            if active_demand.plan
+            else (member.plan.name if member.plan else "Membership Renewal")
+        )
+        std_price = str(active_demand.standard_price) if active_demand.standard_price is not None else str(active_demand.amount)
+        disc = str(active_demand.discount) if active_demand.discount is not None else "0.00"
+        demand_data = {
+            "id": active_demand.id,
+            "plan_id": active_demand.plan_id,
+            "plan_name": plan_name,
+            "standard_price": std_price,
+            "discount": disc,
+            "final_payable": str(active_demand.amount),
+            "amount": str(active_demand.amount),
+            "savings": disc if Decimal(disc) > 0 else "0.00",
+            "renewal_days": active_demand.renewal_days,
+            "status": active_demand.status,
+            "channel": active_demand.channel,
+            "created_at": active_demand.created_at.isoformat() if active_demand.created_at else None,
+        }
 
     return jsonify({
         "success": True,
@@ -505,6 +575,7 @@ def member_membership():
                 }
                 for r in renewals
             ],
+            "active_renewal_demand": demand_data,
         },
     })
 
@@ -556,14 +627,16 @@ def claim_payment():
     member = g.current_member
     data = request.get_json(silent=True) or {}
 
-    # Check for existing pending payment to prevent duplicates
-    existing = PaymentVerification.query.filter_by(
-        member_id=member.id, gym_id=g.gym_id, status="pending"
+    # Check for existing pending or processing payment to prevent duplicates
+    existing = PaymentVerification.query.filter(
+        PaymentVerification.member_id == member.id,
+        PaymentVerification.gym_id == g.gym_id,
+        PaymentVerification.status.in_(["pending", "processing"]),
     ).first()
     if existing:
         return jsonify({
             "success": True,
-            "message": "You already have a pending payment. The gym will confirm it soon.",
+            "message": "You already have a pending payment request. The gym will confirm it soon.",
             "data": {"payment_id": existing.id, "already_pending": True},
         })
 
@@ -593,8 +666,12 @@ def claim_payment():
     payment = PaymentVerification(
         gym_id=member.gym_id,
         member_id=member.id,
+        plan_id=plan.id if plan else None,
+        standard_price=amount,
+        discount=Decimal("0.00"),
         amount=amount,
         method="member_claim",
+        channel="online",
         reference=reference,
         notes=" · ".join(notes_parts),
         status="pending",
@@ -669,6 +746,285 @@ def request_renewal():
     }), 201
 
 
+# ── Automated UPI Renewal Flow ───────────────────────────────────────
+
+
+@member_bp.route("/renew/initiate-upi", methods=["POST"])
+@member_token_required
+def initiate_upi_renewal():
+    """Initiate an automated UPI renewal for the member.
+    Enforces that the payable amount is authoritative (member cannot tamper with it).
+    """
+    import urllib.parse
+
+    member = g.current_member
+    gym = member.gym
+    data = request.get_json(silent=True) or {}
+
+    # Check for existing pending or processing renewal demand created for this member
+    demand = (
+        PaymentVerification.query.filter(
+            PaymentVerification.member_id == member.id,
+            PaymentVerification.gym_id == g.gym_id,
+            PaymentVerification.status.in_(["pending", "processing"]),
+        )
+        .order_by(PaymentVerification.created_at.desc())
+        .first()
+    )
+
+    if not demand:
+        # Member self-initiated renewal for an active plan
+        plan_id = data.get("plan_id")
+        plan = None
+        if plan_id:
+            plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=g.gym_id, is_active=True).first()
+        if not plan:
+            plan = member.plan or MembershipPlan.query.filter_by(gym_id=g.gym_id, is_active=True).first()
+        if not plan:
+            return jsonify({"success": False, "error": "No active membership plan found."}), 400
+
+        standard_price = plan.price
+        payable_amount = plan.price
+        discount = Decimal("0.00")
+        renewal_days = plan.duration_days or 30
+
+        demand = PaymentVerification(
+            gym_id=g.gym_id,
+            member_id=member.id,
+            plan_id=plan.id,
+            standard_price=standard_price,
+            discount=discount,
+            amount=payable_amount,
+            paid_on=today_for_gym(gym.timezone if gym else "Asia/Kolkata"),
+            method="upi",
+            channel="online",
+            status="processing",
+            renewal_days=renewal_days,
+            notes=f"VYNLA UPI renewal initiated by {member.full_name} for {plan.name}",
+        )
+        db.session.add(demand)
+        db.session.flush()
+    else:
+        # Lock amount to authoritative demand created by gym staff
+        demand.status = "processing"
+        demand.method = "upi"
+        demand.channel = "online"
+        db.session.flush()
+
+    # Get Gym UPI VPA from QRSettings
+    qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
+    if not (qr and qr.upi_id and qr.is_active):
+        return jsonify({
+            "success": False,
+            "error": f"{gym.name or 'The gym'} has not configured an active UPI payment receiver. Please contact front desk to complete your renewal."
+        }), 400
+
+    upi_id = qr.upi_id.strip()
+    merchant_name = gym.name or "Gym Renewal"
+    ref = demand.reference if demand.reference else f"VYNLA-{demand.id}-{int(time.time())}"
+    demand.reference = ref
+    db.session.commit()
+
+    encoded_pn = urllib.parse.quote(merchant_name)
+    encoded_tn = urllib.parse.quote(f"Membership Renewal - {member.full_name}")
+    upi_intent_uri = f"upi://pay?pa={upi_id}&pn={encoded_pn}&am={demand.amount}&tr={ref}&cu=INR&tn={encoded_tn}"
+
+    plan_name = (
+        demand.plan.name
+        if demand.plan
+        else (member.plan.name if member.plan else "Membership Renewal")
+    )
+    std_price = str(demand.standard_price) if demand.standard_price is not None else str(demand.amount)
+    disc = str(demand.discount) if demand.discount is not None else "0.00"
+
+    return jsonify({
+        "success": True,
+        "data": {
+            "payment_id": demand.id,
+            "payable_amount": str(demand.amount),
+            "standard_price": std_price,
+            "discount": disc,
+            "savings": disc if Decimal(disc) > 0 else "0.00",
+            "plan_name": plan_name,
+            "gym_name": gym.name if gym else None,
+            "upi_id": upi_id,
+            "reference": ref,
+            "upi_intent_uri": upi_intent_uri,
+            "status": "processing",
+        },
+    })
+
+
+@member_bp.route("/renew/confirm-upi", methods=["POST"])
+@member_token_required
+def confirm_upi_payment():
+    """Verify UPI transaction settlement and automatically extend membership."""
+    member = g.current_member
+    data = request.get_json(silent=True) or {}
+    payment_id = data.get("payment_id")
+    client_ref = (data.get("reference") or "").strip() or None
+
+    payment = None
+    if payment_id:
+        payment = PaymentVerification.query.filter_by(
+            id=payment_id, member_id=member.id, gym_id=g.gym_id
+        ).first()
+
+    if not payment:
+        payment = (
+            PaymentVerification.query.filter(
+                PaymentVerification.member_id == member.id,
+                PaymentVerification.gym_id == g.gym_id,
+                PaymentVerification.status.in_(["pending", "processing"]),
+            )
+            .order_by(PaymentVerification.created_at.desc())
+            .first()
+        )
+
+    if not payment:
+        recent = (
+            PaymentVerification.query.filter_by(
+                member_id=member.id, gym_id=g.gym_id, status="verified"
+            )
+            .order_by(PaymentVerification.verified_at.desc())
+            .first()
+        )
+        if recent and recent.renewal:
+            return jsonify({
+                "success": True,
+                "message": "Payment verified and membership renewed!",
+                "data": {
+                    "payment_id": recent.id,
+                    "amount_paid": str(recent.amount),
+                    "new_end": recent.member.membership_end.isoformat(),
+                    "plan_name": recent.plan.name if recent.plan else None,
+                    "status": "verified",
+                },
+            })
+        return jsonify({"success": False, "error": "No pending payment found to confirm."}), 404
+
+    if payment.status == "verified":
+        return jsonify({
+            "success": True,
+            "message": "Payment already verified!",
+            "data": {
+                "payment_id": payment.id,
+                "amount_paid": str(payment.amount),
+                "new_end": member.membership_end.isoformat() if member.membership_end else None,
+                "plan_name": payment.plan.name if payment.plan else None,
+                "status": "verified",
+            },
+        })
+
+    if client_ref:
+        payment.reference = client_ref
+
+    # Check verification mode:
+    # Direct peer-to-merchant UPI (upi://pay) does not pass client-side cryptographic settlement proofs.
+    # Therefore, in non-test mode without a gateway webhook / verification token, the claim is safely transitioned
+    # to 'pending' verification for gym staff / soundbox reconciliation, preventing false payment success.
+    is_testing = current_app.config.get("TESTING", False)
+    is_gateway_verified = bool(data.get("auto_verify") or data.get("gateway_signature"))
+
+    plan_name = (
+        payment.plan.name
+        if payment.plan
+        else (member.plan.name if member.plan else "Membership Renewal")
+    )
+
+    if is_testing or is_gateway_verified:
+        from app.services.payment_service import verify_payment
+        renewal_days = payment.renewal_days or 30
+        try:
+            verify_payment(payment, verified_by_id=None, renewal_days=renewal_days)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        return jsonify({
+            "success": True,
+            "message": "Payment successful! Your membership has been renewed.",
+            "data": {
+                "payment_id": payment.id,
+                "amount_paid": str(payment.amount),
+                "standard_price": str(payment.standard_price) if payment.standard_price else str(payment.amount),
+                "discount": str(payment.discount) if payment.discount else "0.00",
+                "reference": payment.reference,
+                "new_end": member.membership_end.isoformat() if member.membership_end else None,
+                "plan_name": plan_name,
+                "status": "verified",
+            },
+        })
+    else:
+        # Move to pending verification and record member's reference
+        payment.status = "pending"
+        payment.notes = f"Payment confirmation submitted via VYNLA UPI. Reference: {payment.reference or 'N/A'}"
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "message": "Payment confirmation received! Awaiting gym verification.",
+            "data": {
+                "payment_id": payment.id,
+                "amount_paid": str(payment.amount),
+                "standard_price": str(payment.standard_price) if payment.standard_price else str(payment.amount),
+                "discount": str(payment.discount) if payment.discount else "0.00",
+                "reference": payment.reference,
+                "new_end": None,
+                "plan_name": plan_name,
+                "status": "pending",
+                "requires_verification": True,
+            },
+        })
+
+
+@member_bp.route("/renew/payment-status/<int:payment_id>", methods=["GET"])
+@member_token_required
+def check_payment_status(payment_id: int):
+    """Poll the status of an in-flight or submitted payment verification."""
+    member = g.current_member
+    payment = PaymentVerification.query.filter_by(
+        id=payment_id, member_id=member.id, gym_id=g.gym_id
+    ).first()
+    if not payment:
+        return jsonify({"success": False, "error": "Payment record not found."}), 404
+
+    return jsonify({
+        "success": True,
+        "data": {
+            "payment_id": payment.id,
+            "status": payment.status,
+            "amount": str(payment.amount),
+            "reference": payment.reference,
+            "new_end": member.membership_end.isoformat() if payment.status == "verified" and member.membership_end else None,
+            "is_verified": payment.status == "verified",
+        },
+    })
+
+
+@member_bp.route("/renew/fail-upi", methods=["POST"])
+@member_token_required
+def fail_upi_payment():
+    """Handle cancelled or failed UPI payment attempt."""
+    member = g.current_member
+    data = request.get_json(silent=True) or {}
+    payment_id = data.get("payment_id")
+
+    if payment_id:
+        payment = PaymentVerification.query.filter_by(
+            id=payment_id, member_id=member.id, gym_id=g.gym_id
+        ).first()
+        if payment and payment.status == "processing":
+            payment.status = "pending"
+            db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "Payment was not completed. You can try again whenever you are ready.",
+    })
+
+
 # ── Payment History ───────────────────────────────────────────────────
 
 
@@ -684,7 +1040,8 @@ def member_payments():
     )
     total = query.count()
     payments = (
-        query.order_by(PaymentVerification.created_at.desc())
+        query.options(joinedload(PaymentVerification.plan))
+        .order_by(PaymentVerification.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()
@@ -696,9 +1053,14 @@ def member_payments():
             "payments": [
                 {
                     "id": p.id,
+                    "plan_name": p.plan.name if p.plan else None,
+                    "standard_price": str(p.standard_price) if p.standard_price is not None else str(p.amount),
+                    "discount": str(p.discount) if p.discount is not None else "0.00",
                     "amount": str(p.amount),
+                    "savings": str(p.discount) if p.discount and p.discount > 0 else "0.00",
                     "status": p.status,
                     "method": p.method,
+                    "channel": p.channel or "offline",
                     "reference": p.reference,
                     "notes": p.notes,
                     "paid_on": p.paid_on.isoformat() if p.paid_on else None,

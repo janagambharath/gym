@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -16,8 +18,8 @@ import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import type { Member, Payment } from '../types';
-import { formatCurrency, formatDate, getMemberDisplayStatus } from '../types';
+import type { Member, Payment, Plan } from '../types';
+import { formatCurrency, formatDate, getCurrencySymbol, getMemberDisplayStatus } from '../types';
 
 type RenewMemberScreenProps = {
   member: Member;
@@ -27,16 +29,11 @@ type RenewMemberScreenProps = {
   onComplete?: () => void;
 };
 
-type PaymentMethod = 'cash' | 'upi' | 'other';
+type PaymentMethod = 'cash' | 'upi' | 'card' | 'other';
+type ChannelMode = 'online' | 'offline';
 
 function createPaymentRequestKey(): string {
   return `payment-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-}
-
-function formatPaymentMethod(method: string): string {
-  return method === 'upi'
-    ? 'UPI'
-    : method.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export function RenewMemberScreen({
@@ -46,11 +43,20 @@ export function RenewMemberScreen({
   onViewMember,
   onComplete,
 }: RenewMemberScreenProps) {
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(member.plan?.id ?? null);
+
+  // Financial Pricing Engine
+  const [finalPayable, setFinalPayable] = useState<string>(member.plan?.price ?? '0');
+  const [channelMode, setChannelMode] = useState<ChannelMode>('online');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [discountNote, setDiscountNote] = useState('');
+
   const [renewing, setRenewing] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [paymentResult, setPaymentResult] = useState<Payment | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [agreementChecked, setAgreementChecked] = useState(false);
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
   const [whatsAppFeedback, setWhatsAppFeedback] = useState<{
@@ -59,13 +65,47 @@ export function RenewMemberScreen({
   }>();
   const paymentRequestKeyRef = useRef<string | undefined>(undefined);
 
-  const hasPlan = Boolean(member.plan && member.plan.name);
-  const renewalDays = member.plan?.duration_days ?? 30;
-  const amount = member.plan?.price ?? '0';
+  // Fetch available gym plans
+  useEffect(() => {
+    let cancelled = false;
+    void apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings').then((res) => {
+      if (cancelled) return;
+      if (res.ok && res.data.plans.length > 0) {
+        setPlans(res.data.plans);
+        if (!selectedPlanId) {
+          const match = res.data.plans.find((p) => p.id === member.plan?.id) || res.data.plans[0];
+          setSelectedPlanId(match.id);
+          setFinalPayable(match.price);
+        }
+      }
+      setLoadingPlans(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [member.plan?.id, selectedPlanId]);
+
+  const activePlan = plans.find((p) => p.id === selectedPlanId) || member.plan;
+  const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 2000;
+  const renewalDays = activePlan?.duration_days ?? 30;
+
+  // Derive discount and savings
+  const numericPayable = parseFloat(finalPayable) || 0;
+  const derivedDiscount = Math.max(0, standardPrice - numericPayable);
+  const discountPercent = standardPrice > 0 ? Math.round((derivedDiscount / standardPrice) * 100) : 0;
   const displayStatus = getMemberDisplayStatus(member);
 
+  const handleSelectPlan = (plan: Plan) => {
+    setSelectedPlanId(plan.id);
+    setFinalPayable(plan.price);
+  };
+
   const handleRenew = useCallback(async () => {
-    if (renewing || !hasPlan) return; // Prevent double tap or renewing without plan
+    if (renewing) return;
+    if (numericPayable < 0) {
+      Alert.alert('Invalid Amount', 'Payable amount cannot be negative.');
+      return;
+    }
 
     setRenewing(true);
     setError(undefined);
@@ -77,10 +117,15 @@ export function RenewMemberScreen({
       headers: { 'Idempotency-Key': idempotencyKey },
       body: {
         member_id: member.id,
+        plan_id: selectedPlanId,
+        standard_price: String(standardPrice),
+        discount: String(derivedDiscount),
+        final_payable: String(numericPayable),
+        channel: channelMode,
+        method: channelMode === 'online' ? 'upi' : paymentMethod,
+        auto_verify: channelMode === 'offline',
         renewal_days: renewalDays,
-        amount,
-        method: paymentMethod,
-        notes: 'Renewal payment recorded from the mobile app.',
+        notes: discountNote.trim() || (derivedDiscount > 0 ? `Member-specific discount of ${getCurrencySymbol()}${derivedDiscount}` : 'Renewal recorded from Desk.'),
       },
     });
 
@@ -91,16 +136,13 @@ export function RenewMemberScreen({
       onComplete?.();
     } else {
       if (result.error.status === 401) { onLogout(); return; }
-      // Retain the key after an uncertain network/server failure so retrying
-      // the same payment cannot create a duplicate. Reset it for a definite
-      // client-side validation/conflict error instead.
       if (result.error.status && result.error.status < 500) {
         paymentRequestKeyRef.current = undefined;
       }
       setError(result.error.message);
     }
     setRenewing(false);
-  }, [hasPlan, member.id, renewalDays, amount, paymentMethod, renewing, onLogout, onComplete]);
+  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, discountNote, member.id, onComplete, onLogout]);
 
   const handleSendWhatsApp = useCallback(async () => {
     if (sendingWhatsApp) return;
@@ -126,73 +168,47 @@ export function RenewMemberScreen({
   }, [member.id, onLogout, sendingWhatsApp]);
 
   if (success && paymentResult) {
+    const isOnlineDemand = paymentResult.channel === 'online';
     return (
       <SafeAreaView style={styles.safeArea}>
-        <AppHeader title="Renew Membership" onBack={onBack} />
+        <AppHeader title="Renewal Created" onBack={onBack} />
         <ScrollView contentContainerStyle={styles.successContent}>
-          {/* Success Icon */}
-          <View style={styles.successIcon}>
-            <Icon name="checkmark" size={48} color={colors.textInverse} />
+          <View style={[styles.successIcon, isOnlineDemand && { backgroundColor: colors.infoSurface }]}>
+            <Icon
+              name={isOnlineDemand ? "send" : "checkmark"}
+              size={44}
+              color={isOnlineDemand ? colors.info : colors.textInverse}
+            />
           </View>
 
-          <Text style={styles.successTitle}>Payment Recorded</Text>
+          <Text style={styles.successTitle}>
+            {isOnlineDemand ? "Invoice Published to VYNLA" : "Payment Recorded & Active"}
+          </Text>
           <Text style={styles.successSubtitle}>
-            Membership will be extended after this payment is verified.
+            {isOnlineDemand
+              ? `${member.full_name} will see a fixed payable amount of ${formatCurrency(paymentResult.amount)} on VYNLA.`
+              : `Membership for ${member.full_name} has been renewed and activated.`}
           </Text>
 
-          {/* Member Info */}
+          {/* Pricing breakdown card */}
           <View style={styles.successCard}>
-            <View style={styles.successMemberRow}>
-              <Avatar
-                name={member.full_name}
-                size={50}
-                color={colors.brandSubtle}
-                textColor={colors.brand}
-              />
-              <View style={styles.successMemberInfo}>
-                <Text style={styles.successMemberName} numberOfLines={1}>{member.full_name}</Text>
-                <Text style={styles.successMemberPlan}>{member.plan?.name ?? 'Standard Plan'}</Text>
-              </View>
+            <SectionHeader title="Financial Breakdown" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+            <InfoRow label="Plan" value={activePlan?.name ?? 'Membership'} />
+            <InfoRow label="Standard Catalog Price" value={formatCurrency(standardPrice)} />
+            {derivedDiscount > 0 ? (
+              <InfoRow label="Discount Applied" value={`- ${formatCurrency(derivedDiscount)} (${discountPercent}%)`} valueColor={colors.successDark} />
+            ) : null}
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Actual Paid / Payable</Text>
+              <Text style={styles.totalValue}>{formatCurrency(paymentResult.amount)}</Text>
             </View>
-          </View>
-
-          {/* Renewal status */}
-          <View style={[styles.successCard, styles.renewalStatusCard]}>
-            <View style={styles.renewalStatusIcon}>
-              <Icon name="time" size={22} color={colors.statusPending} />
-            </View>
-            <Text style={styles.successLabel}>Renewal activation</Text>
-            <Text style={styles.successExpiry}>Awaiting verification</Text>
-            <Text style={styles.renewalStatusHint}>Access is unchanged until the payment is approved.</Text>
-            <StatusBadge status={paymentResult.status} size="md" />
-          </View>
-
-          {/* Payment Info */}
-          <View style={styles.successCard}>
-            <SectionHeader title="Payment Information" icon={<Icon name="currency" size={18} color={colors.brand} />} />
-            <InfoRow label="Amount recorded" value={formatCurrency(paymentResult.amount)} />
-            <InfoRow label="Payment method" value={formatPaymentMethod(paymentResult.method)} />
-            <InfoRow label="Recorded on" value={formatDate(paymentResult.created_at)} />
-            <View style={styles.successPaymentStatus}>
-              <Text style={styles.successPaymentLabel}>Payment Status</Text>
-              <StatusBadge status={paymentResult.status} size="md" />
-            </View>
-          </View>
-
-          {/* Security Notice */}
-          <View style={styles.secureNotice}>
-            <Icon name="shield" size={19} color={colors.success} />
-            <View style={styles.secureTextContainer}>
-              <Text style={styles.secureTitle}>Secure & Recorded</Text>
-              <Text style={styles.secureText}>
-                The payment is recorded securely and will be reviewed before access is extended.
-              </Text>
-            </View>
+            <InfoRow label="Channel" value={isOnlineDemand ? "Online (VYNLA UPI)" : `Counter (${(paymentResult.method || 'cash').toUpperCase()})`} />
+            <InfoRow label="Status" value={paymentResult.status.toUpperCase()} valueColor={paymentResult.status === 'verified' ? colors.successDark : colors.statusPending} />
           </View>
 
           {/* Actions */}
           <PrimaryButton
-            label="View Member"
+            label="View Member Details"
             icon={<Icon name="person" size={16} color={colors.brand} />}
             onPress={() => onViewMember?.(member)}
             variant="primary"
@@ -213,7 +229,7 @@ export function RenewMemberScreen({
           ) : null}
 
           <TouchableOpacity
-            accessibilityLabel="Send WhatsApp reminder"
+            accessibilityLabel="Send WhatsApp confirmation"
             accessibilityRole="button"
             disabled={sendingWhatsApp}
             onPress={() => void handleSendWhatsApp()}
@@ -224,7 +240,7 @@ export function RenewMemberScreen({
           >
             <Icon name="whatsapp" size={19} color={colors.whatsappDark} />
             <Text style={styles.successWhatsAppText}>
-              {sendingWhatsApp ? 'Sending...' : 'Send WhatsApp'}
+              {sendingWhatsApp ? 'Sending WhatsApp...' : 'Send WhatsApp Confirmation'}
             </Text>
           </TouchableOpacity>
         </ScrollView>
@@ -237,7 +253,7 @@ export function RenewMemberScreen({
       <AppHeader title="Renew Membership" onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Member Identity */}
+        {/* Member Identity Card */}
         <View style={styles.memberCard}>
           <Avatar
             name={member.full_name}
@@ -247,80 +263,184 @@ export function RenewMemberScreen({
           />
           <View style={styles.memberCardInfo}>
             <Text style={styles.memberCardName} numberOfLines={1}>{member.full_name}</Text>
-            <Text style={styles.memberCardPlan}>{member.plan?.name ?? 'Plan not set'}</Text>
+            <Text style={styles.memberCardPlan}>Current: {member.plan?.name ?? 'Plan not set'}</Text>
           </View>
           <StatusBadge status={displayStatus} size="md" />
         </View>
 
-        {/* Renewal Summary */}
+        {/* 1. Plan Selector Card */}
         <View style={styles.card}>
-          <SectionHeader title="Renewal Summary" icon={<Icon name="clipboard" size={18} color={colors.brand} />} />
-          <InfoRow label="Current Expiry" value={formatDate(member.membership_end)} />
-          <InfoRow label="Renewal Duration" value={`${renewalDays} days`} />
-          <InfoRow label="Amount" value={formatCurrency(amount)} />
-          <View style={styles.summaryHighlight}>
-            <InfoRow
-              label="Extension after verification"
-              value={`${renewalDays} days`}
-              valueColor={colors.brand}
+          <SectionHeader title="1. Select Target Plan" icon={<Icon name="clipboard" size={18} color={colors.brand} />} />
+          <View style={styles.planChipsContainer}>
+            {plans.map((p) => {
+              const isSelected = p.id === selectedPlanId;
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  style={[styles.planChip, isSelected && styles.planChipSelected]}
+                  onPress={() => handleSelectPlan(p)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.planChipName, isSelected && styles.planChipNameSelected]}>{p.name}</Text>
+                  <Text style={[styles.planChipPrice, isSelected && styles.planChipPriceSelected]}>{formatCurrency(p.price)}</Text>
+                  <Text style={[styles.planChipDuration, isSelected && styles.planChipDurationSelected]}>{p.duration_days} days</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <InfoRow label="Current Expiry Date" value={formatDate(member.membership_end)} />
+          <InfoRow label="Renewal Extension" value={`+${renewalDays} days`} valueColor={colors.brand} />
+        </View>
+
+        {/* 2. Commercial Pricing Engine */}
+        <View style={styles.card}>
+          <SectionHeader title="2. Commercial Pricing (Custom Member Rate)" icon={<Icon name="currency" size={18} color={colors.brand} />} />
+          <Text style={styles.helperText}>
+            Plan catalog price remains standard. Customize the exact amount {member.full_name} will actually pay.
+          </Text>
+
+          <View style={styles.pricingRow}>
+            <Text style={styles.pricingLabel}>Standard Catalog Price</Text>
+            <Text style={styles.catalogPriceValue}>{formatCurrency(standardPrice)}</Text>
+          </View>
+
+          {/* Quick Discount Presets */}
+          <View style={styles.discountPresetsRow}>
+            <TouchableOpacity
+              style={[styles.presetChip, numericPayable === standardPrice && styles.presetChipActive]}
+              onPress={() => setFinalPayable(standardPrice.toString())}
+            >
+              <Text style={[styles.presetChipText, numericPayable === standardPrice && styles.presetChipTextActive]}>
+                Full Price
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.presetChip, numericPayable === Math.max(0, standardPrice - 100) && styles.presetChipActive]}
+              onPress={() => setFinalPayable(Math.max(0, standardPrice - 100).toString())}
+            >
+              <Text style={[styles.presetChipText, numericPayable === Math.max(0, standardPrice - 100) && styles.presetChipTextActive]}>
+                ₹100 Off
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.presetChip, numericPayable === Math.max(0, standardPrice - 200) && styles.presetChipActive]}
+              onPress={() => setFinalPayable(Math.max(0, standardPrice - 200).toString())}
+            >
+              <Text style={[styles.presetChipText, numericPayable === Math.max(0, standardPrice - 200) && styles.presetChipTextActive]}>
+                ₹200 Off
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.presetChip, numericPayable === Math.max(0, Math.round(standardPrice * 0.9)) && styles.presetChipActive]}
+              onPress={() => setFinalPayable(Math.max(0, Math.round(standardPrice * 0.9)).toString())}
+            >
+              <Text style={[styles.presetChipText, numericPayable === Math.max(0, Math.round(standardPrice * 0.9)) && styles.presetChipTextActive]}>
+                10% Off
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Editable Final Payable */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Final Payable Amount ({getCurrencySymbol().trim()})</Text>
+            <View style={styles.currencyInputRow}>
+              <Text style={styles.currencyPrefix}>{getCurrencySymbol().trim()}</Text>
+              <TextInput
+                style={styles.currencyTextInput}
+                value={finalPayable}
+                onChangeText={setFinalPayable}
+                keyboardType="numeric"
+                placeholder="0.00"
+                placeholderTextColor={colors.muted}
+              />
+            </View>
+          </View>
+
+          {/* Derived Discount & Savings Badge */}
+          <View style={styles.derivedRow}>
+            <View>
+              <Text style={styles.derivedLabel}>Derived Discount</Text>
+              <Text style={styles.derivedValue}>
+                {formatCurrency(derivedDiscount)} {derivedDiscount > 0 ? `(${discountPercent}% off)` : ''}
+              </Text>
+            </View>
+            {derivedDiscount > 0 ? (
+              <View style={styles.savingsPill}>
+                <Text style={styles.savingsPillText}>Member Saves {formatCurrency(derivedDiscount)}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Commercial Note / Rationale */}
+          <View style={styles.noteContainer}>
+            <Text style={styles.inputLabel}>Commercial Note / Discount Reason</Text>
+            <TextInput
+              style={styles.noteInput}
+              value={discountNote}
+              onChangeText={setDiscountNote}
+              placeholder="e.g. Retention Deal, Referral Bonus, Owner Special..."
+              placeholderTextColor={colors.muted}
             />
           </View>
         </View>
 
-        {/* Payment Status */}
-        <View style={styles.paymentStatusCard}>
-          <View style={styles.paymentStatusIconWrap}>
-            <Icon name="time" size={20} color={colors.statusExpiring} />
-          </View>
-          <View>
-            <Text style={styles.paymentStatusTitle}>Payment Status: PENDING</Text>
-            <Text style={styles.paymentStatusText}>
-              Membership will be extended only after payment verification.
-            </Text>
-          </View>
-        </View>
-
-        {/* Payment Information */}
+        {/* 3. Delivery Route & Method */}
         <View style={styles.card}>
-          <SectionHeader title="Payment Information" icon={<Icon name="currency" size={18} color={colors.brand} />} />
-          <InfoRow label="Renewal amount" value={formatCurrency(amount)} />
-          <InfoRow label="Verification" value="Required before renewal" />
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total Amount</Text>
-            <Text style={styles.totalValue}>{formatCurrency(amount)}</Text>
-          </View>
-        </View>
+          <SectionHeader title="3. Payment Route & Execution" icon={<Icon name="payments" size={18} color={colors.brand} />} />
+          
+          <View style={styles.routeToggleContainer}>
+            <TouchableOpacity
+              style={[styles.routeTab, channelMode === 'online' && styles.routeTabActive]}
+              onPress={() => setChannelMode('online')}
+            >
+              <Icon name="wallet" size={18} color={channelMode === 'online' ? colors.brand : colors.muted} />
+              <Text style={[styles.routeTabText, channelMode === 'online' && styles.routeTabTextActive]}>
+                Publish to VYNLA (UPI)
+              </Text>
+            </TouchableOpacity>
 
-        {/* Payment Method */}
-        <View style={styles.card}>
-          <SectionHeader title="Payment Method" icon={<Icon name="payments" size={18} color={colors.brand} />} />
-          <View style={styles.methodRow}>
-            {(['cash', 'upi', 'other'] as PaymentMethod[]).map((method) => (
-              <TouchableOpacity
-                key={method}
-                style={[styles.methodChip, paymentMethod === method && styles.methodChipActive]}
-                onPress={() => {
-                  paymentRequestKeyRef.current = undefined;
-                  setPaymentMethod(method);
-                }}
-              >
-                <Text style={[styles.methodText, paymentMethod === method && styles.methodTextActive]}>
-                  {method.charAt(0).toUpperCase() + method.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            <TouchableOpacity
+              style={[styles.routeTab, channelMode === 'offline' && styles.routeTabActive]}
+              onPress={() => setChannelMode('offline')}
+            >
+              <Icon name="cash" size={18} color={channelMode === 'offline' ? colors.brand : colors.muted} />
+              <Text style={[styles.routeTabText, channelMode === 'offline' && styles.routeTabTextActive]}>
+                Counter Payment (Desk)
+              </Text>
+            </TouchableOpacity>
           </View>
-        </View>
 
-        {/* Security Notice */}
-        <View style={[styles.secureNotice, styles.verificationNotice]}>
-          <Icon name="shield" size={19} color={colors.info} />
-          <View style={styles.secureTextContainer}>
-            <Text style={styles.secureTitle}>Secure & Accurate</Text>
-            <Text style={styles.secureText}>
-              This payment record will be sent for verification. Membership access is not extended until it is approved.
-            </Text>
-          </View>
+          {channelMode === 'online' ? (
+            <View style={styles.routeInfoBox}>
+              <Icon name="info" size={18} color={colors.brand} />
+              <Text style={styles.routeInfoText}>
+                Member will see a fixed, non-editable price of <Text style={styles.boldText}>{formatCurrency(numericPayable)}</Text> in VYNLA and pay via direct UPI. Membership auto-extends once verified.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.offlineMethodsBox}>
+              <Text style={styles.offlineMethodsLabel}>Select Counter Method:</Text>
+              <View style={styles.methodRow}>
+                {(['cash', 'upi', 'card', 'other'] as PaymentMethod[]).map((method) => (
+                  <TouchableOpacity
+                    key={method}
+                    style={[styles.methodChip, paymentMethod === method && styles.methodChipActive]}
+                    onPress={() => setPaymentMethod(method)}
+                  >
+                    <Text style={[styles.methodText, paymentMethod === method && styles.methodTextActive]}>
+                      {method.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.offlineHelpText}>
+                Counter payment will be recorded and membership will activate immediately.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Agreement Checkbox */}
@@ -332,22 +452,9 @@ export function RenewMemberScreen({
             {agreementChecked ? <Icon name="checkmark" size={15} color={colors.textInverse} /> : null}
           </View>
           <Text style={styles.agreementText}>
-            I confirm the amount and payment method are correct and want to record this payment for verification.
+            I confirm that the commercial price of {formatCurrency(numericPayable)} is approved for {member.full_name}.
           </Text>
         </TouchableOpacity>
-
-        {/* Missing Plan Warning */}
-        {!hasPlan ? (
-          <View style={[styles.secureNotice, { backgroundColor: colors.warningSurface, borderColor: colors.warningBorder }]}>
-            <Icon name="alert" size={19} color={colors.warning} />
-            <View style={styles.secureTextContainer}>
-              <Text style={[styles.secureTitle, { color: colors.warningDark }]}>Plan Required</Text>
-              <Text style={[styles.secureText, { color: colors.textSecondary }]}>
-                This member does not have an active plan assigned. Please assign a plan from Edit Member before recording a renewal payment.
-              </Text>
-            </View>
-          </View>
-        ) : null}
 
         {/* Error */}
         {error ? (
@@ -356,29 +463,22 @@ export function RenewMemberScreen({
           </View>
         ) : null}
 
-        {/* Confirm Button */}
+        {/* Action Button */}
         <PrimaryButton
-          label={hasPlan ? "Record Payment for Renewal" : "Plan Required to Renew"}
-          icon={<Icon name="lock" size={16} color={colors.textInverse} />}
+          label={
+            channelMode === 'online'
+              ? `Publish to VYNLA (${formatCurrency(numericPayable)})`
+              : `Confirm & Activate (${formatCurrency(numericPayable)})`
+          }
+          icon={<Icon name={channelMode === 'online' ? "send" : "checkmark"} size={16} color={colors.textInverse} />}
           onPress={() => void handleRenew()}
-          disabled={!agreementChecked || !hasPlan}
+          disabled={!agreementChecked || numericPayable <= 0}
           loading={renewing}
         />
 
         <TouchableOpacity onPress={onBack} style={styles.cancelButton}>
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
-
-        {/* Review reminder */}
-        <View style={styles.duplicateNotice}>
-          <Icon name="info" size={20} color={colors.brand} />
-          <View>
-            <Text style={styles.duplicateTitle}>Review before submitting</Text>
-            <Text style={styles.duplicateText}>
-              A payment record is created for this renewal and remains pending until it is verified.
-            </Text>
-          </View>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -736,5 +836,233 @@ const styles = StyleSheet.create({
   verificationNotice: {
     backgroundColor: colors.infoSurface,
     borderColor: colors.infoBorder,
+  },
+  planChipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  planChip: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    minWidth: '47%',
+    padding: spacing.md,
+  },
+  planChipSelected: {
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.brand,
+    borderWidth: 2,
+  },
+  planChipName: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  planChipNameSelected: {
+    color: colors.brand,
+  },
+  planChipPrice: {
+    color: colors.text,
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.medium,
+    marginTop: 2,
+  },
+  planChipPriceSelected: {
+    color: colors.brand,
+    fontWeight: fontWeight.bold,
+  },
+  planChipDuration: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+    marginTop: 2,
+  },
+  planChipDurationSelected: {
+    color: colors.brand,
+  },
+  helperText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    marginBottom: spacing.md,
+  },
+  pricingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+  },
+  pricingLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.base,
+  },
+  catalogPriceValue: {
+    color: colors.muted,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    textDecorationLine: 'line-through',
+  },
+  inputContainer: {
+    marginTop: spacing.md,
+  },
+  inputLabel: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    marginBottom: spacing.xs,
+  },
+  currencyInputRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.brand,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    flexDirection: 'row',
+    paddingHorizontal: spacing.md,
+  },
+  currencyPrefix: {
+    color: colors.brand,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.bold,
+    marginRight: spacing.xs,
+  },
+  currencyTextInput: {
+    color: colors.text,
+    flex: 1,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.extrabold,
+    paddingVertical: spacing.sm,
+  },
+  derivedRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.md,
+  },
+  discountPresetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  presetChip: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  presetChipActive: {
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.brand,
+  },
+  presetChipText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+  },
+  presetChipTextActive: {
+    color: colors.brand,
+    fontWeight: fontWeight.bold,
+  },
+  derivedLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
+  derivedValue: {
+    color: colors.successDark,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  savingsPill: {
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+  },
+  savingsPillText: {
+    color: colors.successDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
+  noteContainer: {
+    marginTop: spacing.md,
+  },
+  noteInput: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: fontSize.base,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  routeToggleContainer: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  routeTab: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+  },
+  routeTabActive: {
+    backgroundColor: colors.brandSubtle,
+    borderColor: colors.brand,
+    borderWidth: 2,
+  },
+  routeTabText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+  routeTabTextActive: {
+    color: colors.brand,
+    fontWeight: fontWeight.bold,
+  },
+  routeInfoBox: {
+    alignItems: 'flex-start',
+    backgroundColor: colors.infoSurface,
+    borderColor: colors.infoBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  routeInfoText: {
+    color: colors.text,
+    flex: 1,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
+  },
+  boldText: {
+    fontWeight: fontWeight.bold,
+  },
+  offlineMethodsBox: {
+    gap: spacing.sm,
+  },
+  offlineMethodsLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+  offlineHelpText: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
   },
 });

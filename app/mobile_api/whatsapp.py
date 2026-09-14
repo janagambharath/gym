@@ -356,6 +356,8 @@ def register_whatsapp_routes(bp):
 
         resp = make_response(html, 200)
         resp.headers["Content-Type"] = "text/html; charset=utf-8"
+        # Marker: tell _register_security_headers to preserve our custom CSP
+        resp.headers["X-RD-Custom-CSP"] = "1"
         # Relax CSP for this page only — Meta SDK requires connect-src and script-src
         resp.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
@@ -570,23 +572,36 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     document.getElementById('connectBtn').disabled = true;
     setStatus('Opening Meta Business login...', false);
 
+    // sessionInfoListener is REQUIRED when sessionInfoVersion is 2.
+    // Meta calls this callback with the selected WABA and phone number.
+    function sessionInfoListener(sessionInfo) {
+      if (sessionInfo && sessionInfo.phone_number_id) {
+        setStatus('WhatsApp Business connected! Saving...', false);
+        postToApp({
+          type: 'embedded_signup_complete',
+          waba_id: sessionInfo.waba_id || '',
+          phone_number_id: sessionInfo.phone_number_id,
+          business_phone_number: sessionInfo.display_phone_number || ''
+        });
+      } else if (sessionInfo && sessionInfo.current_step === 'success') {
+        setStatus('Setup complete. Finalizing...', false);
+      }
+    }
+
     FB.login(function(response) {
       if (response.authResponse) {
         var code = response.authResponse.code;
-        setStatus('Signed in. Retrieving WhatsApp Business details...', false);
+        setStatus('Signed in. Completing WhatsApp Business selection...', false);
 
-        // The Embedded Signup flow returns the selected WABA and phone number
-        // via the sessionInfoListener callback set in the login extras.
-        // We also pass the auth code so the backend can exchange it if needed.
-        // Note: The actual WABA/phone info comes from the sessionInfoListener.
-
-        // If we got here without sessionInfoListener firing, handle it via the code
+        // If sessionInfoListener already fired, we're done.
+        // Otherwise the auth code confirms the user authenticated successfully.
         if (code) {
-          setStatus('Authentication successful. Please complete business selection...', false);
+          setStatus('Authentication successful. Complete the business selection to finish.', false);
         }
       } else {
         document.getElementById('connectBtn').disabled = false;
         setStatus('Login was cancelled or failed.', true);
+        postToApp({ type: 'embedded_signup_error', message: 'Meta login was cancelled or failed.' });
       }
     }, {
       config_id: META_CONFIG_ID,
@@ -595,7 +610,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
       extras: {
         setup: {},
         featureType: 'only_waba_sharing',
-        sessionInfoVersion: 2
+        sessionInfoVersion: 2,
+        sessionInfoListener: sessionInfoListener
       }
     });
   }

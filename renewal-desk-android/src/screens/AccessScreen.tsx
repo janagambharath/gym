@@ -301,6 +301,18 @@ export function AccessScreen({
     );
   };
 
+  const renderLegacyBridgeBanner = () => {
+    if (!summary?.has_legacy_events) return null;
+    return (
+      <View style={styles.legacyBanner}>
+        <Icon name="info" size={16} color={colors.brand} />
+        <Text style={styles.legacyBannerText}>
+          Some scans show as "Check In" because the bridge software doesn't report entry/exit direction. Update your bridge agent to v2+ for full tracking.
+        </Text>
+      </View>
+    );
+  };
+
   const TABS: { key: FilterTab; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'inside', label: 'Inside' },
@@ -456,6 +468,7 @@ export function AccessScreen({
               {renderSummaryCards()}
               {renderDeviceStatus()}
               {renderDeniedBanner()}
+              {renderLegacyBridgeBanner()}
               {renderFilterTabs()}
               {/* Search */}
               <View style={styles.searchContainer}>
@@ -491,6 +504,7 @@ export function AccessScreen({
               {renderSummaryCards()}
               {renderDeviceStatus()}
               {renderDeniedBanner()}
+              {renderLegacyBridgeBanner()}
               {renderFilterTabs()}
               {/* Search */}
               <View style={styles.searchContainer}>
@@ -777,5 +791,26 @@ const styles = StyleSheet.create({
   // Footer loader
   footerLoader: {
     paddingVertical: spacing.lg,
+  },
+
+  // Legacy bridge info banner
+  legacyBanner: {
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  legacyBannerText: {
+    color: '#1E40AF',
+    flex: 1,
+    fontSize: fontSize.xs,
+    lineHeight: 16,
   },
 });

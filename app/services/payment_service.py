@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 
 from sqlalchemy import select
 
@@ -25,8 +26,8 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         if locked_payment.renewal:
             return locked_payment.renewal
         raise ValueError(f"Payment {locked_payment.id} is already verified.")
-    if locked_payment.status != "pending":
-        raise ValueError(f"Payment {locked_payment.id} is not pending.")
+    if locked_payment.status not in ("pending", "processing"):
+        raise ValueError(f"Payment {locked_payment.id} is {locked_payment.status}.")
 
     member = (
         db.session.execute(
@@ -44,28 +45,39 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     gym_timezone = (
         member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
     )
-    new_start = max(today_for_gym(gym_timezone), previous_end + timedelta(days=1))
+    today = today_for_gym(gym_timezone)
+    if previous_end and previous_end >= today:
+        new_start = previous_end + timedelta(days=1)
+    else:
+        new_start = today
+        member.membership_start = new_start
     new_end = new_start + timedelta(days=renewal_days - 1)
 
     locked_payment.status = "verified"
     locked_payment.verified_by_id = verified_by_id
     locked_payment.verified_at = utcnow()
 
-    member.membership_start = new_start
     member.membership_end = new_end
     member.status = "active"
     queue_membership_command(member)
 
+    target_plan_id = locked_payment.plan_id or member.plan_id
+    if locked_payment.plan_id and locked_payment.plan_id != member.plan_id:
+        member.plan_id = locked_payment.plan_id
+
     renewal = RenewalHistory(
         gym_id=locked_payment.gym_id,
         member_id=member.id,
-        plan_id=member.plan_id,
+        plan_id=target_plan_id,
         payment_verification_id=locked_payment.id,
         renewed_by_id=verified_by_id,
         previous_end=previous_end,
         new_start=new_start,
         new_end=new_end,
+        standard_price=locked_payment.standard_price,
+        discount=locked_payment.discount or Decimal("0.00"),
         amount=locked_payment.amount,
+        channel=locked_payment.channel or "offline",
         notes=locked_payment.notes,
     )
     db.session.add(renewal)
@@ -119,4 +131,18 @@ def delete_payment(payment: PaymentVerification) -> None:
 
     db.session.delete(payment)
     invalidate_dashboard_cache(gym_id)
+
+
+def cancel_payment(payment: PaymentVerification, *, cancelled_by_id: int | None = None) -> None:
+    """Cancel an unverified payment or renewal demand."""
+    if payment.status == "verified":
+        raise ValueError("Cannot cancel an already verified payment.")
+    if payment.status == "cancelled":
+        return
+    payment.status = "cancelled"
+    if cancelled_by_id:
+        payment.verified_by_id = cancelled_by_id
+    payment.verified_at = utcnow()
+    invalidate_dashboard_cache(payment.gym_id)
+
 

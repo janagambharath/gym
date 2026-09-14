@@ -25,11 +25,15 @@ def _serialize_renewal(r: RenewalHistory) -> dict:
         "id": r.id,
         "member_id": r.member_id,
         "member_name": r.member.full_name if r.member else None,
+        "plan_id": r.plan_id,
         "plan_name": r.plan.name if r.plan else None,
         "previous_end": r.previous_end.isoformat() if r.previous_end else None,
         "new_start": r.new_start.isoformat() if r.new_start else None,
         "new_end": r.new_end.isoformat() if r.new_end else None,
+        "standard_price": str(r.standard_price) if r.standard_price is not None else None,
+        "discount": str(r.discount) if r.discount is not None else "0.00",
         "amount": str(r.amount),
+        "channel": r.channel or "offline",
         "notes": r.notes,
         "renewed_by": r.renewed_by.full_name if r.renewed_by else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -191,6 +195,40 @@ def register_renewals_routes(bp):
         if member is None:
             return error_response("NOT_FOUND", "Member not found.", 404)
 
+        from app.models import MembershipPlan
+
+        plan_id = data.get("plan_id")
+        plan = None
+        if plan_id:
+            plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=g.gym_id).first()
+            if plan:
+                member.plan_id = plan.id
+        elif member.plan:
+            plan = member.plan
+
+        raw_standard = data.get("standard_price")
+        standard_price: Decimal | None = None
+        if raw_standard is not None and str(raw_standard).strip():
+            try:
+                standard_price = Decimal(str(raw_standard).strip())
+            except (InvalidOperation, TypeError):
+                standard_price = None
+        if standard_price is None and plan:
+            standard_price = plan.price
+
+        raw_discount = data.get("discount")
+        if raw_discount is not None and str(raw_discount).strip():
+            try:
+                discount = Decimal(str(raw_discount).strip())
+            except (InvalidOperation, TypeError):
+                discount = Decimal("0.00")
+        elif standard_price is not None and standard_price >= amount:
+            discount = standard_price - amount
+        else:
+            discount = Decimal("0.00")
+
+        channel = str(data.get("channel", "offline")).strip().lower()
+
         previous_end = member.membership_end
         today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
         new_start = max(today, previous_end + timedelta(days=1))
@@ -209,7 +247,10 @@ def register_renewals_routes(bp):
             previous_end=previous_end,
             new_start=new_start,
             new_end=new_end,
+            standard_price=standard_price,
+            discount=discount,
             amount=amount,
+            channel=channel,
             notes=notes or f"Renewed for {renewal_days} days via mobile.",
         )
         db.session.add(renewal)

@@ -410,3 +410,82 @@ def _serialize_access_event(evt: AccessEvent) -> dict:
         "is_invalid": evt.is_invalid,
         "verify_method": evt.verify_method,
     }
+
+
+# ── Auto-reset stale "Inside" members ────────────────────────────────
+
+
+def auto_reset_stale_inside_members(
+    gym_id: int,
+    gym_timezone: str,
+    auto_exit_hour: int = 23,
+) -> int:
+    """Mark members as OUTSIDE if they entered before today's closing time.
+
+    Many gyms have a single biometric terminal used only for entry scans.
+    Without exit scans, ``MemberAccessState.current_state`` stays ``INSIDE``
+    indefinitely.  This function resets stale entries by transitioning members
+    whose ``last_entry_at`` is before the most recent gym closing time
+    (default: 11 PM) to ``OUTSIDE``.
+
+    Returns the number of members reset.
+
+    The caller is responsible for committing the session.
+    """
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    try:
+        tz = ZoneInfo(gym_timezone)
+    except Exception:
+        tz = ZoneInfo("Asia/Kolkata")
+
+    now_local = datetime.now(tz)
+
+    # Determine the most recent closing time in local tz
+    closing_today = now_local.replace(
+        hour=auto_exit_hour, minute=0, second=0, microsecond=0,
+    )
+    if now_local < closing_today:
+        # Before today's closing → use yesterday's closing as the cutoff
+        closing_cutoff = closing_today - timedelta(days=1)
+    else:
+        closing_cutoff = closing_today
+
+    # Convert to UTC for the database comparison
+    closing_cutoff_utc = closing_cutoff.astimezone(timezone.utc)
+
+    stale_members = MemberAccessState.query.filter(
+        MemberAccessState.gym_id == gym_id,
+        MemberAccessState.current_state == "INSIDE",
+        MemberAccessState.last_entry_at < closing_cutoff_utc,
+    ).all()
+
+    count = 0
+    for state in stale_members:
+        state.current_state = "OUTSIDE"
+        state.last_exit_at = closing_cutoff_utc
+        count += 1
+
+    if count:
+        logger.info(
+            "Auto-reset %d stale INSIDE member(s) for gym %s (cutoff: %s)",
+            count, gym_id, closing_cutoff_utc.isoformat(),
+        )
+
+    return count
+
+
+def has_legacy_attendance_events(gym_id: int) -> bool:
+    """Return True if the gym has ATTENDANCE events (att_state=null).
+
+    This indicates old bridge builds that don't report entry/exit direction.
+    The mobile app uses this to show an info banner.
+    """
+    return db.session.query(
+        AccessEvent.query.filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.event_type == "ATTENDANCE",
+        ).exists()
+    ).scalar() or False
+

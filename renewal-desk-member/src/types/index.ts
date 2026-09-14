@@ -67,19 +67,56 @@ export interface RenewalRecord {
   new_start: string;
   new_end: string;
   amount: string;
+  standard_price?: string | null;
+  discount?: string | null;
+  channel?: string | null;
   created_at: string | null;
 }
 
 export interface PaymentRecord {
   id: number;
   amount: string;
-  status: 'pending' | 'verified' | 'rejected' | 'refunded';
+  status: 'pending' | 'processing' | 'verified' | 'rejected' | 'failed' | 'cancelled' | 'refunded';
   method: string;
+  channel?: 'online' | 'offline' | string;
+  plan_name?: string | null;
+  standard_price?: string | null;
+  discount?: string | null;
+  savings?: string | null;
   reference?: string | null;
   notes?: string | null;
   paid_on?: string | null;
   created_at?: string | null;
   verified_at?: string | null;
+}
+
+export interface RenewalDemand {
+  id: number;
+  plan_id: number | null;
+  plan_name: string;
+  standard_price: string;
+  discount: string;
+  final_payable: string;
+  amount: string;
+  savings: string;
+  renewal_days: number;
+  status: string;
+  channel: string;
+  created_at: string | null;
+}
+
+export interface UPIPaymentSession {
+  payment_id: number;
+  payable_amount: string;
+  standard_price: string;
+  discount: string;
+  savings: string;
+  plan_name: string;
+  gym_name: string | null;
+  upi_id: string;
+  reference: string;
+  upi_intent_uri: string;
+  status: string;
 }
 
 export interface AccessEventRecord {
@@ -118,6 +155,7 @@ export interface DashboardResponse {
     status: string;
     created_at: string | null;
   } | null;
+  active_renewal_demand: RenewalDemand | null;
 }
 
 export type RootTabParamList = {

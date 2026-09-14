@@ -40,7 +40,10 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     previous_end = db.Column(db.Date, nullable=False)
     new_start = db.Column(db.Date, nullable=False)
     new_end = db.Column(db.Date, nullable=False)
+    standard_price = db.Column(db.Numeric(10, 2), nullable=True)
+    discount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
+    channel = db.Column(db.String(32), nullable=False, default="offline")
     notes = db.Column(db.Text, nullable=True)
     is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 

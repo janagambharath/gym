@@ -154,8 +154,35 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
           javaScriptEnabled
           domStorageEnabled
           thirdPartyCookiesEnabled
+          allowsInlineMediaPlayback
+          setSupportMultipleWindows
+          javaScriptCanOpenWindowsAutomatically
           onMessage={handleWebViewMessage}
           startInLoadingState
+          userAgent="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
+          onShouldStartLoadWithRequest={(request) => {
+            // Allow Meta OAuth redirects and our own signup page
+            const url = request.url || '';
+            if (
+              url.includes('facebook.com') ||
+              url.includes('fbcdn.net') ||
+              url.includes('fb.com') ||
+              url.includes('connect.facebook.net') ||
+              url.startsWith(state.url.split('?')[0])
+            ) {
+              return true;
+            }
+            return true; // Allow all — Meta SDK needs various redirects
+          }}
+          onOpenWindow={(syntheticEvent) => {
+            // Handle popup requests (Meta OAuth popup flow)
+            const { nativeEvent } = syntheticEvent;
+            if (nativeEvent.targetUrl && webViewRef.current) {
+              webViewRef.current.injectJavaScript(
+                `window.location.href = ${JSON.stringify(nativeEvent.targetUrl)};`
+              );
+            }
+          }}
           renderLoading={() => (
             <View style={styles.webviewLoading}>
               <ActivityIndicator color={colors.brand} size="large" />

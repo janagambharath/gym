@@ -9,6 +9,8 @@ import {
   AccessSummary,
   RenewalRecord,
   Member,
+  RenewalDemand,
+  UPIPaymentSession,
 } from '../types';
 
 const TOKEN_KEY = 'vynla_member_token';
@@ -81,13 +83,13 @@ async function request<T>(
       if (typeof json?.error === 'string') {
         errorMsg = json.error;
       } else if (json?.error && typeof json.error === 'object') {
-        if (json.error.code === 'NOT_FOUND' || res.status === 404) {
-          errorMsg = "We couldn't find a member account for this number. Please contact your gym.";
-        } else {
-          errorMsg = json.error.message || json.error.code || 'Something went wrong.';
-        }
+        errorMsg = json.error.message || json.error.code || 'Something went wrong.';
+      } else if (typeof json?.message === 'string') {
+        errorMsg = json.message;
       } else if (res.status === 404) {
-        errorMsg = "We couldn't find a member account for this number. Please contact your gym.";
+        errorMsg = path.includes('auth')
+          ? "We couldn't find a member account for this number. Please contact your gym."
+          : 'The requested service or endpoint is temporarily unavailable. Please try again shortly.';
       } else if (res.status >= 500) {
         errorMsg = 'Gym service is temporarily unavailable. Please try again shortly.';
       }
@@ -155,6 +157,7 @@ export const apiClient = {
     };
     gym: { name: string | null; phone: string | null };
     renewal_history: RenewalRecord[];
+    active_renewal_demand: RenewalDemand | null;
   }> {
     const res = await request<{ success: boolean; data: any }>('/api/member/v1/membership');
     return res.data;
@@ -169,6 +172,52 @@ export const apiClient = {
   // Payment Info for Renewal
   async getPaymentInfo(): Promise<PaymentInfo> {
     const res = await request<{ success: boolean; data: PaymentInfo }>('/api/member/v1/payment-info');
+    return res.data;
+  },
+
+  // Automated UPI Renewal Flow
+  async initiateUpiRenewal(planId?: number): Promise<UPIPaymentSession> {
+    const res = await request<{ success: boolean; data: UPIPaymentSession }>('/api/member/v1/renew/initiate-upi', {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: planId }),
+    });
+    return res.data;
+  },
+
+  async confirmUpiPayment(paymentId?: number, reference?: string): Promise<{
+    payment_id: number;
+    amount_paid: string;
+    standard_price?: string;
+    discount?: string;
+    reference?: string;
+    new_end?: string;
+    plan_name?: string;
+    status: string;
+  }> {
+    const res = await request<{ success: boolean; message?: string; data: any }>('/api/member/v1/renew/confirm-upi', {
+      method: 'POST',
+      body: JSON.stringify({ payment_id: paymentId, reference }),
+    });
+    return res.data;
+  },
+
+  async failUpiPayment(paymentId?: number): Promise<{ success: boolean; message?: string }> {
+    const res = await request<{ success: boolean; message?: string }>('/api/member/v1/renew/fail-upi', {
+      method: 'POST',
+      body: JSON.stringify({ payment_id: paymentId }),
+    });
+    return res;
+  },
+
+  async getPaymentStatus(paymentId: number): Promise<{
+    payment_id: number;
+    status: string;
+    amount: string;
+    reference?: string;
+    new_end?: string | null;
+    is_verified: boolean;
+  }> {
+    const res = await request<{ success: boolean; data: any }>(`/api/member/v1/renew/payment-status/${paymentId}`);
     return res.data;
   },
 

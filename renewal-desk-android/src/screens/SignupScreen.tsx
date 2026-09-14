@@ -52,8 +52,14 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
       setErrorMessage('Please enter a valid email address.');
       return;
     }
-    if (password.length < 6) {
-      setErrorMessage('Password must be at least 6 characters.');
+    if (
+      password.length < 12 ||
+      !/[a-z]/.test(password) ||
+      !/[A-Z]/.test(password) ||
+      !/[0-9]/.test(password) ||
+      !/[^a-zA-Z0-9]/.test(password)
+    ) {
+      setErrorMessage('Password must be at least 12 characters with upper, lower, number, and symbol.');
       return;
     }
     setStep(2);
@@ -185,7 +191,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
                 </View>
                 <TextInput
                   style={styles.input}
-                  placeholder="Minimum 6 characters"
+                  placeholder="Min 12 chars, A-z, 0-9, symbol"
                   placeholderTextColor={colors.muted}
                   value={password}
                   onChangeText={setPassword}

@@ -9,7 +9,7 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Gym, MembershipPlan
+from app.models import Gym, MembershipPlan, QRSettings
 from app.services.audit_service import audit
 from app.services.mobile_billing_service import entitlement_for
 
@@ -34,6 +34,7 @@ def register_settings_routes(bp):
             .order_by(MembershipPlan.name.asc())
             .all()
         )
+        qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
         return jsonify({
             "success": True,
             "data": {
@@ -54,6 +55,13 @@ def register_settings_routes(bp):
                     "billing": entitlement_for(gym),
                 },
                 "plans": [_serialize_plan(p) for p in plans],
+                "payment_settings": {
+                    "upi_id": qr.upi_id if qr else None,
+                    "payment_label": qr.payment_label if qr else (gym.name if gym else None),
+                    "instructions": qr.instructions if qr else None,
+                    "qr_public_url": qr.qr_public_url if qr else None,
+                    "is_active": qr.is_active if qr else True,
+                },
             },
         })
 
@@ -86,6 +94,67 @@ def register_settings_routes(bp):
         )
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Settings updated."}})
+
+    @bp.route("/settings/payment", methods=["GET", "PUT", "PATCH"])
+    @token_required
+    @roles_required("gym_owner")
+    def payment_settings():
+        qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
+        if request.method == "GET":
+            return jsonify({
+                "success": True,
+                "data": {
+                    "upi_id": qr.upi_id if qr else None,
+                    "payment_label": qr.payment_label if qr else (g.current_user.gym.name if g.current_user.gym else None),
+                    "instructions": qr.instructions if qr else None,
+                    "qr_public_url": qr.qr_public_url if qr else None,
+                    "is_active": qr.is_active if qr else True,
+                },
+            })
+
+        data = request.get_json(silent=True) or {}
+        if not qr:
+            qr = QRSettings(gym_id=g.gym_id, payment_label=g.current_user.gym.name)
+            db.session.add(qr)
+
+        if "upi_id" in data:
+            upi_id = (data["upi_id"] or "").strip()
+            if upi_id and "@" not in upi_id:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "Invalid UPI ID format (must contain '@', e.g. merchant@okaxis).",
+                    400,
+                )
+            qr.upi_id = upi_id or None
+
+        if "payment_label" in data:
+            qr.payment_label = (data["payment_label"] or "").strip() or None
+
+        if "instructions" in data:
+            qr.instructions = (data["instructions"] or "").strip() or None
+
+        if "is_active" in data:
+            qr.is_active = bool(data["is_active"])
+
+        audit(
+            action="update_qr_settings",
+            resource_type="qr_settings",
+            resource_id=qr.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"upi_id": qr.upi_id, "is_active": qr.is_active},
+        )
+        db.session.commit()
+        return jsonify({
+            "success": True,
+            "message": "Gym payment details updated successfully.",
+            "data": {
+                "upi_id": qr.upi_id,
+                "payment_label": qr.payment_label,
+                "instructions": qr.instructions,
+                "is_active": qr.is_active,
+            },
+        })
 
     # ─── Plan Management ─────────────────────────────────────────────
 

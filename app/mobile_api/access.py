@@ -9,6 +9,7 @@ from app.services.access_event_service import (
     get_access_events,
     get_access_summary,
     get_members_inside,
+    has_legacy_attendance_events,
 )
 
 
@@ -20,6 +21,7 @@ def register_access_routes(bp):
         """Live Access summary: inside count, entries/exits/denied today, device status."""
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         summary = get_access_summary(g.gym_id, gym_timezone)
+        summary["has_legacy_events"] = has_legacy_attendance_events(g.gym_id)
         resp = jsonify({"success": True, "data": summary})
         resp.headers["Cache-Control"] = "no-store"
         return resp

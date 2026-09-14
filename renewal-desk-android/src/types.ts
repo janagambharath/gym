@@ -62,16 +62,51 @@ export type Payment = {
   id: number;
   member_id: number;
   member_name: string | null;
+  member_phone?: string | null;
+  plan_id?: number | null;
+  plan_name?: string | null;
+  standard_price?: string | null;
+  discount?: string | null;
+  final_payable?: string | null;
   amount: string;
   paid_on: string | null;
   method: string;
+  channel?: 'online' | 'offline';
   reference: string | null;
   status: string;
   renewal_days: number | null;
   notes: string | null;
+  created_by?: string | null;
   verified_by: string | null;
   verified_at: string | null;
   created_at: string | null;
+};
+
+export type PaymentSummaryToday = {
+  total_collected: string;
+  total_discount: string;
+  payment_count: number;
+  methods: {
+    upi: string;
+    cash: string;
+    card: string;
+    other: string;
+  };
+  channels: {
+    online: string;
+    offline: string;
+  };
+};
+
+export type PaymentDashboardSummary = {
+  today: PaymentSummaryToday;
+  pending: {
+    count: number;
+    amount: string;
+  };
+  failed: {
+    count: number;
+  };
 };
 
 export type PaymentsResponse = {
@@ -151,9 +186,18 @@ export type Plan = {
   price: string;
 };
 
+export type PaymentSettings = {
+  upi_id: string | null;
+  payment_label: string | null;
+  instructions: string | null;
+  qr_public_url?: string | null;
+  is_active: boolean;
+};
+
 export type SettingsResponse = {
   gym: GymSettings;
   plans: Plan[];
+  payment_settings?: PaymentSettings;
 };
 
 // ---------------------------------------------------------------------------
@@ -450,6 +494,7 @@ export type AccessSummary = {
   device_online: boolean;
   device_name: string | null;
   last_heartbeat: string | null;
+  has_legacy_events?: boolean;
 };
 
 export type AccessEvent = {

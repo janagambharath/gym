@@ -14,7 +14,7 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
         Index("ix_payments_gym_status", "gym_id", "status"),
         Index("ix_payments_gym_member", "gym_id", "member_id"),
         CheckConstraint(
-            "status IN ('pending', 'verified', 'rejected')",
+            "status IN ('pending', 'processing', 'verified', 'rejected', 'failed', 'cancelled', 'refunded')",
             name="ck_payments_status",
         ),
         CheckConstraint(
@@ -27,12 +27,21 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     member_id = db.Column(
         db.Integer, db.ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    plan_id = db.Column(
+        db.Integer, db.ForeignKey("membership_plans.id", ondelete="SET NULL"), nullable=True
+    )
     verified_by_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    standard_price = db.Column(db.Numeric(10, 2), nullable=True)
+    discount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     paid_on = db.Column(db.Date, nullable=True)
     method = db.Column(db.String(64), nullable=False, default="upi")
+    channel = db.Column(db.String(32), nullable=False, default="offline")
     reference = db.Column(db.String(160), nullable=True)
     status = db.Column(db.String(32), nullable=False, default="pending", index=True)
     renewal_days = db.Column(db.Integer, nullable=False, default=30)
@@ -41,8 +50,10 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="payments")
+    plan = db.relationship("MembershipPlan")
     renewal = db.relationship("RenewalHistory", back_populates="payment_verification", uselist=False)
-    verified_by = db.relationship("User")
+    verified_by = db.relationship("User", foreign_keys=[verified_by_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
 
     @property
     def payment_mode(self) -> str:

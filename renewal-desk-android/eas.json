@@ -41,6 +41,7 @@
       "autoIncrement": true,
       "channel": "production",
       "environment": "production",
+      "credentialsSource": "local",
       "android": {
         "buildType": "app-bundle"
       },

@@ -37,4 +37,8 @@ Thumbs.db
 Desktop.ini
 *.apk
 *.aab
+*.keystore
+*.jks
+original_keystore/
+scratch_*
 

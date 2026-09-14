@@ -75,6 +75,7 @@ export const MembershipScreen: React.FC = () => {
 
   const membership = membershipData?.membership;
   const renewals: RenewalRecord[] = membershipData?.renewal_history || [];
+  const activeDemand = membershipData?.active_renewal_demand;
 
   const daysLeft = membership?.days_left;
   const isExpired = membership?.is_expired || (daysLeft !== null && daysLeft < 0);
@@ -106,6 +107,44 @@ export const MembershipScreen: React.FC = () => {
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : null}
+
+        {/* Special Active Renewal Demand Callout */}
+        {activeDemand && (
+          <View style={styles.demandAlertCard}>
+            <View style={styles.demandAlertTop}>
+              <View style={styles.demandBadge}>
+                <Ionicons name="sparkles" size={14} color="#D97706" />
+                <Text style={styles.demandBadgeText}>SPECIAL RENEWAL OFFER</Text>
+              </View>
+              {parseFloat(activeDemand.savings || '0') > 0 ? (
+                <View style={styles.savingsPill}>
+                  <Text style={styles.savingsPillText}>SAVE ₹{activeDemand.savings}</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <Text style={styles.demandPlanTitle}>{activeDemand.plan_name}</Text>
+            <View style={styles.demandPriceRow}>
+              {parseFloat(activeDemand.savings || '0') > 0 ? (
+                <Text style={styles.demandStrikethrough}>₹{activeDemand.standard_price}</Text>
+              ) : null}
+              <Text style={styles.demandFinalPrice}>
+                ₹{activeDemand.final_payable || activeDemand.amount}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.demandCtaBtn, { backgroundColor: theme.primary }]}
+              onPress={() => navigation.navigate('Renew')}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="flash" size={16} color={theme.primaryText} />
+              <Text style={[styles.demandCtaBtnText, { color: theme.primaryText }]}>
+                Renew with 1-Tap UPI
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {membership && (
           <>
@@ -409,5 +448,84 @@ const styles = StyleSheet.create({
   historyAmount: {
     ...typography.bodySemibold,
     color: colors.text,
+  },
+  demandAlertCard: {
+    backgroundColor: colors.card,
+    borderColor: '#F59E0B',
+    borderRadius: radii.xl,
+    borderWidth: 1.5,
+    marginBottom: spacing.lg,
+    padding: spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  demandAlertTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  demandBadge: {
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  demandBadgeText: {
+    color: '#B45309',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  savingsPill: {
+    backgroundColor: '#DCFCE7',
+    borderRadius: radii.full,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  savingsPillText: {
+    color: '#15803D',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  demandPlanTitle: {
+    ...typography.h2,
+    color: colors.text,
+    marginTop: spacing.xs,
+  },
+  demandPriceRow: {
+    alignItems: 'baseline',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: 2,
+  },
+  demandStrikethrough: {
+    ...typography.h3,
+    color: colors.muted,
+    textDecorationLine: 'line-through',
+  },
+  demandFinalPrice: {
+    ...typography.h1,
+    color: colors.text,
+    fontSize: 28,
+  },
+  demandCtaBtn: {
+    alignItems: 'center',
+    borderRadius: radii.lg,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  demandCtaBtnText: {
+    ...typography.bodySemibold,
+    fontSize: 15,
   },
 });

@@ -1,9 +1,5 @@
 # EAS Build — ignore unnecessary files to speed up upload
-docs/
 *.md
-!README.md
 .expo/
 .git/
 node_modules/
-!credentials.json
-!release.keystore

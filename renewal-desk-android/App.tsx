@@ -35,6 +35,7 @@ import * as Notifications from 'expo-notifications';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { PaymentDetailScreen } from './src/screens/PaymentDetailScreen';
 import { PaymentsScreen } from './src/screens/PaymentsScreen';
+import { PaymentSetupScreen } from './src/screens/PaymentSetupScreen';
 import { PlansScreen } from './src/screens/PlansScreen';
 import { RecordPaymentScreen } from './src/screens/RecordPaymentScreen';
 import { RenewalsScreen } from './src/screens/RenewalsScreen';
@@ -158,6 +159,7 @@ type MoreStackParamList = {
   RecordPayment: { memberId?: number };
   Inbox: undefined;
   FastRenewal: FastRenewalParams;
+  PaymentSetup: undefined;
 };
 
 type AuthStackParamList = {
@@ -892,6 +894,7 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
             onNavigateCampaigns={() => props.navigation.navigate('Campaigns')}
             onNavigateAccess={() => props.navigation.navigate('AccessHome')}
             onNavigatePayments={() => props.navigation.navigate('PaymentsHome')}
+            onNavigatePaymentSetup={() => props.navigation.navigate('PaymentSetup')}
           />
         )}
       </MoreStackNav.Screen>
@@ -1044,6 +1047,9 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
             }}
           />
         )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="PaymentSetup">
+        {(props) => <PaymentSetupScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
     </MoreStackNav.Navigator>
   );

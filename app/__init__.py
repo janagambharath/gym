@@ -289,21 +289,29 @@ def _register_error_handlers(app: Flask) -> None:
 def _register_security_headers(app: Flask) -> None:
     @app.after_request
     def set_security_headers(response):
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' https://cdn.jsdelivr.net; "
-            "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-            "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
-            "img-src 'self' data: https: blob:; "
-            "connect-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self';"
-        )
+
+        # Routes that need custom CSP (e.g. Meta Embedded Signup) set this
+        # marker so the global handler does not overwrite their headers.
+        if not response.headers.get("X-RD-Custom-CSP"):
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' https://cdn.jsdelivr.net; "
+                "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+                "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
+                "img-src 'self' data: https: blob:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self';"
+            )
+        else:
+            # Remove the internal marker before sending to client
+            del response.headers["X-RD-Custom-CSP"]
+
         if not app.debug:
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
@@ -606,8 +614,10 @@ def _register_cli(app: Flask) -> None:
             auto_expire_members_for_gym,
             run_due_reminders_for_gym,
         )
+        from app.services.access_event_service import auto_reset_stale_inside_members
 
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
+        access_totals = {"auto_exited": 0}
         for gym in _iter_active_gyms():
             expired_count = auto_expire_members_for_gym(gym)
             if expired_count:
@@ -630,6 +640,19 @@ def _register_cli(app: Flask) -> None:
                     {"event": "gym_reminders", "gym_id": gym.id, "gym": gym.name, **result}
                 )
             )
+
+            # Reset stale "Inside" members whose entry was before gym closing time
+            reset_count = auto_reset_stale_inside_members(
+                gym.id, gym.timezone or "Asia/Kolkata",
+            )
+            if reset_count:
+                access_totals["auto_exited"] += reset_count
+                db.session.commit()
+                app.logger.info(
+                    json.dumps(
+                        {"event": "auto_exit_reset", "gym_id": gym.id, "count": reset_count}
+                    )
+                )
         app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
         _record_reminders_heartbeat(app, totals)
 
