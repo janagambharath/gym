@@ -105,6 +105,11 @@ export function WhatsAppOnboardingModal({
       return;
     }
 
+    if (data.type === 'open_external_browser') {
+      void handleOpenExternalBrowser();
+      return;
+    }
+
     if (data.type === 'embedded_signup_cancel') {
       setWebViewUrl(null);
       return;

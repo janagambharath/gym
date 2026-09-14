@@ -295,12 +295,12 @@ def _register_security_headers(app: Flask) -> None:
 
         # Routes that need custom CSP (e.g. Meta Embedded Signup) set this
         # marker so the global handler does not overwrite their headers.
-        if not response.headers.get("X-RD-Custom-CSP"):
+        if not response.headers.get("X-RD-Custom-CSP") and not request.path.startswith("/api/mobile/v1/whatsapp/embedded-signup-page"):
             response.headers["X-Frame-Options"] = "DENY"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
                 "script-src 'self' https://cdn.jsdelivr.net; "
-                "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
                 "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com data:; "
                 "img-src 'self' data: https: blob:; "
                 "connect-src 'self'; "
@@ -310,7 +310,8 @@ def _register_security_headers(app: Flask) -> None:
             )
         else:
             # Remove the internal marker before sending to client
-            del response.headers["X-RD-Custom-CSP"]
+            if "X-RD-Custom-CSP" in response.headers:
+                del response.headers["X-RD-Custom-CSP"]
 
         if not app.debug:
             response.headers["Strict-Transport-Security"] = (

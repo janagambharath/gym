@@ -464,86 +464,106 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
 <title>Connect WhatsApp Business</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     background: #F8F9FB; color: #0F172A;
     display: flex; flex-direction: column; align-items: center;
-    min-height: 100vh; padding: 32px 24px;
+    min-height: 100vh; padding: 24px 16px;
+    -webkit-font-smoothing: antialiased;
   }
-  .logo { font-size: 28px; font-weight: 800; margin-bottom: 8px; color: #0F172A; }
-  .subtitle { font-size: 14px; color: #64748B; margin-bottom: 32px; text-align: center; }
+  .logo { font-size: 24px; font-weight: 800; color: #0F172A; text-align: center; margin-bottom: 4px; letter-spacing: -0.5px; }
+  .subtitle { font-size: 14px; color: #64748B; text-align: center; margin-bottom: 24px; }
   .card {
-    background: #fff; border: 1px solid #E2E8F0; border-radius: 16px;
-    padding: 28px 24px; width: 100%; max-width: 420px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px;
+    padding: 24px; width: 100%; max-width: 420px;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.06);
   }
-  .card h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .card h2 { font-size: 18px; font-weight: 700; color: #0F172A; margin-bottom: 8px; }
   .card p { font-size: 13px; color: #475569; line-height: 1.5; margin-bottom: 20px; }
-  .steps { list-style: none; margin-bottom: 24px; }
-  .steps li {
+  .step-row {
+    display: flex; align-items: center; gap: 12px; font-size: 13px; color: #334155;
     padding: 10px 0; border-bottom: 1px solid #F1F5F9;
-    font-size: 13px; color: #334155; display: flex; align-items: flex-start; gap: 10px;
   }
-  .steps li:last-child { border-bottom: none; }
+  .step-row:last-child { border-bottom: none; }
   .step-num {
     flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
-    background: #2563EB; color: #fff; font-size: 11px; font-weight: 700;
+    background: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 700;
     display: flex; align-items: center; justify-content: center;
   }
   .btn-connect {
     display: flex; align-items: center; justify-content: center; gap: 10px;
     width: 100%; padding: 14px 0; border: none; border-radius: 12px;
-    background: #25D366; color: #fff; font-size: 16px; font-weight: 700;
-    cursor: pointer; transition: opacity 0.15s;
+    background: #25D366; color: #FFFFFF; font-size: 15px; font-weight: 700;
+    cursor: pointer; box-shadow: 0 2px 4px rgba(37, 211, 102, 0.2);
   }
-  .btn-connect:hover { opacity: 0.9; }
-  .btn-connect:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-browser {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; margin-top: 10px; padding: 12px 0; border: 1px solid #CBD5E1;
+    border-radius: 12px; background: #F8FAFC; color: #1E293B; font-size: 13px; font-weight: 600;
+    cursor: pointer;
+  }
   .btn-cancel {
     display: block; width: 100%; text-align: center;
-    margin-top: 16px; padding: 10px; border: none; background: none;
+    margin-top: 14px; padding: 8px; border: none; background: none;
     color: #94A3B8; font-size: 13px; cursor: pointer;
   }
-  .status { text-align: center; margin-top: 20px; font-size: 13px; color: #64748B; }
+  .status { text-align: center; margin-top: 16px; font-size: 13px; color: #64748B; }
   .status.error { color: #DC2626; }
 </style>
 </head>
-<body>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #F8F9FB; color: #0F172A; margin: 0; padding: 24px 16px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; box-sizing: border-box;">
 
-<div class="logo">Renewal Desk</div>
-<p class="subtitle">Connect your WhatsApp Business account</p>
+<div style="font-size: 24px; font-weight: 800; color: #0F172A; text-align: center; margin-bottom: 4px; letter-spacing: -0.5px;">Renewal Desk</div>
+<p style="font-size: 14px; color: #64748B; text-align: center; margin-top: 0; margin-bottom: 24px;">Connect your WhatsApp Business account</p>
 
-<div class="card">
-  <h2>WhatsApp Setup</h2>
-  <p>Connect your existing WhatsApp Business number to enable automated renewal reminders, AI receptionist, and broadcast messages.</p>
+<div style="background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.06); box-sizing: border-box;">
+  <h2 style="font-size: 18px; font-weight: 700; color: #0F172A; margin-top: 0; margin-bottom: 8px;">WhatsApp Setup</h2>
+  <p style="font-size: 13px; color: #475569; line-height: 1.5; margin-top: 0; margin-bottom: 20px;">Connect your existing WhatsApp Business number to enable automated renewal reminders, AI receptionist, and broadcast messages.</p>
 
-  <ol class="steps">
-    <li><span class="step-num">1</span> Tap <strong>Connect WhatsApp</strong> below</li>
-    <li><span class="step-num">2</span> Sign in with your Facebook/Meta Business account</li>
-    <li><span class="step-num">3</span> Select or create a WhatsApp Business account</li>
-    <li><span class="step-num">4</span> Choose the phone number to connect</li>
-  </ol>
+  <div style="display: flex; flex-direction: column; margin-bottom: 24px;">
+    <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #334155; padding: 10px 0; border-bottom: 1px solid #F1F5F9;">
+      <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;">1</span>
+      <span>Tap <strong style="color: #0F172A;">Connect WhatsApp</strong> below</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #334155; padding: 10px 0; border-bottom: 1px solid #F1F5F9;">
+      <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;">2</span>
+      <span>Sign in with your Facebook / Meta Business account</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #334155; padding: 10px 0; border-bottom: 1px solid #F1F5F9;">
+      <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;">3</span>
+      <span>Select or create a WhatsApp Business account</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #334155; padding: 10px 0;">
+      <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background-color: #2563EB; color: #FFFFFF; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;">4</span>
+      <span>Choose the phone number to connect</span>
+    </div>
+  </div>
 
-  <button id="connectBtn" class="btn-connect" onclick="startSignup()" disabled>
+  <button id="connectBtn" onclick="startSignup()" style="display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 14px 0; border: none; border-radius: 12px; background-color: #25D366; color: #FFFFFF; font-size: 16px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 4px rgba(37, 211, 102, 0.2);">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.11.546 4.093 1.502 5.817L0 24l6.334-1.478A11.94 11.94 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.82a9.78 9.78 0 01-5.282-1.546l-.38-.226-3.935.918.975-3.843-.248-.395A9.776 9.776 0 012.18 12 9.82 9.82 0 0112 2.18 9.82 9.82 0 0121.82 12 9.82 9.82 0 0112 21.82z"/></svg>
     Connect WhatsApp
   </button>
-  <button class="btn-cancel" onclick="cancelSetup()">Cancel</button>
-  <p id="statusText" class="status"></p>
+
+  <button onclick="openExternal()" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 10px; padding: 12px 0; border: 1px solid #CBD5E1; border-radius: 12px; background-color: #F8FAFC; color: #1E293B; font-size: 13px; font-weight: 600; cursor: pointer;">
+    🌐 Open in Chrome / Browser
+  </button>
+
+  <button onclick="cancelSetup()" style="display: block; width: 100%; text-align: center; margin-top: 14px; padding: 8px; border: none; background: transparent; color: #94A3B8; font-size: 13px; cursor: pointer;">Cancel</button>
+  <p id="statusText" style="text-align: center; margin-top: 16px; font-size: 13px; color: #64748B;"></p>
 </div>
 
 <!-- Meta Facebook SDK -->
-<script async defer crossorigin="anonymous"
-  src="https://connect.facebook.net/en_US/sdk.js"></script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
 
 <script>
   var META_APP_ID = '{{META_APP_ID}}';
   var META_CONFIG_ID = '{{META_CONFIG_ID}}';
+  var fbInitialized = false;
 
-  // Post message helper — works in React Native WebView
   function postToApp(data) {
     if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
       window.ReactNativeWebView.postMessage(JSON.stringify(data));
@@ -552,28 +572,35 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
 
   function setStatus(msg, isError) {
     var el = document.getElementById('statusText');
-    el.textContent = msg;
-    el.className = isError ? 'status error' : 'status';
+    if (el) {
+      el.textContent = msg;
+      el.style.color = isError ? '#DC2626' : '#64748B';
+    }
+  }
+
+  function openExternal() {
+    postToApp({ type: 'open_external_browser' });
   }
 
   // Initialize Facebook SDK
   window.fbAsyncInit = function() {
-    FB.init({
-      appId: META_APP_ID,
-      autoLogAppEvents: true,
-      xfbml: false,
-      version: 'v21.0'
-    });
-    document.getElementById('connectBtn').disabled = false;
-    setStatus('Ready. Tap Connect WhatsApp to begin.', false);
+    try {
+      FB.init({
+        appId: META_APP_ID,
+        autoLogAppEvents: true,
+        xfbml: false,
+        version: 'v21.0'
+      });
+      fbInitialized = true;
+      setStatus('Ready. Tap Connect WhatsApp to begin.', false);
+    } catch (e) {
+      console.warn('FB init error', e);
+    }
   };
 
   function startSignup() {
-    document.getElementById('connectBtn').disabled = true;
     setStatus('Opening Meta Business login...', false);
 
-    // sessionInfoListener is REQUIRED when sessionInfoVersion is 2.
-    // Meta calls this callback with the selected WABA and phone number.
     function sessionInfoListener(sessionInfo) {
       if (sessionInfo && sessionInfo.phone_number_id) {
         setStatus('WhatsApp Business connected! Saving...', false);
@@ -588,51 +615,49 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
       }
     }
 
-    FB.login(function(response) {
-      if (response.authResponse) {
-        var code = response.authResponse.code;
-        setStatus('Signed in. Completing WhatsApp Business selection...', false);
-
-        // If sessionInfoListener already fired, we're done.
-        // Otherwise the auth code confirms the user authenticated successfully.
-        if (code) {
-          setStatus('Authentication successful. Complete the business selection to finish.', false);
-        }
-      } else {
-        document.getElementById('connectBtn').disabled = false;
-        setStatus('Login was cancelled or failed.', true);
-        postToApp({ type: 'embedded_signup_error', message: 'Meta login was cancelled or failed.' });
+    if (typeof FB !== 'undefined' && FB.login) {
+      try {
+        FB.login(function(response) {
+          if (response.authResponse) {
+            var code = response.authResponse.code;
+            setStatus('Signed in. Completing WhatsApp Business selection...', false);
+            if (code) {
+              setStatus('Authentication successful. Please complete business selection...', false);
+            }
+          } else {
+            setStatus('Login was closed. If popups are blocked, tap "Open in Chrome / Browser" above.', false);
+          }
+        }, {
+          config_id: META_CONFIG_ID,
+          response_type: 'code',
+          override_default_response_type: true,
+          extras: {
+            setup: {},
+            featureType: 'only_waba_sharing',
+            sessionInfoVersion: 2,
+            sessionInfoListener: sessionInfoListener
+          }
+        });
+      } catch (err) {
+        // If WebView blocks popup, fallback to opening in external browser
+        setStatus('Opening in system browser...', false);
+        openExternal();
       }
-    }, {
-      config_id: META_CONFIG_ID,
-      response_type: 'code',
-      override_default_response_type: true,
-      extras: {
-        setup: {},
-        featureType: 'only_waba_sharing',
-        sessionInfoVersion: 2,
-        sessionInfoListener: sessionInfoListener
-      }
-    });
+    } else {
+      // SDK not loaded in WebView or blocked by policy
+      setStatus('Opening in system browser for secure Meta login...', false);
+      openExternal();
+    }
   }
 
   // Meta Embedded Signup session info listener
-  // This fires when the user completes business/phone selection
   window.addEventListener('message', function(event) {
-    // Only process messages from Facebook domain
     if (!event.origin || (!event.origin.includes('facebook.com') && event.origin !== window.location.origin)) {
       return;
     }
 
     try {
-      var data;
-      if (typeof event.data === 'string') {
-        data = JSON.parse(event.data);
-      } else {
-        data = event.data;
-      }
-
-      // Handle the session info from Meta Embedded Signup
+      var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
       if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
         var setupData = data.data;
         if (setupData && setupData.phone_number_id) {
@@ -645,14 +670,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
           });
           return;
         }
-
-        if (setupData && setupData.current_step === 'success') {
-          setStatus('Setup complete. Finalizing...', false);
-          return;
-        }
       }
 
-      // Also handle the newer callback format
       if (data && (data.waba_id || data.phone_number_id)) {
         setStatus('WhatsApp Business connected! Saving...', false);
         postToApp({
@@ -662,9 +681,7 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
           business_phone_number: data.display_phone_number || ''
         });
       }
-    } catch (e) {
-      // Ignore non-JSON messages from other frames
-    }
+    } catch (e) {}
   });
 
   function cancelSetup() {
