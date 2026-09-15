@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Image,
@@ -46,40 +46,72 @@ function ActiveGoogleAuthButton({
 
   const activeClientId = GOOGLE_WEB_CLIENT_ID || GOOGLE_ANDROID_CLIENT_ID;
 
-  const [, , promptAsync] = Google.useIdTokenAuthRequest({
+  // On Android the provider first returns an authorization code, then
+  // exchanges it asynchronously for an ID token. The hook's ``response``
+  // changes only after that exchange; reading the value returned directly by
+  // promptAsync therefore drops valid sign-ins before their token arrives.
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     clientId: activeClientId,
     webClientId: GOOGLE_WEB_CLIENT_ID,
     androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    selectAccount: true,
   });
+  const completedToken = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!response || response.type !== 'success') {
+      if (response?.type === 'error') {
+        setLoading(false);
+        onError('Google sign-in could not be completed. Please try again or use email and password.');
+      }
+      return;
+    }
+
+    const idToken = response.params?.id_token || response.authentication?.idToken;
+    if (!idToken) {
+      // The hook temporarily reports a successful code response while it is
+      // exchanging that code. Wait for the completed response rather than
+      // incorrectly treating it as a failed sign-in.
+      return;
+    }
+    if (completedToken.current === idToken) {
+      return;
+    }
+    completedToken.current = idToken;
+
+    void Promise.resolve(onSuccess(idToken))
+      .catch(() => onError('Google sign-in could not be completed. Please try again or use email and password.'))
+      .finally(() => setLoading(false));
+  }, [onError, onSuccess, response]);
 
   const handlePress = useCallback(async () => {
     if (loading || disabled) return;
+    if (!request) {
+      onError('Google sign-in is still preparing. Please wait a moment and try again.');
+      return;
+    }
     setLoading(true);
+    completedToken.current = null;
     try {
-      const res = await promptAsync();
-      if (res?.type === 'success') {
-        const idToken = res.params?.id_token || (res as any)?.authentication?.idToken;
-        if (idToken) {
-          await onSuccess(idToken);
-        } else {
-          onError('Google sign-in did not return a valid credential token.');
+      const result = await promptAsync();
+      if (result.type !== 'success') {
+        setLoading(false);
+        if (result.type === 'error') {
+          onError('Google sign-in could not be completed. Please try again or use email and password.');
         }
-      } else if (res?.type === 'error') {
-        onError('Google sign-in failed. Please try again.');
       }
     } catch (err: unknown) {
+      setLoading(false);
       const msg = err instanceof Error ? err.message : 'An error occurred during Google sign-in.';
       onError(msg);
-    } finally {
-      setLoading(false);
     }
-  }, [loading, disabled, promptAsync, onSuccess, onError]);
+  }, [loading, disabled, onError, promptAsync, request]);
 
   return (
     <TouchableOpacity
-      style={[styles.googleBtn, (loading || disabled) && styles.googleBtnDisabled]}
+      style={[styles.googleBtn, (loading || disabled || !request) && styles.googleBtnDisabled]}
       onPress={() => void handlePress()}
-      disabled={loading || disabled}
+      disabled={loading || disabled || !request}
       activeOpacity={0.8}
     >
       <Image

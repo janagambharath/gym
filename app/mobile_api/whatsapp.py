@@ -253,15 +253,19 @@ def register_whatsapp_routes(bp):
     def connection_status():
         """Return truthful WhatsApp connection status and Meta onboarding state."""
         gym = g.current_user.gym
-        
-        if gym.whatsapp_enabled and gym.phone_number_id:
+        status = _connection_state(gym)
+
+        if status == "CONNECTED":
             status = "CONNECTED"
             desc = "WhatsApp Business is active and connected to Renewal Desk automation."
             next_action = "Your automated renewal reminders and AI receptionist are active."
-        elif gym.whatsapp_business_account_id and not gym.phone_number_id:
+        elif status in {"PENDING", "ACTION_REQUIRED"}:
             status = "ACTION_REQUIRED"
             desc = "Meta requires business verification or phone number selection to complete setup."
             next_action = "Complete Meta Embedded Signup on your phone or computer."
+        elif status == "FAILED":
+            desc = "We could not verify this WhatsApp connection with Meta."
+            next_action = "Try connecting again. Nothing has been enabled for your gym yet."
         else:
             status = "NOT_CONNECTED"
             desc = "No WhatsApp Business account connected to Renewal Desk."
@@ -356,6 +360,10 @@ def register_whatsapp_routes(bp):
 
         resp = make_response(html, 200)
         resp.headers["Content-Type"] = "text/html; charset=utf-8"
+        # A WebView must never reuse a former Embedded Signup page: an old
+        # page can contain an obsolete Meta configuration or a disabled CTA.
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
         # Marker: tell _register_security_headers to preserve our custom CSP
         resp.headers["X-RD-Custom-CSP"] = "1"
         # Relax CSP for this page only — Meta SDK requires connect-src and script-src
@@ -392,7 +400,26 @@ def register_whatsapp_routes(bp):
         gym.phone_number_id = phone_number_id
         if phone:
             gym.business_phone_number = phone
+        # A browser callback alone is insufficient. Verify that Meta accepts
+        # the selected WABA/number and webhook subscription before enabling
+        # any automation for this gym.
+        gym.whatsapp_enabled = False
+        gym.whatsapp_connection_status = "PENDING"
+        gym.whatsapp_connection_error = None
+        verification = WhatsAppService(gym).connect_webhooks()
+        if not verification.ok:
+            gym.whatsapp_connection_status = "FAILED"
+            gym.whatsapp_connection_error = "We could not verify this WhatsApp connection with Meta. Please try again."
+            db.session.commit()
+            return error_response(
+                "WHATSAPP_CONNECTION_NOT_VERIFIED",
+                "We could not finish connecting WhatsApp. Nothing has been enabled yet. Please try again.",
+                409,
+            )
+
         gym.whatsapp_enabled = True
+        gym.whatsapp_connection_status = "CONNECTED"
+        gym.whatsapp_connection_error = None
 
         audit(
             action="mobile_connect_waba",
@@ -548,7 +575,7 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     Connect WhatsApp
   </button>
 
-  <button onclick="openExternal()" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 10px; padding: 12px 0; border: 1px solid #CBD5E1; border-radius: 12px; background-color: #F8FAFC; color: #1E293B; font-size: 13px; font-weight: 600; cursor: pointer;">
+  <button onclick="openExternal()" style="display: none;" aria-hidden="true" tabindex="-1">
     🌐 Open in Chrome / Browser
   </button>
 
@@ -557,7 +584,7 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
 </div>
 
 <!-- Meta Facebook SDK -->
-<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js" onerror="metaSdkFailed()"></script>
 
 <script>
   var META_APP_ID = '{{META_APP_ID}}';
@@ -579,7 +606,13 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
   }
 
   function openExternal() {
-    postToApp({ type: 'open_external_browser' });
+    // The browser cannot return a verified result to the signed-in app.
+    // Keep the complete signup journey in this WebView instead.
+    setStatus('Please complete setup in this screen so Renewal Desk can verify the connection.', false);
+  }
+
+  function metaSdkFailed() {
+    setStatus('Meta sign-in could not load. Check your internet connection, then close and try again.', true);
   }
 
   // Initialize Facebook SDK
@@ -599,6 +632,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
   };
 
   function startSignup() {
+    var button = document.getElementById('connectBtn');
+    if (button) button.disabled = true;
     setStatus('Opening Meta Business login...', false);
 
     function sessionInfoListener(sessionInfo) {
@@ -625,7 +660,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
               setStatus('Authentication successful. Please complete business selection...', false);
             }
           } else {
-            setStatus('Login was closed. If popups are blocked, tap "Open in Chrome / Browser" above.', false);
+            if (button) button.disabled = false;
+            setStatus('Setup was closed. You can safely try again.', false);
           }
         }, {
           config_id: META_CONFIG_ID,
@@ -639,14 +675,12 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
           }
         });
       } catch (err) {
-        // If WebView blocks popup, fallback to opening in external browser
-        setStatus('Opening in system browser...', false);
-        openExternal();
+        if (button) button.disabled = false;
+        setStatus('Meta sign-in could not open. Close this screen and try again.', true);
       }
     } else {
-      // SDK not loaded in WebView or blocked by policy
-      setStatus('Opening in system browser for secure Meta login...', false);
-      openExternal();
+      if (button) button.disabled = false;
+      setStatus('Meta sign-in is still loading. Please wait a moment and try again.', false);
     }
   }
 

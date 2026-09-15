@@ -257,6 +257,11 @@ def register_auth_routes(bp):
             for cid in current_app.config.get("GOOGLE_OAUTH_CLIENT_ID", "").split(",")
             if cid.strip()
         ]
+        configured_client_ids.extend(
+            cid.strip()
+            for cid in current_app.config.get("GOOGLE_OAUTH_ANDROID_CLIENT_ID", "").split(",")
+            if cid.strip()
+        )
         if configured_client_ids and google_data.get("aud") not in configured_client_ids:
             return error_response("GOOGLE_AUTH_FAILED", "Google token audience mismatch.", 401)
 

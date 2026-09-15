@@ -523,6 +523,8 @@ export async function updateWhatsAppProfile(params: {
 export type OnboardingStep = {
   id: string;
   title: string;
+  description?: string;
+  action_label?: string;
   completed: boolean;
   route: string | null;
 };
@@ -532,6 +534,7 @@ export type OnboardingProgressData = {
   total_count: number;
   percentage: number;
   is_complete: boolean;
+  trial?: { is_active: boolean; ends_at: string | null; days: number };
   steps: OnboardingStep[];
 };
 

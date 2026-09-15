@@ -21,4 +21,4 @@ def test_google_play_lifecycle_mapping_never_promotes_pending_purchase():
     assert pending == "PENDING"
     assert active == "ACTIVE" and renews_at is not None
     assert cancelled == "CANCELLED" and expires_at is not None
-    assert failed == "PAYMENT_FAILED" and grace_end is not None
+    assert failed == "GRACE_PERIOD" and grace_end is not None

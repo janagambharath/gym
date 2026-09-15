@@ -196,33 +196,42 @@ def register_dashboard_routes(bp):
 
     @bp.route("/onboarding/progress", methods=["GET"])
     @token_required
-    @roles_required("gym_owner", "staff")
+    @roles_required("gym_owner")
     def onboarding_progress():
-        """Track new customer onboarding setup checklist progress ordered by Time to First Value."""
-        from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
-        from app.models.bot import GymBotConfig
+        """Return the owner-facing, self-serve setup journey.
+
+        This is intentionally separate from operational metrics: a placeholder
+        plan, an empty UPI setting, or an expired trial must never look like a
+        completed setup step.
+        """
+        from app.models import Member, MembershipPlan, QRSettings
+        from app.services.mobile_billing_service import entitlement_for
 
         gym = g.current_user.gym
 
-        account_created = True
+        profile_complete = bool(gym.name and gym.phone and (gym.address or gym.city))
         members_imported = Member.query.filter_by(gym_id=gym.id).filter(Member.deleted_at.is_(None)).count() > 0
-        plans_configured = MembershipPlan.query.filter_by(gym_id=gym.id, is_active=True).count() > 0
-        first_renewal_completed = (
-            RenewalHistory.query.filter_by(gym_id=gym.id).count() > 0
-            or PaymentVerification.query.filter_by(gym_id=gym.id).count() > 0
-        )
+        plans_configured = MembershipPlan.query.filter(
+            MembershipPlan.gym_id == gym.id,
+            MembershipPlan.is_active.is_(True),
+            MembershipPlan.price > 0,
+        ).count() > 0
         whatsapp_connected = bool(gym.whatsapp_enabled and gym.phone_number_id)
-        bot_configured = bool(
-            GymBotConfig.query.filter_by(gym_id=gym.id).first()
-            and (gym.address or gym.phone)
+        payment_settings = QRSettings.query.filter_by(gym_id=gym.id).first()
+        member_payments_ready = bool(
+            payment_settings and payment_settings.is_active and payment_settings.upi_id
         )
+        billing = entitlement_for(gym)
+        subscription_status = billing["subscription_status"]
+        subscription_ready = subscription_status in {"TRIAL", "ACTIVE", "PENDING", "PAYMENT_FAILED"}
 
         steps = [
-            {"id": "members_imported", "title": "Add or Import Members", "completed": members_imported, "route": "Members"},
-            {"id": "plans_configured", "title": "Confirm Membership Pricing Plans", "completed": plans_configured, "route": "Plans"},
-            {"id": "first_renewal_completed", "title": "Record First Renewal or Payment", "completed": first_renewal_completed, "route": "Renewals"},
-            {"id": "whatsapp_connected", "title": "Connect WhatsApp Business", "completed": whatsapp_connected, "route": "WhatsApp"},
-            {"id": "bot_configured", "title": "Configure AI Receptionist", "completed": bot_configured, "route": "Bot"},
+            {"id": "gym_profile", "title": "Gym profile", "description": "Add your location so members and staff know which gym they are using.", "action_label": "Complete profile", "completed": profile_complete, "route": "Settings"},
+            {"id": "plans_configured", "title": "Membership plans", "description": "Set a real price for at least one plan before assigning memberships.", "action_label": "Set up plans", "completed": plans_configured, "route": "Plans"},
+            {"id": "members_imported", "title": "Members", "description": "Add your first member or import your existing member list.", "action_label": "Add members", "completed": members_imported, "route": "Members"},
+            {"id": "whatsapp_connected", "title": "Connect WhatsApp", "description": "Send renewal reminders and follow-ups from your gym's WhatsApp Business account.", "action_label": "Connect WhatsApp", "completed": whatsapp_connected, "route": "WhatsApp"},
+            {"id": "member_payments", "title": "Collect member payments", "description": "Add your gym UPI ID so members can pay their own renewal amount in VYNLA.", "action_label": "Set up payments", "completed": member_payments_ready, "route": "PaymentSetup"},
+            {"id": "subscription", "title": "Renewal Desk subscription", "description": "Your first 7 days are free. Choose a plan before the trial ends to keep using Renewal Desk.", "action_label": "View subscription", "completed": subscription_ready, "route": "Subscription", "status": subscription_status, "trial_ends_at": billing.get("expires_at")},
         ]
 
         completed_count = sum(1 for s in steps if s["completed"])
@@ -235,6 +244,11 @@ def register_dashboard_routes(bp):
                 "total_count": total_count,
                 "percentage": int((completed_count / total_count) * 100) if total_count > 0 else 100,
                 "is_complete": completed_count == total_count,
+                "trial": {
+                    "is_active": subscription_status == "TRIAL",
+                    "ends_at": billing.get("expires_at") if subscription_status == "TRIAL" else None,
+                    "days": 7,
+                },
                 "steps": steps,
             },
         })

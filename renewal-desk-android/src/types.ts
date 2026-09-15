@@ -158,7 +158,7 @@ export type BillingEntitlement = {
   billing_source: 'MANUAL' | 'GOOGLE_PLAY';
   plan_id: string | null;
   plan_name: string | null;
-  subscription_status: 'TRIAL' | 'ACTIVE' | 'PAYMENT_FAILED' | 'CANCELLED' | 'EXPIRED' | 'PENDING';
+  subscription_status: 'TRIAL' | 'ACTIVE' | 'PAYMENT_FAILED' | 'GRACE_PERIOD' | 'CANCELLED' | 'EXPIRED' | 'PENDING';
   started_at: string | null;
   renews_at: string | null;
   expires_at: string | null;

@@ -42,6 +42,7 @@ type DashboardScreenProps = {
   onNavigateNotifications?: () => void;
   onNavigateCampaigns?: () => void;
   onNavigateInbox?: () => void;
+  onNavigatePaymentSetup?: () => void;
   refreshToken?: number;
 };
 
@@ -66,6 +67,7 @@ export function DashboardScreen({
   onNavigateNotifications,
   onNavigateCampaigns,
   onNavigateInbox,
+  onNavigatePaymentSetup,
   refreshToken,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
@@ -240,6 +242,7 @@ export function DashboardScreen({
                   else onNavigateMembers();
                 }
                 else if (route === 'WhatsApp') onNavigateWhatsApp?.();
+                else if (route === 'PaymentSetup') onNavigatePaymentSetup?.();
                 else if (route === 'Renewals') {
                   if (onNavigateRecordPayment) onNavigateRecordPayment();
                   else onNavigateRenewals?.();

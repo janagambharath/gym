@@ -2,7 +2,6 @@ import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -65,26 +64,12 @@ export function WhatsAppOnboardingModal({
 
       const config = getRuntimeConfiguration();
       const baseUrl = config.apiBaseUrl || 'https://gym-production-910c.up.railway.app';
-      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}`;
+      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}&v=${Date.now()}`;
       setWebViewUrl(pageUrl);
     } catch {
       Alert.alert('Error', 'Failed to launch Meta Embedded Signup.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleOpenExternalBrowser = async () => {
-    if (!webViewUrl) return;
-    try {
-      const supported = await Linking.canOpenURL(webViewUrl);
-      if (supported) {
-        await Linking.openURL(webViewUrl);
-      } else {
-        Alert.alert('Error', 'Could not open external browser.');
-      }
-    } catch {
-      Alert.alert('Error', 'Failed to open browser.');
     }
   };
 
@@ -102,11 +87,6 @@ export function WhatsAppOnboardingModal({
     try {
       data = JSON.parse(event.nativeEvent.data);
     } catch {
-      return;
-    }
-
-    if (data.type === 'open_external_browser') {
-      void handleOpenExternalBrowser();
       return;
     }
 
@@ -422,15 +402,6 @@ export function WhatsAppOnboardingModal({
             </View>
             <View style={styles.webViewHeaderRight}>
               <TouchableOpacity
-                onPress={handleOpenExternalBrowser}
-                style={styles.browserBtn}
-                accessibilityLabel="Open in External Browser"
-                activeOpacity={0.7}
-              >
-                <Icon name="globe" size={16} color={colors.brand} />
-                <Text style={styles.browserBtnText}>Browser</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
                 onPress={handleWebViewClose}
                 style={styles.webViewCloseBtn}
                 accessibilityLabel="Close Meta Signup"
@@ -450,7 +421,8 @@ export function WhatsAppOnboardingModal({
               domStorageEnabled
               thirdPartyCookiesEnabled
               sharedCookiesEnabled
-              setSupportMultipleWindows={false}
+              cacheEnabled={false}
+              setSupportMultipleWindows
               javaScriptCanOpenWindowsAutomatically
               userAgent="Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
               startInLoadingState
@@ -461,13 +433,21 @@ export function WhatsAppOnboardingModal({
                 </View>
               )}
               onMessage={handleWebViewMessage}
+              onOpenWindow={(event) => {
+                const targetUrl = event.nativeEvent.targetUrl;
+                if (targetUrl && webViewRef.current) {
+                  webViewRef.current.injectJavaScript(
+                    `window.location.assign(${JSON.stringify(targetUrl)}); true;`,
+                  );
+                }
+              }}
               onError={() => {
                 Alert.alert(
                   'Could Not Load Meta Signup',
-                  'Failed to load the embedded page. You can open it in your browser or enter your WhatsApp Phone Number ID directly.',
+                  'Failed to load the secure Meta setup. Nothing has been connected. Check your connection and try again.',
                   [
-                    { text: 'Open in Browser', onPress: handleOpenExternalBrowser },
-                    { text: 'Enter Manually', onPress: handleWebViewClose },
+                    { text: 'Try Again', onPress: handleWebViewClose },
+                    { text: 'Close', style: 'cancel', onPress: handleWebViewClose },
                   ]
                 );
               }}

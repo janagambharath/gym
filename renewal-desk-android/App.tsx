@@ -96,6 +96,7 @@ type DashboardStackParamList = {
   CampaignDetail: { campaign: Campaign };
   FastRenewal: FastRenewalParams;
   Inbox: undefined;
+  PaymentSetup: undefined;
 };
 
 type MembersStackParamList = {
@@ -253,6 +254,7 @@ function DashboardStackScreen({
             onNavigateNotifications={() => props.navigation.navigate('Notifications')}
             onNavigateCampaigns={() => props.navigation.navigate('Campaigns')}
             onNavigateInbox={() => props.navigation.navigate('Inbox')}
+            onNavigatePaymentSetup={() => props.navigation.navigate('PaymentSetup')}
             refreshToken={refreshToken}
           />
         )}
@@ -404,6 +406,9 @@ function DashboardStackScreen({
         {(props) => (
           <WhatsAppScreen onBack={() => props.navigation.goBack()} />
         )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="PaymentSetup">
+        {(props) => <PaymentSetupScreen onBack={() => props.navigation.goBack()} />}
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="BotOverview">
         {(props) => (

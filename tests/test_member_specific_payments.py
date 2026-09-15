@@ -264,6 +264,39 @@ def test_initiate_upi_fails_if_gym_has_no_active_upi_receiver(client, seed_gym, 
     assert "not configured an active UPI payment receiver" in err
 
 
+def test_member_cannot_self_verify_upi_by_sending_gateway_flags(client, app, seed_gym, seed_member):
+    """A client-controlled flag or fake signature must never renew a membership."""
+    member_headers = _member_headers(seed_member)
+    gym = seed_gym["gym"]
+    db.session.add(QRSettings(gym_id=gym.id, upi_id="gymowner@okhdfcbank", is_active=True))
+    db.session.commit()
+
+    old_end = seed_member.membership_end
+    initiated = client.post("/api/member/v1/renew/initiate-upi", headers=member_headers, json={})
+    assert initiated.status_code == 200
+    payment_id = initiated.get_json()["data"]["payment_id"]
+
+    # Simulate production even though this test suite otherwise runs in TESTING mode.
+    app.config["TESTING"] = False
+    try:
+        confirmed = client.post(
+            "/api/member/v1/renew/confirm-upi",
+            headers=member_headers,
+            json={
+                "payment_id": payment_id,
+                "auto_verify": True,
+                "gateway_signature": "attacker-controlled-value",
+            },
+        )
+    finally:
+        app.config["TESTING"] = True
+
+    assert confirmed.status_code == 200
+    assert confirmed.get_json()["data"]["status"] == "pending"
+    refreshed = db.session.get(Member, seed_member.id)
+    assert refreshed.membership_end == old_end
+
+
 def test_staff_cannot_delete_payments_strictly_gym_owner(client, seed_gym, seed_member):
     """Regular staff must NOT be able to delete payment records. Strictly reserved for gym_owner."""
     gym = seed_gym["gym"]

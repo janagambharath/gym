@@ -38,7 +38,7 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
             <Text style={styles.progressBadgeText}>{data.percentage}%</Text>
           </View>
           <View>
-            <Text style={styles.title}>Setup Checklist</Text>
+            <Text style={styles.title}>Set Up Your Gym</Text>
             <Text style={styles.subtitle}>
               {data.completed_count} of {data.total_count} steps completed
             </Text>
@@ -76,14 +76,22 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
                   color={step.completed ? colors.success : colors.muted}
                 />
               </View>
-              <Text
-                style={[
-                  styles.stepTitle,
-                  step.completed && styles.stepTitleCompleted,
-                ]}
-              >
-                {step.title}
-              </Text>
+              <View style={styles.stepCopy}>
+                <Text
+                  style={[
+                    styles.stepTitle,
+                    step.completed && styles.stepTitleCompleted,
+                  ]}
+                >
+                  {step.title}
+                </Text>
+                {!step.completed && step.description ? (
+                  <Text style={styles.stepDescription}>{step.description}</Text>
+                ) : null}
+              </View>
+              {!step.completed && step.action_label && (
+                <Text style={styles.actionLabel}>{step.action_label}</Text>
+              )}
               {!step.completed && step.route && (
                 <View style={styles.stepForwardWrap}>
                   <Icon name="forward" size={14} color={colors.brand} />
@@ -161,6 +169,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 22,
   },
+  stepCopy: {
+    flex: 1,
+    marginLeft: spacing.sm,
+    marginRight: spacing.xs,
+  },
   stepList: {
     borderTopColor: colors.borderLight,
     borderTopWidth: 1,
@@ -180,14 +193,24 @@ const styles = StyleSheet.create({
   },
   stepTitle: {
     color: colors.text,
-    flex: 1,
     fontSize: fontSize.sm,
     fontWeight: fontWeight.medium,
-    marginLeft: spacing.sm,
+  },
+  stepDescription: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    lineHeight: 16,
+    marginTop: 2,
   },
   stepTitleCompleted: {
     color: colors.muted,
     textDecorationLine: 'line-through',
+  },
+  actionLabel: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+    marginRight: spacing.xs,
   },
   subtitle: {
     color: colors.textSecondary,

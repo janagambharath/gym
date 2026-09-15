@@ -158,7 +158,7 @@ def test_google_play_purchase_verification_requires_provider_configuration(clien
         assert updated_gym.subscription_status == "trial"
 
 
-def test_whatsapp_onboarding_and_connection(client, app):
+def test_whatsapp_onboarding_and_connection(client, app, monkeypatch):
     """Test WhatsApp connection status, onboarding config, connect-waba, and profile."""
     with app.app_context():
         gym = Gym(name="WhatsApp Gym", slug="wa-gym", country="India", currency="INR", phone="+919871112233", whatsapp_enabled=False)
@@ -172,6 +172,8 @@ def test_whatsapp_onboarding_and_connection(client, app):
     # Set Meta config for embedded signup
     app.config["META_APP_ID"] = "test_meta_app_id"
     app.config["META_CONFIG_ID"] = "test_meta_config_id"
+    from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
+    monkeypatch.setattr(WhatsAppService, "connect_webhooks", lambda self: WhatsAppResult(ok=True))
 
     login_resp = client.post("/api/mobile/v1/auth/login", json={"email": "wa.owner@example.com", "password": "password123"})
     token = login_resp.get_json()["data"]["access_token"]
@@ -187,6 +189,12 @@ def test_whatsapp_onboarding_and_connection(client, app):
     assert config_resp.status_code == 200
     assert "meta_app_id" in config_resp.get_json()["data"]
     assert len(config_resp.get_json()["data"]["supported_methods"]) == 2
+
+    signup_page = client.get(
+        "/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=test_meta_app_id&config_id=test_meta_config_id"
+    )
+    assert signup_page.status_code == 200
+    assert signup_page.headers["Cache-Control"] == "no-store, max-age=0"
 
     # Connect WABA
     connect_resp = client.post("/api/mobile/v1/whatsapp/connect-waba", json={
@@ -204,6 +212,40 @@ def test_whatsapp_onboarding_and_connection(client, app):
     }, headers=headers)
     assert profile_resp.status_code == 200
     assert profile_resp.get_json()["data"]["about"] == "Premier CrossFit Gym"
+
+
+def test_whatsapp_connection_requires_meta_verification(client, app, monkeypatch):
+    """Returned browser IDs must not create a false Connected status."""
+    with app.app_context():
+        gym = Gym(name="Unverified WhatsApp Gym", slug="unverified-wa-gym", country="India", currency="INR", phone="+919871112244")
+        db.session.add(gym)
+        db.session.flush()
+        owner = User(gym_id=gym.id, email="unverified.wa@example.com", full_name="WA Owner", role="gym_owner")
+        owner.set_password("password123")
+        db.session.add(owner)
+        db.session.commit()
+
+    from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
+    monkeypatch.setattr(
+        WhatsAppService,
+        "connect_webhooks",
+        lambda self: WhatsAppResult(ok=False, error="Meta rejected the subscription"),
+    )
+    login = client.post("/api/mobile/v1/auth/login", json={"email": "unverified.wa@example.com", "password": "password123"})
+    headers = {"Authorization": f"Bearer {login.get_json()['data']['access_token']}"}
+
+    response = client.post("/api/mobile/v1/whatsapp/connect-waba", json={
+        "waba_id": "waba_12345",
+        "phone_number_id": "phone_id_9989",
+    }, headers=headers)
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "WHATSAPP_CONNECTION_NOT_VERIFIED"
+
+    status = client.get("/api/mobile/v1/whatsapp/connection-status", headers=headers)
+    assert status.get_json()["data"]["status"] == "FAILED"
+    with app.app_context():
+        gym = Gym.query.filter_by(slug="unverified-wa-gym").first()
+        assert gym.whatsapp_enabled is False
 
 
 def test_onboarding_progress_checklist(client, app):
@@ -224,9 +266,10 @@ def test_onboarding_progress_checklist(client, app):
     resp = client.get("/api/mobile/v1/onboarding/progress", headers=headers)
     assert resp.status_code == 200
     data = resp.get_json()["data"]
-    assert data["total_count"] == 5
-    assert len(data["steps"]) == 5
-    assert data["steps"][0]["id"] == "members_imported"
+    assert data["total_count"] == 6
+    assert len(data["steps"]) == 6
+    assert data["steps"][0]["id"] == "gym_profile"
+    assert data["trial"]["is_active"] is True
 
 
 def test_google_auth_validation(client):
@@ -252,7 +295,7 @@ def test_google_auth_new_user_and_existing_user(client, app, monkeypatch):
         "email": "new.owner@gmail.com",
         "email_verified": "true",
         "name": "Google Gym Owner",
-        "aud": "",
+        "aud": "android-client.apps.googleusercontent.com",
     }
 
     class MockResponse:
@@ -266,6 +309,8 @@ def test_google_auth_new_user_and_existing_user(client, app, monkeypatch):
             return self.data
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=10: MockResponse(mock_google_response))
+    app.config["GOOGLE_OAUTH_CLIENT_ID"] = "web-client.apps.googleusercontent.com"
+    app.config["GOOGLE_OAUTH_ANDROID_CLIENT_ID"] = "android-client.apps.googleusercontent.com"
 
     # 1. New user registration via Google
     resp = client.post("/api/mobile/v1/auth/google", json={

@@ -924,7 +924,12 @@ def confirm_upi_payment():
     # Therefore, in non-test mode without a gateway webhook / verification token, the claim is safely transitioned
     # to 'pending' verification for gym staff / soundbox reconciliation, preventing false payment success.
     is_testing = current_app.config.get("TESTING", False)
-    is_gateway_verified = bool(data.get("auto_verify") or data.get("gateway_signature"))
+    # This endpoint is called by the member's device, so neither a boolean
+    # nor a purported signature in its JSON body is evidence of settlement.
+    # A real provider integration must verify its signed webhook server-side
+    # and mark the payment verified independently. Until then, production
+    # confirmations stay pending for the gym to reconcile.
+    is_gateway_verified = False
 
     plan_name = (
         payment.plan.name

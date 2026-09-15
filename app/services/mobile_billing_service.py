@@ -195,8 +195,12 @@ def _play_state(payload: dict[str, Any]) -> tuple[str, datetime | None, datetime
     line_items = payload.get("lineItems") or []
     first_item = line_items[0] if line_items and isinstance(line_items[0], dict) else {}
     expires_at = _as_utc(first_item.get("expiryTime"))
-    if state in {"SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"}:
-        return ("ACTIVE" if state.endswith("ACTIVE") else "PAYMENT_FAILED", expires_at, expires_at)
+    if state == "SUBSCRIPTION_STATE_ACTIVE":
+        return "ACTIVE", expires_at, None
+    if state == "SUBSCRIPTION_STATE_IN_GRACE_PERIOD":
+        # A declined renewal is materially different from a locked account:
+        # the owner retains service until the provider's grace end date.
+        return "GRACE_PERIOD", expires_at, expires_at
     if state == "SUBSCRIPTION_STATE_CANCELED":
         return "CANCELLED", expires_at, None
     if state == "SUBSCRIPTION_STATE_PENDING":
@@ -265,7 +269,7 @@ def _apply_verified_purchase(
     subscription.state = status
     subscription.expires_at = expires_at
     subscription.renews_at = expires_at if status == "ACTIVE" else None
-    subscription.grace_period_end = grace_end if status == "PAYMENT_FAILED" else None
+    subscription.grace_period_end = grace_end if status == "GRACE_PERIOD" else None
     subscription.last_verified_at = utcnow()
     subscription.external_account_id = expected_account
 
