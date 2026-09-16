@@ -307,7 +307,7 @@ export function AccessScreen({
       <View style={styles.legacyBanner}>
         <Icon name="info" size={16} color={colors.brand} />
         <Text style={styles.legacyBannerText}>
-          Some scans show as "Check In" because the bridge software doesn't report entry/exit direction. Update your bridge agent to v2+ for full tracking.
+          {'Some scans show as "Check In" because the bridge software doesn\'t report entry/exit direction. Update your bridge agent to v2+ for full tracking.'}
         </Text>
       </View>
     );

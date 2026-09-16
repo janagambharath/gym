@@ -24,29 +24,29 @@ SUPPORTED_LOCALES: dict[str, dict[str, str]] = {
 
 DEFAULT_CATALOG: dict[str, list[dict[str, str]]] = {
     "IN": [
-        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "999.00", "currency": "INR"},
-        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "1499.00", "currency": "INR"},
-        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "2499.00", "currency": "INR"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "999.00", "currency": "INR", "base_plan_id": "monthly-starter"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "1999.00", "currency": "INR", "base_plan_id": "monthly-growth"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "3499.00", "currency": "INR", "base_plan_id": "monthly-pro"},
     ],
     "AE": [
-        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "99.00", "currency": "AED"},
-        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "199.00", "currency": "AED"},
-        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "299.00", "currency": "AED"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "199.00", "currency": "AED", "base_plan_id": "monthly-starter"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "399.00", "currency": "AED", "base_plan_id": "monthly-growth"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "599.00", "currency": "AED", "base_plan_id": "monthly-pro"},
     ],
     "US": [
-        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "19.99", "currency": "USD"},
-        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "39.99", "currency": "USD"},
-        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "69.99", "currency": "USD"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "29.99", "currency": "USD", "base_plan_id": "monthly-starter"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "59.99", "currency": "USD", "base_plan_id": "monthly-growth"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "99.99", "currency": "USD", "base_plan_id": "monthly-pro"},
     ],
     "GB": [
-        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "15.99", "currency": "GBP"},
-        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "29.99", "currency": "GBP"},
-        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "54.99", "currency": "GBP"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "19.99", "currency": "GBP", "base_plan_id": "monthly-starter"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "39.99", "currency": "GBP", "base_plan_id": "monthly-growth"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "69.99", "currency": "GBP", "base_plan_id": "monthly-pro"},
     ],
     "AU": [
-        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "29.00", "currency": "AUD"},
-        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "59.00", "currency": "AUD"},
-        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "99.00", "currency": "AUD"},
+        {"id": "online.revorax.renewaldesk.sub.starter", "name": "Starter", "price": "39.00", "currency": "AUD", "base_plan_id": "monthly-starter"},
+        {"id": "online.revorax.renewaldesk.sub.growth", "name": "Growth", "price": "79.00", "currency": "AUD", "base_plan_id": "monthly-growth"},
+        {"id": "online.revorax.renewaldesk.sub.pro", "name": "Pro", "price": "139.00", "currency": "AUD", "base_plan_id": "monthly-pro"},
     ],
 }
 
@@ -98,6 +98,7 @@ def catalog_for(country: str, currency: str) -> list[dict[str, str]]:
                         "name": entry["name"],
                         "price": str(entry["price"]),
                         "currency": currency,
+                        "base_plan_id": entry.get("base_plan_id", f"monthly-{entry['name'].lower()}"),
                     }
                     for entry in entries
                 ]
@@ -123,6 +124,40 @@ def entitlement_for(gym: Gym) -> dict[str, Any]:
             gym.trial_ends_at, time.max, tzinfo=timezone.utc
         )
     expires_at = gym.billing_expires_at or legacy_manual_expiry
+
+    trial_info: dict[str, Any] = {
+        "is_trial": status == "TRIAL",
+        "days_left": 0,
+        "state": None,
+        "notice": None,
+    }
+    if status == "TRIAL":
+        from datetime import date as dt_date
+        today = datetime.now(timezone.utc).date()
+        trial_end = gym.trial_ends_at or (gym.created_at.date() if gym.created_at else today)
+        days_left = (trial_end - today).days
+        if days_left < 0:
+            trial_state = "EXPIRED"
+            trial_notice = "Your free trial has ended. Upgrade to continue using Renewal Desk."
+        elif days_left == 0:
+            trial_state = "ENDING_SOON"
+            trial_notice = "Your trial ends today."
+        elif days_left == 1:
+            trial_state = "ENDING_SOON"
+            trial_notice = "Your trial ends tomorrow."
+        elif days_left <= 3:
+            trial_state = "ENDING_SOON"
+            trial_notice = f"Your trial ends in {days_left} days."
+        else:
+            trial_state = "ACTIVE"
+            trial_notice = f"{days_left} days left in your free trial."
+        trial_info = {
+            "is_trial": True,
+            "days_left": max(0, days_left),
+            "state": trial_state,
+            "notice": trial_notice,
+        }
+
     return {
         "billing_source": source,
         "plan_id": gym.billing_plan_id,
@@ -133,6 +168,7 @@ def entitlement_for(gym: Gym) -> dict[str, Any]:
         "expires_at": expires_at.isoformat() if expires_at else None,
         "grace_period_end": gym.billing_grace_period_end.isoformat() if gym.billing_grace_period_end else None,
         "purchase_management_available": source == "GOOGLE_PLAY" and bool(gym.billing_plan_id),
+        "trial_info": trial_info,
     }
 
 

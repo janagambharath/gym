@@ -21,10 +21,10 @@ def test_plan_catalog_structure(app):
         "online.revorax.renewaldesk.sub.growth",
         "online.revorax.renewaldesk.sub.pro",
     ]
-    assert [p["price"] for p in inr_plans] == ["999.00", "1499.00", "2499.00"]
+    assert [p["price"] for p in inr_plans] == ["999.00", "1999.00", "3499.00"]
 
     assert len(aed_plans) == 3
-    assert [p["price"] for p in aed_plans] == ["99.00", "199.00", "299.00"]
+    assert [p["price"] for p in aed_plans] == ["199.00", "399.00", "599.00"]
 
 
 def test_self_service_signup_success(client, app):
@@ -127,7 +127,7 @@ def test_subscription_status_and_plans(client, app):
     p_data = plans_resp.get_json()["data"]
     assert p_data["currency"] == "AED"
     assert len(p_data["plans"]) == 3
-    assert p_data["plans"][0]["price"] == "99.00"
+    assert p_data["plans"][0]["price"] == "199.00"
 
 
 def test_google_play_purchase_verification_requires_provider_configuration(client, app):

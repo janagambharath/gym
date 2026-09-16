@@ -61,7 +61,7 @@ function ActiveGoogleAuthButton({
   useEffect(() => {
     if (!response || response.type !== 'success') {
       if (response?.type === 'error') {
-        setLoading(false);
+        queueMicrotask(() => setLoading(false));
         onError('Google sign-in could not be completed. Please try again or use email and password.');
       }
       return;

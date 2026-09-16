@@ -14,6 +14,7 @@ Provides:
 """
 from __future__ import annotations
 
+import os
 from functools import wraps
 import hashlib
 import hmac
@@ -41,11 +42,18 @@ from app.models import (
     RenewalHistory,
     User,
 )
+from app.services.audit_service import audit
 from app.services.timezone_service import today_for_gym
 
 _logger = logging.getLogger(__name__)
 
 member_bp = Blueprint("member_api", __name__, url_prefix="/api/member/v1")
+
+
+def _is_reviewer_bypass_enabled() -> bool:
+    if current_app.config.get("ENABLE_REVIEWER_BYPASS"):
+        return True
+    return os.environ.get("ENABLE_REVIEWER_BYPASS", "").strip().lower() in ("true", "1", "yes")
 
 
 def _token_secret() -> str:
@@ -137,7 +145,7 @@ def _get_gym_branding(gym: Gym | None) -> dict:
             "phone": None,
             "whatsapp_number": None,
             "website": None,
-            "opening_hours": "Mon-Sat: 6:00 AM - 10:00 PM · Sun: 7:00 AM - 1:00 PM",
+            "opening_hours": None,
             "powered_by": "VYNLA",
             "announcements": [],
             "offers": [],
@@ -168,7 +176,7 @@ def _get_gym_branding(gym: Gym | None) -> dict:
     offers = []
     active_promos = (
         Campaign.query.filter_by(gym_id=gym.id)
-        .filter(Campaign.status.in_(["draft", "sending", "sent", "completed"]))
+        .filter(Campaign.status.in_(["sending", "sent", "completed"]))
         .order_by(Campaign.created_at.desc())
         .limit(3)
         .all()
@@ -197,7 +205,7 @@ def _get_gym_branding(gym: Gym | None) -> dict:
         "phone": gym.business_phone_number or gym.phone,
         "whatsapp_number": gym.business_phone_number or gym.phone,
         "website": None,
-        "opening_hours": "Mon-Sat: 6:00 AM - 10:00 PM · Sun: 7:00 AM - 1:00 PM",
+        "opening_hours": None,
         "powered_by": "VYNLA",
         "announcements": announcements,
         "offers": offers,
@@ -214,7 +222,7 @@ def request_otp():
     if not phone or len(phone) < 10:
         return jsonify({"success": False, "error": "Valid phone number is required."}), 400
 
-    if phone.endswith("9999999999"):
+    if phone.endswith("9999999999") and _is_reviewer_bypass_enabled():
         gym = Gym.query.filter_by(status="active").first() or Gym.query.first()
         if gym:
             member = Member.query.filter(Member.phone.endswith("9999999999"), Member.gym_id == gym.id).first()
@@ -332,11 +340,12 @@ def verify_otp():
             member_id, gym_id = verified
 
     # Reviewer verification for Google Play Store review
-    if member_id is None and (phone.endswith("9999999999") or phone.endswith("7995854994")) and otp == "123456":
-        reviewer_member = Member.query.filter(Member.phone.endswith(phone[-10:])).first()
-        if reviewer_member:
-            member_id = reviewer_member.id
-            gym_id = reviewer_member.gym_id
+    if _is_reviewer_bypass_enabled():
+        if member_id is None and (phone.endswith("9999999999") or phone.endswith("7995854994")) and otp == "123456":
+            reviewer_member = Member.query.filter(Member.phone.endswith(phone[-10:])).first()
+            if reviewer_member:
+                member_id = reviewer_member.id
+                gym_id = reviewer_member.gym_id
 
     if member_id is None:
         return jsonify({"success": False, "error": "Invalid or expired verification code."}), 400
@@ -713,9 +722,11 @@ def request_renewal():
     """
     member = g.current_member
 
-    # Check if there's already a pending payment
-    existing = PaymentVerification.query.filter_by(
-        member_id=member.id, gym_id=g.gym_id, status="pending"
+    # Check if there's already a pending or processing payment
+    existing = PaymentVerification.query.filter(
+        PaymentVerification.member_id == member.id,
+        PaymentVerification.gym_id == g.gym_id,
+        PaymentVerification.status.in_(["pending", "processing"]),
     ).first()
     if existing:
         return jsonify({
@@ -1022,6 +1033,22 @@ def fail_upi_payment():
         ).first()
         if payment and payment.status == "processing":
             payment.status = "pending"
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            failure_note = f"UPI payment cancelled or failed by member on {now_str}."
+            payment.notes = f"{payment.notes}\n{failure_note}".strip() if payment.notes else failure_note
+            audit(
+                action="upi_payment_failed",
+                resource_type="PaymentVerification",
+                resource_id=payment.id,
+                gym_id=g.gym_id,
+                actor_id=None,
+                metadata={
+                    "member_id": member.id,
+                    "payment_id": payment.id,
+                    "amount": str(payment.amount),
+                    "reason": data.get("reason", "member_cancelled_or_failed"),
+                },
+            )
             db.session.commit()
 
     return jsonify({

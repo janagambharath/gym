@@ -108,134 +108,140 @@ export function SettingsScreen({
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Account */}
+        {/* 1. Gym Profile & Information */}
         <View style={styles.card}>
-          <SectionHeader title="Account" icon={<Icon name="person" size={18} color={colors.brand} />} />
+          <SectionHeader title="Gym Profile" icon={<Icon name="business" size={18} color={colors.brand} />} />
           <View style={styles.accountInfo}>
-            <Avatar name={session?.userName ?? 'U'} size={56} />
+            <Avatar name={gym?.name ?? session?.userName ?? 'G'} size={52} />
             <View style={styles.accountDetails}>
-              <Text style={styles.accountName}>{session?.userName ?? 'User'}</Text>
+              <Text style={styles.accountName}>{gym?.name ?? 'My Gym'}</Text>
               <Text style={styles.accountRole}>
-                {session?.userRole === 'gym_owner' ? 'Gym Owner' : 'Staff'}
+                {session?.userName ?? 'Owner'} • {session?.userRole === 'gym_owner' ? 'Gym Owner' : 'Staff'}
               </Text>
             </View>
           </View>
-        </View>
-
-        {/* Quick Navigation */}
-        <View style={styles.card}>
-          <SectionHeader title="Navigation" icon={<Icon name="dashboard" size={18} color={colors.brand} />} />
-          <View style={styles.menuList}>
-            <MenuItem icon="wallet" label="Subscription & Billing" onPress={onNavigateSubscription} />
-            <MenuItem icon="target" label="Campaigns" onPress={onNavigateCampaigns} />
-            <MenuItem icon="revenue" label="Payments" onPress={onNavigatePayments} />
-            {session?.userRole === 'gym_owner' ? (
-              <MenuItem icon="wallet" label="Payment & UPI Setup" onPress={onNavigatePaymentSetup} />
-            ) : null}
-            <MenuItem icon="whatsapp" label="WhatsApp Reminders" onPress={onNavigateWhatsApp} />
-            <MenuItem icon="robot" label="AI Receptionist (Bot)" onPress={onNavigateBot} />
-            <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
-            <MenuItem icon="access" label="Access Control" onPress={onNavigateAccess} />
-            <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
-            {session?.userRole === 'gym_owner' ? (
-              <MenuItem icon="staff" label="Staff Management" onPress={onNavigateStaff} />
-            ) : null}
-            <MenuItem icon="analytics" label="Analytics & Reports" onPress={onNavigateReports} />
-          </View>
-        </View>
-
-        {/* Gym Information */}
-        {gym ? (
-          <View style={styles.card}>
-            <SectionHeader title="Gym Information" icon={<Icon name="business" size={18} color={colors.brand} />} />
+          {gym ? (
             <View style={styles.infoList}>
-              <InfoRow label="Name" value={gym.name} />
               <InfoRow label="Email" value={gym.email ?? '—'} />
               <InfoRow label="Phone" value={gym.phone ?? '—'} />
               <InfoRow label="Address" value={gym.address ?? '—'} />
               <InfoRow label="Timezone" value={gym.timezone ?? 'Asia/Kolkata'} />
             </View>
-          </View>
-        ) : null}
+          ) : null}
+        </View>
 
-        {/* Subscription */}
-        {gym ? (
-          <View style={styles.card}>
-            <SectionHeader title="Subscription" icon={<Icon name="shield" size={18} color={colors.brand} />} />
-            <View style={styles.subscriptionRow}>
-              <Text style={styles.subscriptionLabel}>Status</Text>
-              <StatusBadge
-                status={gym.subscription_status === 'active' ? 'active' : gym.subscription_status ?? 'pending'}
-                size="md"
-              />
-            </View>
-            {gym.max_members ? (
-              <InfoRow label="Member Limit" value={String(gym.max_members)} />
-            ) : null}
+        {/* 2. Membership & Plans */}
+        <View style={styles.card}>
+          <SectionHeader title="Memberships & Plans" icon={<Icon name="plan" size={18} color={colors.brand} />} />
+          <View style={styles.menuList}>
+            <MenuItem icon="plan" label="Membership Plans" onPress={onNavigatePlans} />
+            <MenuItem icon="target" label="Promotional Campaigns" onPress={onNavigateCampaigns} />
           </View>
-        ) : null}
+        </View>
 
-        {/* Payment & UPI Setup */}
-        {session?.userRole === 'gym_owner' ? (
-          <TouchableOpacity style={styles.card} onPress={onNavigatePaymentSetup} activeOpacity={0.7}>
-            <SectionHeader title="Payment & UPI Setup" icon={<Icon name="wallet" size={18} color={colors.brand} />} />
-            <View style={styles.paymentSetupRow}>
-              <View style={styles.flex}>
-                <Text style={styles.paymentUpiText}>
-                  {paymentSettings?.upi_id ? paymentSettings.upi_id : 'No UPI ID Configured'}
-                </Text>
-                <Text style={styles.paymentSubtext}>
-                  {paymentSettings?.upi_id
-                    ? paymentSettings.is_active
-                      ? 'Active • VYNLA members pay directly via UPI'
-                      : 'Disabled • UPI renewals paused'
-                    : 'Tap to configure gym UPI ID & bank account'}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.statusPill,
-                  {
-                    backgroundColor:
-                      paymentSettings?.upi_id && paymentSettings?.is_active
-                        ? '#DCFCE7'
-                        : '#FEF3C7',
-                  },
-                ]}
-              >
-                <Text
+        {/* 3. Payments & Invoicing */}
+        <View style={styles.card}>
+          <SectionHeader title="Payments & Invoicing" icon={<Icon name="revenue" size={18} color={colors.brand} />} />
+          <View style={styles.menuList}>
+            {session?.userRole === 'gym_owner' ? (
+              <TouchableOpacity style={styles.paymentSetupRow} onPress={onNavigatePaymentSetup} activeOpacity={0.7}>
+                <View style={styles.flex}>
+                  <Text style={styles.paymentUpiText}>
+                    {paymentSettings?.upi_id ? paymentSettings.upi_id : 'No UPI Configured'}
+                  </Text>
+                  <Text style={styles.paymentSubtext}>
+                    {paymentSettings?.upi_id
+                      ? paymentSettings.is_active
+                        ? 'Active • VYNLA members pay directly via UPI'
+                        : 'Disabled • Online renewals paused'
+                      : 'Tap to configure gym UPI ID & bank account'}
+                  </Text>
+                </View>
+                <View
                   style={[
-                    styles.statusPillText,
+                    styles.statusPill,
                     {
-                      color:
+                      backgroundColor:
                         paymentSettings?.upi_id && paymentSettings?.is_active
-                          ? colors.successDark
-                          : '#B45309',
+                          ? '#DCFCE7'
+                          : '#FEF3C7',
                     },
                   ]}
                 >
-                  {paymentSettings?.upi_id && paymentSettings?.is_active ? 'Active' : 'Setup Needed'}
-                </Text>
-              </View>
-              <Icon name="forward" size={16} color={colors.muted} />
-            </View>
-          </TouchableOpacity>
-        ) : null}
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      {
+                        color:
+                          paymentSettings?.upi_id && paymentSettings?.is_active
+                            ? colors.successDark
+                            : '#B45309',
+                      },
+                    ]}
+                  >
+                    {paymentSettings?.upi_id && paymentSettings?.is_active ? 'Active' : 'Setup Needed'}
+                  </Text>
+                </View>
+                <Icon name="forward" size={16} color={colors.muted} />
+              </TouchableOpacity>
+            ) : null}
+            <MenuItem icon="revenue" label="Payment Transactions & Ledger" onPress={onNavigatePayments} />
+          </View>
+        </View>
 
-        {/* WhatsApp */}
-        {gym ? (
-          <TouchableOpacity style={styles.card} onPress={onNavigateWhatsApp} activeOpacity={0.7}>
-            <SectionHeader title="WhatsApp" icon={<Icon name="whatsapp" size={18} color={colors.whatsapp} />} />
-            <View style={styles.whatsappRow}>
-              <View style={[styles.whatsappDot, { backgroundColor: gym.whatsapp_enabled ? colors.whatsapp : colors.gray300 }]} />
-              <Text style={styles.whatsappStatus}>
-                {gym.whatsapp_enabled ? 'Connected & Active' : 'Not Configured'}
-              </Text>
-              <View style={styles.flex} />
-              <Icon name="forward" size={16} color={colors.muted} />
-            </View>
+        {/* 4. WhatsApp & Automation */}
+        <View style={styles.card}>
+          <SectionHeader title="WhatsApp & Automation" icon={<Icon name="whatsapp" size={18} color={colors.whatsapp} />} />
+          <TouchableOpacity style={styles.whatsappRow} onPress={onNavigateWhatsApp} activeOpacity={0.7}>
+            <View style={[styles.whatsappDot, { backgroundColor: gym?.whatsapp_enabled ? colors.whatsapp : colors.gray300 }]} />
+            <Text style={styles.whatsappStatus}>
+              {gym?.whatsapp_enabled ? 'Connected & Active' : 'Setup WhatsApp Reminders'}
+            </Text>
+            <View style={styles.flex} />
+            <Icon name="forward" size={16} color={colors.muted} />
           </TouchableOpacity>
-        ) : null}
+          <View style={styles.menuList}>
+            <MenuItem icon="robot" label="AI Receptionist (Bot)" onPress={onNavigateBot} />
+            <MenuItem icon="testTube" label="Test AI Receptionist" onPress={onNavigateBotTest} />
+          </View>
+        </View>
+
+        {/* 5. Staff & Access Control */}
+        <View style={styles.card}>
+          <SectionHeader title="Staff & Access Control" icon={<Icon name="staff" size={18} color={colors.brand} />} />
+          <View style={styles.menuList}>
+            {session?.userRole === 'gym_owner' ? (
+              <MenuItem icon="staff" label="Staff Management & Permissions" onPress={onNavigateStaff} />
+            ) : null}
+            <MenuItem icon="access" label="Biometric Devices & Access Logs" onPress={onNavigateAccess} />
+          </View>
+        </View>
+
+        {/* 6. Analytics & Reports */}
+        <View style={styles.card}>
+          <SectionHeader title="Analytics & Reports" icon={<Icon name="analytics" size={18} color={colors.brand} />} />
+          <View style={styles.menuList}>
+            <MenuItem icon="analytics" label="Operational Analytics & Performance" onPress={onNavigateReports} />
+          </View>
+        </View>
+
+        {/* 7. Renewal Desk Subscription */}
+        <TouchableOpacity style={styles.card} onPress={onNavigateSubscription} activeOpacity={0.7}>
+          <SectionHeader title="Renewal Desk Subscription" icon={<Icon name="shield" size={18} color={colors.brand} />} />
+          <View style={styles.subscriptionRow}>
+            <Text style={styles.subscriptionLabel}>Status</Text>
+            <StatusBadge
+              status={gym?.subscription_status === 'active' ? 'active' : gym?.subscription_status ?? 'pending'}
+              size="md"
+            />
+          </View>
+          {gym?.max_members ? (
+            <InfoRow label="Member Limit" value={String(gym.max_members)} />
+          ) : null}
+          <View style={styles.menuList}>
+            <MenuItem icon="wallet" label="Manage Subscription & Billing" onPress={onNavigateSubscription} />
+          </View>
+        </TouchableOpacity>
 
         {/* About */}
         <View style={styles.card}>

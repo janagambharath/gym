@@ -94,29 +94,45 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
       return;
     }
 
-    setSaving(true);
+    const submitPayment = async () => {
+      setSaving(true);
 
-    const result = await apiRequest<Payment>('/api/mobile/v1/payments', {
-      method: 'POST',
-      body: {
-        member_id: selectedMember.id,
-        amount: parsedAmount,
-        method,
-        reference: reference.trim() || undefined,
-        notes: notes.trim() || undefined,
-        renewal_days: days,
-      },
-    });
+      const result = await apiRequest<Payment>('/api/mobile/v1/payments', {
+        method: 'POST',
+        body: {
+          member_id: selectedMember.id,
+          amount: parsedAmount,
+          method,
+          reference: reference.trim() || undefined,
+          notes: notes.trim() || undefined,
+          renewal_days: days,
+        },
+      });
 
-    setSaving(false);
+      setSaving(false);
 
-    if (result.ok) {
-      Alert.alert('Success', `Payment of ${formatCurrency(parsedAmount)} recorded for ${selectedMember.full_name}.`);
-      onCreated?.(result.data);
-      onBack();
-    } else {
-      Alert.alert('Error', result.error.message);
+      if (result.ok) {
+        Alert.alert('Success', `Payment of ${formatCurrency(parsedAmount)} recorded for ${selectedMember.full_name}.`);
+        onCreated?.(result.data);
+        onBack();
+      } else {
+        Alert.alert('Error', result.error.message);
+      }
+    };
+
+    if (parsedAmount === 0) {
+      Alert.alert(
+        'Confirm Complementary Payment',
+        `Are you sure you want to record a ₹0 (complementary) payment for ${selectedMember.full_name}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Confirm', onPress: () => { void submitPayment(); } },
+        ]
+      );
+      return;
     }
+
+    await submitPayment();
   }, [selectedMember, amount, method, reference, notes, renewalDays, onBack, onCreated, saving]);
 
   return (

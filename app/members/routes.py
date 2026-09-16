@@ -119,9 +119,12 @@ def bulk_renew():
         renewed_ids = []
         for member in members:
             previous_end = member.membership_end
-            new_start = max(today, previous_end + timedelta(days=1))
+            if previous_end and previous_end >= today:
+                new_start = previous_end + timedelta(days=1)
+            else:
+                new_start = today
+                member.membership_start = new_start
             new_end = new_start + timedelta(days=renewal_days - 1)
-            member.membership_start = new_start
             member.membership_end = new_end
             member.status = "active"
             queue_membership_command(member)

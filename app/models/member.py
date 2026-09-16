@@ -51,7 +51,7 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     gender = db.Column(db.String(32), nullable=True)
     joined_on = db.Column(db.Date, nullable=False, default=date.today)
     membership_start = db.Column(db.Date, nullable=False, default=date.today)
-    membership_end = db.Column(db.Date, nullable=False)
+    membership_end = db.Column(db.Date, nullable=True)
     status = db.Column(db.String(32), nullable=False, default="active", index=True)
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
@@ -86,11 +86,15 @@ class Member(TenantMixin, TimestampMixin, db.Model):
 
     @property
     def days_until_expiry(self) -> int:
+        if self.membership_end is None:
+            return 0
         gym_timezone = self.gym.timezone if self.gym else "Asia/Kolkata"
         return (self.membership_end - today_for_gym(gym_timezone)).days
 
     @property
     def is_expired(self) -> bool:
+        if self.membership_end is None:
+            return True
         gym_timezone = self.gym.timezone if self.gym else "Asia/Kolkata"
         return self.membership_end < today_for_gym(gym_timezone)
 
@@ -109,4 +113,8 @@ class Member(TenantMixin, TimestampMixin, db.Model):
         return utcnow() - last_inbound < timedelta(hours=24)
 
     def refresh_status(self) -> None:
-        self.status = "expired" if self.is_expired else "active"
+        if self.membership_end is None:
+            self.status = "expired"
+        else:
+            self.status = "expired" if self.is_expired else "active"
+

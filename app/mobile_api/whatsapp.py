@@ -49,10 +49,28 @@ def register_whatsapp_routes(bp):
             next_step = "WhatsApp setup is pending provider confirmation."
         elif state == "FAILED":
             next_step = "WhatsApp setup failed. Review the provider configuration and retry from the administrator console."
+
+        is_waba_connected = bool(gym.whatsapp_business_account_id)
+        is_business_connected = bool(gym.whatsapp_business_account_id and gym.name)
+        is_phone_connected = bool(gym.phone_number_id and (gym.business_phone_number or gym.phone))
+        is_messaging_ready = bool(gym.whatsapp_enabled and gym.whatsapp_connection_status == "CONNECTED")
+        is_reminders_ready = bool(gym.whatsapp_enabled and is_messaging_ready)
+
+        checklist = {
+            "whatsapp_connected": is_waba_connected,
+            "business_connected": is_business_connected,
+            "phone_connected": is_phone_connected,
+            "messaging_ready": is_messaging_ready,
+            "reminders_ready": is_reminders_ready,
+        }
+
         return jsonify({"success": True, "data": {
             "state": state,
             "business_phone_number": gym.business_phone_number or gym.phone or None,
+            "phone_number_id": gym.phone_number_id,
+            "waba_id": gym.whatsapp_business_account_id,
             "next_step": next_step,
+            "checklist": checklist,
         }})
 
     @bp.route("/whatsapp/send-reminder", methods=["POST"])

@@ -37,7 +37,7 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
         nullable=True,
         index=True,
     )
-    previous_end = db.Column(db.Date, nullable=False)
+    previous_end = db.Column(db.Date, nullable=True)
     new_start = db.Column(db.Date, nullable=False)
     new_end = db.Column(db.Date, nullable=False)
     standard_price = db.Column(db.Numeric(10, 2), nullable=True)

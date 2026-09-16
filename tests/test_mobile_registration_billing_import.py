@@ -82,7 +82,7 @@ def test_manual_entitlement_and_catalog_are_server_backed(client, seed_gym):
     catalog = client.get("/api/mobile/v1/billing/catalog", headers=_headers(seed_gym))
     assert catalog.status_code == 200
     plans = catalog.get_json()["data"]["plans"]
-    assert [plan["price"] for plan in plans] == ["999.00", "1499.00", "2499.00"]
+    assert [plan["price"] for plan in plans] == ["999.00", "1999.00", "3499.00"]
 
 
 def test_google_purchase_never_activates_without_provider_verification(client, seed_gym):

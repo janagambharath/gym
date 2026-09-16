@@ -129,16 +129,28 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
   const [broadcastSuccess, setBroadcastSuccess] = useState<string | null>(null);
 
+  type WhatsAppChecklist = {
+    whatsapp_connected: boolean;
+    business_connected: boolean;
+    phone_connected: boolean;
+    messaging_ready: boolean;
+    reminders_ready: boolean;
+  };
+
   const [whatsappStatus, setWhatsappStatus] = useState<string>('not_connected');
+  const [checklist, setChecklist] = useState<WhatsAppChecklist | null>(null);
 
   // Fetch WhatsApp connection status & broadcast stats
   useEffect(() => {
-    void apiRequest<{ gym: { whatsapp_enabled: boolean; whatsapp_connection_status?: string } }>('/api/mobile/v1/settings').then((res) => {
+    void apiRequest<{
+      state: string;
+      checklist?: WhatsAppChecklist;
+    }>('/api/mobile/v1/whatsapp/status').then((res) => {
       if (res.ok) {
-        setWhatsappStatus(
-          res.data.gym.whatsapp_connection_status ??
-          (res.data.gym.whatsapp_enabled ? 'connected' : 'not_connected')
-        );
+        setWhatsappStatus(res.data.state.toLowerCase());
+        if (res.data.checklist) {
+          setChecklist(res.data.checklist);
+        }
       }
     });
 
@@ -430,6 +442,31 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
               <Icon name="forward" size={16} color={colors.whatsapp} />
             </View>
           </View>
+
+          {checklist ? (
+            <View style={styles.checklistWrap}>
+              <View style={styles.checklistItem}>
+                <Icon name={checklist.whatsapp_connected ? 'checkmark' : 'warning'} size={14} color={checklist.whatsapp_connected ? colors.success : colors.muted} />
+                <Text style={styles.checklistText}>WhatsApp Business</Text>
+              </View>
+              <View style={styles.checklistItem}>
+                <Icon name={checklist.business_connected ? 'checkmark' : 'warning'} size={14} color={checklist.business_connected ? colors.success : colors.muted} />
+                <Text style={styles.checklistText}>Meta Business</Text>
+              </View>
+              <View style={styles.checklistItem}>
+                <Icon name={checklist.phone_connected ? 'checkmark' : 'warning'} size={14} color={checklist.phone_connected ? colors.success : colors.muted} />
+                <Text style={styles.checklistText}>Phone Number</Text>
+              </View>
+              <View style={styles.checklistItem}>
+                <Icon name={checklist.messaging_ready ? 'checkmark' : 'warning'} size={14} color={checklist.messaging_ready ? colors.success : colors.muted} />
+                <Text style={styles.checklistText}>Messaging Ready</Text>
+              </View>
+              <View style={styles.checklistItem}>
+                <Icon name={checklist.reminders_ready ? 'checkmark' : 'warning'} size={14} color={checklist.reminders_ready ? colors.success : colors.muted} />
+                <Text style={styles.checklistText}>Renewal Reminders</Text>
+              </View>
+            </View>
+          ) : null}
         </TouchableOpacity>
 
         {/* 3-Tab Toggle */}
@@ -775,6 +812,25 @@ const styles = StyleSheet.create({
   cardInfo: { flex: 1, gap: 2, marginLeft: spacing.md },
   cardName: { color: colors.text, fontSize: fontSize.base, fontWeight: fontWeight.semibold },
   cardMeta: { color: colors.muted, fontSize: fontSize.sm },
+  checklistWrap: {
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  checklistItem: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  checklistText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+  },
   cardRow: {
     alignItems: 'center',
     backgroundColor: colors.card,

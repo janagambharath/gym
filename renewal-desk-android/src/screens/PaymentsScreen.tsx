@@ -248,7 +248,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
           {/* Card 1: Today's Collected */}
           <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
             <View style={styles.summaryCardTop}>
-              <Text style={styles.summaryLabel}>TODAY'S COLLECTIONS</Text>
+              <Text style={styles.summaryLabel}>{"TODAY'S COLLECTIONS"}</Text>
               <View style={styles.countBadge}>
                 <Text style={styles.countBadgeText}>{summary.today.payment_count} paid</Text>
               </View>

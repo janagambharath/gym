@@ -9,7 +9,6 @@ import {
   Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -119,7 +118,7 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
           <View style={styles.infoBanner}>
             <Icon name="shield" size={20} color={colors.brand} />
             <Text style={styles.infoBannerText}>
-              Members in VYNLA pay directly into your gym's UPI or bank account. Renewal Desk never holds your funds.
+              {"Members in VYNLA pay directly into your gym's UPI or bank account. Renewal Desk never holds your funds."}
             </Text>
           </View>
 
@@ -130,7 +129,7 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
               icon={<Icon name="wallet" size={18} color={colors.brand} />}
             />
             <Text style={styles.helperText}>
-              Enter your gym's official UPI ID (VPA). This will receive 1-tap payments from Google Pay, PhonePe, and Paytm.
+              {"Enter your gym's official UPI ID (VPA). This will receive 1-tap payments from Google Pay, PhonePe, and Paytm."}
             </Text>
 
             <View style={styles.inputGroup}>

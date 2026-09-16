@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
@@ -449,7 +449,8 @@ def register_payments_routes(bp):
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            return error_response("DB_ERROR", str(exc), 500)
+            current_app.logger.exception("Failed to delete payment %s: %s", payment_id, exc)
+            return error_response("DB_ERROR", "Failed to delete payment.", 500)
 
         return jsonify({"success": True, "data": {"message": "Payment deleted successfully."}})
 

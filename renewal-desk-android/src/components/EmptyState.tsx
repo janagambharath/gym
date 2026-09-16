@@ -11,9 +11,20 @@ type EmptyStateProps = {
   message?: string;
   actionLabel?: string;
   onAction?: () => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 };
 
-export function EmptyState({ icon, title, subtitle, message, actionLabel, onAction }: EmptyStateProps) {
+export function EmptyState({
+  icon,
+  title,
+  subtitle,
+  message,
+  actionLabel,
+  onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
+}: EmptyStateProps) {
   const desc = subtitle ?? message;
   return (
     <View style={styles.container}>
@@ -26,15 +37,28 @@ export function EmptyState({ icon, title, subtitle, message, actionLabel, onActi
       ) : null}
       <Text style={styles.title}>{title}</Text>
       {desc ? <Text style={styles.message}>{desc}</Text> : null}
-      {actionLabel && onAction ? (
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={onAction}
-          style={styles.action}
-        >
-          <Text style={styles.actionText}>{actionLabel}</Text>
-        </TouchableOpacity>
-      ) : null}
+      <View style={styles.buttonRow}>
+        {actionLabel && onAction ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={onAction}
+            style={styles.action}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.actionText}>{actionLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
+        {secondaryActionLabel && onSecondaryAction ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={onSecondaryAction}
+            style={styles.secondaryAction}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.secondaryActionText}>{secondaryActionLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -43,7 +67,6 @@ const styles = StyleSheet.create({
   action: {
     backgroundColor: colors.brand,
     borderRadius: radius.md,
-    marginTop: spacing.lg,
     paddingHorizontal: spacing.xxl,
     paddingVertical: spacing.md,
   },
@@ -51,6 +74,27 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     fontSize: fontSize.base,
     fontWeight: fontWeight.semibold,
+  },
+  buttonRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+    justifyContent: 'center',
+    marginTop: spacing.lg,
+  },
+  secondaryAction: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
+  },
+  secondaryActionText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.medium,
   },
   container: {
     alignItems: 'center',

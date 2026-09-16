@@ -1,7 +1,7 @@
 """Mobile API notification inbox and push token registration endpoints."""
 from __future__ import annotations
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 from sqlalchemy import or_
 
 from app.extensions import db
@@ -58,7 +58,8 @@ def register_notifications_routes(bp):
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            return error_response("DB_ERROR", str(exc), 500)
+            current_app.logger.exception("Failed to register push token: %s", exc)
+            return error_response("DB_ERROR", "Failed to register push token.", 500)
 
         return jsonify({"success": True, "data": {"message": "Push token registered successfully."}})
 
@@ -81,7 +82,8 @@ def register_notifications_routes(bp):
                 db.session.commit()
             except Exception as exc:
                 db.session.rollback()
-                return error_response("DB_ERROR", str(exc), 500)
+                current_app.logger.exception("Failed to unregister push token: %s", exc)
+                return error_response("DB_ERROR", "Failed to unregister push token.", 500)
 
         return jsonify({"success": True, "data": {"message": "Push token unregistered."}})
 
@@ -151,7 +153,8 @@ def register_notifications_routes(bp):
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            return error_response("DB_ERROR", str(exc), 500)
+            current_app.logger.exception("Failed to mark notification as read: %s", exc)
+            return error_response("DB_ERROR", "Failed to update notification.", 500)
 
         return jsonify({"success": True, "data": {"message": "Notification marked as read."}})
 
@@ -166,6 +169,7 @@ def register_notifications_routes(bp):
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            return error_response("DB_ERROR", str(exc), 500)
+            current_app.logger.exception("Failed to mark all notifications as read: %s", exc)
+            return error_response("DB_ERROR", "Failed to update notifications.", 500)
 
         return jsonify({"success": True, "data": {"message": "All notifications marked as read."}})

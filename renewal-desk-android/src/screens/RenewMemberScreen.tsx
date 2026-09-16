@@ -44,7 +44,6 @@ export function RenewMemberScreen({
   onComplete,
 }: RenewMemberScreenProps) {
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [loadingPlans, setLoadingPlans] = useState(true);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(member.plan?.id ?? null);
 
   // Financial Pricing Engine
@@ -86,7 +85,7 @@ export function RenewMemberScreen({
   }, [member.plan?.id, selectedPlanId]);
 
   const activePlan = plans.find((p) => p.id === selectedPlanId) || member.plan;
-  const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 2000;
+  const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 0;
   const renewalDays = activePlan?.duration_days ?? 30;
 
   // Derive discount and savings
@@ -299,49 +298,53 @@ export function RenewMemberScreen({
             Plan catalog price remains standard. Customize the exact amount {member.full_name} will actually pay.
           </Text>
 
-          <View style={styles.pricingRow}>
-            <Text style={styles.pricingLabel}>Standard Catalog Price</Text>
-            <Text style={styles.catalogPriceValue}>{formatCurrency(standardPrice)}</Text>
-          </View>
+          {standardPrice > 0 && (
+            <>
+              <View style={styles.pricingRow}>
+                <Text style={styles.pricingLabel}>Standard Catalog Price</Text>
+                <Text style={styles.catalogPriceValue}>{formatCurrency(standardPrice)}</Text>
+              </View>
 
-          {/* Quick Discount Presets */}
-          <View style={styles.discountPresetsRow}>
-            <TouchableOpacity
-              style={[styles.presetChip, numericPayable === standardPrice && styles.presetChipActive]}
-              onPress={() => setFinalPayable(standardPrice.toString())}
-            >
-              <Text style={[styles.presetChipText, numericPayable === standardPrice && styles.presetChipTextActive]}>
-                Full Price
-              </Text>
-            </TouchableOpacity>
+              {/* Quick Discount Presets */}
+              <View style={styles.discountPresetsRow}>
+                <TouchableOpacity
+                  style={[styles.presetChip, numericPayable === standardPrice && styles.presetChipActive]}
+                  onPress={() => setFinalPayable(standardPrice.toString())}
+                >
+                  <Text style={[styles.presetChipText, numericPayable === standardPrice && styles.presetChipTextActive]}>
+                    Full Price
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.presetChip, numericPayable === Math.max(0, standardPrice - 100) && styles.presetChipActive]}
-              onPress={() => setFinalPayable(Math.max(0, standardPrice - 100).toString())}
-            >
-              <Text style={[styles.presetChipText, numericPayable === Math.max(0, standardPrice - 100) && styles.presetChipTextActive]}>
-                ₹100 Off
-              </Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.presetChip, numericPayable === Math.max(0, standardPrice - 100) && styles.presetChipActive]}
+                  onPress={() => setFinalPayable(Math.max(0, standardPrice - 100).toString())}
+                >
+                  <Text style={[styles.presetChipText, numericPayable === Math.max(0, standardPrice - 100) && styles.presetChipTextActive]}>
+                    ₹100 Off
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.presetChip, numericPayable === Math.max(0, standardPrice - 200) && styles.presetChipActive]}
-              onPress={() => setFinalPayable(Math.max(0, standardPrice - 200).toString())}
-            >
-              <Text style={[styles.presetChipText, numericPayable === Math.max(0, standardPrice - 200) && styles.presetChipTextActive]}>
-                ₹200 Off
-              </Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.presetChip, numericPayable === Math.max(0, standardPrice - 200) && styles.presetChipActive]}
+                  onPress={() => setFinalPayable(Math.max(0, standardPrice - 200).toString())}
+                >
+                  <Text style={[styles.presetChipText, numericPayable === Math.max(0, standardPrice - 200) && styles.presetChipTextActive]}>
+                    ₹200 Off
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.presetChip, numericPayable === Math.max(0, Math.round(standardPrice * 0.9)) && styles.presetChipActive]}
-              onPress={() => setFinalPayable(Math.max(0, Math.round(standardPrice * 0.9)).toString())}
-            >
-              <Text style={[styles.presetChipText, numericPayable === Math.max(0, Math.round(standardPrice * 0.9)) && styles.presetChipTextActive]}>
-                10% Off
-              </Text>
-            </TouchableOpacity>
-          </View>
+                <TouchableOpacity
+                  style={[styles.presetChip, numericPayable === Math.max(0, Math.round(standardPrice * 0.9)) && styles.presetChipActive]}
+                  onPress={() => setFinalPayable(Math.max(0, Math.round(standardPrice * 0.9)).toString())}
+                >
+                  <Text style={[styles.presetChipText, numericPayable === Math.max(0, Math.round(standardPrice * 0.9)) && styles.presetChipTextActive]}>
+                    10% Off
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
 
           {/* Editable Final Payable */}
           <View style={styles.inputContainer}>
@@ -360,19 +363,21 @@ export function RenewMemberScreen({
           </View>
 
           {/* Derived Discount & Savings Badge */}
-          <View style={styles.derivedRow}>
-            <View>
-              <Text style={styles.derivedLabel}>Derived Discount</Text>
-              <Text style={styles.derivedValue}>
-                {formatCurrency(derivedDiscount)} {derivedDiscount > 0 ? `(${discountPercent}% off)` : ''}
-              </Text>
-            </View>
-            {derivedDiscount > 0 ? (
-              <View style={styles.savingsPill}>
-                <Text style={styles.savingsPillText}>Member Saves {formatCurrency(derivedDiscount)}</Text>
+          {standardPrice > 0 && (
+            <View style={styles.derivedRow}>
+              <View>
+                <Text style={styles.derivedLabel}>Derived Discount</Text>
+                <Text style={styles.derivedValue}>
+                  {formatCurrency(derivedDiscount)} {derivedDiscount > 0 ? `(${discountPercent}% off)` : ''}
+                </Text>
               </View>
-            ) : null}
-          </View>
+              {derivedDiscount > 0 ? (
+                <View style={styles.savingsPill}>
+                  <Text style={styles.savingsPillText}>Member Saves {formatCurrency(derivedDiscount)}</Text>
+                </View>
+              ) : null}
+            </View>
+          )}
 
           {/* Commercial Note / Rationale */}
           <View style={styles.noteContainer}>

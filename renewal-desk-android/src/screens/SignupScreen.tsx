@@ -27,8 +27,6 @@ const COUNTRIES = [
   { name: 'United States', code: '+1', currency: 'USD', timezone: 'America/New_York' },
   { name: 'United Kingdom', code: '+44', currency: 'GBP', timezone: 'Europe/London' },
   { name: 'Australia', code: '+61', currency: 'AUD', timezone: 'Australia/Sydney' },
-  { name: 'Saudi Arabia', code: '+966', currency: 'SAR', timezone: 'Asia/Riyadh' },
-  { name: 'Canada', code: '+1', currency: 'CAD', timezone: 'America/Toronto' },
 ];
 
 export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenProps) {
@@ -111,7 +109,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
             <Icon name="fitness" size={28} color={colors.brand} />
           </View>
           <Text style={styles.title}>Renewal Desk</Text>
-          <Text style={styles.subtitle}>Gym Member CRM & 24/7 Desk Automation</Text>
+          <Text style={styles.subtitle}>Revenue Recovery System for Gyms</Text>
         </View>
 
         {/* Step Indicator */}
@@ -276,7 +274,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
               <View style={styles.infoBox}>
                 <Icon name="checkmark" size={16} color={colors.success} />
                 <Text style={styles.infoBoxText}>
-                  Includes a free 7-day trial with full access to automated renewals and AI receptionist.
+                  7 days free • No credit card required. Full access to automated renewals and revenue recovery.
                 </Text>
               </View>
 

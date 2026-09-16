@@ -45,7 +45,7 @@ def _serialize_member_for_gym(member: Member, today: date) -> dict:
     from app.mobile_api.members import _serialize_member
 
     payload = _serialize_member(member)
-    payload["days_until_expiry"] = (member.membership_end - today).days
+    payload["days_until_expiry"] = (member.membership_end - today).days if member.membership_end else 0
     return payload
 
 
@@ -230,11 +230,19 @@ def register_renewals_routes(bp):
         channel = str(data.get("channel", "offline")).strip().lower()
 
         previous_end = member.membership_end
-        today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
-        new_start = max(today, previous_end + timedelta(days=1))
+        gym_timezone = (
+            g.current_user.gym.timezone
+            if g.current_user and g.current_user.gym and g.current_user.gym.timezone
+            else "Asia/Kolkata"
+        )
+        today = today_for_gym(gym_timezone)
+        if previous_end and previous_end >= today:
+            new_start = previous_end + timedelta(days=1)
+        else:
+            new_start = today
+            member.membership_start = new_start
         new_end = new_start + timedelta(days=renewal_days - 1)
 
-        member.membership_start = new_start
         member.membership_end = new_end
         member.status = "active"
         queue_membership_command(member)
