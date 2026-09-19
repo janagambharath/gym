@@ -151,9 +151,12 @@ export function WhatsAppOnboardingModal({
       setWebViewUrl(null);
       setLoading(true);
       try {
-        const connectRes = await connectWaba({ code: data.code });
+        const connectRes = await connectWaba({
+          code: data.code,
+          businessId: data.business_id || '',
+        });
         if (connectRes.ok) {
-          Alert.alert('Connected!', 'WhatsApp Business connected successfully to Renewal Desk.');
+          Alert.alert('Connected!', 'WhatsApp Business connected successfully via Embedded Signup.');
           if (connectRes.data?.phone_number_id) setPhoneNumberId(connectRes.data.phone_number_id);
           if (connectRes.data?.waba_id) setWabaId(connectRes.data.waba_id);
           if (connectRes.data?.business_phone_number) setBusinessPhone(connectRes.data.business_phone_number);
@@ -169,6 +172,7 @@ export function WhatsAppOnboardingModal({
         setLoading(false);
       }
     }
+
 
     // Support both standard formats returned by Meta Embedded Signup
     let pId = data.phone_number_id || data.phoneNumberId;

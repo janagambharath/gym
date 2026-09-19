@@ -43,8 +43,13 @@ class WhatsAppService:
             gym.phone_number_id
             or current_app.config.get("WHATSAPP_PHONE_NUMBER_ID")
         )
-        self.access_token = current_app.config["WHATSAPP_ACCESS_TOKEN"]
+        # Per-gym BISU token takes priority; fall back to global env token
+        self.access_token = (
+            gym.get_whatsapp_token()
+            or current_app.config["WHATSAPP_ACCESS_TOKEN"]
+        )
         self.api_version = current_app.config["WHATSAPP_API_VERSION"]
+
 
     def connect_webhooks(self) -> WhatsAppResult:
         if not self.whatsapp_business_account_id:

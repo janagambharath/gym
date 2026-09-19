@@ -118,7 +118,10 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
 
     if (data.type === 'embedded_signup_code' && data.code) {
       setState({ phase: 'connecting', waba_id: '', phone_number_id: '' });
-      const connectRes = await connectWaba({ code: data.code });
+      const connectRes = await connectWaba({
+        code: data.code,
+        businessId: data.business_id || '',
+      });
       if (connectRes.ok) {
         setState({ phase: 'success', phone_number_id: connectRes.data.phone_number_id });
       } else {
@@ -129,6 +132,7 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
       }
       return;
     }
+
 
     let phone_number_id = data.phone_number_id || data.phoneNumberId;
     let waba_id = data.waba_id || data.wabaId;

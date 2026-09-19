@@ -411,11 +411,19 @@ def register_whatsapp_routes(bp):
     @token_required
     @roles_required("gym_owner")
     def connect_waba():
-        """Connect or update tenant-scoped WABA and Phone Number ID."""
+        """Connect or update tenant-scoped WABA and Phone Number ID.
+
+        Handles two flows:
+        1. **Embedded Signup (preferred)**: Receives authorization `code` +
+           `waba_id` + `phone_number_id` + `business_id` from Meta's
+           postMessage callback. Runs the full automated pipeline.
+        2. **Manual fallback**: Receives `waba_id` + `phone_number_id` directly.
+        """
         data = request.get_json(silent=True) or {}
         waba_id = str(data.get("waba_id") or "").strip()
         phone_number_id = str(data.get("phone_number_id") or "").strip()
         code = str(data.get("code") or "").strip()
+        business_id = str(data.get("business_id") or "").strip()
         phone = str(data.get("business_phone_number") or data.get("phone") or "").strip()
 
         if phone_number_id.lower() in ("undefined", "null", "none", "0"):
@@ -423,52 +431,63 @@ def register_whatsapp_routes(bp):
         if waba_id.lower() in ("undefined", "null", "none", "0"):
             waba_id = ""
 
+        gym = g.current_user.gym
+
+        # ── Flow 1: Full Embedded Signup (has authorization code) ──
+        if code:
+            from app.services.embedded_signup_service import EmbeddedSignupService
+
+            service = EmbeddedSignupService(gym)
+            result = service.process_signup(
+                code=code,
+                waba_id=waba_id,
+                phone_number_id=phone_number_id,
+                display_phone_number=phone,
+                business_id=business_id,
+            )
+
+            if result.ok:
+                audit(
+                    action="mobile_connect_waba",
+                    resource_type="gym",
+                    resource_id=gym.id,
+                    gym_id=gym.id,
+                    actor_id=g.current_user.id,
+                    metadata={
+                        "waba_id": result.waba_id,
+                        "phone_number_id": result.phone_number_id,
+                        "business_id": result.business_id,
+                        "steps": result.steps_completed,
+                        "flow": "embedded_signup",
+                    },
+                )
+                db.session.commit()
+
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "status": "CONNECTED",
+                        "message": "WhatsApp Business connected successfully via Embedded Signup.",
+                        "waba_id": result.waba_id,
+                        "phone_number_id": result.phone_number_id,
+                        "business_phone_number": result.display_phone_number,
+                        "business_id": result.business_id,
+                        "steps_completed": result.steps_completed,
+                    },
+                })
+            else:
+                db.session.rollback()
+                return error_response(
+                    "EMBEDDED_SIGNUP_FAILED",
+                    result.error or "Embedded Signup flow failed. Please try again.",
+                    409,
+                )
+
+        # ── Flow 2: Manual/Direct connection (no code) ──
         token = current_app.config.get("WHATSAPP_ACCESS_TOKEN")
         api_ver = current_app.config.get("WHATSAPP_API_VERSION", "v20.0")
 
-        # 1. Exchange OAuth authorization code if provided by Meta Embedded Signup
-        if code:
-            app_id = current_app.config.get("META_APP_ID") or current_app.config.get("WHATSAPP_APP_ID", "1711816793132513")
-            app_secret = current_app.config.get("WHATSAPP_APP_SECRET") or current_app.config.get("WHATSAPP_WEBHOOK_SECRET")
-            try:
-                token_res = requests.get(
-                    f"https://graph.facebook.com/{api_ver}/oauth/access_token",
-                    params={"client_id": app_id, "client_secret": app_secret, "code": code},
-                    timeout=10,
-                )
-                if token_res.status_code == 200:
-                    user_token = token_res.json().get("access_token")
-                    if user_token:
-                        app_token = f"{app_id}|{app_secret}"
-                        debug_res = requests.get(
-                            f"https://graph.facebook.com/{api_ver}/debug_token",
-                            params={"input_token": user_token, "access_token": app_token},
-                            timeout=10,
-                        )
-                        if debug_res.status_code == 200:
-                            scopes = debug_res.json().get("data", {}).get("granular_scopes", [])
-                            for sc in scopes:
-                                targets = sc.get("target_ids", [])
-                                if targets and not waba_id:
-                                    waba_id = str(targets[0])
-                        # If waba_id found, query phone numbers using user_token
-                        if waba_id and not phone_number_id:
-                            nums_res = requests.get(
-                                f"https://graph.facebook.com/{api_ver}/{waba_id}/phone_numbers",
-                                params={"fields": "id,display_phone_number,verified_name"},
-                                headers={"Authorization": f"Bearer {user_token}"},
-                                timeout=10,
-                            )
-                            if nums_res.status_code == 200:
-                                numbers = nums_res.json().get("data", [])
-                                if numbers:
-                                    phone_number_id = str(numbers[0].get("id"))
-                                    if not phone and numbers[0].get("display_phone_number"):
-                                        phone = str(numbers[0].get("display_phone_number"))
-            except Exception as exc:
-                current_app.logger.warning(f"Could not exchange code for WhatsApp Embedded Signup: {exc}")
-
-        # 2. Auto-fetch phone numbers if only WABA ID is provided
+        # Auto-fetch phone numbers if only WABA ID is provided
         if not phone_number_id and waba_id and token:
             try:
                 res = requests.get(
@@ -486,7 +505,6 @@ def register_whatsapp_routes(bp):
             except Exception as exc:
                 current_app.logger.warning(f"Could not auto-fetch phone numbers for WABA {waba_id}: {exc}")
 
-        # 3. If phone_number_id is provided but phone display string is not, auto-fetch display number
         if phone_number_id and not phone and token:
             try:
                 res = requests.get(
@@ -505,14 +523,10 @@ def register_whatsapp_routes(bp):
         if not phone_number_id:
             return error_response("VALIDATION_ERROR", "phone_number_id is required or could not be found for this WABA.", 400)
 
-        gym = g.current_user.gym
         gym.whatsapp_business_account_id = waba_id or gym.whatsapp_business_account_id or f"waba_{gym.id}"
         gym.phone_number_id = phone_number_id
         if phone:
             gym.business_phone_number = phone
-        # A browser callback alone is insufficient. Verify that Meta accepts
-        # the selected WABA/number and webhook subscription before enabling
-        # any automation for this gym.
         gym.whatsapp_enabled = False
         gym.whatsapp_connection_status = "PENDING"
         gym.whatsapp_connection_error = None
@@ -538,7 +552,7 @@ def register_whatsapp_routes(bp):
             resource_id=gym.id,
             gym_id=gym.id,
             actor_id=g.current_user.id,
-            metadata={"waba_id": gym.whatsapp_business_account_id, "phone_number_id": phone_number_id},
+            metadata={"waba_id": gym.whatsapp_business_account_id, "phone_number_id": phone_number_id, "flow": "manual"},
         )
         db.session.commit()
 
@@ -552,6 +566,7 @@ def register_whatsapp_routes(bp):
                 "business_phone_number": gym.business_phone_number,
             },
         })
+
 
     @bp.route("/whatsapp/fetch-numbers", methods=["POST"])
     @token_required
@@ -800,13 +815,17 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     setStatus('Meta sign-in could not load. Check your internet connection, then close and try again.', true);
   }
 
-  function handleSignupSuccess(wabaId, phoneId, phoneNum) {
+  // Track business_id from Meta's WA_EMBEDDED_SIGNUP postMessage
+  var _capturedBusinessId = '';
+
+  function handleSignupSuccess(wabaId, phoneId, phoneNum, businessId) {
     setStatus('WhatsApp Business connected! Saving...', false);
     postToApp({
       type: 'embedded_signup_complete',
       waba_id: wabaId,
       phone_number_id: phoneId,
-      business_phone_number: phoneNum
+      business_phone_number: phoneNum,
+      business_id: businessId || _capturedBusinessId || ''
     });
 
     if (AUTH_TOKEN && AUTH_TOKEN !== '{{AUTH_TOKEN}}') {
@@ -819,7 +838,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
         body: JSON.stringify({
           waba_id: wabaId,
           phone_number_id: phoneId,
-          business_phone_number: phoneNum
+          business_phone_number: phoneNum,
+          business_id: businessId || _capturedBusinessId || ''
         })
       }).then(function(res) {
         return res.json();
@@ -885,7 +905,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
             if (code) {
               postToApp({
                 type: 'embedded_signup_code',
-                code: code
+                code: code,
+                business_id: _capturedBusinessId || ''
               });
               if (AUTH_TOKEN && AUTH_TOKEN !== '{{AUTH_TOKEN}}') {
                 fetch('/api/mobile/v1/whatsapp/connect-waba', {
@@ -894,7 +915,7 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
                     'Content-Type': 'application/json',
                     'Authorization': 'Bearer ' + AUTH_TOKEN
                   },
-                  body: JSON.stringify({ code: code })
+                  body: JSON.stringify({ code: code, business_id: _capturedBusinessId || '' })
                 }).then(function(res) {
                   return res.json();
                 }).then(function(result) {
@@ -904,7 +925,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
                       type: 'embedded_signup_complete',
                       phone_number_id: result.data && result.data.phone_number_id,
                       waba_id: result.data && result.data.waba_id,
-                      business_phone_number: result.data && result.data.business_phone_number
+                      business_phone_number: result.data && result.data.business_phone_number,
+                      business_id: result.data && result.data.business_id
                     });
                     var card = document.getElementById('cardContent');
                     if (card) {
@@ -977,9 +999,13 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
         var phoneId = setupData.phone_number_id || setupData.phoneNumberId || '';
         var wabaId = setupData.waba_id || setupData.wabaId || '';
         var phoneNum = setupData.display_phone_number || setupData.business_phone_number || '';
+        var businessId = setupData.business_id || setupData.businessId || '';
+
+        // Capture business_id for use in FB.login callback
+        if (businessId) _capturedBusinessId = businessId;
 
         if (phoneId || wabaId) {
-          handleSignupSuccess(wabaId, phoneId, phoneNum);
+          handleSignupSuccess(wabaId, phoneId, phoneNum, businessId);
           return;
         }
       }
@@ -988,7 +1014,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
         handleSignupSuccess(
           data.waba_id || data.wabaId || '',
           data.phone_number_id || data.phoneNumberId || '',
-          data.display_phone_number || data.business_phone_number || ''
+          data.display_phone_number || data.business_phone_number || '',
+          data.business_id || data.businessId || ''
         );
       }
     } catch (e) {}

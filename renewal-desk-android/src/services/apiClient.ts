@@ -495,7 +495,8 @@ export async function connectWaba(params: {
   phoneNumberId?: string;
   businessPhoneNumber?: string;
   code?: string;
-}): Promise<ApiResult<{ status: string; message: string; waba_id?: string; phone_number_id: string; business_phone_number?: string }>> {
+  businessId?: string;
+}): Promise<ApiResult<{ status: string; message: string; waba_id?: string; phone_number_id: string; business_phone_number?: string; business_id?: string; steps_completed?: string[] }>> {
   return apiRequest('/api/mobile/v1/whatsapp/connect-waba', {
     method: 'POST',
     body: {
@@ -503,9 +504,11 @@ export async function connectWaba(params: {
       phone_number_id: params.phoneNumberId,
       business_phone_number: params.businessPhoneNumber,
       code: params.code,
+      business_id: params.businessId,
     },
   });
 }
+
 
 export type WabaPhoneNumber = {
   id: string;

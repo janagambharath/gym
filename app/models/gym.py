@@ -55,6 +55,12 @@ class Gym(TimestampMixin, db.Model):
         db.String(32), nullable=False, default="NOT_CONNECTED", index=True
     )
     whatsapp_connection_error = db.Column(db.String(500), nullable=True)
+    # Per-gym encrypted BISU access token from Embedded Signup code exchange
+    whatsapp_access_token_enc = db.Column(db.Text, nullable=True)
+    # Meta Business Portfolio ID returned by Embedded Signup
+    whatsapp_meta_business_id = db.Column(db.String(255), nullable=True)
+    # Whether standard Renewal Desk templates have been auto-provisioned
+    whatsapp_templates_provisioned = db.Column(db.Boolean, nullable=False, default=False)
     welcome_message_template = db.Column(
         db.Text,
         nullable=False,
@@ -110,4 +116,20 @@ class Gym(TimestampMixin, db.Model):
         if self.max_members is None:
             return False
         return current_count >= self.max_members
+
+    def get_whatsapp_token(self) -> str | None:
+        """Decrypt and return the per-gym BISU access token, or None."""
+        if not self.whatsapp_access_token_enc:
+            return None
+        from app.utils.token_encryption import decrypt_token
+        try:
+            return decrypt_token(self.whatsapp_access_token_enc)
+        except Exception:
+            return None
+
+    def set_whatsapp_token(self, plaintext_token: str) -> None:
+        """Encrypt and store a per-gym BISU access token."""
+        from app.utils.token_encryption import encrypt_token
+        self.whatsapp_access_token_enc = encrypt_token(plaintext_token)
+
 
