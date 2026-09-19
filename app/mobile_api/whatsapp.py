@@ -633,9 +633,22 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
   }
 
   function openExternal() {
-    postToApp({ type: 'open_external_browser' });
+    var extrasObj = { sessionInfoVersion: '3', version: 'v4' };
+    if (FEATURE_TYPE && FEATURE_TYPE !== '{{FEATURE_TYPE}}' && FEATURE_TYPE !== 'none') {
+      extrasObj.featureType = FEATURE_TYPE;
+    }
+    var directMetaUrl = 'https://business.facebook.com/messaging/whatsapp/onboard/?app_id=' +
+      encodeURIComponent(META_APP_ID) +
+      '&config_id=' + encodeURIComponent(META_CONFIG_ID) +
+      '&extras=' + encodeURIComponent(JSON.stringify(extrasObj));
+
+    postToApp({
+      type: 'open_external_browser',
+      direct_meta_url: directMetaUrl
+    });
+
     if (!window.ReactNativeWebView) {
-      window.location.reload();
+      window.location.href = directMetaUrl;
     }
   }
 

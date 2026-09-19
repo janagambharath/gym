@@ -82,7 +82,7 @@ class Config:
         "WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"
     ).strip()
     META_APP_ID = os.getenv("META_APP_ID", "1711816793132513")
-    META_CONFIG_ID = os.getenv("META_CONFIG_ID", "107597391155167")
+    META_CONFIG_ID = os.getenv("META_CONFIG_ID", "1075973911551679")
     REDIS_URL = os.getenv("REDIS_URL", "memory://")
 
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

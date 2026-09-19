@@ -99,8 +99,9 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
     }
 
     if (data.type === 'open_external_browser') {
-      if (state.phase === 'ready' && state.url) {
-        void WebBrowser.openBrowserAsync(state.url);
+      const targetUrl = data.direct_meta_url || (state.phase === 'ready' ? state.url : null);
+      if (targetUrl) {
+        void WebBrowser.openBrowserAsync(targetUrl);
       }
       return;
     }

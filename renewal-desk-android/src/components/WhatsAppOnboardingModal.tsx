@@ -51,7 +51,7 @@ export function WhatsAppOnboardingModal({
     try {
       setLoading(true);
       let metaAppId = '1711816793132513';
-      let configId = '107597391155167';
+      let configId = '1075973911551679';
 
       try {
         const res = await getWhatsAppOnboardingConfig();
@@ -95,8 +95,9 @@ export function WhatsAppOnboardingModal({
     }
 
     if (data.type === 'open_external_browser') {
-      if (webViewUrl) {
-        void WebBrowser.openBrowserAsync(webViewUrl);
+      const targetUrl = data.direct_meta_url || webViewUrl;
+      if (targetUrl) {
+        void WebBrowser.openBrowserAsync(targetUrl);
       }
       return;
     }
@@ -418,16 +419,15 @@ export function WhatsAppOnboardingModal({
             <View style={styles.webViewHeaderRight}>
               <TouchableOpacity
                 onPress={() => {
-                  if (webViewUrl) {
-                    void WebBrowser.openBrowserAsync(webViewUrl);
-                  }
+                  const directMetaUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=1711816793132513&config_id=1075973911551679&extras=${encodeURIComponent(JSON.stringify({ sessionInfoVersion: '3', version: 'v4' }))}`;
+                  void WebBrowser.openBrowserAsync(directMetaUrl);
                 }}
                 style={styles.browserBtn}
                 accessibilityLabel="Open in Browser"
                 activeOpacity={0.7}
               >
                 <Icon name="globe" size={14} color={colors.brand} />
-                <Text style={styles.browserBtnText}>Open in Browser</Text>
+                <Text style={styles.browserBtnText}>Open in Meta</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleWebViewClose}
