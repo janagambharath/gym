@@ -5,6 +5,7 @@ from flask import current_app, g, jsonify, request
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
+import requests
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member, QRSettings, ReminderLog
@@ -414,10 +415,28 @@ def register_whatsapp_routes(bp):
         data = request.get_json(silent=True) or {}
         waba_id = (data.get("waba_id") or "").strip()
         phone_number_id = (data.get("phone_number_id") or "").strip()
-        phone = (data.get("business_phone_number") or "").strip()
+        if not phone_number_id and waba_id:
+            token = current_app.config.get("WHATSAPP_ACCESS_TOKEN")
+            api_ver = current_app.config.get("WHATSAPP_API_VERSION", "v20.0")
+            if token:
+                try:
+                    res = requests.get(
+                        f"https://graph.facebook.com/{api_ver}/{waba_id}/phone_numbers",
+                        params={"fields": "id,display_phone_number,verified_name"},
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=10,
+                    )
+                    if res.status_code == 200:
+                        numbers = res.json().get("data", [])
+                        if numbers:
+                            phone_number_id = str(numbers[0].get("id"))
+                            if not phone and numbers[0].get("display_phone_number"):
+                                phone = str(numbers[0].get("display_phone_number"))
+                except Exception as exc:
+                    current_app.logger.warning(f"Could not auto-fetch phone numbers for WABA {waba_id}: {exc}")
 
         if not phone_number_id:
-            return error_response("VALIDATION_ERROR", "phone_number_id is required.", 400)
+            return error_response("VALIDATION_ERROR", "phone_number_id is required or could not be found for this WABA.", 400)
 
         gym = g.current_user.gym
         gym.whatsapp_business_account_id = waba_id or gym.whatsapp_business_account_id or f"waba_{gym.id}"

@@ -128,7 +128,7 @@ export function WhatsAppOnboardingModal({
       setWabaId(String(wId));
     }
 
-    if (pId) {
+    if (pId || wId) {
       setWebViewUrl(null);
       setLoading(true);
       try {

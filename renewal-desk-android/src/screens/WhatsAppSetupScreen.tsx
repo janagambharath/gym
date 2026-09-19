@@ -126,14 +126,14 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
       business_phone_number = data.data.display_phone_number || data.data.business_phone_number || business_phone_number;
     }
 
-    if (!phone_number_id) {
+    if (!phone_number_id && !waba_id) {
       if (data.type === 'embedded_signup_complete' || data.type === 'WA_EMBEDDED_SIGNUP') {
-        setState({ phase: 'error', message: 'Phone Number ID was not returned by Meta.' });
+        setState({ phase: 'error', message: 'No WhatsApp account details were returned by Meta.' });
       }
       return;
     }
 
-    setState({ phase: 'connecting', waba_id: waba_id || '', phone_number_id, business_phone_number });
+    setState({ phase: 'connecting', waba_id: waba_id || '', phone_number_id: phone_number_id || '', business_phone_number });
 
     // POST to backend
     const connectRes = await connectWaba({
