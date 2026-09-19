@@ -419,7 +419,11 @@ export function WhatsAppOnboardingModal({
             <View style={styles.webViewHeaderRight}>
               <TouchableOpacity
                 onPress={() => {
-                  const directMetaUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=1711816793132513&config_id=1075973911551679&extras=${encodeURIComponent(JSON.stringify({ sessionInfoVersion: '3', version: 'v4' }))}`;
+                  const extrasObj: Record<string, string> = { sessionInfoVersion: '3', version: 'v4' };
+                  if (method === 'coexistence') {
+                    extrasObj.featureType = 'whatsapp_business_app_onboarding';
+                  }
+                  const directMetaUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=1711816793132513&config_id=1075973911551679&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
                   void WebBrowser.openBrowserAsync(directMetaUrl);
                 }}
                 style={styles.browserBtn}
