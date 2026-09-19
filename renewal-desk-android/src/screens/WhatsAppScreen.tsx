@@ -141,7 +141,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [checklist, setChecklist] = useState<WhatsAppChecklist | null>(null);
 
   // Fetch WhatsApp connection status & broadcast stats
-  useEffect(() => {
+  const fetchWhatsAppStatus = useCallback(() => {
     void apiRequest<{
       state: string;
       checklist?: WhatsAppChecklist;
@@ -162,6 +162,10 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
       }
     });
   }, []);
+
+  useEffect(() => {
+    fetchWhatsAppStatus();
+  }, [fetchWhatsAppStatus]);
 
   // Fetch reminders
   const fetchReminders = useCallback((p: number, filter: string) => {
@@ -731,6 +735,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
         visible={onboardingModalVisible}
         onClose={() => setOnboardingModalVisible(false)}
         onConnected={() => {
+          fetchWhatsAppStatus();
           refreshReminders();
           refreshLeads();
         }}

@@ -19,8 +19,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import * as WebBrowser from 'expo-web-browser';
 import { AppHeader } from '../components/AppHeader';
-import { connectWaba, getWhatsAppOnboardingConfig } from '../services/apiClient';
+import { connectWaba, getCachedSession, getWhatsAppOnboardingConfig } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
@@ -76,7 +77,9 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
       // The backend injects the correct META_APP_ID and META_CONFIG_ID into
       // the HTML. The page is served at a public (no-auth) route so the
       // WebView doesn't need to send Bearer tokens for the page load itself.
-      const pageUrl = `${config.apiBaseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(meta_app_id)}&config_id=${encodeURIComponent(config_id)}`;
+      const session = getCachedSession();
+      const tokenParam = session?.accessToken ? `&token=${encodeURIComponent(session.accessToken)}` : '';
+      const pageUrl = `${config.apiBaseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(meta_app_id)}&config_id=${encodeURIComponent(config_id)}${tokenParam}`;
 
       setState({ phase: 'ready', url: pageUrl });
     }
@@ -87,11 +90,18 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
 
   // ── 2. Handle postMessage from the Embedded Signup WebView ──
   const handleWebViewMessage = useCallback(async (event: WebViewMessageEvent) => {
-    let data: Record<string, string>;
+    let data: Record<string, any>;
     try {
       data = JSON.parse(event.nativeEvent.data);
     } catch {
       console.warn('[WhatsAppSetup] Invalid postMessage data:', event.nativeEvent.data);
+      return;
+    }
+
+    if (data.type === 'open_external_browser') {
+      if (state.phase === 'ready' && state.url) {
+        void WebBrowser.openBrowserAsync(state.url);
+      }
       return;
     }
 
@@ -105,13 +115,20 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
       return;
     }
 
-    if (data.type !== 'embedded_signup_complete') {
-      return;
+    let phone_number_id = data.phone_number_id || data.phoneNumberId;
+    let waba_id = data.waba_id || data.wabaId;
+    let business_phone_number = data.business_phone_number || data.businessPhoneNumber || data.display_phone_number;
+
+    if (data.type === 'WA_EMBEDDED_SIGNUP' && data.data) {
+      phone_number_id = data.data.phone_number_id || data.data.phoneNumberId || phone_number_id;
+      waba_id = data.data.waba_id || data.data.wabaId || waba_id;
+      business_phone_number = data.data.display_phone_number || data.data.business_phone_number || business_phone_number;
     }
 
-    const { waba_id, phone_number_id, business_phone_number } = data;
     if (!phone_number_id) {
-      setState({ phase: 'error', message: 'Phone Number ID was not returned by Meta.' });
+      if (data.type === 'embedded_signup_complete' || data.type === 'WA_EMBEDDED_SIGNUP') {
+        setState({ phase: 'error', message: 'Phone Number ID was not returned by Meta.' });
+      }
       return;
     }
 
@@ -132,7 +149,7 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
         message: connectRes.error.message || 'Failed to connect WhatsApp Business account.',
       });
     }
-  }, [onBack]);
+  }, [onBack, state]);
 
   // ── Render ────────────────────────────────────────────────────
   return (
@@ -175,12 +192,9 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
             return true; // Allow all — Meta SDK needs various redirects
           }}
           onOpenWindow={(syntheticEvent) => {
-            // Handle popup requests (Meta OAuth popup flow)
             const { nativeEvent } = syntheticEvent;
-            if (nativeEvent.targetUrl && webViewRef.current) {
-              webViewRef.current.injectJavaScript(
-                `window.location.href = ${JSON.stringify(nativeEvent.targetUrl)};`
-              );
+            if (nativeEvent.targetUrl) {
+              void WebBrowser.openBrowserAsync(nativeEvent.targetUrl);
             }
           }}
           renderLoading={() => (

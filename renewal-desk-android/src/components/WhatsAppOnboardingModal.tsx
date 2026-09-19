@@ -12,9 +12,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import * as WebBrowser from 'expo-web-browser';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import { connectWaba, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
+import { connectWaba, getCachedSession, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 
 interface WhatsAppOnboardingModalProps {
@@ -64,7 +65,10 @@ export function WhatsAppOnboardingModal({
 
       const config = getRuntimeConfiguration();
       const baseUrl = config.apiBaseUrl || 'https://gym-production-910c.up.railway.app';
-      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}&v=${Date.now()}`;
+      const session = getCachedSession();
+      const tokenParam = session?.accessToken ? `&token=${encodeURIComponent(session.accessToken)}` : '';
+      const featureParam = method === 'coexistence' ? '&feature_type=whatsapp_business_app_onboarding' : '';
+      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}${featureParam}${tokenParam}&v=${Date.now()}`;
       setWebViewUrl(pageUrl);
     } catch {
       Alert.alert('Error', 'Failed to launch Meta Embedded Signup.');
@@ -90,6 +94,13 @@ export function WhatsAppOnboardingModal({
       return;
     }
 
+    if (data.type === 'open_external_browser') {
+      if (webViewUrl) {
+        void WebBrowser.openBrowserAsync(webViewUrl);
+      }
+      return;
+    }
+
     if (data.type === 'embedded_signup_cancel') {
       setWebViewUrl(null);
       return;
@@ -110,6 +121,10 @@ export function WhatsAppOnboardingModal({
       pId = data.data.phone_number_id || pId;
       wId = data.data.waba_id || wId;
       bPhone = data.data.display_phone_number || bPhone;
+    }
+
+    if (!pId && wId) {
+      setWabaId(String(wId));
     }
 
     if (pId) {
@@ -141,7 +156,7 @@ export function WhatsAppOnboardingModal({
         setLoading(false);
       }
     }
-  }, [onClose, onConnected]);
+  }, [onClose, onConnected, webViewUrl]);
 
   const handleSaveConnection = async () => {
     if (!phoneNumberId.trim()) {
@@ -402,6 +417,19 @@ export function WhatsAppOnboardingModal({
             </View>
             <View style={styles.webViewHeaderRight}>
               <TouchableOpacity
+                onPress={() => {
+                  if (webViewUrl) {
+                    void WebBrowser.openBrowserAsync(webViewUrl);
+                  }
+                }}
+                style={styles.browserBtn}
+                accessibilityLabel="Open in Browser"
+                activeOpacity={0.7}
+              >
+                <Icon name="globe" size={14} color={colors.brand} />
+                <Text style={styles.browserBtnText}>Open in Browser</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={handleWebViewClose}
                 style={styles.webViewCloseBtn}
                 accessibilityLabel="Close Meta Signup"
@@ -435,10 +463,8 @@ export function WhatsAppOnboardingModal({
               onMessage={handleWebViewMessage}
               onOpenWindow={(event) => {
                 const targetUrl = event.nativeEvent.targetUrl;
-                if (targetUrl && webViewRef.current) {
-                  webViewRef.current.injectJavaScript(
-                    `window.location.assign(${JSON.stringify(targetUrl)}); true;`,
-                  );
+                if (targetUrl) {
+                  void WebBrowser.openBrowserAsync(targetUrl);
                 }
               }}
               onError={() => {

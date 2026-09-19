@@ -366,12 +366,18 @@ def register_whatsapp_routes(bp):
         """
         meta_app_id = request.args.get("meta_app_id", "")
         config_id = request.args.get("config_id", "")
+        feature_type = request.args.get("feature_type", "")
+        token = request.args.get("token", "")
 
         if not meta_app_id or not config_id:
             return "<h1>Configuration Error</h1><p>Meta App ID or Configuration ID is missing.</p>", 400
 
-        html = _EMBEDDED_SIGNUP_HTML.replace("{{META_APP_ID}}", meta_app_id).replace(
-            "{{META_CONFIG_ID}}", config_id
+        html = (
+            _EMBEDDED_SIGNUP_HTML
+            .replace("{{META_APP_ID}}", meta_app_id)
+            .replace("{{META_CONFIG_ID}}", config_id)
+            .replace("{{FEATURE_TYPE}}", feature_type)
+            .replace("{{AUTH_TOKEN}}", token)
         )
 
         from flask import make_response
@@ -426,12 +432,13 @@ def register_whatsapp_routes(bp):
         gym.whatsapp_connection_error = None
         verification = WhatsAppService(gym).connect_webhooks()
         if not verification.ok:
+            error_msg = f"We could not finish connecting WhatsApp: {verification.error}" if verification.error else "We could not verify this WhatsApp connection with Meta. Please try again."
             gym.whatsapp_connection_status = "FAILED"
-            gym.whatsapp_connection_error = "We could not verify this WhatsApp connection with Meta. Please try again."
+            gym.whatsapp_connection_error = error_msg
             db.session.commit()
             return error_response(
                 "WHATSAPP_CONNECTION_NOT_VERIFIED",
-                "We could not finish connecting WhatsApp. Nothing has been enabled yet. Please try again.",
+                error_msg,
                 409,
             )
 
@@ -565,7 +572,7 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
 <div style="font-size: 24px; font-weight: 800; color: #0F172A; text-align: center; margin-bottom: 4px; letter-spacing: -0.5px;">Renewal Desk</div>
 <p style="font-size: 14px; color: #64748B; text-align: center; margin-top: 0; margin-bottom: 24px;">Connect your WhatsApp Business account</p>
 
-<div style="background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.06); box-sizing: border-box;">
+<div id="cardContent" style="background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.06); box-sizing: border-box;">
   <h2 style="font-size: 18px; font-weight: 700; color: #0F172A; margin-top: 0; margin-bottom: 8px;">WhatsApp Setup</h2>
   <p style="font-size: 13px; color: #475569; line-height: 1.5; margin-top: 0; margin-bottom: 20px;">Connect your existing WhatsApp Business number to enable automated renewal reminders, AI receptionist, and broadcast messages.</p>
 
@@ -593,8 +600,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     Connect WhatsApp
   </button>
 
-  <button onclick="openExternal()" style="display: none;" aria-hidden="true" tabindex="-1">
-    🌐 Open in Chrome / Browser
+  <button id="browserBtn" onclick="openExternal()" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 12px; padding: 12px 0; border: 1px solid #CBD5E1; border-radius: 12px; background-color: #F8FAFC; color: #1E293B; font-size: 14px; font-weight: 600; cursor: pointer;">
+    🌐 Having trouble? Open in Browser
   </button>
 
   <button onclick="cancelSetup()" style="display: block; width: 100%; text-align: center; margin-top: 14px; padding: 8px; border: none; background: transparent; color: #94A3B8; font-size: 13px; cursor: pointer;">Cancel</button>
@@ -607,6 +614,8 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
 <script>
   var META_APP_ID = '{{META_APP_ID}}';
   var META_CONFIG_ID = '{{META_CONFIG_ID}}';
+  var FEATURE_TYPE = '{{FEATURE_TYPE}}';
+  var AUTH_TOKEN = '{{AUTH_TOKEN}}';
   var fbInitialized = false;
 
   function postToApp(data) {
@@ -624,13 +633,51 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
   }
 
   function openExternal() {
-    // The browser cannot return a verified result to the signed-in app.
-    // Keep the complete signup journey in this WebView instead.
-    setStatus('Please complete setup in this screen so Renewal Desk can verify the connection.', false);
+    postToApp({ type: 'open_external_browser' });
+    if (!window.ReactNativeWebView) {
+      window.location.reload();
+    }
   }
 
   function metaSdkFailed() {
     setStatus('Meta sign-in could not load. Check your internet connection, then close and try again.', true);
+  }
+
+  function handleSignupSuccess(wabaId, phoneId, phoneNum) {
+    setStatus('WhatsApp Business connected! Saving...', false);
+    postToApp({
+      type: 'embedded_signup_complete',
+      waba_id: wabaId,
+      phone_number_id: phoneId,
+      business_phone_number: phoneNum
+    });
+
+    if (AUTH_TOKEN && AUTH_TOKEN !== '{{AUTH_TOKEN}}') {
+      fetch('/api/mobile/v1/whatsapp/connect-waba', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + AUTH_TOKEN
+        },
+        body: JSON.stringify({
+          waba_id: wabaId,
+          phone_number_id: phoneId,
+          business_phone_number: phoneNum
+        })
+      }).then(function(res) {
+        return res.json();
+      }).then(function(result) {
+        if (result && result.success) {
+          setStatus('WhatsApp Connected Successfully!', false);
+          var card = document.getElementById('cardContent');
+          if (card) {
+            card.innerHTML = '<div style="text-align:center; padding: 24px 0;"><h2 style="color:#25D366; font-size:20px; font-weight:800; margin-bottom:8px;">WhatsApp Connected!</h2><p style="color:#475569; font-size:14px; line-height:1.5;">Your business number is now linked to Renewal Desk. Automated renewal reminders and AI receptionist are ready.</p></div>';
+          }
+        }
+      }).catch(function(err) {
+        console.warn('Direct connect save error', err);
+      });
+    }
   }
 
   // Initialize Facebook SDK
@@ -654,63 +701,67 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     if (button) button.disabled = true;
     setStatus('Opening Meta Business login...', false);
 
-    // Auto re-enable button if Facebook SDK popup was blocked or closed
-    setTimeout(function() {
+    // Auto re-enable button fallback if popup was closed without event
+    var recoveryTimeout = setTimeout(function() {
       if (button && button.disabled) {
         button.disabled = false;
         setStatus('Ready. Tap Connect WhatsApp to try again, or enter your WhatsApp credentials directly in the app.', false);
       }
-    }, 6000);
+    }, 8000);
 
-    function sessionInfoListener(sessionInfo) {
-      if (sessionInfo && sessionInfo.phone_number_id) {
-        setStatus('WhatsApp Business connected! Saving...', false);
-        postToApp({
-          type: 'embedded_signup_complete',
-          waba_id: sessionInfo.waba_id || '',
-          phone_number_id: sessionInfo.phone_number_id,
-          business_phone_number: sessionInfo.display_phone_number || ''
-        });
-      } else if (sessionInfo && sessionInfo.current_step === 'success') {
-        setStatus('Setup complete. Finalizing...', false);
-      }
-    }
-
-    if (typeof FB !== 'undefined' && FB.login) {
+    function launchFb() {
       try {
+        var loginExtras = {
+          setup: {},
+          sessionInfoVersion: '3',
+          version: 'v4'
+        };
+        if (FEATURE_TYPE && FEATURE_TYPE !== '{{FEATURE_TYPE}}' && FEATURE_TYPE !== 'none') {
+          loginExtras.featureType = FEATURE_TYPE;
+        }
+
         FB.login(function(response) {
-          if (response.authResponse) {
-            var code = response.authResponse.code;
-            setStatus('Signed in. Completing WhatsApp Business selection...', false);
-            if (code) {
-              setStatus('Authentication successful. Please complete business selection...', false);
-            }
+          clearTimeout(recoveryTimeout);
+          if (response && response.authResponse) {
+            setStatus('Signed in. Retrieving WhatsApp Business details...', false);
           } else {
             if (button) button.disabled = false;
-            setStatus('Setup was closed. You can safely try again.', false);
+            setStatus('Setup was closed. You can tap Connect WhatsApp to try again.', false);
           }
         }, {
           config_id: META_CONFIG_ID,
           response_type: 'code',
           override_default_response_type: true,
-          extras: {
-            setup: {},
-            featureType: 'only_waba_sharing',
-            sessionInfoVersion: 2,
-            sessionInfoListener: sessionInfoListener
-          }
+          extras: loginExtras
         });
       } catch (err) {
+        clearTimeout(recoveryTimeout);
         if (button) button.disabled = false;
-        setStatus('Meta sign-in could not open. Close this screen and try again.', true);
+        setStatus('Meta sign-in could not open. Tap "Having trouble? Open in Browser" below.', true);
       }
+    }
+
+    if (typeof FB !== 'undefined' && FB.login) {
+      launchFb();
     } else {
-      if (button) button.disabled = false;
-      setStatus('Meta sign-in is still loading. Please wait a moment and try again.', false);
+      setStatus('Loading Meta SDK, please wait...', false);
+      var checks = 0;
+      var interval = setInterval(function() {
+        checks++;
+        if (typeof FB !== 'undefined' && FB.login) {
+          clearInterval(interval);
+          launchFb();
+        } else if (checks >= 25) { // 5-second polling timeout
+          clearInterval(interval);
+          clearTimeout(recoveryTimeout);
+          if (button) button.disabled = false;
+          setStatus('Meta SDK took too long to load. Tap "Having trouble? Open in Browser" below.', true);
+        }
+      }, 200);
     }
   }
 
-  // Meta Embedded Signup session info listener
+  // Meta Embedded Signup message listener
   window.addEventListener('message', function(event) {
     if (!event.origin || (!event.origin.includes('facebook.com') && event.origin !== window.location.origin)) {
       return;
@@ -718,28 +769,33 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
 
     try {
       var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-      if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
-        var setupData = data.data;
-        if (setupData && setupData.phone_number_id) {
-          setStatus('WhatsApp Business connected! Saving...', false);
-          postToApp({
-            type: 'embedded_signup_complete',
-            waba_id: setupData.waba_id || '',
-            phone_number_id: setupData.phone_number_id,
-            business_phone_number: setupData.display_phone_number || ''
-          });
+      if (!data) return;
+
+      if (data.type === 'WA_EMBEDDED_SIGNUP') {
+        if (data.event === 'CANCEL') {
+          var btn = document.getElementById('connectBtn');
+          if (btn) btn.disabled = false;
+          setStatus('Setup was cancelled. You can tap Connect WhatsApp to try again.', false);
+          return;
+        }
+
+        var setupData = data.data || {};
+        var phoneId = setupData.phone_number_id || setupData.phoneNumberId || '';
+        var wabaId = setupData.waba_id || setupData.wabaId || '';
+        var phoneNum = setupData.display_phone_number || setupData.business_phone_number || '';
+
+        if (phoneId || wabaId) {
+          handleSignupSuccess(wabaId, phoneId, phoneNum);
           return;
         }
       }
 
-      if (data && (data.waba_id || data.phone_number_id)) {
-        setStatus('WhatsApp Business connected! Saving...', false);
-        postToApp({
-          type: 'embedded_signup_complete',
-          waba_id: data.waba_id || '',
-          phone_number_id: data.phone_number_id || '',
-          business_phone_number: data.display_phone_number || ''
-        });
+      if (data && (data.waba_id || data.phone_number_id || data.phoneNumberId)) {
+        handleSignupSuccess(
+          data.waba_id || data.wabaId || '',
+          data.phone_number_id || data.phoneNumberId || '',
+          data.display_phone_number || data.business_phone_number || ''
+        );
       }
     } catch (e) {}
   });
