@@ -413,27 +413,94 @@ def register_whatsapp_routes(bp):
     def connect_waba():
         """Connect or update tenant-scoped WABA and Phone Number ID."""
         data = request.get_json(silent=True) or {}
-        waba_id = (data.get("waba_id") or "").strip()
-        phone_number_id = (data.get("phone_number_id") or "").strip()
-        if not phone_number_id and waba_id:
-            token = current_app.config.get("WHATSAPP_ACCESS_TOKEN")
-            api_ver = current_app.config.get("WHATSAPP_API_VERSION", "v20.0")
-            if token:
-                try:
-                    res = requests.get(
-                        f"https://graph.facebook.com/{api_ver}/{waba_id}/phone_numbers",
-                        params={"fields": "id,display_phone_number,verified_name"},
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=10,
-                    )
-                    if res.status_code == 200:
-                        numbers = res.json().get("data", [])
-                        if numbers:
-                            phone_number_id = str(numbers[0].get("id"))
-                            if not phone and numbers[0].get("display_phone_number"):
-                                phone = str(numbers[0].get("display_phone_number"))
-                except Exception as exc:
-                    current_app.logger.warning(f"Could not auto-fetch phone numbers for WABA {waba_id}: {exc}")
+        waba_id = str(data.get("waba_id") or "").strip()
+        phone_number_id = str(data.get("phone_number_id") or "").strip()
+        code = str(data.get("code") or "").strip()
+        phone = str(data.get("business_phone_number") or data.get("phone") or "").strip()
+
+        if phone_number_id.lower() in ("undefined", "null", "none", "0"):
+            phone_number_id = ""
+        if waba_id.lower() in ("undefined", "null", "none", "0"):
+            waba_id = ""
+
+        token = current_app.config.get("WHATSAPP_ACCESS_TOKEN")
+        api_ver = current_app.config.get("WHATSAPP_API_VERSION", "v20.0")
+
+        # 1. Exchange OAuth authorization code if provided by Meta Embedded Signup
+        if code:
+            app_id = current_app.config.get("META_APP_ID") or current_app.config.get("WHATSAPP_APP_ID", "1711816793132513")
+            app_secret = current_app.config.get("WHATSAPP_APP_SECRET") or current_app.config.get("WHATSAPP_WEBHOOK_SECRET")
+            try:
+                token_res = requests.get(
+                    f"https://graph.facebook.com/{api_ver}/oauth/access_token",
+                    params={"client_id": app_id, "client_secret": app_secret, "code": code},
+                    timeout=10,
+                )
+                if token_res.status_code == 200:
+                    user_token = token_res.json().get("access_token")
+                    if user_token:
+                        app_token = f"{app_id}|{app_secret}"
+                        debug_res = requests.get(
+                            f"https://graph.facebook.com/{api_ver}/debug_token",
+                            params={"input_token": user_token, "access_token": app_token},
+                            timeout=10,
+                        )
+                        if debug_res.status_code == 200:
+                            scopes = debug_res.json().get("data", {}).get("granular_scopes", [])
+                            for sc in scopes:
+                                targets = sc.get("target_ids", [])
+                                if targets and not waba_id:
+                                    waba_id = str(targets[0])
+                        # If waba_id found, query phone numbers using user_token
+                        if waba_id and not phone_number_id:
+                            nums_res = requests.get(
+                                f"https://graph.facebook.com/{api_ver}/{waba_id}/phone_numbers",
+                                params={"fields": "id,display_phone_number,verified_name"},
+                                headers={"Authorization": f"Bearer {user_token}"},
+                                timeout=10,
+                            )
+                            if nums_res.status_code == 200:
+                                numbers = nums_res.json().get("data", [])
+                                if numbers:
+                                    phone_number_id = str(numbers[0].get("id"))
+                                    if not phone and numbers[0].get("display_phone_number"):
+                                        phone = str(numbers[0].get("display_phone_number"))
+            except Exception as exc:
+                current_app.logger.warning(f"Could not exchange code for WhatsApp Embedded Signup: {exc}")
+
+        # 2. Auto-fetch phone numbers if only WABA ID is provided
+        if not phone_number_id and waba_id and token:
+            try:
+                res = requests.get(
+                    f"https://graph.facebook.com/{api_ver}/{waba_id}/phone_numbers",
+                    params={"fields": "id,display_phone_number,verified_name"},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                if res.status_code == 200:
+                    numbers = res.json().get("data", [])
+                    if numbers:
+                        phone_number_id = str(numbers[0].get("id"))
+                        if not phone and numbers[0].get("display_phone_number"):
+                            phone = str(numbers[0].get("display_phone_number"))
+            except Exception as exc:
+                current_app.logger.warning(f"Could not auto-fetch phone numbers for WABA {waba_id}: {exc}")
+
+        # 3. If phone_number_id is provided but phone display string is not, auto-fetch display number
+        if phone_number_id and not phone and token:
+            try:
+                res = requests.get(
+                    f"https://graph.facebook.com/{api_ver}/{phone_number_id}",
+                    params={"fields": "display_phone_number,verified_name"},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                if res.status_code == 200:
+                    num_data = res.json()
+                    if num_data.get("display_phone_number"):
+                        phone = str(num_data.get("display_phone_number"))
+            except Exception as exc:
+                current_app.logger.debug(f"Could not fetch display number for {phone_number_id}: {exc}")
 
         if not phone_number_id:
             return error_response("VALIDATION_ERROR", "phone_number_id is required or could not be found for this WABA.", 400)
@@ -480,8 +547,66 @@ def register_whatsapp_routes(bp):
             "data": {
                 "status": "CONNECTED",
                 "message": "WhatsApp Business connected successfully.",
+                "waba_id": gym.whatsapp_business_account_id,
                 "phone_number_id": gym.phone_number_id,
                 "business_phone_number": gym.business_phone_number,
+            },
+        })
+
+    @bp.route("/whatsapp/fetch-numbers", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def fetch_waba_numbers():
+        """Auto-fetch registered phone numbers for a WABA or the gym's existing WABA."""
+        data = request.get_json(silent=True) or {}
+        waba_id = str(data.get("waba_id") or "").strip()
+        gym = g.current_user.gym
+        if not waba_id:
+            waba_id = gym.whatsapp_business_account_id or ""
+
+        if waba_id.lower() in ("undefined", "null", "none", "0"):
+            waba_id = ""
+
+        token = current_app.config.get("WHATSAPP_ACCESS_TOKEN")
+        api_ver = current_app.config.get("WHATSAPP_API_VERSION", "v20.0")
+
+        if not token:
+            return error_response("CONFIG_ERROR", "WHATSAPP_ACCESS_TOKEN is not configured on backend.", 500)
+
+        found_numbers = []
+        # If waba_id still not known, try to find assigned WABAs for our system user
+        if not waba_id:
+            try:
+                sys_res = requests.get(
+                    f"https://graph.facebook.com/{api_ver}/me/assigned_whatsapp_business_accounts",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                if sys_res.status_code == 200:
+                    accounts = sys_res.json().get("data", [])
+                    if accounts:
+                        waba_id = str(accounts[0].get("id"))
+            except Exception as exc:
+                current_app.logger.warning(f"Could not query assigned WABAs: {exc}")
+
+        if waba_id:
+            try:
+                res = requests.get(
+                    f"https://graph.facebook.com/{api_ver}/{waba_id}/phone_numbers",
+                    params={"fields": "id,display_phone_number,verified_name,code_verification_status,quality_rating"},
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                if res.status_code == 200:
+                    found_numbers = res.json().get("data", [])
+            except Exception as exc:
+                current_app.logger.warning(f"Error fetching numbers for WABA {waba_id}: {exc}")
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "waba_id": waba_id,
+                "numbers": found_numbers,
             },
         })
 
@@ -756,6 +881,43 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
           clearTimeout(recoveryTimeout);
           if (response && response.authResponse) {
             setStatus('Signed in. Retrieving WhatsApp Business details...', false);
+            var code = response.authResponse.code;
+            if (code) {
+              postToApp({
+                type: 'embedded_signup_code',
+                code: code
+              });
+              if (AUTH_TOKEN && AUTH_TOKEN !== '{{AUTH_TOKEN}}') {
+                fetch('/api/mobile/v1/whatsapp/connect-waba', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + AUTH_TOKEN
+                  },
+                  body: JSON.stringify({ code: code })
+                }).then(function(res) {
+                  return res.json();
+                }).then(function(result) {
+                  if (result && result.success) {
+                    setStatus('WhatsApp Connected Successfully!', false);
+                    postToApp({
+                      type: 'embedded_signup_complete',
+                      phone_number_id: result.data && result.data.phone_number_id,
+                      waba_id: result.data && result.data.waba_id,
+                      business_phone_number: result.data && result.data.business_phone_number
+                    });
+                    var card = document.getElementById('cardContent');
+                    if (card) {
+                      card.innerHTML = '<div style="text-align:center; padding: 24px 0;"><h2 style="color:#25D366; font-size:20px; font-weight:800; margin-bottom:8px;">WhatsApp Connected!</h2><p style="color:#475569; font-size:14px; line-height:1.5;">Your business number is now linked to Renewal Desk.</p></div>';
+                    }
+                  } else {
+                    setStatus('Signed in. Verifying Meta connection...', false);
+                  }
+                }).catch(function(err) {
+                  console.warn('Backend code exchange failed', err);
+                });
+              }
+            }
           } else {
             if (button) button.disabled = false;
             setStatus('Setup was closed. You can tap Connect WhatsApp to try again.', false);

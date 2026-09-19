@@ -492,15 +492,36 @@ export async function getWhatsAppOnboardingConfig(): Promise<ApiResult<{
 
 export async function connectWaba(params: {
   wabaId?: string;
-  phoneNumberId: string;
+  phoneNumberId?: string;
   businessPhoneNumber?: string;
-}): Promise<ApiResult<{ status: string; message: string; phone_number_id: string }>> {
+  code?: string;
+}): Promise<ApiResult<{ status: string; message: string; waba_id?: string; phone_number_id: string; business_phone_number?: string }>> {
   return apiRequest('/api/mobile/v1/whatsapp/connect-waba', {
     method: 'POST',
     body: {
       waba_id: params.wabaId,
       phone_number_id: params.phoneNumberId,
       business_phone_number: params.businessPhoneNumber,
+      code: params.code,
+    },
+  });
+}
+
+export type WabaPhoneNumber = {
+  id: string;
+  display_phone_number: string;
+  verified_name?: string;
+  code_verification_status?: string;
+  quality_rating?: string;
+};
+
+export async function fetchWabaNumbers(params?: {
+  wabaId?: string;
+}): Promise<ApiResult<{ waba_id: string; numbers: WabaPhoneNumber[] }>> {
+  return apiRequest('/api/mobile/v1/whatsapp/fetch-numbers', {
+    method: 'POST',
+    body: {
+      waba_id: params?.wabaId,
     },
   });
 }

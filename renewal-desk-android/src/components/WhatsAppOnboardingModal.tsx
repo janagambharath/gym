@@ -15,7 +15,7 @@ import { WebView } from 'react-native-webview';
 import * as WebBrowser from 'expo-web-browser';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import { connectWaba, getCachedSession, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
+import { connectWaba, fetchWabaNumbers, getCachedSession, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 
 interface WhatsAppOnboardingModalProps {
@@ -43,9 +43,43 @@ export function WhatsAppOnboardingModal({
   const [aboutText, setAboutText] = useState(currentProfile?.about || '');
   const [addressText, setAddressText] = useState(currentProfile?.address || '');
   const [loading, setLoading] = useState(false);
+  const [fetchingNumbers, setFetchingNumbers] = useState(false);
   const [activeTab, setActiveTab] = useState<'connect' | 'profile'>('connect');
   const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
   const webViewRef = useRef<WebView>(null);
+
+  const handleAutoFetchNumbers = async () => {
+    setFetchingNumbers(true);
+    try {
+      const res = await fetchWabaNumbers({ wabaId: wabaId.trim() || undefined });
+      if (res.ok && res.data.numbers && res.data.numbers.length > 0) {
+        const primary = res.data.numbers[0];
+        setPhoneNumberId(primary.id);
+        if (primary.display_phone_number) {
+          setBusinessPhone(primary.display_phone_number);
+        }
+        if (res.data.waba_id) {
+          setWabaId(res.data.waba_id);
+        }
+        Alert.alert(
+          'Phone Number Found!',
+          `Found ${primary.display_phone_number || primary.id} (${primary.verified_name || 'Verified'}). Details have been filled in below.`
+        );
+      } else if (res.ok && res.data.waba_id) {
+        setWabaId(res.data.waba_id);
+        Alert.alert('WABA Found', 'Found WhatsApp Business Account, but no registered phone numbers were found under it yet.');
+      } else {
+        Alert.alert(
+          'No Numbers Found',
+          'Could not automatically detect phone numbers. Please ensure you finished Meta signup, or enter your Phone Number ID manually.'
+        );
+      }
+    } catch {
+      Alert.alert('Network Error', 'Failed to reach Meta to fetch phone numbers.');
+    } finally {
+      setFetchingNumbers(false);
+    }
+  };
 
   const handleLaunchEmbeddedSignup = async () => {
     try {
@@ -113,33 +147,59 @@ export function WhatsAppOnboardingModal({
       return;
     }
 
+    if (data.type === 'embedded_signup_code' && data.code) {
+      setWebViewUrl(null);
+      setLoading(true);
+      try {
+        const connectRes = await connectWaba({ code: data.code });
+        if (connectRes.ok) {
+          Alert.alert('Connected!', 'WhatsApp Business connected successfully to Renewal Desk.');
+          if (connectRes.data?.phone_number_id) setPhoneNumberId(connectRes.data.phone_number_id);
+          if (connectRes.data?.waba_id) setWabaId(connectRes.data.waba_id);
+          if (connectRes.data?.business_phone_number) setBusinessPhone(connectRes.data.business_phone_number);
+          onConnected();
+          onClose();
+          return;
+        } else {
+          Alert.alert('Verification Pending', connectRes.error?.message || 'Verification with Meta in progress.');
+        }
+      } catch {
+        // Continue to check other fields
+      } finally {
+        setLoading(false);
+      }
+    }
+
     // Support both standard formats returned by Meta Embedded Signup
     let pId = data.phone_number_id || data.phoneNumberId;
     let wId = data.waba_id || data.wabaId;
     let bPhone = data.business_phone_number || data.businessPhoneNumber || data.display_phone_number;
 
     if (data.type === 'WA_EMBEDDED_SIGNUP' && data.data) {
-      pId = data.data.phone_number_id || pId;
-      wId = data.data.waba_id || wId;
-      bPhone = data.data.display_phone_number || bPhone;
+      pId = data.data.phone_number_id || data.data.phoneNumberId || pId;
+      wId = data.data.waba_id || data.data.wabaId || wId;
+      bPhone = data.data.display_phone_number || data.data.business_phone_number || bPhone;
     }
 
-    if (!pId && wId) {
-      setWabaId(String(wId));
-    }
+    if (pId) setPhoneNumberId(String(pId));
+    if (wId) setWabaId(String(wId));
+    if (bPhone) setBusinessPhone(String(bPhone));
 
     if (pId || wId) {
       setWebViewUrl(null);
       setLoading(true);
       try {
         const connectRes = await connectWaba({
-          wabaId: wId || undefined,
-          phoneNumberId: String(pId),
-          businessPhoneNumber: bPhone || undefined,
+          wabaId: wId ? String(wId) : undefined,
+          phoneNumberId: pId ? String(pId) : '',
+          businessPhoneNumber: bPhone ? String(bPhone) : undefined,
         });
 
         if (connectRes.ok) {
           Alert.alert('Connected!', 'WhatsApp Business connected successfully to Renewal Desk.');
+          if (connectRes.data?.phone_number_id) setPhoneNumberId(connectRes.data.phone_number_id);
+          if (connectRes.data?.waba_id) setWabaId(connectRes.data.waba_id);
+          if (connectRes.data?.business_phone_number) setBusinessPhone(connectRes.data.business_phone_number);
           onConnected();
           onClose();
         } else {
@@ -150,9 +210,6 @@ export function WhatsAppOnboardingModal({
           'Saved Locally',
           'Connection received from Meta. Please tap Confirm & Connect to verify.',
         );
-        if (pId) setPhoneNumberId(String(pId));
-        if (wId) setWabaId(String(wId));
-        if (bPhone) setBusinessPhone(String(bPhone));
       } finally {
         setLoading(false);
       }
@@ -312,6 +369,23 @@ export function WhatsAppOnboardingModal({
                   </TouchableOpacity>
 
                   <Text style={styles.orDivider}>— OR ENTER WHATSAPP BUSINESS DETAILS DIRECTLY —</Text>
+
+                  {/* Auto-fetch button from Meta */}
+                  <TouchableOpacity
+                    style={[styles.autoFetchBtn, (fetchingNumbers || loading) && styles.btnDisabled]}
+                    onPress={handleAutoFetchNumbers}
+                    disabled={fetchingNumbers || loading}
+                    activeOpacity={0.8}
+                  >
+                    {fetchingNumbers ? (
+                      <ActivityIndicator size="small" color={colors.brand} />
+                    ) : (
+                      <>
+                        <Icon name="refresh" size={16} color={colors.brand} />
+                        <Text style={styles.autoFetchBtnText}>⚡ Auto-Fetch Details from Meta</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
 
                   {/* Direct ID input fields */}
                   <Text style={styles.inputLabel}>WhatsApp Phone Number ID *</Text>
@@ -630,6 +704,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginVertical: spacing.md,
     fontWeight: fontWeight.bold,
+  },
+  autoFetchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandSubtle,
+    borderWidth: 1,
+    borderColor: colors.brandLight,
+    marginBottom: spacing.md,
+  },
+  autoFetchBtnText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+    color: colors.brand,
   },
   inputLabel: {
     fontSize: fontSize.xs,

@@ -248,6 +248,46 @@ def test_whatsapp_connection_requires_meta_verification(client, app, monkeypatch
         assert gym.whatsapp_enabled is False
 
 
+def test_whatsapp_fetch_numbers(client, app, monkeypatch):
+    """Test auto-fetching registered phone numbers for a WABA."""
+    with app.app_context():
+        gym = Gym(name="Fetch WA Gym", slug="fetch-wa-gym", country="India", currency="INR", phone="+919871112255", whatsapp_business_account_id="waba_auto_1")
+        db.session.add(gym)
+        db.session.flush()
+        owner = User(gym_id=gym.id, email="fetch.wa@example.com", full_name="Fetch Owner", role="gym_owner")
+        owner.set_password("password123")
+        db.session.add(owner)
+        db.session.commit()
+
+    app.config["WHATSAPP_ACCESS_TOKEN"] = "test_wa_token"
+    login = client.post("/api/mobile/v1/auth/login", json={"email": "fetch.wa@example.com", "password": "password123"})
+    headers = {"Authorization": f"Bearer {login.get_json()['data']['access_token']}"}
+
+    class DummyResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "data": [
+                    {
+                        "id": "phone_auto_123",
+                        "display_phone_number": "+91 98765 43210",
+                        "verified_name": "Fetch Gym Official",
+                    }
+                ]
+            }
+
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: DummyResponse())
+
+    response = client.post("/api/mobile/v1/whatsapp/fetch-numbers", json={"waba_id": "waba_auto_1"}, headers=headers)
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["waba_id"] == "waba_auto_1"
+    assert len(data["numbers"]) == 1
+    assert data["numbers"][0]["id"] == "phone_auto_123"
+    assert data["numbers"][0]["display_phone_number"] == "+91 98765 43210"
+
+
 def test_onboarding_progress_checklist(client, app):
     """Test GET /api/mobile/v1/onboarding/progress calculation."""
     with app.app_context():

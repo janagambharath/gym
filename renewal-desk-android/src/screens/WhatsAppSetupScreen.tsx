@@ -116,6 +116,20 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
       return;
     }
 
+    if (data.type === 'embedded_signup_code' && data.code) {
+      setState({ phase: 'connecting', waba_id: '', phone_number_id: '' });
+      const connectRes = await connectWaba({ code: data.code });
+      if (connectRes.ok) {
+        setState({ phase: 'success', phone_number_id: connectRes.data.phone_number_id });
+      } else {
+        setState({
+          phase: 'error',
+          message: connectRes.error.message || 'Failed to connect WhatsApp Business account.',
+        });
+      }
+      return;
+    }
+
     let phone_number_id = data.phone_number_id || data.phoneNumberId;
     let waba_id = data.waba_id || data.wabaId;
     let business_phone_number = data.business_phone_number || data.businessPhoneNumber || data.display_phone_number;
@@ -137,9 +151,9 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
 
     // POST to backend
     const connectRes = await connectWaba({
-      wabaId: waba_id,
-      phoneNumberId: phone_number_id,
-      businessPhoneNumber: business_phone_number,
+      wabaId: waba_id ? String(waba_id) : undefined,
+      phoneNumberId: phone_number_id ? String(phone_number_id) : undefined,
+      businessPhoneNumber: business_phone_number ? String(business_phone_number) : undefined,
     });
 
     if (connectRes.ok) {
