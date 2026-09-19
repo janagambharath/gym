@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+renewal-desk-android
+renewal-desk-member
+tests
+docs
+*.md
+.venv
+venv
+*.apk
+*.aab
+*.keystore
+*.jks
