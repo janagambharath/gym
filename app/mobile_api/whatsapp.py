@@ -654,6 +654,14 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     if (button) button.disabled = true;
     setStatus('Opening Meta Business login...', false);
 
+    // Auto re-enable button if Facebook SDK popup was blocked or closed
+    setTimeout(function() {
+      if (button && button.disabled) {
+        button.disabled = false;
+        setStatus('Ready. Tap Connect WhatsApp to try again, or enter your WhatsApp credentials directly in the app.', false);
+      }
+    }, 6000);
+
     function sessionInfoListener(sessionInfo) {
       if (sessionInfo && sessionInfo.phone_number_id) {
         setStatus('WhatsApp Business connected! Saving...', false);

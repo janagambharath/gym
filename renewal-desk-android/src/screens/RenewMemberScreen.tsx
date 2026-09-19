@@ -77,7 +77,6 @@ export function RenewMemberScreen({
           setFinalPayable(match.price);
         }
       }
-      setLoadingPlans(false);
     });
     return () => {
       cancelled = true;
