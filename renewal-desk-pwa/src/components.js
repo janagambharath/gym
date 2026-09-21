@@ -4,6 +4,7 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 import { icon } from './icons.js';
+import { router } from './router.js';
 import { escapeHtml, getInitials, getAvatarColor, getMemberDisplayStatus, getMemberStatusColor, getPaymentStatusColor, formatCurrency, formatDate, getDaysText } from './utils.js';
 
 // ─── Toast System ────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ export function showConfirm({ title, message, confirmText = 'Confirm', cancelTex
 // ─── Header ──────────────────────────────────────────────────────────
 
 export function renderHeader({ title, subtitle, showBack, onBack, actions = [] }) {
+  const shouldShowBack = showBack !== undefined ? showBack : (router && router.depth > 1);
   const actionsHtml = actions.map((a, i) =>
     `<button class="header-action" id="header-action-${i}" aria-label="${escapeHtml(a.label || '')}">${a.badge ? '<span class="header-badge"></span>' : ''}${icon(a.icon, 22)}</button>`
   ).join('');
@@ -55,8 +57,8 @@ export function renderHeader({ title, subtitle, showBack, onBack, actions = [] }
   return `
     <div class="app-header has-safe-top">
       <div class="header-left">
-        ${showBack ? `<button class="header-back" id="header-back">${icon('back', 22)}</button>` : ''}
-        <div>
+        ${shouldShowBack ? `<button class="header-back" id="header-back" aria-label="Go back" type="button">${icon('back', 22)}</button>` : ''}
+        <div class="header-titles">
           <div class="header-title">${escapeHtml(title)}</div>
           ${subtitle ? `<div class="header-subtitle">${escapeHtml(subtitle)}</div>` : ''}
         </div>
@@ -65,9 +67,18 @@ export function renderHeader({ title, subtitle, showBack, onBack, actions = [] }
     </div>`;
 }
 
-export function bindHeaderEvents(el, { onBack, actions = [] }) {
-  if (onBack) {
-    el.querySelector('#header-back')?.addEventListener('click', onBack);
+export function bindHeaderEvents(el, { onBack, actions = [] } = {}) {
+  const backBtn = el.querySelector('#header-back');
+  if (backBtn) {
+    backBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof onBack === 'function') {
+        onBack();
+      } else if (router && router.depth > 1) {
+        router.pop();
+      }
+    };
   }
   actions.forEach((a, i) => {
     el.querySelector(`#header-action-${i}`)?.addEventListener('click', a.onClick);

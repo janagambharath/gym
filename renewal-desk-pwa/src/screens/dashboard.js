@@ -17,17 +17,28 @@ export default {
 
     // Initial skeleton
     el.innerHTML = `
-      ${renderHeader({ title: gymName, subtitle: `${getGreeting()}, ${userName.split(' ')[0] || 'there'}`, actions: [{ icon: 'notifications', label: 'Notifications' }, { icon: 'settings', label: 'Settings' }] })}
+      <div class="app-header has-safe-top dash-top-bar">
+        <div class="dash-brand-block">
+          <img src="/icons/logo.png" alt="Renewal Desk" class="dash-brand-logo">
+          <span class="dash-brand-name">Renewal Desk</span>
+        </div>
+        ${gymName ? `
+          <div class="dash-gym-pill">
+            ${icon('fitness', 14, 'var(--text-secondary)')}
+            <span class="dash-gym-name">${escapeHtml(gymName)}</span>
+          </div>
+        ` : ''}
+        <div class="header-right">
+          <button class="header-action" id="dash-notifications-btn" aria-label="Notifications">${icon('notifications', 22)}</button>
+          <button class="header-action avatar-action" id="dash-settings-btn" aria-label="Settings">${renderAvatar(userName || gymName, 'sm')}</button>
+        </div>
+      </div>
       <div class="scroll-view" id="dash-scroll">
         ${renderDashboardSkeleton()}
       </div>`;
 
-    bindHeaderEvents(el, {
-      actions: [
-        { onClick: () => navigate.push('notifications') },
-        { onClick: () => navigate.switchTab('more') },
-      ]
-    });
+    el.querySelector('#dash-notifications-btn')?.addEventListener('click', () => navigate.push('notifications'));
+    el.querySelector('#dash-settings-btn')?.addEventListener('click', () => navigate.push('settings'));
 
     // Fetch data
     await loadDashboard(el);
@@ -37,6 +48,8 @@ export default {
 async function loadDashboard(el) {
   const scroll = el.querySelector('#dash-scroll');
   if (!scroll) return;
+  const session = getCachedSession();
+  const userName = session?.userName || '';
 
   const [dashRes, upcomingRes, paymentsRes] = await Promise.all([
     apiRequest('/api/mobile/v1/dashboard'),
@@ -56,8 +69,12 @@ async function loadDashboard(el) {
   const payments = paymentsRes.ok ? (paymentsRes.data.payments || []) : [];
 
   scroll.innerHTML = `<div class="scroll-content" style="padding:0">
+    <div class="dash-greeting-card">
+      <div style="font-size:var(--fs-2xl);font-weight:var(--fw-bold);color:var(--text)">${getGreeting()}, ${escapeHtml(userName.split(' ')[0] || 'there')}</div>
+      <div style="font-size:var(--fs-sm);color:var(--text-secondary);margin-top:2px">Here's the live view of what needs your attention today.</div>
+    </div>
     <!-- Metrics Grid -->
-    <div style="padding:var(--sp-lg)">
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
       <div class="metric-grid">
         ${renderMetricCard({ label: 'Active', value: formatInteger(data.total_active), iconName: 'members', color: 'var(--status-active)', bgColor: 'var(--status-active-surface)', onClick: 'members-active' })}
         ${renderMetricCard({ label: 'Expiring Soon', value: formatInteger(data.expiring_soon), iconName: 'warning', color: 'var(--status-expiring)', bgColor: 'var(--status-expiring-surface)', onClick: 'renewals' })}

@@ -6,12 +6,7 @@ providers = ["python"]
 [phases.setup]
 nixPkgs = ["...", "nodejs_20"]
 
-[phases.pwa]
-dependsOn = ["setup"]
+[phases.build]
 cmds = [
     "cd renewal-desk-pwa && npm ci && npm run build"
 ]
-
-[phases.install]
-dependsOn = ["pwa"]
-cmds = ["..."]

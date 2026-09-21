@@ -30,33 +30,136 @@
 }
 
 .header-back {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--r-full);
   color: var(--text);
-  transition: background 0.15s;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
   flex-shrink: 0;
+  margin-left: -6px;
+  padding: 0;
+}
+
+.header-back:hover {
+  background: var(--gray-100);
+  color: var(--brand);
 }
 
 .header-back:active {
-  background: var(--gray-100);
+  background: var(--border);
+  transform: scale(0.92);
+}
+
+.header-back svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  display: block;
+}
+
+.header-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .header-title {
-  font-size: var(--fs-2xl);
+  font-size: var(--fs-xl);
   font-weight: var(--fw-bold);
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .header-subtitle {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+/* ═══ DASHBOARD TOP BAR ════════════════════════════════════════════════ */
+.dash-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-lg);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  height: calc(var(--header-height) + var(--safe-top));
+  padding-top: var(--safe-top);
+  flex-shrink: 0;
+}
+
+.dash-brand-block {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-shrink: 0;
+}
+
+.dash-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  object-fit: contain;
+}
+
+.dash-brand-name {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
+.dash-gym-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  margin-left: var(--sp-sm);
+  max-width: 180px;
+  flex-shrink: 1;
+}
+
+.dash-gym-name {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-greeting-card {
+  padding: var(--sp-xl) var(--sp-lg) var(--sp-md);
+}
+
+.avatar-action {
+  padding: 0 !important;
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: var(--r-full);
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .header-right {

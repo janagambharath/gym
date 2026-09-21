@@ -13,6 +13,7 @@ venv/
 env/
 node_modules/
 dist/
+!renewal-desk-pwa/dist/
 build/
 *.log
 

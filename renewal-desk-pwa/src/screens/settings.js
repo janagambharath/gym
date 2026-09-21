@@ -1,15 +1,17 @@
 /* Settings / More Screen */
 import { apiRequest, getCachedSession, logout as apiLogout } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, renderAvatar, renderMenuItem, renderBadge, renderInfoRow, showConfirm, showToast } from '../components.js';
+import { router } from '../router.js';
+import { renderHeader, bindHeaderEvents, renderAvatar, renderMenuItem, renderBadge, renderInfoRow, showConfirm, showToast } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml } from '../utils.js';
 
 export default {
   async mount(el) {
     const session = getCachedSession();
+    const canGoBack = router.depth > 1;
     el.innerHTML = `
-      ${renderHeader({ title: 'Settings' })}
+      ${renderHeader({ title: 'Settings', showBack: canGoBack })}
       <div class="scroll-view"><div class="scroll-content">
         <!-- Profile Card -->
         <div class="card" style="margin:var(--sp-lg)">
@@ -55,6 +57,10 @@ export default {
           <button class="btn btn-danger btn-full btn-sm" id="btn-delete" style="margin-top:var(--sp-md)">Delete Account & Data</button>
         </div>
       </div></div>`;
+
+    bindHeaderEvents(el, {
+      onBack: () => router.depth > 1 ? navigate.pop() : navigate.switchTab('dashboard'),
+    });
 
     // Menu item clicks
     el.querySelectorAll('[data-action]').forEach(item => {
