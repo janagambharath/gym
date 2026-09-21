@@ -142,6 +142,5 @@
 
   /* ── Layout ──────────────────────────────────────────────────────── */
   --header-height: 56px;
-  --tab-bar-height: 56px;
-  --max-width: 480px;
+  --tab-bar-height: 60px;
 }

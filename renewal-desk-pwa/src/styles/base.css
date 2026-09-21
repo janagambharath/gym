@@ -38,22 +38,51 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  max-width: var(--max-width);
-  margin: 0 auto;
   background: var(--bg);
   position: relative;
   overflow: hidden;
 }
 
-/* Desktop centering with visual border */
-@media (min-width: 481px) {
+/* ── Desktop Layout ────────────────────────────────────────────────── */
+/* On desktop (≥768px), center the app with a max-width and subtle shadow.
+   On wider screens (≥1024px), the sidebar navigation replaces the bottom
+   tab bar — handled in components.css via the .desktop-sidebar class. */
+
+@media (min-width: 768px) {
   body {
-    background: var(--gray-200);
+    background: var(--gray-100);
   }
   #app {
-    box-shadow: 0 0 40px rgba(0,0,0,0.08);
+    max-width: 480px;
+    margin: 0 auto;
+    box-shadow: 0 0 60px rgba(0,0,0,0.08);
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
+  }
+}
+
+/* Wide desktop: side-by-side layout */
+@media (min-width: 1024px) {
+  #app {
+    max-width: 1200px;
+    flex-direction: row;
+    border: none;
+    box-shadow: 0 0 80px rgba(0,0,0,0.06);
+    border-radius: var(--r-xl);
+    margin: 20px auto;
+    height: calc(100% - 40px);
+    overflow: hidden;
+  }
+
+  /* Main content area takes remaining space */
+  #screen-container {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Hide bottom tab bar on desktop — sidebar takes over */
+  #tab-bar-container .tab-bar {
+    display: none;
   }
 }
 
@@ -61,6 +90,16 @@ body {
 @media all and (display-mode: standalone) {
   body {
     overscroll-behavior-y: none;
+  }
+  /* In standalone mode, always use mobile layout */
+  #app {
+    max-width: none !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    height: 100% !important;
+    flex-direction: column !important;
   }
 }
 
@@ -125,7 +164,13 @@ button {
 }
 
 .scroll-content {
-  padding-bottom: calc(var(--tab-bar-height) + var(--safe-bottom) + var(--sp-lg));
+  padding-bottom: calc(var(--tab-bar-height) + var(--safe-bottom) + var(--sp-xxl));
+}
+
+@media (min-width: 1024px) {
+  .scroll-content {
+    padding-bottom: var(--sp-xxl);
+  }
 }
 
 /* ── Screen container ──────────────────────────────────────────────── */
