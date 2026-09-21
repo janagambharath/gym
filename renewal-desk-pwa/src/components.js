@@ -75,8 +75,10 @@ export function bindHeaderEvents(el, { onBack, actions = [] } = {}) {
       e.stopPropagation();
       if (typeof onBack === 'function') {
         onBack();
-      } else if (router) {
+      } else if (router && router.depth > 1) {
         router.back();
+      } else {
+        import('./app.js').then(({ navigate }) => navigate.switchTab('dashboard'));
       }
     };
   }
@@ -90,6 +92,7 @@ export function bindHeaderEvents(el, { onBack, actions = [] } = {}) {
 const tabs = [
   { id: 'dashboard', label: 'Home', icon: 'dashboard' },
   { id: 'members', label: 'Members', icon: 'members' },
+  { id: 'access', label: 'Access', icon: 'access' },
   { id: 'renewals', label: 'Renewals', icon: 'renewals' },
   { id: 'payments', label: 'Payments', icon: 'payments' },
   { id: 'more', label: 'More', icon: 'more' },

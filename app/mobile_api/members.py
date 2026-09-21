@@ -326,7 +326,7 @@ def register_members_routes(bp):
     @roles_required("gym_owner", "staff")
     def create_member():
         data = request.get_json(silent=True) or {}
-        full_name = (data.get("full_name") or "").strip()
+        full_name = (data.get("full_name") or data.get("name") or "").strip()
         phone = normalize_phone_e164((data.get("phone") or "").strip())
         if not full_name or not phone:
             return error_response("VALIDATION_ERROR", "full_name and phone are required.", 400)
@@ -392,8 +392,8 @@ def register_members_routes(bp):
             return error_response("NOT_FOUND", "Member not found.", 404)
 
         data = request.get_json(silent=True) or {}
-        if "full_name" in data:
-            name = (data["full_name"] or "").strip()
+        if "full_name" in data or "name" in data:
+            name = (data.get("full_name") or data.get("name") or "").strip()
             if not name:
                 return error_response("VALIDATION_ERROR", "full_name cannot be empty.", 400)
             member.full_name = name

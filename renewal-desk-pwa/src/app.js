@@ -19,6 +19,7 @@ let activeTab = 'dashboard';
 const TAB_CONFIG = {
   dashboard: { screen: 'dashboard', label: 'Home' },
   members: { screen: 'members', label: 'Members' },
+  access: { screen: 'access', label: 'Access' },
   renewals: { screen: 'renewals', label: 'Renewals' },
   payments: { screen: 'payments', label: 'Payments' },
   more: { screen: 'settings', label: 'More' },
@@ -35,6 +36,7 @@ function registerScreens() {
   // Tabs
   router.register('dashboard', () => import('./screens/dashboard.js'), { auth: true });
   router.register('members', () => import('./screens/members.js'), { auth: true });
+  router.register('access', () => import('./screens/access.js'), { auth: true });
   router.register('renewals', () => import('./screens/renewals.js'), { auth: true });
   router.register('payments', () => import('./screens/payments.js'), { auth: true });
   router.register('settings', () => import('./screens/settings.js'), { auth: true });
@@ -99,6 +101,7 @@ function renderDesktopSidebar(activeTab) {
   const items = [
     { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
     { id: 'members', label: 'Members', icon: 'members' },
+    { id: 'access', label: 'Access', icon: 'access' },
     { id: 'renewals', label: 'Renewals', icon: 'renewals' },
     { id: 'payments', label: 'Payments', icon: 'payments' },
     { id: 'more', label: 'Settings', icon: 'settings' },
