@@ -71,6 +71,7 @@ const icons = {
   filter: '<path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/>',
   download: '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>',
   qrcode: '<path d="M3 11h8V3H3v8zm2-6h4v4H5V5zm8-2v8h8V3h-8zm6 6h-4V5h4v4zM3 21h8v-8H3v8zm2-6h4v4H5v-4zm13-2h-2v4h-2v2h2v2h2v-4h2v-2h-2v-2zm0 6h-2v2h2v-2zm4-4h-2v2h2v-2zm0 4h-2v2h2v-2z"/>',
+  robot: '<path d="M12 2a2 2 0 012 2c0 .74-.4 1.38-1 1.72V7h4a3 3 0 013 3v8a3 3 0 01-3 3H6a3 3 0 01-3-3v-8a3 3 0 013-3h4V5.72c-.6-.34-1-.98-1-1.72a2 2 0 012-2zm-3 8a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm-6.5 6a.5.5 0 000 1h7a.5.5 0 000-1h-7z"/>',
 };
 
 /**
