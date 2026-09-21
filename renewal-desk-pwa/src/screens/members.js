@@ -10,7 +10,7 @@ export default {
     let members = [], total = 0, page = 1, loading = false, filter = 'all', query = '';
 
     el.innerHTML = `
-      ${renderHeader({ title: 'Members', actions: [{ icon: 'add', label: 'Add' }] })}
+      ${renderHeader({ title: 'Members', showBack: true, actions: [{ icon: 'add', label: 'Add' }] })}
       <div style="padding:var(--sp-sm) var(--sp-lg)">
         <div class="search-bar">
           <span class="search-icon">${icon('search', 18)}</span>

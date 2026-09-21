@@ -992,7 +992,7 @@ select.form-input {
 /* ═══ FAB (Floating Action Button) ═════════════════════════════════════ */
 .fab {
   position: absolute;
-  bottom: calc(var(--tab-bar-height) + var(--safe-bottom) + var(--sp-lg));
+  bottom: var(--sp-lg);
   right: var(--sp-lg);
   width: 56px;
   height: 56px;

@@ -9,9 +9,8 @@ import { escapeHtml } from '../utils.js';
 export default {
   async mount(el) {
     const session = getCachedSession();
-    const canGoBack = router.depth > 1;
     el.innerHTML = `
-      ${renderHeader({ title: 'Settings', showBack: canGoBack })}
+      ${renderHeader({ title: 'Settings', showBack: true })}
       <div class="scroll-view"><div class="scroll-content">
         <!-- Profile Card -->
         <div class="card" style="margin:var(--sp-lg)">

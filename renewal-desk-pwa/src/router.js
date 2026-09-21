@@ -32,6 +32,13 @@ class Router {
   /** @param {HTMLElement} container */
   init(container) {
     this.container = container;
+    if (typeof window !== 'undefined') {
+      window.addEventListener('popstate', () => {
+        if (this.stack.length > 1 || (this.currentTab && this.currentTab !== 'dashboard')) {
+          this.back();
+        }
+      });
+    }
   }
 
   /**

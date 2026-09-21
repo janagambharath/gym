@@ -10,7 +10,7 @@ export default {
     let payments = [], page = 1, total = 0, filter = 'all', loading = false;
 
     el.innerHTML = `
-      ${renderHeader({ title: 'Payments', actions: [{ icon: 'add', label: 'Record' }] })}
+      ${renderHeader({ title: 'Payments', showBack: true, actions: [{ icon: 'add', label: 'Record' }] })}
       <div id="pay-summary"></div>
       <div class="filter-chips" id="pay-filters">
         <button class="filter-chip active" data-filter="all">All</button>

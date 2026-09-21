@@ -8,7 +8,7 @@ import { escapeHtml, formatInteger } from '../utils.js';
 export default {
   async mount(el) {
     el.innerHTML = `
-      ${renderHeader({ title: 'Renewals', actions: [{ icon: 'megaphone', label: 'Campaigns' }] })}
+      ${renderHeader({ title: 'Renewals', showBack: true, actions: [{ icon: 'megaphone', label: 'Campaigns' }] })}
       <div class="scroll-view" id="renewals-list">${renderListSkeleton()}</div>`;
 
     bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('campaigns') }] });
