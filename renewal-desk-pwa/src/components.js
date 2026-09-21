@@ -92,7 +92,7 @@ const tabs = [
   { id: 'members', label: 'Members', icon: 'members' },
   { id: 'renewals', label: 'Renewals', icon: 'renewals' },
   { id: 'payments', label: 'Payments', icon: 'payments' },
-  { id: 'more', label: 'More', icon: 'more' },
+  { id: 'more', label: 'Options', icon: 'more' },
 ];
 
 export function renderTabBar(activeTab) {

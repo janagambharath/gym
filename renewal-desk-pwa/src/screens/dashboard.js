@@ -38,7 +38,7 @@ export default {
       </div>`;
 
     el.querySelector('#dash-notifications-btn')?.addEventListener('click', () => navigate.push('notifications'));
-    el.querySelector('#dash-settings-btn')?.addEventListener('click', () => navigate.push('settings'));
+    el.querySelector('#dash-settings-btn')?.addEventListener('click', () => navigate.switchTab('more'));
 
     // Fetch data
     await loadDashboard(el);

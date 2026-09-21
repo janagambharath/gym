@@ -21,7 +21,7 @@ const TAB_CONFIG = {
   members: { screen: 'members', label: 'Members' },
   renewals: { screen: 'renewals', label: 'Renewals' },
   payments: { screen: 'payments', label: 'Payments' },
-  more: { screen: 'settings', label: 'More' },
+  more: { screen: 'settings', label: 'Options' },
 };
 
 // ─── Screen Registration ─────────────────────────────────────────────
@@ -84,48 +84,12 @@ function registerScreens() {
 
 function renderAppShell() {
   appEl.innerHTML = `
-    <nav id="desktop-sidebar" class="desktop-sidebar"></nav>
     <div id="screen-container" style="flex:1;position:relative;overflow:hidden"></div>
     <div id="tab-bar-container"></div>
   `;
   screenContainer = document.getElementById('screen-container');
   tabBarEl = document.getElementById('tab-bar-container');
   router.init(screenContainer);
-}
-
-function renderDesktopSidebar(activeTab) {
-  const sidebar = document.getElementById('desktop-sidebar');
-  if (!sidebar) return;
-  const items = [
-    { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-    { id: 'members', label: 'Members', icon: 'members' },
-    { id: 'renewals', label: 'Renewals', icon: 'renewals' },
-    { id: 'payments', label: 'Payments', icon: 'payments' },
-    { id: 'more', label: 'Settings', icon: 'settings' },
-  ];
-  sidebar.innerHTML = `
-    <div class="sidebar-brand">
-      <img src="/icons/logo.png" alt="Renewal Desk" class="sidebar-logo">
-      <span class="sidebar-brand-text">Renewal Desk</span>
-    </div>
-    <div class="sidebar-nav">
-      ${items.map(t => `
-        <button class="sidebar-item ${t.id === activeTab ? 'active' : ''}" data-tab="${t.id}">
-          ${icon(t.icon, 20)}
-          <span>${t.label}</span>
-        </button>
-      `).join('')}
-    </div>
-    <div class="sidebar-footer">
-      <div style="font-size:var(--fs-xs);color:var(--muted)">© Renewal Desk</div>
-    </div>
-  `;
-  sidebar.querySelectorAll('.sidebar-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tabId = btn.dataset.tab;
-      if (tabId && tabId !== activeTab) switchTab(tabId);
-    });
-  });
 }
 
 function showTabBar(tab) {
@@ -142,15 +106,10 @@ function showTabBar(tab) {
       }
     });
   });
-
-  // Also update desktop sidebar
-  renderDesktopSidebar(tab);
 }
 
 function hideTabBar() {
   if (tabBarEl) tabBarEl.style.display = 'none';
-  const sidebar = document.getElementById('desktop-sidebar');
-  if (sidebar) sidebar.innerHTML = '';
 }
 
 async function switchTab(tabId, recordHistory = true) {

@@ -583,7 +583,29 @@ def test_mobile_access_endpoints_require_auth(client):
     res_summary = client.get("/api/mobile/v1/access/summary")
     res_events = client.get("/api/mobile/v1/access/events")
     res_inside = client.get("/api/mobile/v1/access/inside")
+    res_status = client.get("/api/mobile/v1/access/status")
+    res_log = client.get("/api/mobile/v1/access/log")
 
     assert res_summary.status_code == 401
     assert res_events.status_code == 401
     assert res_inside.status_code == 401
+    assert res_status.status_code == 401
+    assert res_log.status_code == 401
+
+
+# ─── 16. Mobile Access Alias Endpoints (/access/status, /access/log) ───
+
+def test_mobile_access_alias_endpoints(client, seed_gym):
+    owner = seed_gym["owner"]
+    gym = seed_gym["gym"]
+
+    res_status = client.get("/api/mobile/v1/access/status", headers=_auth_headers(owner, gym))
+    assert res_status.status_code == 200
+    assert "inside_now" in res_status.get_json()["data"]
+
+    res_log = client.get("/api/mobile/v1/access/log?page_size=10", headers=_auth_headers(owner, gym))
+    assert res_log.status_code == 200
+    data = res_log.get_json()["data"]
+    assert "events" in data
+    assert "log" in data
+
