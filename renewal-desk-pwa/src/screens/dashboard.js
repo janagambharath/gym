@@ -68,7 +68,7 @@ async function loadDashboard(el) {
   const upcoming = upcomingRes.ok ? upcomingRes.data.members || [] : [];
   const payments = paymentsRes.ok ? (paymentsRes.data.payments || []) : [];
 
-  scroll.innerHTML = `<div class="scroll-content" style="padding:0">
+  scroll.innerHTML = `<div class="scroll-content">
     <div class="dash-greeting-card">
       <div style="font-size:var(--fs-2xl);font-weight:var(--fw-bold);color:var(--text)">${getGreeting()}, ${escapeHtml(userName.split(' ')[0] || 'there')}</div>
       <div style="font-size:var(--fs-sm);color:var(--text-secondary);margin-top:2px">Here's the live view of what needs your attention today.</div>

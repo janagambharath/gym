@@ -197,6 +197,21 @@
 }
 
 /* ═══ TAB BAR ══════════════════════════════════════════════════════════ */
+#tab-bar-container {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 50;
+  background: var(--card);
+}
+
+#tab-bar-container:empty {
+  display: none !important;
+  height: 0 !important;
+}
+
 .tab-bar {
   display: flex;
   align-items: stretch;
@@ -205,8 +220,7 @@
   background: var(--card);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-  position: relative;
-  z-index: 10;
+  width: 100%;
 }
 
 .tab-item {
