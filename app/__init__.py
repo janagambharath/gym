@@ -67,15 +67,45 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_cli(app)
     _start_scheduler(app)
 
-    @app.route("/")
-    def index():
-        if current_user.is_authenticated:
-            if current_user.role == "super_admin":
-                return redirect(url_for("admin.dashboard"))
-            return redirect(url_for("gym.dashboard"))
-        return redirect(url_for("auth.login"))
+    # ── PWA serving ───────────────────────────────────────────────────
+    # The Vite-built PWA lives in renewal-desk-pwa/dist.  We serve its
+    # static assets and use a catch-all for SPA client-side routing.
+    _pwa_dist = Path(app.root_path).parent / "renewal-desk-pwa" / "dist"
+    _pwa_available = _pwa_dist.is_dir() and (_pwa_dist / "index.html").exists()
+
+    if _pwa_available:
+        app.logger.info("PWA dist found at %s — serving as web frontend", _pwa_dist)
+
+        @app.route("/")
+        def index():
+            return send_from_directory(str(_pwa_dist), "index.html")
+
+        @app.route("/<path:filename>")
+        def pwa_static(filename):
+            """Serve PWA static assets (JS/CSS/icons/manifest).
+
+            Flask blueprints are registered first so their routes always
+            take priority.  This catch-all only fires for paths that
+            don't match any blueprint route.
+            """
+            file_path = _pwa_dist / filename
+            if file_path.is_file():
+                return send_from_directory(str(_pwa_dist), filename)
+            # SPA fallback — let the client-side router handle it
+            return send_from_directory(str(_pwa_dist), "index.html")
+    else:
+        app.logger.warning("PWA dist not found at %s — falling back to legacy redirect", _pwa_dist)
+
+        @app.route("/")
+        def index():
+            if current_user.is_authenticated:
+                if current_user.role == "super_admin":
+                    return redirect(url_for("admin.dashboard"))
+                return redirect(url_for("gym.dashboard"))
+            return redirect(url_for("auth.login"))
 
     return app
+
 
 
 def _normalize_database_url(app: Flask) -> None:

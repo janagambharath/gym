@@ -1,0 +1,17 @@
+# Nixpacks configuration for Railway
+# Adds Node.js alongside Python so we can build the PWA during deploy
+
+providers = ["python"]
+
+[phases.setup]
+nixPkgs = ["...", "nodejs_20"]
+
+[phases.pwa]
+dependsOn = ["setup"]
+cmds = [
+    "cd renewal-desk-pwa && npm ci && npm run build"
+]
+
+[phases.install]
+dependsOn = ["pwa"]
+cmds = ["..."]
