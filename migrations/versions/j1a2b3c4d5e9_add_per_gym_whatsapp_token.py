@@ -1,7 +1,7 @@
 """Add per-gym WhatsApp token, business ID, and template provisioning columns.
 
 Revision ID: j1a2b3c4d5e9
-Revises: i1a2b3c4d5e8
+Revises: 4d750d2fb69b
 Create Date: 2026-09-19 15:30:00.000000
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "j1a2b3c4d5e9"
-down_revision = "i1a2b3c4d5e8"
+down_revision = "4d750d2fb69b"
 branch_labels = None
 depends_on = None
 
