@@ -10,6 +10,7 @@ from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, MembershipPlan, QRSettings
+from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.mobile_billing_service import entitlement_for
 
@@ -92,12 +93,13 @@ def register_settings_routes(bp):
             actor_id=g.current_user.id,
             metadata={"updated_fields": list(updates.keys())},
         )
+        invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Settings updated."}})
 
     @bp.route("/settings/payment", methods=["GET", "PUT", "PATCH"])
     @token_required
-    @roles_required("gym_owner")
+    @roles_required("gym_owner", "staff")
     def payment_settings():
         qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
         if request.method == "GET":
@@ -135,6 +137,8 @@ def register_settings_routes(bp):
 
         if "is_active" in data:
             qr.is_active = bool(data["is_active"])
+        elif qr.upi_id:
+            qr.is_active = True
 
         audit(
             action="update_qr_settings",
@@ -144,6 +148,7 @@ def register_settings_routes(bp):
             actor_id=g.current_user.id,
             metadata={"upi_id": qr.upi_id, "is_active": qr.is_active},
         )
+        invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({
             "success": True,
@@ -204,6 +209,7 @@ def register_settings_routes(bp):
             actor_id=g.current_user.id,
             metadata={"name": name, "price": str(price), "duration_days": duration_days},
         )
+        invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": _serialize_plan(plan)}), 201
 
@@ -256,6 +262,7 @@ def register_settings_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
         )
+        invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": _serialize_plan(plan)})
 
@@ -276,6 +283,7 @@ def register_settings_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
         )
+        invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Plan deleted."}})
 
