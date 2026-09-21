@@ -1291,8 +1291,14 @@ select.form-input {
   display: none;
 }
 
+.desktop-sidebar:empty {
+  display: none !important;
+  width: 0 !important;
+  border-right: none !important;
+}
+
 @media (min-width: 1024px) {
-  .desktop-sidebar {
+  .desktop-sidebar:not(:empty) {
     display: flex;
     flex-direction: column;
     width: 240px;
@@ -1365,6 +1371,23 @@ select.form-input {
     border-top: 1px solid var(--border-light);
     text-align: center;
   }
+}
+
+/* ═══ AUTH CONTAINER ═══════════════════════════════════════════════════ */
+.auth-scroll {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.auth-container {
+  max-width: 440px;
+  width: 100%;
+  margin: auto;
+  padding: var(--sp-xl) var(--sp-lg);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 /* ═══ DESKTOP ENHANCEMENTS ═════════════════════════════════════════════ */

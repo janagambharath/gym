@@ -17,12 +17,16 @@ class Router {
     this.currentTab = null;
     /** @type {Map<string, { screenId: string, params: Record<string,string>, element: HTMLElement }[]>} */
     this.tabStacks = new Map();
+    /** @type {{ type: 'push'|'tab', tabId?: string, screenId?: string }[]} */
+    this.history = [];
     /** @type {(() => void)|null} */
     this.onAuthRequired = null;
     /** @type {Set<string>} */
     this.authRequired = new Set();
     /** @type {(() => boolean)|null} */
     this.isAuthenticated = null;
+    /** @type {((tabId: string) => void)|null} */
+    this.onSwitchTab = null;
   }
 
   /** @param {HTMLElement} container */
@@ -109,6 +113,29 @@ class Router {
     if (this.currentTab) {
       this.tabStacks.set(this.currentTab, [...this.stack]);
     }
+  }
+
+  /** Go back one screen or back to previous tab/dashboard */
+  async back() {
+    if (this.stack.length > 1) {
+      await this.pop();
+    } else if (this.history.length > 0) {
+      const prev = this.history.pop();
+      if (prev?.tabId && prev.tabId !== this.currentTab && this.onSwitchTab) {
+        this.onSwitchTab(prev.tabId);
+      } else if (this.onSwitchTab) {
+        this.onSwitchTab('dashboard');
+      }
+    } else if (this.currentTab && this.currentTab !== 'dashboard' && this.onSwitchTab) {
+      this.onSwitchTab('dashboard');
+    } else if (window.history.length > 1) {
+      window.history.back();
+    }
+  }
+
+  /** Check if a back action is available */
+  canGoBack() {
+    return this.stack.length > 1 || this.history.length > 0 || (this.currentTab != null && this.currentTab !== 'dashboard');
   }
 
   /**

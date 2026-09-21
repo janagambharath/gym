@@ -11,20 +11,20 @@ import { icon } from '../icons.js';
 export default {
   mount(el) {
     el.innerHTML = `
-      <div class="scroll-view">
-        <div style="padding:var(--sp-4xl) var(--sp-xxl);padding-top:calc(var(--safe-top) + var(--sp-4xl));min-height:100%;display:flex;flex-direction:column;justify-content:center">
+      <div class="scroll-view auth-scroll">
+        <div class="auth-container">
           
           <!-- Branding -->
-          <div style="text-align:center;margin-bottom:var(--sp-4xl)">
-            <img src="/icons/logo.png" alt="Renewal Desk" style="width:80px;height:80px;border-radius:var(--r-xxl);margin:0 auto var(--sp-lg);display:block;object-fit:contain">
-            <h1 style="font-size:var(--fs-5xl);margin-bottom:var(--sp-xs)">Renewal Desk</h1>
-            <p style="color:var(--muted);font-size:var(--fs-base);margin:0">Your gym management command center</p>
+          <div style="text-align:center;margin-bottom:var(--sp-2xl)">
+            <img src="/icons/logo.png" alt="Renewal Desk" style="width:72px;height:72px;border-radius:var(--r-xxl);margin:0 auto var(--sp-md);display:block;object-fit:contain">
+            <h1 style="font-size:var(--fs-4xl);margin-bottom:var(--sp-xs)">Renewal Desk</h1>
+            <p style="color:var(--muted);font-size:var(--fs-sm);margin:0">Your gym management command center</p>
           </div>
 
           <!-- Form Card -->
-          <div class="card" style="padding:var(--sp-xxl)">
-            <h2 style="font-size:var(--fs-3xl);margin-bottom:var(--sp-xs)">Sign in</h2>
-            <p style="color:var(--text-secondary);margin-bottom:var(--sp-xl)">Enter your credentials to continue</p>
+          <div class="card" style="padding:var(--sp-xl)">
+            <h2 style="font-size:var(--fs-2xl);margin-bottom:var(--sp-xs)">Sign in</h2>
+            <p style="color:var(--text-secondary);font-size:var(--fs-sm);margin-bottom:var(--sp-lg)">Enter your credentials to continue</p>
 
             <div id="login-error" class="error-banner hidden" style="margin-bottom:var(--sp-lg)">
               ${icon('alert', 16)} <span id="login-error-text"></span>
@@ -42,11 +42,11 @@ export default {
           </div>
 
           <!-- Footer Links -->
-          <div style="text-align:center;margin-top:var(--sp-xxl);display:flex;flex-direction:column;gap:var(--sp-md)">
+          <div style="text-align:center;margin-top:var(--sp-xl);display:flex;flex-direction:column;gap:var(--sp-sm)">
             <button class="btn btn-outline btn-full" id="goto-signup">
               Create a new account
             </button>
-            <button style="color:var(--brand);font-size:var(--fs-sm);font-weight:var(--fw-semibold);padding:var(--sp-md)" id="goto-member-login">
+            <button style="color:var(--brand);font-size:var(--fs-sm);font-weight:var(--fw-semibold);padding:var(--sp-sm)" id="goto-member-login">
               I'm a gym member →
             </button>
           </div>

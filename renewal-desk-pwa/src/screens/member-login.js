@@ -9,27 +9,29 @@ export default {
     const render = () => {
       el.innerHTML = `
         ${renderHeader({ title: 'Member Login', showBack: true })}
-        <div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
-          <div style="text-align:center;margin-bottom:var(--sp-xxl)">
-            <div style="width:64px;height:64px;border-radius:var(--r-full);background:var(--whatsapp);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-lg)">${icon('whatsapp', 32, 'white')}</div>
-            <h2>${step === 'phone' ? 'Enter your phone number' : 'Enter OTP'}</h2>
-            <p style="color:var(--text-secondary)">${step === 'phone' ? 'We\'ll send a verification code via WhatsApp' : `Code sent to ${phone}`}</p>
+        <div class="scroll-view auth-scroll">
+          <div class="auth-container" style="padding-top:var(--sp-md)">
+            <div style="text-align:center;margin-bottom:var(--sp-xl)">
+              <div style="width:56px;height:56px;border-radius:var(--r-full);background:var(--whatsapp);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-md)">${icon('whatsapp', 28, 'white')}</div>
+              <h2 style="font-size:var(--fs-2xl);margin-bottom:var(--sp-xs)">${step === 'phone' ? 'Enter phone number' : 'Enter OTP'}</h2>
+              <p style="color:var(--text-secondary);font-size:var(--fs-sm)">${step === 'phone' ? 'We\'ll send a verification code via WhatsApp' : `Code sent to ${phone}`}</p>
+            </div>
+            <div id="otp-error" class="error-banner hidden" style="margin-bottom:var(--sp-lg)">${icon('alert', 16)} <span id="otp-error-text"></span></div>
+            ${step === 'phone' ? `
+              <form id="phone-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
+                ${renderFormField({ id: 'ml-phone', label: 'Phone Number', type: 'tel', placeholder: '9876543210', required: true })}
+                ${renderFormField({ id: 'ml-slug', label: 'Gym Code', placeholder: 'your-gym-slug', required: true, hint: 'Ask your gym owner for the code' })}
+                <button type="submit" class="btn btn-whatsapp btn-lg btn-full">${icon('send', 18, 'white')} Send OTP</button>
+              </form>
+            ` : `
+              <form id="otp-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
+                ${renderFormField({ id: 'ml-otp', label: 'Verification Code', placeholder: '123456', required: true })}
+                <button type="submit" class="btn btn-primary btn-lg btn-full">Verify & Login</button>
+                <button type="button" class="btn btn-secondary btn-full" id="otp-back">Change Number</button>
+              </form>
+            `}
           </div>
-          <div id="otp-error" class="error-banner hidden" style="margin-bottom:var(--sp-lg)">${icon('alert', 16)} <span id="otp-error-text"></span></div>
-          ${step === 'phone' ? `
-            <form id="phone-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
-              ${renderFormField({ id: 'ml-phone', label: 'Phone Number', type: 'tel', placeholder: '9876543210', required: true })}
-              ${renderFormField({ id: 'ml-slug', label: 'Gym Code', placeholder: 'your-gym-slug', required: true, hint: 'Ask your gym owner for the code' })}
-              <button type="submit" class="btn btn-whatsapp btn-lg btn-full">${icon('send', 18, 'white')} Send OTP</button>
-            </form>
-          ` : `
-            <form id="otp-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
-              ${renderFormField({ id: 'ml-otp', label: 'Verification Code', placeholder: '123456', required: true })}
-              <button type="submit" class="btn btn-primary btn-lg btn-full">Verify & Login</button>
-              <button type="button" class="btn btn-secondary btn-full" id="otp-back">Change Number</button>
-            </form>
-          `}
-        </div></div>`;
+        </div>`;
       bindHeaderEvents(el, { onBack: () => navigate.pop() });
       if (step === 'phone') {
         el.querySelector('#phone-form').addEventListener('submit', async (e) => {

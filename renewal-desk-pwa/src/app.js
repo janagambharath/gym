@@ -153,9 +153,12 @@ function hideTabBar() {
   if (sidebar) sidebar.innerHTML = '';
 }
 
-async function switchTab(tabId) {
+async function switchTab(tabId, recordHistory = true) {
   const config = TAB_CONFIG[tabId];
   if (!config) return;
+  if (recordHistory && activeTab && activeTab !== tabId) {
+    router.history.push({ type: 'tab', tabId: activeTab });
+  }
   activeTab = tabId;
   showTabBar(tabId);
   await router.switchTab(tabId, config.screen);
@@ -165,7 +168,8 @@ async function switchTab(tabId) {
 
 export const navigate = {
   push: (screenId, params) => router.push(screenId, params),
-  pop: () => router.pop(),
+  pop: () => router.back(),
+  back: () => router.back(),
   switchTab,
   replace: (screenId, params) => router.push(screenId, params, { replace: true }),
   toLogin: () => showAuthFlow(),
@@ -233,6 +237,7 @@ export async function boot() {
   // Auth guard
   router.isAuthenticated = () => !!getCachedSession();
   router.onAuthRequired = () => showAuthFlow();
+  router.onSwitchTab = (tabId) => switchTab(tabId, false);
 
   // Restore session
   const session = restoreSession();

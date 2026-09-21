@@ -8,8 +8,8 @@ export default {
   mount(el) {
     el.innerHTML = `
       ${renderHeader({ title: 'Create Account', showBack: true })}
-      <div class="scroll-view">
-        <div class="scroll-content" style="padding:var(--sp-xxl)">
+      <div class="scroll-view auth-scroll">
+        <div class="auth-container" style="padding-top:var(--sp-md)">
           <div id="signup-error" class="error-banner hidden" style="margin-bottom:var(--sp-lg)">
             ${icon('alert', 16)} <span id="signup-error-text"></span>
           </div>

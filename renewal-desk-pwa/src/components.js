@@ -49,7 +49,7 @@ export function showConfirm({ title, message, confirmText = 'Confirm', cancelTex
 // ─── Header ──────────────────────────────────────────────────────────
 
 export function renderHeader({ title, subtitle, showBack, onBack, actions = [] }) {
-  const shouldShowBack = showBack !== undefined ? showBack : (router && router.depth > 1);
+  const shouldShowBack = showBack !== undefined ? showBack : (router ? router.canGoBack() : false);
   const actionsHtml = actions.map((a, i) =>
     `<button class="header-action" id="header-action-${i}" aria-label="${escapeHtml(a.label || '')}">${a.badge ? '<span class="header-badge"></span>' : ''}${icon(a.icon, 22)}</button>`
   ).join('');
@@ -75,8 +75,8 @@ export function bindHeaderEvents(el, { onBack, actions = [] } = {}) {
       e.stopPropagation();
       if (typeof onBack === 'function') {
         onBack();
-      } else if (router && router.depth > 1) {
-        router.pop();
+      } else if (router) {
+        router.back();
       }
     };
   }

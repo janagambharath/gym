@@ -223,8 +223,6 @@ async function loadDashboard(el) {
         </div>
       </div>
     </div>` : ''}
-
-    <div style="height:var(--sp-xxl)"></div>
   </div>`;
 
   // Bind click events
