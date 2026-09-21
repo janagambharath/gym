@@ -1,9 +1,7 @@
-/* ═══════════════════════════════════════════════════════════════════════
-   Settings / More Screen — 1:1 Parity with Renewal Desk Android App
-   ═══════════════════════════════════════════════════════════════════════ */
-
-import { apiRequest, getCachedSession, logout as apiLogout, deleteAccount } from '../api.js';
+/* Settings / More Screen */
+import { apiRequest, getCachedSession, logout as apiLogout } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
+import { router } from '../router.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderMenuItem, renderBadge, renderInfoRow, showConfirm, showToast } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml } from '../utils.js';
@@ -11,304 +9,74 @@ import { escapeHtml } from '../utils.js';
 export default {
   async mount(el) {
     const session = getCachedSession();
-    const gymName = session?.tenantName || 'My Gym';
-    const userName = session?.userName || 'Owner';
-    const isOwner = session?.userRole === 'gym_owner';
-
     el.innerHTML = `
-      ${renderHeader({ title: 'More', showBack: false })}
-      <div class="scroll-view" id="settings-scroll">
-        <div class="scroll-content" id="settings-content">
-          <!-- 1. Gym Profile & Information -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-md)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
-                  ${icon('business', 18, 'var(--brand)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Gym Profile</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:var(--sp-md);padding-bottom:var(--sp-md);border-bottom:1px solid var(--border-light)">
-                ${renderAvatar(gymName || userName, 'lg')}
-                <div style="flex:1;min-width:0">
-                  <div style="font-size:var(--fs-lg);font-weight:var(--fw-bold);color:var(--text)" id="gym-display-name">${escapeHtml(gymName)}</div>
-                  <div style="font-size:var(--fs-sm);color:var(--text-secondary)">
-                    ${escapeHtml(userName)} • ${isOwner ? 'Gym Owner' : 'Staff'}
-                  </div>
-                </div>
-              </div>
-              <div id="gym-info-rows" style="margin-top:var(--sp-sm)">
-                ${renderInfoRow('Email', '—')}
-                ${renderInfoRow('Phone', '—')}
-                ${renderInfoRow('Address', '—')}
-                ${renderInfoRow('Timezone', 'Asia/Kolkata')}
-              </div>
+      ${renderHeader({ title: 'Settings', showBack: true })}
+      <div class="scroll-view"><div class="scroll-content">
+        <!-- Profile Card -->
+        <div class="card" style="margin:var(--sp-lg)">
+          <div class="card-body" style="display:flex;align-items:center;gap:var(--sp-lg)">
+            ${renderAvatar(session?.userName || 'User', 'lg')}
+            <div style="flex:1;min-width:0">
+              <div style="font-size:var(--fs-xl);font-weight:var(--fw-bold)">${escapeHtml(session?.userName || '')}</div>
+              <div style="font-size:var(--fs-sm);color:var(--text-secondary)">${escapeHtml(session?.tenantName || '')}</div>
+              <div style="margin-top:var(--sp-xs)">${renderBadge(session?.userRole || 'owner')}</div>
             </div>
-          </div>
-
-          <!-- 2. Memberships & Plans -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-sm)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
-                  ${icon('plan', 18, 'var(--brand)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Memberships & Plans</div>
-              </div>
-              <div class="menu-list">
-                ${renderMenuItem({ iconName: 'plan', label: 'Membership Plans', desc: 'Manage pricing & durations', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'plans' })}
-                ${renderMenuItem({ iconName: 'target', label: 'Promotional Campaigns', desc: 'Renewal & recovery broadcasts', iconBg: 'var(--warning-surface)', iconColor: 'var(--warning)', onClick: 'campaigns' })}
-              </div>
-            </div>
-          </div>
-
-          <!-- 3. Payments & Invoicing -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-sm)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
-                  ${icon('cash', 18, 'var(--brand)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Payments & Invoicing</div>
-              </div>
-              ${isOwner ? `
-                <div class="payment-setup-row" id="row-payment-setup" style="cursor:pointer;padding:var(--sp-md);background:var(--gray-50);border-radius:var(--r-lg);border:1px solid var(--border-light);margin-bottom:var(--sp-sm);display:flex;align-items:center;gap:var(--sp-sm)">
-                  <div style="flex:1;min-width:0">
-                    <div style="font-weight:var(--fw-semibold);font-size:var(--fs-base);color:var(--text)" id="upi-display-text">No UPI Configured</div>
-                    <div style="font-size:var(--fs-xs);color:var(--text-secondary);margin-top:2px" id="upi-subtext">Tap to configure gym UPI ID & bank account</div>
-                  </div>
-                  <span class="badge badge-pending" id="upi-status-badge">Setup Needed</span>
-                  ${icon('forward', 14, 'var(--muted)')}
-                </div>
-              ` : ''}
-              <div class="menu-list">
-                ${renderMenuItem({ iconName: 'cash', label: 'Payment Transactions & Ledger', desc: 'All verified, pending, and counter payments', iconBg: 'var(--status-paid-surface)', iconColor: 'var(--status-paid)', onClick: 'payments' })}
-              </div>
-            </div>
-          </div>
-
-          <!-- 4. WhatsApp & Automation -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-sm)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:#dcfce7;display:flex;align-items:center;justify-content:center">
-                  ${icon('whatsapp', 18, 'var(--whatsapp)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">WhatsApp & Automation</div>
-              </div>
-              <div class="whatsapp-status-row" id="row-whatsapp" style="cursor:pointer;display:flex;align-items:center;gap:var(--sp-sm);padding:var(--sp-md);background:var(--gray-50);border-radius:var(--r-lg);border:1px solid var(--border-light);margin-bottom:var(--sp-sm)">
-                <span class="device-dot" id="wa-status-dot" style="background:var(--gray-300)"></span>
-                <span style="font-weight:var(--fw-medium);font-size:var(--fs-sm);color:var(--text)" id="wa-status-text">Setup WhatsApp Reminders</span>
-                <div style="flex:1"></div>
-                ${icon('forward', 14, 'var(--muted)')}
-              </div>
-              <div class="menu-list">
-                ${renderMenuItem({ iconName: 'robot', label: 'AI Receptionist (Bot)', desc: 'Configure automatic inquiry replies & FAQs', iconBg: '#ede9fe', iconColor: '#7c3aed', onClick: 'bot-overview' })}
-                ${renderMenuItem({ iconName: 'testTube', label: 'Test AI Receptionist', desc: 'Simulate member inquiries in sandbox', iconBg: 'var(--info-surface)', iconColor: 'var(--info)', onClick: 'bot-test' })}
-              </div>
-            </div>
-          </div>
-
-          <!-- 5. Staff & Access Control -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-sm)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
-                  ${icon('staff', 18, 'var(--brand)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Staff & Access Control</div>
-              </div>
-              <div class="menu-list">
-                ${isOwner ? renderMenuItem({ iconName: 'staff', label: 'Staff Management & Permissions', desc: 'Add staff, managers, and desk team', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'staff' }) : ''}
-                ${renderMenuItem({ iconName: 'access', label: 'Biometric Devices & Access Logs', desc: 'X990 device status and member entry feed', iconBg: '#fce7f3', iconColor: '#db2777', onClick: 'access' })}
-              </div>
-            </div>
-          </div>
-
-          <!-- 6. Analytics & Reports -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-sm)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
-                  ${icon('report', 18, 'var(--brand)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Analytics & Reports</div>
-              </div>
-              <div class="menu-list">
-                ${renderMenuItem({ iconName: 'report', label: 'Operational Analytics & Performance', desc: 'KPI summaries for 7d, 30d, and custom periods', iconBg: 'var(--success-surface)', iconColor: 'var(--success)', onClick: 'reports' })}
-              </div>
-            </div>
-          </div>
-
-          <!-- 7. Renewal Desk Subscription -->
-          <div class="card" id="card-subscription" style="margin:0 var(--sp-lg) var(--sp-lg);cursor:pointer">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-sm)">
-                <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
-                  ${icon('shield', 18, 'var(--brand)')}
-                </div>
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Renewal Desk Subscription</div>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--sp-sm) 0;border-bottom:1px solid var(--border-light)">
-                <span style="font-size:var(--fs-sm);color:var(--text-secondary)">Status</span>
-                <span id="sub-status-badge">${renderBadge('Active')}</span>
-              </div>
-              <div id="sub-limit-row" style="display:flex;justify-content:space-between;align-items:center;padding:var(--sp-sm) 0;border-bottom:1px solid var(--border-light)">
-                <span style="font-size:var(--fs-sm);color:var(--text-secondary)">Member Limit</span>
-                <span style="font-size:var(--fs-sm);font-weight:var(--fw-semibold)" id="sub-limit-val">Unlimited</span>
-              </div>
-              <div class="menu-list" style="margin-top:var(--sp-xs)">
-                ${renderMenuItem({ iconName: 'wallet', label: 'Manage Subscription & Billing', desc: 'View invoices, plans, and account tier', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'subscription' })}
-              </div>
-            </div>
-          </div>
-
-          <!-- 8. About Renewal Desk -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-md)">
-                <img src="/icons/logo.png" alt="Renewal Desk" style="width:40px;height:40px;border-radius:var(--r-md);object-fit:contain">
-                <div>
-                  <div style="font-weight:var(--fw-bold);font-size:var(--fs-base);color:var(--text)">Renewal Desk</div>
-                  <div style="font-size:var(--fs-xs);color:var(--text-secondary)">Gym Management & AI Receptionist</div>
-                </div>
-              </div>
-              ${renderInfoRow('Version', '1.0.0')}
-              ${renderInfoRow('Build', 'Production Release (Build 5)')}
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--sp-md) 0 0;border-top:1px solid var(--border-light);cursor:pointer" id="btn-privacy">
-                <div style="display:flex;align-items:center;gap:var(--sp-xs)">
-                  ${icon('business', 16, 'var(--brand)')}
-                  <span style="font-size:var(--fs-sm);color:var(--brand);font-weight:var(--fw-semibold)">Privacy Policy</span>
-                </div>
-                ${icon('forward', 14, 'var(--muted)')}
-              </div>
-            </div>
-          </div>
-
-          <!-- 9. Account Management & Danger Zone -->
-          <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg);border-color:var(--critical-border);background:var(--critical-surface)">
-            <div class="card-body">
-              <div style="display:flex;align-items:center;gap:var(--sp-xs);margin-bottom:var(--sp-xs);color:var(--critical)">
-                ${icon('shield', 18, 'var(--critical)')}
-                <div style="font-weight:var(--fw-bold);font-size:var(--fs-base)">Account Management</div>
-              </div>
-              <div style="font-size:var(--fs-xs);color:var(--critical);line-height:1.4;margin-bottom:var(--sp-md)">
-                Permanently delete your account, gym records, member database, and message logs.
-              </div>
-              <button class="btn btn-danger btn-full btn-sm" id="btn-delete" style="background:var(--critical);color:white">
-                ${icon('delete', 16, 'white')}
-                <span>Delete Account & Data</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- 10. Logout Button -->
-          <div style="padding:0 var(--sp-lg) var(--sp-xl)">
-            <button class="btn btn-secondary btn-full" id="btn-logout" style="min-height:48px;font-size:var(--fs-base);font-weight:var(--fw-bold)">
-              ${icon('logout', 18)}
-              <span>Sign Out</span>
-            </button>
           </div>
         </div>
-      </div>`;
+
+        <!-- Gym Management -->
+        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Gym Management</div>
+        <div class="card" style="margin:var(--sp-sm) var(--sp-lg) var(--sp-lg)">
+          ${renderMenuItem({ iconName: 'plan', label: 'Membership Plans', desc: 'Manage pricing & durations', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'plans' })}
+          ${renderMenuItem({ iconName: 'staff', label: 'Staff', desc: 'Manage team members', iconBg: 'var(--info-surface)', iconColor: 'var(--info)', onClick: 'staff' })}
+          ${renderMenuItem({ iconName: 'report', label: 'Reports', desc: 'Analytics & summaries', iconBg: 'var(--success-surface)', iconColor: 'var(--success)', onClick: 'reports' })}
+          ${renderMenuItem({ iconName: 'wallet', label: 'Payment Setup', desc: 'UPI & QR settings', iconBg: 'var(--status-pending-surface)', iconColor: 'var(--status-pending)', onClick: 'payment-setup' })}
+          ${renderMenuItem({ iconName: 'access', label: 'Access Control', desc: 'Biometric & attendance', iconBg: '#fce7f3', iconColor: '#db2777', onClick: 'access' })}
+        </div>
+
+        <!-- Communication -->
+        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Communication</div>
+        <div class="card" style="margin:var(--sp-sm) var(--sp-lg) var(--sp-lg)">
+          ${renderMenuItem({ iconName: 'whatsapp', label: 'WhatsApp', desc: 'Reminders & broadcasts', iconBg: '#dcfce7', iconColor: 'var(--whatsapp)', onClick: 'whatsapp' })}
+          ${renderMenuItem({ iconName: 'robot', label: 'AI Receptionist', desc: 'WhatsApp bot settings', iconBg: '#ede9fe', iconColor: '#7c3aed', onClick: 'bot-overview' })}
+          ${renderMenuItem({ iconName: 'megaphone', label: 'Campaigns', desc: 'Bulk messaging', iconBg: 'var(--warning-surface)', iconColor: 'var(--warning)', onClick: 'campaigns' })}
+          ${renderMenuItem({ iconName: 'inbox', label: 'Inbox', desc: 'Messages & conversations', iconBg: 'var(--info-surface)', iconColor: 'var(--info)', onClick: 'inbox' })}
+          ${renderMenuItem({ iconName: 'notifications', label: 'Notifications', desc: 'Activity feed', iconBg: 'var(--critical-surface)', iconColor: 'var(--critical)', onClick: 'notifications' })}
+        </div>
+
+        <!-- Account -->
+        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Account</div>
+        <div class="card" style="margin:var(--sp-sm) var(--sp-lg) var(--sp-lg)">
+          ${renderMenuItem({ iconName: 'subscription', label: 'Subscription', desc: 'Billing & plan', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'subscription' })}
+        </div>
+
+        <!-- Actions -->
+        <div style="padding:0 var(--sp-lg) var(--sp-lg);display:flex;flex-direction:column;gap:var(--sp-sm)">
+          <button class="btn btn-secondary btn-full" id="btn-logout">${icon('logout', 18)} Sign Out</button>
+          <button class="btn btn-danger btn-full btn-sm" id="btn-delete" style="margin-top:var(--sp-md)">Delete Account & Data</button>
+        </div>
+      </div></div>`;
 
     bindHeaderEvents(el, {
-      onBack: () => navigate.switchTab('dashboard'),
+      onBack: () => router.depth > 1 ? navigate.pop() : navigate.switchTab('dashboard'),
     });
 
-    // Menu items
+    // Menu item clicks
     el.querySelectorAll('[data-action]').forEach(item => {
-      item.addEventListener('click', () => {
-        const act = item.dataset.action;
-        if (act === 'payments') navigate.switchTab('payments');
-        else if (act === 'access') navigate.switchTab('access');
-        else navigate.push(act);
-      });
+      item.addEventListener('click', () => navigate.push(item.dataset.action));
     });
 
-    el.querySelector('#row-payment-setup')?.addEventListener('click', () => navigate.push('payment-setup'));
-    el.querySelector('#row-whatsapp')?.addEventListener('click', () => navigate.push('whatsapp'));
-    el.querySelector('#card-subscription')?.addEventListener('click', () => navigate.push('subscription'));
-    el.querySelector('#btn-privacy')?.addEventListener('click', () => {
-      window.open('https://gym-production-910c.up.railway.app/privacy', '_blank');
-    });
-
-    el.querySelector('#btn-logout')?.addEventListener('click', async () => {
+    el.querySelector('#btn-logout').addEventListener('click', async () => {
       const yes = await showConfirm({ title: 'Sign Out', message: 'Are you sure you want to sign out?', confirmText: 'Sign Out' });
       if (yes) handleLogout();
     });
 
-    el.querySelector('#btn-delete')?.addEventListener('click', async () => {
-      const yes = await showConfirm({
-        title: 'Delete Account & Data',
-        message: 'Are you sure you want to permanently delete your account and all associated gym records? This action cannot be undone.',
-        confirmText: 'Delete Permanently',
-        destructive: true,
-      });
+    el.querySelector('#btn-delete').addEventListener('click', async () => {
+      const yes = await showConfirm({ title: 'Delete Account', message: 'This will permanently delete your account and all gym data. This cannot be undone.', confirmText: 'Delete Permanently', destructive: true });
       if (!yes) return;
-      const res = await deleteAccount();
-      if (res.ok) {
-        handleLogout();
-      } else {
-        showToast(res.error?.message || 'Could not delete account.', 'error');
-      }
-    });
-
-    // Fetch live settings from backend to populate gym details
-    apiRequest('/api/mobile/v1/settings').then(res => {
-      if (!res.ok) return;
-      const data = res.data;
-      const gym = data.gym || {};
-      const pay = data.payment_settings || {};
-
-      const nameEl = el.querySelector('#gym-display-name');
-      if (nameEl && gym.name) nameEl.textContent = gym.name;
-
-      const rowsEl = el.querySelector('#gym-info-rows');
-      if (rowsEl) {
-        rowsEl.innerHTML = `
-          ${renderInfoRow('Email', gym.email || '—')}
-          ${renderInfoRow('Phone', gym.phone || '—')}
-          ${renderInfoRow('Address', gym.address || '—')}
-          ${renderInfoRow('Timezone', gym.timezone || 'Asia/Kolkata')}
-        `;
-      }
-
-      // Payment settings
-      const upiText = el.querySelector('#upi-display-text');
-      const upiSub = el.querySelector('#upi-subtext');
-      const upiBadge = el.querySelector('#upi-status-badge');
-      if (upiText && upiBadge) {
-        if (pay.upi_id) {
-          upiText.textContent = pay.upi_id;
-          upiSub.textContent = pay.is_active ? 'Active • VYNLA members pay directly via UPI' : 'Disabled • Online renewals paused';
-          upiBadge.className = pay.is_active ? 'badge badge-active' : 'badge badge-pending';
-          upiBadge.textContent = pay.is_active ? 'Active' : 'Disabled';
-        } else {
-          upiText.textContent = 'No UPI Configured';
-          upiSub.textContent = 'Tap to configure gym UPI ID & bank account';
-          upiBadge.className = 'badge badge-pending';
-          upiBadge.textContent = 'Setup Needed';
-        }
-      }
-
-      // WhatsApp status
-      const waDot = el.querySelector('#wa-status-dot');
-      const waText = el.querySelector('#wa-status-text');
-      if (waDot && waText) {
-        waDot.style.background = gym.whatsapp_enabled ? 'var(--whatsapp)' : 'var(--gray-300)';
-        waText.textContent = gym.whatsapp_enabled ? 'Connected & Active' : 'Setup WhatsApp Reminders';
-      }
-
-      // Subscription status
-      const subBadge = el.querySelector('#sub-status-badge');
-      if (subBadge) {
-        subBadge.innerHTML = renderBadge(gym.subscription_status === 'active' ? 'Active' : (gym.subscription_status || 'Pending'));
-      }
-      const limitVal = el.querySelector('#sub-limit-val');
-      if (limitVal) {
-        limitVal.textContent = gym.max_members ? String(gym.max_members) : 'Unlimited';
-      }
+      const { deleteAccount } = await import('../api.js');
+      await deleteAccount();
+      handleLogout();
     });
   }
 };
