@@ -11,7 +11,8 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Gym, Member, MembershipPlan
+from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
@@ -343,6 +344,7 @@ def register_members_routes(bp):
             if gym.members_at_limit(current_count):
                 return error_response("MEMBER_LIMIT", f"Member limit ({gym.max_members}) reached.", 409)
 
+        plan = None
         plan_id = data.get("plan_id")
         if plan_id:
             plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=g.gym_id, is_active=True).first()
@@ -353,6 +355,7 @@ def register_members_routes(bp):
         membership_start = _parse_date(data.get("membership_start")) or local_today
         membership_end = _parse_date(data.get("membership_end")) or local_today
 
+        notes_val = (data.get("notes") or "").strip() or None
         member = Member(
             gym_id=g.gym_id,
             full_name=full_name,
@@ -364,10 +367,64 @@ def register_members_routes(bp):
             membership_start=membership_start,
             membership_end=membership_end,
             status="active" if membership_end >= local_today else "expired",
-            notes=(data.get("notes") or "").strip() or None,
+            notes=notes_val,
         )
         db.session.add(member)
         db.session.flush()
+
+        # Record initial payment / customizable money if provided
+        raw_amount = data.get("amount")
+        is_paid = data.get("paid", True)
+        if raw_amount is not None and str(raw_amount).strip() != "" and is_paid:
+            try:
+                amt = Decimal(str(raw_amount).strip())
+                if amt >= 0:
+                    method = str(data.get("payment_method") or data.get("method") or "cash").strip().lower()
+                    if method not in {"cash", "upi", "card", "bank_transfer", "other"}:
+                        method = "cash"
+                    standard_price = plan.price if plan else amt
+                    discount = max(Decimal("0.00"), standard_price - amt) if standard_price is not None else Decimal("0.00")
+                    renewal_days = (membership_end - membership_start).days + 1 if membership_end and membership_start else (plan.duration_days if plan else 30)
+                    payment = PaymentVerification(
+                        gym_id=g.gym_id,
+                        member_id=member.id,
+                        plan_id=plan.id if plan else None,
+                        created_by_id=g.current_user.id,
+                        standard_price=standard_price,
+                        discount=discount,
+                        amount=amt,
+                        paid_on=membership_start,
+                        method=method,
+                        channel="offline",
+                        reference=(data.get("payment_reference") or data.get("reference") or "").strip() or None,
+                        status="verified",
+                        verified_by_id=g.current_user.id,
+                        verified_at=utcnow(),
+                        renewal_days=renewal_days,
+                        notes=(data.get("payment_notes") or notes_val or "Initial membership fee"),
+                    )
+                    db.session.add(payment)
+                    db.session.flush()
+
+                    renewal = RenewalHistory(
+                        gym_id=g.gym_id,
+                        member_id=member.id,
+                        plan_id=member.plan_id,
+                        payment_verification_id=payment.id,
+                        renewed_by_id=g.current_user.id,
+                        previous_end=None,
+                        new_start=membership_start,
+                        new_end=membership_end,
+                        standard_price=standard_price,
+                        discount=discount,
+                        amount=amt,
+                        channel="offline",
+                        notes=payment.notes,
+                    )
+                    db.session.add(renewal)
+            except (InvalidOperation, TypeError, ValueError):
+                pass
+
         queue_membership_command(member)
         audit(action="create_member", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id)
