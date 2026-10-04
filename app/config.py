@@ -13,11 +13,16 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _normalize_db_url(raw: str | None) -> str:
+    url = raw or f"sqlite:///{BASE_DIR / 'instance' / 'dev.db'}"
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL", f"sqlite:///{BASE_DIR / 'instance' / 'dev.db'}"
-    )
+    SQLALCHEMY_DATABASE_URI = _normalize_db_url(os.getenv("DATABASE_URL"))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     WTF_CSRF_ENABLED = True
