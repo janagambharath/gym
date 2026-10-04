@@ -23,6 +23,7 @@ export default {
           ${renderFormField({ id: 'em-phone', label: 'Phone', type: 'tel', value: m.phone, required: true })}
           ${renderFormField({ id: 'em-email', label: 'Email', type: 'email', value: m.email || '' })}
           ${renderFormField({ id: 'em-gender', label: 'Gender', value: m.gender || '', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}
+          ${renderFormField({ id: 'em-address', label: 'Address', type: 'textarea', value: m.address || '' })}
           ${renderFormField({ id: 'em-plan', label: 'Plan', value: m.plan?.id || '', options: plans.map(p => ({ value: p.id, label: p.name })) })}
           ${renderFormField({ id: 'em-notes', label: 'Notes', type: 'textarea', value: m.notes || '' })}
           <button type="submit" class="btn btn-primary btn-lg btn-full" id="em-submit">Save Changes</button>
@@ -48,6 +49,7 @@ export default {
         gender: el.querySelector('#em-gender').value || null,
         plan_id: el.querySelector('#em-plan').value ? Number(el.querySelector('#em-plan').value) : null,
         notes: el.querySelector('#em-notes').value.trim() || null,
+        address: el.querySelector('#em-address').value.trim() || null,
       };
 
       const r = await apiRequest(`/api/mobile/v1/members/${memberId}`, { method: 'PATCH', body });

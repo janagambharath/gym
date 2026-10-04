@@ -55,6 +55,7 @@ export default {
               ${renderInfoRow('Phone', member.phone)}
               ${renderInfoRow('Email', member.email || '—')}
               ${renderInfoRow('Gender', member.gender || '—')}
+              ${renderInfoRow('Address', member.address || '—')}
               ${renderInfoRow('Joined', formatDate(member.joined_on))}
               ${member.notes ? renderInfoRow('Notes', member.notes) : ''}
             </div>

@@ -18,6 +18,7 @@ export default {
           ${renderFormField({ id: 'am-phone', label: 'Phone', type: 'tel', placeholder: '9876543210', required: true })}
           ${renderFormField({ id: 'am-email', label: 'Email', type: 'email', placeholder: 'member@example.com' })}
           ${renderFormField({ id: 'am-gender', label: 'Gender', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}
+          ${renderFormField({ id: 'am-address', label: 'Address', type: 'textarea', placeholder: 'Member address...' })}
           ${renderFormField({ id: 'am-plan', label: 'Membership Plan', options: plans.map(p => ({ value: p.id, label: `${p.name} — ${p.duration_days} days (${formatCurrency(p.price)})` })) })}
           ${renderFormField({ id: 'am-amount', label: 'Membership Fee (Customizable Money)', type: 'number', step: '0.01', placeholder: '0.00', value: defaultPlan?.price || '' })}
           ${renderFormField({ id: 'am-paid', label: 'Payment Status', options: [{ value: 'paid', label: 'Paid Now' }, { value: 'unpaid', label: 'Collect Later (Unpaid)' }] })}
@@ -106,6 +107,7 @@ export default {
         paid: isPaid,
         payment_method: isPaid ? paymentMethod : undefined,
         notes: el.querySelector('#am-notes')?.value?.trim() || null,
+        address: el.querySelector('#am-address')?.value?.trim() || null,
       };
 
       try {

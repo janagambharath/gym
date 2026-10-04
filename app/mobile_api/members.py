@@ -29,6 +29,7 @@ def _serialize_member(m: Member) -> dict:
         "phone": m.phone,
         "email": m.email,
         "gender": m.gender,
+        "address": m.address,
         "plan": {"id": m.plan.id, "name": m.plan.name, "duration_days": m.plan.duration_days, "price": str(m.plan.price)} if m.plan else None,
         "membership_start": m.membership_start.isoformat() if m.membership_start else None,
         "membership_end": m.membership_end.isoformat() if m.membership_end else None,
@@ -356,12 +357,14 @@ def register_members_routes(bp):
         membership_end = _parse_date(data.get("membership_end")) or local_today
 
         notes_val = (data.get("notes") or "").strip() or None
+        address_val = (data.get("address") or "").strip() or None
         member = Member(
             gym_id=g.gym_id,
             full_name=full_name,
             phone=phone,
             email=(data.get("email") or "").strip() or None,
             gender=(data.get("gender") or "").strip() or None,
+            address=address_val,
             plan_id=plan_id if plan_id else None,
             joined_on=local_today,
             membership_start=membership_start,
@@ -466,6 +469,8 @@ def register_members_routes(bp):
             member.gender = (data["gender"] or "").strip() or None
         if "notes" in data:
             member.notes = (data["notes"] or "").strip() or None
+        if "address" in data:
+            member.address = (data["address"] or "").strip() or None
         if "plan_id" in data:
             if data["plan_id"]:
                 plan = MembershipPlan.query.filter_by(id=data["plan_id"], gym_id=g.gym_id, is_active=True).first()

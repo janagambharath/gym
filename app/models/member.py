@@ -55,6 +55,7 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="active", index=True)
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
+    address = db.Column(db.Text, nullable=True)
     external_ref = db.Column(db.String(120), nullable=True)
     # This is the numeric Enroll Number stored on the gym's biometric terminal.
     # It is intentionally separate from member.id and any external CRM reference.

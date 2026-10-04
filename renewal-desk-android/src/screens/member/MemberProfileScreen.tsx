@@ -173,6 +173,13 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
             </View>
           )}
 
+          {member?.address && (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Address</Text>
+              <Text style={styles.infoValue}>{member.address}</Text>
+            </View>
+          )}
+
           {member?.joined_on && (
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Member Since</Text>
