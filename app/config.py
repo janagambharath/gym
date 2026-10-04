@@ -17,6 +17,23 @@ def _normalize_db_url(raw: str | None) -> str:
     url = raw or f"sqlite:///{BASE_DIR / 'instance' / 'dev.db'}"
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
+
+    if url.startswith("postgresql+psycopg://"):
+        try:
+            import psycopg  # noqa: F401
+        except ImportError:
+            # Fallback to psycopg2 if psycopg (v3) is not installed
+            url = url.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        try:
+            import psycopg  # noqa: F401
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        except ImportError:
+            try:
+                import psycopg2  # noqa: F401
+                url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            except ImportError:
+                pass
     return url
 
 
