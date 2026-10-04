@@ -609,3 +609,46 @@ def test_mobile_access_alias_endpoints(client, seed_gym):
     assert "events" in data
     assert "log" in data
 
+
+# ─── 17. Manual Check-in / Entry / Exit Endpoint ───────────────────────
+
+def test_mobile_access_checkin_manual(client, seed_gym, seed_member):
+    owner = seed_gym["owner"]
+    gym = seed_gym["gym"]
+    member = seed_member
+
+    # Check in member
+    res = client.post(
+        "/api/mobile/v1/access/checkin",
+        headers=_auth_headers(owner, gym),
+        json={"member_id": member.id, "type": "ENTRY"},
+    )
+    assert res.status_code == 200
+    data = res.get_json()["data"]
+    assert data["member_id"] == member.id
+    assert data["event_type"] == "ENTRY"
+    assert data["direction"] == "IN"
+
+    # Verify summary now shows 1 inside and 1 entry
+    res_summary = client.get("/api/mobile/v1/access/summary", headers=_auth_headers(owner, gym))
+    assert res_summary.status_code == 200
+    s = res_summary.get_json()["data"]
+    assert s["inside_now"] == 1
+    assert s["entries_today"] >= 1
+
+    # Check out member
+    res_out = client.post(
+        "/api/mobile/v1/access/checkin",
+        headers=_auth_headers(owner, gym),
+        json={"member_id": member.id, "type": "EXIT"},
+    )
+    assert res_out.status_code == 200
+    data_out = res_out.get_json()["data"]
+    assert data_out["event_type"] == "EXIT"
+    assert data_out["direction"] == "OUT"
+
+    # Verify summary inside_now is back to 0
+    res_summary2 = client.get("/api/mobile/v1/access/summary", headers=_auth_headers(owner, gym))
+    s2 = res_summary2.get_json()["data"]
+    assert s2["inside_now"] == 0
+

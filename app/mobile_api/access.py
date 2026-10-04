@@ -10,7 +10,10 @@ from app.services.access_event_service import (
     get_access_summary,
     get_members_inside,
     has_legacy_attendance_events,
+    record_manual_access_event,
+    _serialize_access_event,
 )
+from app.models.member import Member
 
 
 def register_access_routes(bp):
@@ -81,3 +84,33 @@ def register_access_routes(bp):
         resp = jsonify({"success": True, "data": result})
         resp.headers["Cache-Control"] = "no-store"
         return resp
+
+    @bp.route("/access/checkin", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def access_checkin():
+        """Record manual member check-in or check-out directly from the app."""
+        data = request.get_json(silent=True) or {}
+        member_id = data.get("member_id")
+        event_type = (data.get("type") or data.get("event_type") or "ENTRY").upper()
+        if not member_id:
+            return jsonify({"success": False, "error": {"message": "member_id is required"}}), 400
+
+        member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).filter(Member.deleted_at.is_(None)).first()
+        if not member:
+            return jsonify({"success": False, "error": {"message": "Member not found"}}), 404
+
+        actor_name = g.current_user.full_name if hasattr(g, "current_user") and g.current_user else "Front Desk"
+        evt = record_manual_access_event(
+            gym_id=g.gym_id,
+            member_id=member.id,
+            event_type=event_type,
+            actor_name=actor_name,
+        )
+        is_entry = evt.event_type in ("ENTRY", "ATTENDANCE")
+        msg = f"{member.full_name} checked in successfully" if is_entry else (f"Access denied: {member.full_name} membership is expired" if evt.event_type == "ACCESS_DENIED" else f"{member.full_name} checked out")
+        return jsonify({
+            "success": True,
+            "data": _serialize_access_event(evt),
+            "message": msg,
+        })

@@ -77,6 +77,25 @@ export function MemberDetailScreen({
     setRefreshing(false);
   }), [member.id, onLogout]);
 
+  const [checkingIn, setCheckingIn] = useState(false);
+
+  const handleCheckInToggle = useCallback(async () => {
+    if (checkingIn) return;
+    setCheckingIn(true);
+    const isExiting = !!member.is_inside;
+    const result = await apiRequest<{ message: string }>('/api/mobile/v1/access/checkin', {
+      method: 'POST',
+      body: { member_id: member.id, type: isExiting ? 'EXIT' : 'ENTRY' },
+    });
+    if (result.ok) {
+      showMessage(isExiting ? `${member.full_name} checked out.` : `${member.full_name} checked in!`, 'success');
+      void fetchMemberData();
+    } else {
+      showMessage(result.error.message, 'error');
+    }
+    setCheckingIn(false);
+  }, [checkingIn, member.id, member.full_name, member.is_inside, fetchMemberData]);
+
   useEffect(() => {
     void fetchMemberData();
   }, [fetchMemberData, refreshToken]);
@@ -149,6 +168,9 @@ export function MemberDetailScreen({
             <View style={styles.identityInfo}>
               <Text style={styles.memberName} numberOfLines={1}>{member.full_name}</Text>
               <Text style={styles.memberPhone}>{member.phone}</Text>
+              {member.address ? (
+                <Text style={styles.memberAddress} numberOfLines={2}>📍 {member.address}</Text>
+              ) : null}
               <Text style={styles.memberId}>ID: MBR{member.id}</Text>
               {member.plan ? (
                 <View style={styles.planBadge}>
@@ -303,7 +325,16 @@ export function MemberDetailScreen({
           </View>
           <View style={styles.activityRow}>
             <View>
-              <Text style={styles.activityTitle}>Biometric / Access State</Text>
+              <Text style={styles.activityTitle}>Access & Attendance</Text>
+              <Text style={styles.activitySub}>
+                {member.is_inside ? 'Currently Inside Gym' : 'Outside'}
+              </Text>
+            </View>
+            <StatusBadge status={member.is_inside ? 'active' : 'pending'} />
+          </View>
+          <View style={styles.activityRow}>
+            <View>
+              <Text style={styles.activityTitle}>Biometric / Access Device</Text>
               <Text style={styles.activitySub}>
                 {member.has_biometric ? 'Enrolled on Access Device' : 'Not enrolled on device'}
               </Text>
@@ -312,12 +343,22 @@ export function MemberDetailScreen({
           </View>
         </View>
 
+        {/* Attendance Check In / Out Action */}
+        <View style={{ marginBottom: spacing.xs }}>
+          <PrimaryButton
+            title={checkingIn ? (member.is_inside ? 'Checking out...' : 'Checking in...') : (member.is_inside ? 'Check Out Member' : 'Check In Member (Attendance)')}
+            icon={<Icon name="access" size={18} color={member.is_inside ? colors.brand : colors.textInverse} />}
+            onPress={() => void handleCheckInToggle()}
+            variant={member.is_inside ? 'outline' : 'primary'}
+          />
+        </View>
+
         {/* Primary CTA */}
         <PrimaryButton
           title="Renew Membership"
           icon={<Icon name="renewals" size={18} color={colors.textInverse} />}
           onPress={() => onRenew?.(member)}
-          variant="primary"
+          variant="outline"
         />
 
         {/* Secondary Actions */}
@@ -533,6 +574,11 @@ const styles = StyleSheet.create({
   memberPhone: {
     color: colors.textSecondary,
     fontSize: fontSize.base,
+    marginTop: spacing.xxs,
+  },
+  memberAddress: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
     marginTop: spacing.xxs,
   },
   membershipGrid: {

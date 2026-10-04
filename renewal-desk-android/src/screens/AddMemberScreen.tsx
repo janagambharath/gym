@@ -56,6 +56,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState(countryPrefix);
   const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlans.length > 0 ? initialPlans[0].id : null);
 
   // Customizable Money & Payment Engine
@@ -151,6 +152,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
         full_name: fullName.trim(),
         phone: normalizedPhone,
         email: email.trim() || undefined,
+        address: address.trim() || undefined,
         plan_id: selectedPlanId,
         membership_start: today,
         membership_end: endDate,
@@ -173,6 +175,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     fullName,
     phone,
     email,
+    address,
     selectedPlanId,
     notes,
     customAmount,
@@ -237,6 +240,14 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
                 placeholder="Enter email (optional)"
                 keyboardType="email-address"
                 autoCapitalize="none"
+                returnKeyType="next"
+              />
+
+              <FormField
+                label="Address"
+                value={address}
+                onChangeText={setAddress}
+                placeholder="Enter street, area, city (optional)"
                 returnKeyType="next"
               />
             </View>

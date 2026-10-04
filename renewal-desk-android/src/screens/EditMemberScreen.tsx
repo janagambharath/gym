@@ -37,6 +37,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [address, setAddress] = useState('');
   const [gender, setGender] = useState('');
   const [notes, setNotes] = useState('');
   const [planId, setPlanId] = useState<number | undefined>();
@@ -59,6 +60,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
         setFullName(m.full_name);
         setPhone(m.phone);
         setEmail(m.email ?? '');
+        setAddress(m.address ?? '');
         setGender(m.gender ?? '');
         setNotes(m.notes ?? '');
         setPlanId(m.plan?.id);
@@ -98,6 +100,8 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
 
     if (email.trim()) body.email = email.trim();
     else body.email = null;
+    if (address.trim()) body.address = address.trim();
+    else body.address = null;
     if (gender.trim()) body.gender = gender.trim();
     else body.gender = null;
     if (notes.trim()) body.notes = notes.trim();
@@ -118,7 +122,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
     } else {
       Alert.alert('Error', result.error.message);
     }
-  }, [fullName, phone, email, gender, notes, planId, memberId, validate, onBack, onSaved, saving]);
+  }, [fullName, phone, email, address, gender, notes, planId, memberId, validate, onBack, onSaved, saving]);
 
   if (loading) {
     return (
@@ -173,6 +177,12 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
               placeholder="email@example.com"
               keyboardType="email-address"
               autoCapitalize="none"
+            />
+            <FormField
+              label="Address"
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Street, locality, city"
             />
             <FormField
               label="Gender"

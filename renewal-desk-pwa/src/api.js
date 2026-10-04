@@ -265,3 +265,11 @@ export async function uploadPaymentQrImage(file) {
     return { ok: false, error: { message: 'Could not upload the QR image. Check your connection.' } };
   }
 }
+
+/** Record manual member check-in or check-out */
+export async function checkInMember(memberId, type = 'ENTRY') {
+  return apiRequest('/api/mobile/v1/access/checkin', {
+    method: 'POST',
+    body: { member_id: memberId, type },
+  });
+}

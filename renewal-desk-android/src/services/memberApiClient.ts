@@ -122,6 +122,7 @@ export type MemberProfile = {
     full_name: string;
     phone: string;
     email: string | null;
+    address?: string | null;
     joined_on: string | null;
     status: string;
   };

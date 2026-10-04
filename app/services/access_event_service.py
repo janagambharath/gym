@@ -489,3 +489,62 @@ def has_legacy_attendance_events(gym_id: int) -> bool:
         ).exists()
     ).scalar() or False
 
+
+def record_manual_access_event(
+    *,
+    gym_id: int,
+    member_id: int,
+    event_type: str = "ENTRY",
+    actor_name: str = "Front Desk App",
+) -> AccessEvent:
+    """Record a front desk manual check-in or check-out directly from the app."""
+    import uuid
+
+    member = Member.query.filter_by(id=member_id, gym_id=gym_id).first()
+    if not member:
+        raise ValueError(f"Member {member_id} not found in gym {gym_id}")
+
+    # Check expiration / validity
+    if member.status == "expired" or (member.days_until_expiry is not None and member.days_until_expiry < 0):
+        actual_event_type = "ACCESS_DENIED"
+        direction = "NONE"
+    else:
+        actual_event_type = "EXIT" if event_type.upper() == "EXIT" else "ENTRY"
+        direction = "OUT" if actual_event_type == "EXIT" else "IN"
+
+    now = utcnow()
+    access_event = AccessEvent(
+        gym_id=gym_id,
+        member_id=member.id,
+        bridge_id=None,
+        event_type=actual_event_type,
+        direction=direction,
+        event_timestamp=now,
+        received_timestamp=now,
+        device_enroll_number=member.device_enroll_number or str(member.id),
+        source_event_id=f"manual-{uuid.uuid4().hex[:16]}",
+        att_state=ATT_STATE_CHECK_OUT if direction == "OUT" else ATT_STATE_CHECK_IN,
+        verify_method="MANUAL_CHECKIN",
+        is_invalid=(actual_event_type == "ACCESS_DENIED"),
+        member_name=member.full_name,
+        membership_status=member.status,
+        device_name=actor_name,
+    )
+    db.session.add(access_event)
+    db.session.flush()
+
+    if actual_event_type in ("ENTRY", "EXIT"):
+        _update_member_access_state(
+            gym_id=gym_id,
+            member_id=member.id,
+            access_event=access_event,
+            event_type=actual_event_type,
+        )
+
+    db.session.commit()
+    logger.info(
+        "Manual AccessEvent created: gym=%s member=%s type=%s direction=%s actor=%s",
+        gym_id, member.id, actual_event_type, direction, actor_name,
+    )
+    return access_event
+

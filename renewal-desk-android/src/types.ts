@@ -12,6 +12,7 @@ export type Member = {
   full_name: string;
   phone: string;
   email: string | null;
+  address?: string | null;
   gender: string | null;
   status: 'active' | 'expired' | 'deleted';
   membership_start: string | null;
@@ -22,6 +23,7 @@ export type Member = {
   notes: string | null;
   whatsapp_opted_in: boolean;
   has_biometric: boolean;
+  is_inside?: boolean;
 };
 
 export type MembersResponse = {

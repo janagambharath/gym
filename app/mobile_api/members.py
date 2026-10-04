@@ -12,6 +12,7 @@ from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models.member_access_state import MemberAccessState
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
@@ -321,7 +322,11 @@ def register_members_routes(bp):
         )
         if member is None:
             return error_response("NOT_FOUND", "Member not found.", 404)
-        return jsonify({"success": True, "data": _serialize_member(member)})
+        data = _serialize_member(member)
+        access_state = MemberAccessState.query.filter_by(gym_id=g.gym_id, member_id=member.id).first()
+        data["is_inside"] = (access_state.current_state == "INSIDE") if access_state else False
+        data["last_entry_at"] = access_state.last_entry_at.isoformat() if (access_state and access_state.last_entry_at) else None
+        return jsonify({"success": True, "data": data})
 
     @bp.route("/members", methods=["POST"])
     @token_required

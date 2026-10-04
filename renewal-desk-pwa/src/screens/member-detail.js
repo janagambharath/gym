@@ -91,7 +91,9 @@ export default {
             <!-- Activity -->
             <div style="padding:0 var(--sp-lg) var(--sp-lg)">
               <div class="card card-body">
-                <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">Activity</div>
+                <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">Activity & Access</div>
+                ${renderInfoRow('Access Status', member.is_inside ? '<span style="color:var(--success);font-weight:var(--fw-bold)">● Inside Gym Now</span>' : 'Outside')}
+                ${member.is_inside && member.last_entry_at ? renderInfoRow('Entered At', formatDateTime(member.last_entry_at)) : ''}
                 ${renderInfoRow('WhatsApp', member.whatsapp_opted_in ? 'Opted In' : 'Not opted in')}
                 ${renderInfoRow('Biometric', member.has_biometric ? 'Enrolled' : 'Not enrolled')}
               </div>
@@ -99,11 +101,14 @@ export default {
 
             <!-- Actions -->
             <div style="padding:0 var(--sp-lg) var(--sp-lg);display:flex;flex-direction:column;gap:var(--sp-sm)">
+              <button class="btn ${member.is_inside ? 'btn-secondary' : 'btn-primary'} btn-full" id="btn-checkin" style="font-weight:var(--fw-semibold)">
+                ${member.is_inside ? `${icon('back', 18)} Check Out Member` : `${icon('access', 18, 'white')} Check In Member (Attendance)`}
+              </button>
               <button class="btn btn-outline btn-full" id="btn-edit-member" style="font-weight:var(--fw-semibold)">
                 ${icon('edit', 18)} Edit Member Details
               </button>
-              <button class="btn btn-primary btn-full" id="btn-renew">
-                ${icon('renewals', 18, 'white')} Renew Membership
+              <button class="btn btn-outline btn-full" id="btn-renew">
+                ${icon('renewals', 18)} Renew Membership
               </button>
               <button class="btn btn-outline btn-full" id="btn-record-payment">
                 ${icon('wallet', 18)} Record Payment
@@ -130,6 +135,26 @@ export default {
       el.querySelector('#btn-edit-member')?.addEventListener('click', openEdit);
       el.querySelector('#btn-quick-edit')?.addEventListener('click', openEdit);
       el.querySelector('#btn-edit-contact')?.addEventListener('click', openEdit);
+
+      el.querySelector('#btn-checkin')?.addEventListener('click', async () => {
+        const btn = el.querySelector('#btn-checkin');
+        const isCheckingOut = member.is_inside;
+        btn.disabled = true;
+        btn.textContent = isCheckingOut ? 'Checking out...' : 'Checking in...';
+        const res = await apiRequest('/api/mobile/v1/access/checkin', {
+          method: 'POST',
+          body: { member_id: member.id, type: isCheckingOut ? 'EXIT' : 'ENTRY' },
+        });
+        if (res.ok) {
+          member.is_inside = !isCheckingOut;
+          showToast(res.data?.message || (isCheckingOut ? `${member.full_name} checked out` : `${member.full_name} checked in!`), 'success');
+          loadData();
+        } else {
+          showToast(res.error?.message || 'Action failed', 'error');
+          btn.disabled = false;
+          btn.innerHTML = member.is_inside ? `${icon('back', 18)} Check Out Member` : `${icon('access', 18, 'white')} Check In Member (Attendance)`;
+        }
+      });
 
       el.querySelector('#btn-renew')?.addEventListener('click', () => navigate.push('renew-member', { member: JSON.stringify(member) }));
       el.querySelector('#btn-record-payment')?.addEventListener('click', () => navigate.push('record-payment', { memberId: String(member.id) }));

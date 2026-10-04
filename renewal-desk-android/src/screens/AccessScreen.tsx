@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Modal,
   RefreshControl,
   StyleSheet,
   Text,
@@ -21,6 +23,7 @@ import type {
   AccessSummary,
   InsideMember,
   InsideMembersResponse,
+  Member,
   Pagination,
 } from '../types';
 
@@ -115,6 +118,13 @@ export function AccessScreen({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [showCheckInModal, setShowCheckInModal] = useState(false);
+  const [checkInSearch, setCheckInSearch] = useState('');
+  const [candidateMembers, setCandidateMembers] = useState<Member[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [checkingInId, setCheckingInId] = useState<number | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // ── Fetch summary ────────────────────────────────────────────────
 
@@ -234,6 +244,60 @@ export function AccessScreen({
     await fetchEvents(pagination.page + 1, true);
     setLoadingMore(false);
   }, [activeTab, loadingMore, pagination, fetchEvents]);
+
+  const fetchCandidateMembers = useCallback(async (q: string) => {
+    setLoadingCandidates(true);
+    const url = `/api/mobile/v1/members?per_page=20${q.trim() ? `&search=${encodeURIComponent(q.trim())}` : '&status=active'}`;
+    const res = await apiRequest<{ members: Member[] }>(url);
+    if (res.ok) {
+      setCandidateMembers(res.data.members || []);
+    }
+    setLoadingCandidates(false);
+  }, []);
+
+  const handleManualCheckIn = useCallback(async (memberId: number, type: 'ENTRY' | 'EXIT' = 'ENTRY') => {
+    setCheckingInId(memberId);
+    const res = await apiRequest<{ message: string }>('/api/mobile/v1/access/checkin', {
+      method: 'POST',
+      body: { member_id: memberId, type },
+    });
+    if (res.ok) {
+      const msg = res.data?.message || (type === 'ENTRY' ? 'Member checked in successfully!' : 'Member checked out.');
+      setActionMessage(msg);
+      setTimeout(() => setActionMessage(null), 3500);
+      setShowCheckInModal(false);
+      void loadAll();
+    } else {
+      Alert.alert('Action Failed', res.error.message);
+    }
+    setCheckingInId(null);
+  }, [loadAll]);
+
+  const renderActionBanner = () => {
+    if (!actionMessage) return null;
+    return (
+      <View style={styles.actionBanner}>
+        <Icon name="check" size={16} color={colors.success} />
+        <Text style={styles.actionBannerText}>{actionMessage}</Text>
+      </View>
+    );
+  };
+
+  const renderCheckInButton = () => (
+    <View style={styles.checkInBtnRow}>
+      <TouchableOpacity
+        style={styles.checkInBtn}
+        onPress={() => {
+          setShowCheckInModal(true);
+          void fetchCandidateMembers('');
+        }}
+        activeOpacity={0.8}
+      >
+        <Icon name="access" size={18} color={colors.textInverse} />
+        <Text style={styles.checkInBtnText}>+ Check In Member (Attendance)</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   // ── Renders ──────────────────────────────────────────────────────
 
@@ -377,26 +441,36 @@ export function AccessScreen({
   };
 
   const renderInsideMemberItem = ({ item }: { item: InsideMember }) => (
-    <TouchableOpacity
-      style={styles.eventCard}
-      onPress={() => onNavigateMemberDetail?.({ id: item.id, full_name: item.full_name, phone: item.phone, status: item.status } as any)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.eventLeft}>
+    <View style={styles.eventCard}>
+      <TouchableOpacity
+        style={styles.eventLeft}
+        onPress={() => onNavigateMemberDetail?.({ id: item.id, full_name: item.full_name, phone: item.phone, status: item.status } as any)}
+      >
         <Avatar name={item.full_name} size={40} />
-      </View>
-      <View style={styles.eventCenter}>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.eventCenter}
+        onPress={() => onNavigateMemberDetail?.({ id: item.id, full_name: item.full_name, phone: item.phone, status: item.status } as any)}
+      >
         <Text style={styles.eventName} numberOfLines={1}>
           {item.full_name}
         </Text>
         <Text style={styles.eventTime}>
           {item.entered_at ? `Since ${formatAccessTime(item.entered_at)}` : 'Inside'}
         </Text>
-      </View>
+      </TouchableOpacity>
       <View style={styles.eventRight}>
-        <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
+        <TouchableOpacity
+          style={[styles.smallCheckOutBtn, checkingInId === item.id && { opacity: 0.5 }]}
+          disabled={checkingInId === item.id}
+          onPress={() => void handleManualCheckIn(item.id, 'EXIT')}
+        >
+          <Text style={styles.smallCheckOutText}>
+            {checkingInId === item.id ? '...' : 'Check Out'}
+          </Text>
+        </TouchableOpacity>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 
   const renderEmpty = () => {
@@ -465,7 +539,9 @@ export function AccessScreen({
           renderItem={renderInsideMemberItem}
           ListHeaderComponent={
             <>
+              {renderActionBanner()}
               {renderSummaryCards()}
+              {renderCheckInButton()}
               {renderDeviceStatus()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
@@ -501,7 +577,9 @@ export function AccessScreen({
           renderItem={renderEventItem}
           ListHeaderComponent={
             <>
+              {renderActionBanner()}
               {renderSummaryCards()}
+              {renderCheckInButton()}
               {renderDeviceStatus()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
@@ -534,6 +612,63 @@ export function AccessScreen({
           }
         />
       )}
+
+      {/* Manual Check In Modal */}
+      <Modal visible={showCheckInModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Manual Check In</Text>
+              <TouchableOpacity onPress={() => setShowCheckInModal(false)}>
+                <Icon name="close" size={20} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalSearchBox}>
+              <Icon name="search" size={16} color={colors.muted} />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder="Search member by name or phone..."
+                placeholderTextColor={colors.muted}
+                value={checkInSearch}
+                onChangeText={(t) => {
+                  setCheckInSearch(t);
+                  void fetchCandidateMembers(t);
+                }}
+              />
+            </View>
+            <FlatList
+              data={candidateMembers}
+              keyExtractor={(item) => String(item.id)}
+              style={{ maxHeight: 350 }}
+              renderItem={({ item }) => (
+                <View style={styles.candidateRow}>
+                  <Avatar name={item.full_name} size={36} />
+                  <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                    <Text style={styles.candidateName} numberOfLines={1}>{item.full_name}</Text>
+                    <Text style={styles.candidatePhone}>{item.phone}{item.plan ? ` · ${item.plan.name}` : ''}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.candidateCheckInBtn}
+                    disabled={checkingInId === item.id}
+                    onPress={() => void handleManualCheckIn(item.id, 'ENTRY')}
+                  >
+                    <Text style={styles.candidateCheckInBtnText}>
+                      {checkingInId === item.id ? 'Checking...' : 'Check In'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              ListEmptyComponent={
+                loadingCandidates ? (
+                  <ActivityIndicator style={{ padding: spacing.lg }} color={colors.brand} />
+                ) : (
+                  <Text style={styles.modalEmptyText}>No active members found.</Text>
+                )
+              }
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -812,5 +947,127 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSize.xs,
     lineHeight: 16,
+  },
+  actionBanner: {
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.sm,
+  },
+  actionBannerText: {
+    color: colors.success,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  checkInBtnRow: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  checkInBtn: {
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+    ...shadows.sm,
+  },
+  checkInBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  smallCheckOutBtn: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  smallCheckOutText: {
+    color: colors.text,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
+  modalOverlay: {
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.lg,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  modalTitle: {
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+    color: colors.text,
+  },
+  modalSearchBox: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
+  },
+  modalSearchInput: {
+    flex: 1,
+    height: 40,
+    fontSize: fontSize.base,
+    color: colors.text,
+    marginLeft: spacing.xs,
+  },
+  candidateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  candidateName: {
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+    color: colors.text,
+  },
+  candidatePhone: {
+    fontSize: fontSize.xs,
+    color: colors.muted,
+  },
+  candidateCheckInBtn: {
+    backgroundColor: colors.brand,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  candidateCheckInBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+  },
+  modalEmptyText: {
+    textAlign: 'center',
+    color: colors.muted,
+    padding: spacing.lg,
+    fontSize: fontSize.sm,
   },
 });
