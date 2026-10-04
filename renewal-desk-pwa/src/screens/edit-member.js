@@ -55,6 +55,7 @@ export default {
       const r = await apiRequest(`/api/mobile/v1/members/${memberId}`, { method: 'PATCH', body });
       if (r.ok) {
         showToast('Saved!', 'success');
+        window.dispatchEvent(new CustomEvent('member-updated', { detail: r.data }));
         navigate.pop();
       } else {
         if (r.error?.status === 401) {

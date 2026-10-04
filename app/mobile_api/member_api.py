@@ -345,7 +345,7 @@ def verify_otp():
     data = request.get_json(silent=True) or {}
     phone = _normalize_phone(data.get("phone", ""))
     otp = (data.get("otp") or "").strip()
-    challenge = data.get("challenge")
+    challenge = data.get("challenge") or data.get("challenge_token")
 
     if not phone or not otp:
         return jsonify({"success": False, "error": "Phone and OTP are required."}), 400

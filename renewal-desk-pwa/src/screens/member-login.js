@@ -19,9 +19,11 @@ export default {
             <div id="otp-error" class="error-banner hidden" style="margin-bottom:var(--sp-lg)">${icon('alert', 16)} <span id="otp-error-text"></span></div>
             ${step === 'phone' ? `
               <form id="phone-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
-                ${renderFormField({ id: 'ml-phone', label: 'Phone Number', type: 'tel', placeholder: '9876543210', required: true })}
-                ${renderFormField({ id: 'ml-slug', label: 'Gym Code', placeholder: 'your-gym-slug', required: true, hint: 'Ask your gym owner for the code' })}
+                ${renderFormField({ id: 'ml-phone', label: 'Mobile Number', type: 'tel', placeholder: '9876543210', required: true })}
                 <button type="submit" class="btn btn-whatsapp btn-lg btn-full">${icon('send', 18, 'white')} Send OTP</button>
+                <div style="text-align:center;margin-top:var(--sp-sm)">
+                  <a href="/vynla" style="color:var(--brand);font-size:var(--fs-sm);text-decoration:none;font-weight:var(--fw-semibold)">Open VYNLA Member App →</a>
+                </div>
               </form>
             ` : `
               <form id="otp-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
@@ -37,9 +39,8 @@ export default {
         el.querySelector('#phone-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           phone = el.querySelector('#ml-phone').value.trim();
-          const slug = el.querySelector('#ml-slug').value.trim();
-          const res = await memberRequestOtp(phone, slug);
-          if (res.ok) { challengeToken = res.data.challenge_token; step = 'otp'; render(); }
+          const res = await memberRequestOtp(phone);
+          if (res.ok) { challengeToken = res.data.challenge || res.data.challenge_token; step = 'otp'; render(); }
           else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }
         });
       } else {

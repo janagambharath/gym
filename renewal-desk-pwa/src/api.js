@@ -236,14 +236,15 @@ export async function deleteAccount() {
 // ─── Member Auth ─────────────────────────────────────────────────────
 
 export async function memberRequestOtp(phone, gymSlug) {
+  const body = gymSlug ? { phone, gym_slug: gymSlug } : { phone };
   return apiRequest('/api/member/v1/auth/request-otp', {
-    method: 'POST', body: { phone, gym_slug: gymSlug }, anonymous: true,
+    method: 'POST', body, anonymous: true,
   });
 }
 
 export async function memberVerifyOtp(phone, otp, challengeToken) {
   return apiRequest('/api/member/v1/auth/verify-otp', {
-    method: 'POST', body: { phone, otp, challenge_token: challengeToken }, anonymous: true,
+    method: 'POST', body: { phone, otp, challenge: challengeToken, challenge_token: challengeToken }, anonymous: true,
   });
 }
 

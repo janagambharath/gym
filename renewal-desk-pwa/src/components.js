@@ -188,7 +188,7 @@ export function renderMemberCard(member) {
       ${renderAvatar(member.full_name)}
       <div class="list-item-content">
         <div class="list-item-title">${escapeHtml(member.full_name)}</div>
-        <div class="list-item-subtitle">${escapeHtml(member.phone)}${member.plan ? ` · ${escapeHtml(member.plan.name)}` : ''}</div>
+        <div class="list-item-subtitle">${escapeHtml(member.phone)}${member.plan ? ` · ${escapeHtml(member.plan.name)}` : ''}${member.address ? ` · 📍 ${escapeHtml(member.address)}` : ''}</div>
       </div>
       <div class="list-item-right">
         ${renderBadge(displayStatus)}
