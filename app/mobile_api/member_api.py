@@ -347,6 +347,13 @@ def request_otp():
             if "vynla_otp" not in otp_templates_to_try:
                 otp_templates_to_try.append("vynla_otp")
 
+            otp_button_param = [{
+                "type": "button",
+                "sub_type": "url",
+                "index": 0,
+                "parameters": [{"type": "text", "text": str(otp)}],
+            }]
+
             template_sent = False
             for tpl in otp_templates_to_try:
                 template_res = wa.send_template(
@@ -354,6 +361,7 @@ def request_otp():
                     template_name=tpl,
                     language_code=current_app.config.get("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"),
                     body_parameters=[otp],
+                    button_parameters=otp_button_param,
                 )
                 if template_res.ok:
                     template_sent = True
