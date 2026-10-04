@@ -1,5 +1,5 @@
 /* Payment Setup Screen */
-import { apiRequest } from '../api.js';
+import { apiRequest, uploadPaymentQrImage } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
 
@@ -15,11 +15,27 @@ export default {
           ${renderFormField({ id: 'ps-upi', label: 'UPI ID / VPA *', value: ps.upi_id || '', placeholder: 'e.g. yourgym@okhdfcbank', required: true })}
           ${renderFormField({ id: 'ps-label', label: 'Payment Label', value: ps.payment_label || '', placeholder: 'Displayed to members (e.g. Gym Name)' })}
           ${renderFormField({ id: 'ps-inst', label: 'Instructions', type: 'textarea', value: ps.instructions || '', placeholder: 'Payment instructions for members' })}
+          <div class="form-group"><label class="form-label" for="ps-qr">Payment QR image</label><p class="form-hint">Upload a PNG, JPG, or WebP image. Members will see it in VYNLA.</p><input id="ps-qr" class="form-input" type="file" accept="image/png,image/jpeg,image/webp">${ps.qr_public_url ? `<img src="${ps.qr_public_url}" alt="Current payment QR" style="display:block;width:180px;height:180px;object-fit:contain;margin-top:12px;border:1px solid var(--border);border-radius:var(--r-md)">` : ''}</div>
           <button type="submit" class="btn btn-primary btn-lg btn-full" id="ps-submit">Save Settings</button>
         </form>
       </div></div>`;
 
     bindHeaderEvents(el, { onBack: () => navigate.pop() });
+
+    el.querySelector('#ps-qr').addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const upload = await uploadPaymentQrImage(file);
+      if (upload.ok) {
+        showToast('QR image uploaded. Members can scan it in VYNLA.', 'success');
+        if (upload.data.qr_public_url) {
+          const preview = document.createElement('img');
+          preview.src = upload.data.qr_public_url; preview.alt = 'Payment QR';
+          preview.style.cssText = 'display:block;width:180px;height:180px;object-fit:contain;margin-top:12px;border:1px solid var(--border);border-radius:var(--r-md)';
+          event.target.insertAdjacentElement('afterend', preview);
+        }
+      } else showToast(upload.error.message, 'error');
+    });
 
     el.querySelector('#ps-form').addEventListener('submit', async (e) => {
       e.preventDefault();

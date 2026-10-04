@@ -148,6 +148,9 @@ def settings():
         if form.qr_image.data:
             try:
                 qr_settings.qr_image_path = save_gym_qr(form.qr_image.data, gym_id)
+                # The new dashboard upload is the QR members should see.
+                # Do not leave an older external URL taking precedence.
+                qr_settings.qr_public_url = None
             except ValueError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("gym.settings"))

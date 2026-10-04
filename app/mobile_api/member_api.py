@@ -25,7 +25,7 @@ import time
 from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request, url_for
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
@@ -44,10 +44,30 @@ from app.models import (
 )
 from app.services.audit_service import audit
 from app.services.timezone_service import today_for_gym
+from app.utils.helpers import normalize_public_media_url
 
 _logger = logging.getLogger(__name__)
 
 member_bp = Blueprint("member_api", __name__, url_prefix="/api/member/v1")
+
+
+def _member_qr_url(qr: QRSettings | None) -> str | None:
+    """Resolve dashboard or owner-app QR uploads for a member client."""
+    if not qr:
+        return None
+    if qr.qr_public_url:
+        return normalize_public_media_url(qr.qr_public_url) or None
+    path = qr.qr_image_path
+    if not path:
+        return None
+    if path.startswith(("http://", "https://")):
+        return normalize_public_media_url(path) or None
+
+    from itsdangerous import URLSafeTimedSerializer
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="qr-media")
+    token = serializer.dumps({"path": path.replace("\\", "/")})
+    return url_for("signed_qr_file", token=token, _external=True)
 
 
 def _is_reviewer_bypass_enabled() -> bool:
@@ -191,12 +211,12 @@ def _get_gym_branding(gym: Gym | None) -> dict:
                 "created_at": c.created_at.isoformat() if c.created_at else None,
             })
 
-    # QR Settings / payment logo
+    # A gym may upload its payment QR from the dashboard or owner app.
     qr = gym.qr_settings
 
     return {
         "gym_name": gym.name,
-        "logo_url": qr.qr_public_url if (qr and qr.qr_public_url) else None,
+        "logo_url": _member_qr_url(qr),
         "primary_color": "#2563EB",
         "secondary_color": "#1D4ED8",
         "accent_color": "#EFF6FF",
@@ -1230,6 +1250,7 @@ def member_profile():
                 "upi_id": qr_settings.upi_id if qr_settings else None,
                 "payment_label": qr_settings.payment_label if qr_settings else None,
                 "instructions": qr_settings.instructions if qr_settings else None,
+                "qr_public_url": _member_qr_url(qr_settings),
             } if qr_settings else None,
         },
     })
@@ -1253,6 +1274,6 @@ def member_payment_info():
             "upi_id": qr_settings.upi_id if qr_settings else None,
             "payment_label": qr_settings.payment_label if qr_settings else None,
             "instructions": qr_settings.instructions if qr_settings else None,
-            "qr_public_url": qr_settings.qr_public_url if qr_settings else None,
+            "qr_public_url": _member_qr_url(qr_settings),
         },
     })

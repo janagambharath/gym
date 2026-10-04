@@ -134,6 +134,7 @@ export type MemberProfile = {
     upi_id: string | null;
     payment_label: string | null;
     instructions: string | null;
+    qr_public_url: string | null;
   } | null;
 };
 

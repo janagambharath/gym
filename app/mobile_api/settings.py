@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request, url_for
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -13,6 +13,8 @@ from app.models import Gym, MembershipPlan, QRSettings
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.mobile_billing_service import entitlement_for
+from app.services.storage_service import delete_local_upload, save_gym_qr
+from app.utils.helpers import normalize_public_media_url
 
 
 def _serialize_plan(p: MembershipPlan) -> dict:
@@ -21,6 +23,40 @@ def _serialize_plan(p: MembershipPlan) -> dict:
         "name": p.name,
         "duration_days": p.duration_days,
         "price": str(p.price),
+    }
+
+
+def _payment_qr_url(qr: QRSettings | None) -> str | None:
+    """Return the image URL members can actually load.
+
+    Dashboard uploads are stored privately under ``uploads/gym_qr``.  A
+    short-lived signed URL keeps those files private while still allowing the
+    member web and Android clients to display the owner's QR image.
+    """
+    if not qr:
+        return None
+    if qr.qr_public_url:
+        return normalize_public_media_url(qr.qr_public_url) or None
+    if not qr.qr_image_path:
+        return None
+    if qr.qr_image_path.startswith(("http://", "https://")):
+        return normalize_public_media_url(qr.qr_image_path) or None
+
+    from itsdangerous import URLSafeTimedSerializer
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="qr-media")
+    token = serializer.dumps({"path": qr.qr_image_path.replace("\\", "/")})
+    return url_for("signed_qr_file", token=token, _external=True)
+
+
+def _serialize_payment_settings(qr: QRSettings | None, gym: Gym | None) -> dict:
+    return {
+        "upi_id": qr.upi_id if qr else None,
+        "payment_label": qr.payment_label if qr else (gym.name if gym else None),
+        "instructions": qr.instructions if qr else None,
+        # Keep the established field name so older Android releases work too.
+        "qr_public_url": _payment_qr_url(qr),
+        "is_active": qr.is_active if qr else True,
     }
 
 
@@ -56,13 +92,7 @@ def register_settings_routes(bp):
                     "billing": entitlement_for(gym),
                 },
                 "plans": [_serialize_plan(p) for p in plans],
-                "payment_settings": {
-                    "upi_id": qr.upi_id if qr else None,
-                    "payment_label": qr.payment_label if qr else (gym.name if gym else None),
-                    "instructions": qr.instructions if qr else None,
-                    "qr_public_url": qr.qr_public_url if qr else None,
-                    "is_active": qr.is_active if qr else True,
-                },
+                "payment_settings": _serialize_payment_settings(qr, gym),
             },
         })
 
@@ -105,13 +135,7 @@ def register_settings_routes(bp):
         if request.method == "GET":
             return jsonify({
                 "success": True,
-                "data": {
-                    "upi_id": qr.upi_id if qr else None,
-                    "payment_label": qr.payment_label if qr else (g.current_user.gym.name if g.current_user.gym else None),
-                    "instructions": qr.instructions if qr else None,
-                    "qr_public_url": qr.qr_public_url if qr else None,
-                    "is_active": qr.is_active if qr else True,
-                },
+                "data": _serialize_payment_settings(qr, g.current_user.gym),
             })
 
         data = request.get_json(silent=True) or {}
@@ -153,13 +177,66 @@ def register_settings_routes(bp):
         return jsonify({
             "success": True,
             "message": "Gym payment details updated successfully.",
-            "data": {
-                "upi_id": qr.upi_id,
-                "payment_label": qr.payment_label,
-                "instructions": qr.instructions,
-                "is_active": qr.is_active,
-            },
+            "data": _serialize_payment_settings(qr, g.current_user.gym),
         })
+
+    @bp.route("/settings/payment/qr", methods=["POST", "DELETE"])
+    @token_required
+    @roles_required("gym_owner")
+    def payment_qr_image():
+        """Let gym owners replace the QR shown in VYNLA from their app."""
+        qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
+        if not qr:
+            qr = QRSettings(gym_id=g.gym_id, payment_label=g.current_user.gym.name)
+            db.session.add(qr)
+            db.session.flush()
+
+        if request.method == "DELETE":
+            old_path = qr.qr_image_path
+            qr.qr_image_path = None
+            qr.qr_public_url = None
+            invalidate_dashboard_cache(g.gym_id)
+            audit(
+                action="remove_qr_settings",
+                resource_type="qr_settings",
+                resource_id=qr.id,
+                gym_id=g.gym_id,
+                actor_id=g.current_user.id,
+            )
+            db.session.commit()
+            if old_path and not old_path.startswith(("http://", "https://")):
+                try:
+                    delete_local_upload(old_path)
+                except Exception:
+                    current_app.logger.exception("Could not remove old QR upload for gym %s", g.gym_id)
+            return jsonify({"success": True, "data": _serialize_payment_settings(qr, g.current_user.gym)})
+
+        upload = request.files.get("qr_image")
+        if not upload or not upload.filename:
+            return error_response("VALIDATION_ERROR", "Select a PNG, JPG, or WebP QR image.", 400)
+
+        old_path = qr.qr_image_path
+        try:
+            qr.qr_image_path = save_gym_qr(upload, g.gym_id)
+        except ValueError as exc:
+            return error_response("VALIDATION_ERROR", str(exc), 400)
+        # An uploaded image deliberately takes precedence over a legacy URL.
+        qr.qr_public_url = None
+        invalidate_dashboard_cache(g.gym_id)
+        audit(
+            action="upload_qr_settings",
+            resource_type="qr_settings",
+            resource_id=qr.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+        )
+        db.session.commit()
+        if old_path and old_path != qr.qr_image_path and not old_path.startswith(("http://", "https://")):
+            try:
+                delete_local_upload(old_path)
+            except Exception:
+                current_app.logger.exception("Could not remove replaced QR upload for gym %s", g.gym_id)
+        return jsonify({"success": True, "data": _serialize_payment_settings(qr, g.current_user.gym)})
 
     # ─── Plan Management ─────────────────────────────────────────────
 
