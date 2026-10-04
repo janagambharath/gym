@@ -19,10 +19,13 @@ def upgrade():
     inspector = sa.inspect(conn)
     existing_columns = {col["name"] for col in inspector.get_columns("members")}
     if "address" not in existing_columns:
-        with op.batch_alter_table("members", schema=None) as batch_op:
-            batch_op.add_column(
-                sa.Column("address", sa.Text(), nullable=True)
-            )
+        if conn.dialect.name == "postgresql":
+            op.execute("ALTER TABLE members ADD COLUMN IF NOT EXISTS address TEXT")
+        else:
+            with op.batch_alter_table("members", schema=None) as batch_op:
+                batch_op.add_column(
+                    sa.Column("address", sa.Text(), nullable=True)
+                )
 
 
 def downgrade():

@@ -60,7 +60,6 @@ def create_app(config_name: str | None = None) -> Flask:
     _ensure_runtime_dirs(app)
     _configure_logging(app)
     _init_extensions(app)
-    _ensure_member_address_column(app)
     _register_blueprints(app)
     _register_error_handlers(app)
     _register_security_headers(app)
@@ -258,25 +257,6 @@ def _init_extensions(app: Flask) -> None:
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
     login_manager.login_message_category = "warning"
-
-
-def _ensure_member_address_column(app: Flask) -> None:
-    """Ensure members table has address column across all database dialects."""
-    if app.config.get("TESTING"):
-        return
-    try:
-        from sqlalchemy import inspect, text
-        with app.app_context():
-            inspector = inspect(db.engine)
-            if "members" in inspector.get_table_names():
-                cols = [c["name"] for c in inspector.get_columns("members")]
-                if "address" not in cols:
-                    with db.engine.connect() as conn:
-                        conn.execute(text("ALTER TABLE members ADD COLUMN address TEXT"))
-                        conn.commit()
-                    app.logger.info("Auto-migrated: added address column to members table")
-    except Exception as exc:
-        app.logger.debug("Address column check skipped or failed: %s", exc)
 
 
 def _register_blueprints(app: Flask) -> None:
