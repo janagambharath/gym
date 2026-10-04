@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import * as DocumentPicker from 'expo-document-picker';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -9,13 +11,14 @@ import {
   Switch,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, uploadPaymentQrImage } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 
@@ -39,6 +42,8 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
   const [instructions, setInstructions] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+  const [uploadingQr, setUploadingQr] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +54,7 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
         setPaymentLabel(res.data.payment_label || '');
         setInstructions(res.data.instructions || '');
         setIsActive(res.data.is_active !== false);
+        setQrImageUrl(res.data.qr_public_url || null);
       }
       setLoading(false);
     });
@@ -92,6 +98,34 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
       Alert.alert('Save Failed', res.error.message || 'Could not update payment settings.');
     }
   }, [upiId, paymentLabel, instructions, isActive]);
+
+  const handlePickQr = useCallback(async () => {
+    const selection = await DocumentPicker.getDocumentAsync({
+      type: ['image/png', 'image/jpeg', 'image/webp'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (selection.canceled || !selection.assets?.[0]) return;
+
+    const asset = selection.assets[0];
+    if (!asset.mimeType || !['image/png', 'image/jpeg', 'image/webp'].includes(asset.mimeType)) {
+      Alert.alert('Unsupported image', 'Choose a PNG, JPG, or WebP QR image.');
+      return;
+    }
+    setUploadingQr(true);
+    const result = await uploadPaymentQrImage({
+      uri: asset.uri,
+      name: asset.name || 'payment-qr.png',
+      mimeType: asset.mimeType,
+    });
+    setUploadingQr(false);
+    if (result.ok) {
+      setQrImageUrl(result.data.qr_public_url);
+      Alert.alert('QR uploaded', 'Members can now scan this QR in VYNLA.');
+    } else {
+      Alert.alert('Upload failed', result.error.message);
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -168,6 +202,26 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
                 thumbColor={colors.surface}
               />
             </View>
+          </View>
+
+          <View style={styles.card}>
+            <SectionHeader
+              title="3. Payment QR Image"
+              icon={<Icon name="camera" size={18} color={colors.brand} />}
+            />
+            <Text style={styles.helperText}>
+              Upload the QR your members should scan when they pay from another device. This replaces any previous QR image.
+            </Text>
+            {qrImageUrl ? <Image source={{ uri: qrImageUrl }} style={styles.qrPreview} resizeMode="contain" /> : null}
+            <TouchableOpacity
+              style={[styles.uploadQrButton, uploadingQr && styles.buttonDisabled]}
+              onPress={() => void handlePickQr()}
+              disabled={uploadingQr}
+              activeOpacity={0.75}
+            >
+              {uploadingQr ? <ActivityIndicator color="#fff" /> : <Icon name="document" size={18} color="#fff" />}
+              <Text style={styles.uploadQrText}>{uploadingQr ? 'Uploading QR...' : qrImageUrl ? 'Replace QR Image' : 'Upload QR Image'}</Text>
+            </TouchableOpacity>
           </View>
 
           {/* 2. Bank Details & Instructions */}
@@ -386,5 +440,33 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     marginTop: spacing.sm,
+  },
+  qrPreview: {
+    alignSelf: 'center',
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    height: 190,
+    marginBottom: spacing.md,
+    width: 190,
+  },
+  uploadQrButton: {
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 46,
+    paddingHorizontal: spacing.md,
+  },
+  uploadQrText: {
+    color: '#fff',
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  buttonDisabled: {
+    opacity: 0.65,
   },
 });

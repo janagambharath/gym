@@ -246,3 +246,21 @@ export async function memberVerifyOtp(phone, otp, challengeToken) {
     method: 'POST', body: { phone, otp, challenge_token: challengeToken }, anonymous: true,
   });
 }
+
+/** Upload an owner-selected payment QR image without setting a JSON content type. */
+export async function uploadPaymentQrImage(file) {
+  const form = new FormData();
+  form.append('qr_image', file);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/mobile/v1/settings/payment/qr`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', ...(cachedSession?.accessToken ? { Authorization: `Bearer ${cachedSession.accessToken}` } : {}) },
+      body: form,
+    });
+    const envelope = await response.json();
+    if (!response.ok || !envelope.success) return { ok: false, error: { message: envelope.error?.message || envelope.error || 'QR upload failed.' } };
+    return { ok: true, data: envelope.data };
+  } catch {
+    return { ok: false, error: { message: 'Could not upload the QR image. Check your connection.' } };
+  }
+}

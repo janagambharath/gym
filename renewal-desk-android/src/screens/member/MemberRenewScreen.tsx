@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -187,7 +188,7 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
 
             <Text style={styles.sectionTitle}>Payment Details</Text>
 
-            {paymentInfo?.upi_id ? (
+            {paymentInfo?.upi_id || paymentInfo?.qr_public_url ? (
               <View style={styles.paymentInfoCard}>
                 <View style={styles.paymentInfoRow}>
                   <Text style={styles.paymentInfoLabel}>UPI ID</Text>
@@ -203,6 +204,16 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
                   <View style={styles.instructionsBox}>
                     <Icon name="info" size={16} color={colors.brand} />
                     <Text style={styles.instructionsText}>{paymentInfo.instructions}</Text>
+                  </View>
+                )}
+                {paymentInfo.qr_public_url && (
+                  <View style={styles.qrSection}>
+                    <Text style={styles.qrTitle}>Scan this QR to pay</Text>
+                    <Image
+                      source={{ uri: paymentInfo.qr_public_url }}
+                      style={styles.qrImage}
+                      resizeMode="contain"
+                    />
                   </View>
                 )}
               </View>
@@ -467,6 +478,23 @@ const styles = StyleSheet.create({
     fontSize: fontSize.base,
     color: colors.text,
     fontWeight: fontWeight.bold,
+  },
+  qrSection: {
+    alignItems: 'center',
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+  },
+  qrTitle: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    marginBottom: spacing.sm,
+  },
+  qrImage: {
+    height: 200,
+    width: 200,
   },
   gymPhoneText: {
     fontSize: fontSize.xl,

@@ -639,3 +639,63 @@ export async function batchCreateMembers(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Payment QR image upload (owner-only, multipart rather than JSON)
+// ---------------------------------------------------------------------------
+
+export type PaymentQrImage = {
+  uri: string;
+  name: string;
+  mimeType: string;
+};
+
+export type PaymentQrUploadResult = {
+  qr_public_url: string | null;
+  upi_id: string | null;
+  payment_label: string | null;
+  instructions: string | null;
+  is_active: boolean;
+};
+
+/** Upload a QR image selected by the gym owner for display in VYNLA. */
+export async function uploadPaymentQrImage(
+  image: PaymentQrImage,
+): Promise<ApiResult<PaymentQrUploadResult>> {
+  const config = getRuntimeConfiguration();
+  if (!config.apiBaseUrl) {
+    return { ok: false, error: { message: 'API base URL is not configured.' } };
+  }
+
+  const form = new FormData();
+  form.append('qr_image', {
+    uri: image.uri,
+    name: image.name,
+    type: image.mimeType,
+  } as never);
+
+  try {
+    const response = await fetch(`${config.apiBaseUrl}/api/mobile/v1/settings/payment/qr`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        ...(cachedSession?.accessToken ? { Authorization: `Bearer ${cachedSession.accessToken}` } : {}),
+      },
+      body: form,
+    });
+    const envelope = (await response.json()) as BackendEnvelope<PaymentQrUploadResult>;
+    if (!response.ok || !envelope.success || !envelope.data) {
+      return {
+        ok: false,
+        error: {
+          message: envelope.error?.message ?? `Upload failed (${response.status}).`,
+          code: envelope.error?.code,
+          status: response.status,
+        },
+      };
+    }
+    return { ok: true, data: envelope.data };
+  } catch {
+    return { ok: false, error: { message: 'Could not upload the QR image. Check your connection and try again.' } };
+  }
+}
+

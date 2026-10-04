@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ load_dotenv()
 import sentry_sdk
 from flask import (
     Flask,
+    Response,
     abort,
     jsonify,
     redirect,
@@ -72,6 +74,31 @@ def create_app(config_name: str | None = None) -> Flask:
     # static assets and use a catch-all for SPA client-side routing.
     _pwa_dist = Path(app.root_path).parent / "renewal-desk-pwa" / "dist"
     _pwa_available = _pwa_dist.is_dir() and (_pwa_dist / "index.html").exists()
+
+    if _pwa_available:
+        @app.route("/vynla")
+        @app.route("/vynla/")
+        def vynla_member_pwa():
+            """Serve the dedicated, installable member PWA at /vynla."""
+            html = (_pwa_dist / "index.html").read_text(encoding="utf-8")
+            html = html.replace('href="/manifest.webmanifest"', 'href="/vynla/manifest.webmanifest"')
+            html = html.replace('href="/manifest.json"', 'href="/vynla/manifest.webmanifest"')
+            html = re.sub(r"<title>.*?</title>", "<title>VYNLA - Member App</title>", html, count=1)
+            return Response(html, content_type="text/html; charset=utf-8")
+
+        @app.route("/vynla/manifest.webmanifest")
+        def vynla_member_manifest():
+            return jsonify({
+                "name": "VYNLA Member App", "short_name": "VYNLA",
+                "description": "Your gym membership, payments, and renewal app.",
+                "theme_color": "#2563EB", "background_color": "#F8F9FB",
+                "display": "standalone", "orientation": "portrait",
+                "scope": "/vynla/", "start_url": "/vynla/",
+                "icons": [
+                    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+                ],
+            })
 
     if _pwa_available:
         app.logger.info("PWA dist found at %s — serving as web frontend", _pwa_dist)
