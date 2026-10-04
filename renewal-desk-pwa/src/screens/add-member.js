@@ -12,7 +12,7 @@ export default {
 
     el.innerHTML = `
       ${renderHeader({ title: 'Add Member', showBack: true })}
-      <div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+      <div class="scroll-view"><div class="scroll-content form-scroll-content">
         <form id="add-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
           ${renderFormField({ id: 'am-name', label: 'Full Name', placeholder: 'Member name', required: true })}
           ${renderFormField({ id: 'am-phone', label: 'Phone', type: 'tel', placeholder: '9876543210', required: true })}

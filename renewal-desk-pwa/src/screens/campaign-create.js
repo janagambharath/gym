@@ -7,7 +7,7 @@ export default { async mount(el) {
   const templRes = await apiRequest('/api/mobile/v1/campaigns/templates');
   const templates = templRes.ok ? templRes.data.templates||templRes.data||[] : [];
   const templOpts = templates.map(t=>({value:t.id||t.name,label:t.name||t.id}));
-  el.innerHTML = `${renderHeader({title:'New Campaign',showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+  el.innerHTML = `${renderHeader({title:'New Campaign',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <form id="cc-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
       ${renderFormField({id:'cc-name',label:'Campaign Name',placeholder:'e.g. Monthly renewal reminder',required:true})}
       ${renderFormField({id:'cc-segment',label:'Target Segment',options:segOpts,required:true})}

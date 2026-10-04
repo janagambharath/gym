@@ -29,6 +29,14 @@ class Router {
     this.onSwitchTab = null;
   }
 
+  get depth() {
+    return this.stack.length;
+  }
+
+  get current() {
+    return this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
+  }
+
   /** @param {HTMLElement} container */
   init(container) {
     this.container = container;
@@ -80,9 +88,21 @@ class Router {
     const el = document.createElement('div');
     el.className = 'screen';
     el.dataset.screenId = screenId;
+    el.style.zIndex = String(10 + this.stack.length);
+
+    const prevScreen = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
 
     if (opts.animate && this.stack.length > 0) {
       el.classList.add('screen-enter');
+      if (prevScreen?.element) {
+        setTimeout(() => {
+          if (this.current?.element === el && prevScreen?.element && document.body.contains(el)) {
+            prevScreen.element.style.visibility = 'hidden';
+          }
+        }, 320);
+      }
+    } else if (prevScreen?.element) {
+      prevScreen.element.style.visibility = 'hidden';
     }
 
     // If replacing, remove old top
@@ -108,6 +128,11 @@ class Router {
     if (this.stack.length <= 1) return;
 
     const top = this.stack.pop();
+    const prev = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
+    if (prev?.element) {
+      prev.element.style.visibility = 'visible';
+    }
+
     if (top) {
       top.element.classList.remove('screen-enter');
       top.element.classList.add('screen-exit');
@@ -170,7 +195,10 @@ class Router {
     // Restore saved stack or create new
     const savedStack = this.tabStacks.get(tabId);
     if (savedStack && savedStack.length > 0) {
-      for (const entry of savedStack) {
+      for (let i = 0; i < savedStack.length; i++) {
+        const entry = savedStack[i];
+        entry.element.style.zIndex = String(10 + i);
+        entry.element.style.visibility = (i === savedStack.length - 1) ? 'visible' : 'hidden';
         this.container.appendChild(entry.element);
         this.stack.push(entry);
       }

@@ -3,7 +3,7 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js';
 export default { mount(el) {
-  el.innerHTML = `${renderHeader({title:'Upload CSV',showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl);text-align:center">
+  el.innerHTML = `${renderHeader({title:'Upload CSV',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
     <div style="border:2px dashed var(--border);border-radius:var(--r-xl);padding:var(--sp-4xl);margin-bottom:var(--sp-xl)">
       ${icon('upload',40,'var(--muted)')}
       <p style="margin-top:var(--sp-lg);color:var(--text-secondary)">Tap to select a CSV file</p>

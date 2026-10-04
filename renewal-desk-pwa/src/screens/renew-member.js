@@ -8,7 +8,7 @@ export default { async mount(el, params) {
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
   const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
   const status = getMemberDisplayStatus(member);
-  el.innerHTML = `${renderHeader({ title: 'Renew Membership', showBack: true })}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+  el.innerHTML = `${renderHeader({ title: 'Renew Membership', showBack: true })}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <div class="card card-body" style="margin-bottom:var(--sp-xl);display:flex;align-items:center;gap:var(--sp-md)">
       ${renderAvatar(member.full_name)} <div><div style="font-weight:var(--fw-bold)">${escapeHtml(member.full_name)}</div>
       <div style="font-size:var(--fs-sm);color:var(--text-secondary)">${escapeHtml(member.phone)}</div></div>

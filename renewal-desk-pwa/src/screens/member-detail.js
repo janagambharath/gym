@@ -46,6 +46,13 @@ export default {
               `}
               ${renderBadge(status)}
               ${daysText ? `<div style="margin-top:var(--sp-sm);font-size:var(--fs-sm);color:${statusColor.text}">${escapeHtml(daysText)}</div>` : ''}
+              ${member.recent_otp ? `
+                <div style="background:var(--brand-subtle);border:1.5px solid var(--info-border);border-radius:var(--r-lg);padding:10px 14px;margin-top:var(--sp-md);display:inline-block;max-width:280px">
+                  <div style="font-size:var(--fs-xs);color:var(--text-secondary);font-weight:var(--fw-medium)">Active Member App (VYNLA) Login Code</div>
+                  <div style="font-size:22px;font-weight:var(--fw-extrabold);color:var(--brand);letter-spacing:4px;margin:2px 0">${escapeHtml(member.recent_otp)}</div>
+                  <div style="font-size:var(--fs-xs);color:var(--muted)">Expires in ~${Math.max(1, Math.round((member.recent_otp_expires_in || 600) / 60))} min</div>
+                </div>
+              ` : ''}
               <div style="margin-top:var(--sp-md)">
                 <button class="btn btn-outline btn-sm" id="btn-quick-edit" style="display:inline-flex;align-items:center;gap:6px">
                   ${icon('edit', 14)} Edit Member

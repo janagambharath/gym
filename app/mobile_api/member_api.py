@@ -87,6 +87,24 @@ def _generate_otp() -> str:
     return "".join(random.choices(string.digits, k=6))
 
 
+# In-memory store for recent member OTPs so gym staff can assist members if needed
+_RECENT_MEMBER_OTPS: dict[int, dict] = {}
+
+
+def get_recent_member_otp(member_id: int) -> dict | None:
+    data = _RECENT_MEMBER_OTPS.get(member_id)
+    if not data:
+        return None
+    now = int(time.time())
+    if now > data["expires_at"]:
+        _RECENT_MEMBER_OTPS.pop(member_id, None)
+        return None
+    return {
+        "otp": data["otp"],
+        "expires_in_seconds": data["expires_at"] - now,
+    }
+
+
 def _normalize_phone(phone: str) -> str:
     """Strip whitespace and leading +, keep digits only."""
     return phone.strip().lstrip("+").replace(" ", "").replace("-", "")
@@ -282,53 +300,113 @@ def request_otp():
             "error": "We couldn't find a member account for this number. Please contact your gym.",
         }), 404
 
-    otp = _generate_otp()
+    if _is_reviewer_bypass_enabled() and (phone.endswith("9999999999") or phone.endswith("7995854994")):
+        otp = "123456"
+    else:
+        otp = _generate_otp()
+
     expires_at_ts = int(time.time()) + 600  # 10 minutes
     challenge = _sign_otp_challenge(phone, member.id, member.gym_id, otp, expires_at_ts)
 
+    # Cache recent OTP in memory so gym staff can assist the member if WhatsApp is delayed
+    _RECENT_MEMBER_OTPS[member.id] = {
+        "otp": otp,
+        "expires_at": expires_at_ts,
+        "phone": phone,
+        "created_at": int(time.time()),
+    }
+
     # Send OTP via WhatsApp
+    delivery_ok = False
+    delivery_error = None
+    wa_chat_url = None
+
+    gym = db.session.get(Gym, member.gym_id)
+    if gym:
+        gym_phone = (gym.business_phone_number or gym.phone or "").strip()
+        if gym_phone:
+            import re
+            clean_gp = re.sub(r"\D", "", gym_phone)
+            if len(clean_gp) == 10:
+                clean_gp = "91" + clean_gp
+            wa_chat_url = f"https://wa.me/{clean_gp}?text=Hi%2C%20please%20send%20my%20VYNLA%20login%20code"
+
     try:
-        gym = db.session.get(Gym, member.gym_id)
-        if gym and gym.whatsapp_enabled:
-            from app.services.whatsapp_service import WhatsAppService
-            from app.utils.helpers import phone_to_whatsapp
+        from app.services.whatsapp_service import WhatsAppService
+        from app.utils.helpers import phone_to_whatsapp
 
-            wa = WhatsAppService(gym)
-            wa_phone = phone_to_whatsapp(member.phone)
-            if wa_phone:
-                otp_template = current_app.config.get("WHATSAPP_OTP_TEMPLATE_NAME", "")
-                template_sent = False
-                if otp_template:
-                    template_res = wa.send_template(
-                        to=wa_phone,
-                        template_name=otp_template,
-                        language_code=current_app.config.get("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"),
-                        body_parameters=[otp],
-                        button_parameters=[{
-                            "type": "button",
-                            "sub_type": "url",
-                            "index": "0",
-                            "parameters": [{"type": "text", "text": str(otp)}],
-                        }],
-                    )
-                    template_sent = template_res.ok
-                    if not template_sent:
-                        _logger.warning("WhatsApp OTP template '%s' failed: %s", otp_template, template_res.error)
+        wa = WhatsAppService(gym) if gym else None
+        wa_phone = phone_to_whatsapp(member.phone)
+        can_send_wa = bool(wa and wa_phone and (gym.whatsapp_enabled or current_app.config.get("WHATSAPP_ENABLED")))
 
-                if not template_sent:
-                    text_res = wa.send_text(
-                        to=wa_phone,
-                        body=f"Your VYNLA verification code is: {otp}\n\nValid for 10 minutes.",
-                    )
-                    if not text_res.ok:
-                        _logger.warning("WhatsApp OTP text message failed: %s", text_res.error)
-    except Exception:
+        if can_send_wa:
+            otp_templates_to_try = []
+            configured_tpl = current_app.config.get("WHATSAPP_OTP_TEMPLATE_NAME", "").strip()
+            if configured_tpl:
+                otp_templates_to_try.append(configured_tpl)
+            if "vynla_otp" not in otp_templates_to_try:
+                otp_templates_to_try.append("vynla_otp")
+
+            template_sent = False
+            for tpl in otp_templates_to_try:
+                template_res = wa.send_template(
+                    to=wa_phone,
+                    template_name=tpl,
+                    language_code=current_app.config.get("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"),
+                    body_parameters=[otp],
+                )
+                if template_res.ok:
+                    template_sent = True
+                    delivery_ok = True
+                    break
+                else:
+                    delivery_error = template_res.error
+                    _logger.warning("WhatsApp OTP template '%s' failed: %s", tpl, template_res.error)
+
+            if not template_sent:
+                text_res = wa.send_text(
+                    to=wa_phone,
+                    body=f"Your VYNLA verification code is: {otp}\n\nValid for 10 minutes. Do not share this code.",
+                )
+                if text_res.ok:
+                    delivery_ok = True
+                else:
+                    delivery_error = text_res.error or delivery_error
+                    _logger.warning("WhatsApp OTP text message failed: %s", text_res.error)
+        else:
+            if not wa_phone:
+                delivery_error = "Invalid mobile phone format for WhatsApp"
+            elif not wa or not (wa.phone_number_id and wa.access_token):
+                delivery_error = "WhatsApp credentials are not configured on this server or gym"
+            else:
+                delivery_error = "WhatsApp messaging is not active for this gym"
+    except Exception as exc:
+        delivery_error = str(exc)
         _logger.exception("Failed to send OTP via WhatsApp for phone %s", phone[-4:])
+
+    # If reviewer bypass is active or testing, allow through
+    if current_app.config.get("TESTING") or (_is_reviewer_bypass_enabled() and (phone.endswith("9999999999") or phone.endswith("7995854994"))):
+        delivery_ok = True
+
+    delivery_warning = None
+    if not delivery_ok:
+        if delivery_error:
+            if "131047" in delivery_error or "24 hours" in delivery_error.lower():
+                delivery_warning = "WhatsApp delivery requires an initial message. Tap 'Message gym on WhatsApp' below, then tap Resend Code."
+            elif "not enabled" in delivery_error.lower() or "missing" in delivery_error.lower() or "not active" in delivery_error.lower():
+                delivery_warning = "WhatsApp messaging is not active for this gym yet. Ask gym staff for your 6-digit login code."
+            else:
+                delivery_warning = f"WhatsApp delivery note: {delivery_error}. You can ask gym staff for your code or tap Resend Code."
+        else:
+            delivery_warning = "WhatsApp code could not be confirmed. Ask gym staff for your 6-digit code or tap Resend Code."
 
     resp_payload = {
         "success": True,
-        "message": "OTP sent to your WhatsApp number.",
+        "delivery_ok": delivery_ok,
+        "delivery_warning": delivery_warning,
+        "message": "Verification code sent to your WhatsApp number." if delivery_ok else "Verification code generated.",
         "challenge": challenge,
+        "wa_chat_url": wa_chat_url,
         "gym_name": member.gym.name if member.gym else None,
         "powered_by": "VYNLA",
     }

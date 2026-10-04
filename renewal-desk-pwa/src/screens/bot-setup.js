@@ -4,7 +4,7 @@ import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../c
 export default { async mount(el) {
   const res = await apiRequest('/api/mobile/v1/bot/config');
   const c = res.ok ? res.data : {};
-  el.innerHTML = `${renderHeader({title:'Bot Setup',showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+  el.innerHTML = `${renderHeader({title:'Bot Setup',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <form id="bs-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
       ${renderFormField({id:'bs-greet',label:'Greeting Message',type:'textarea',value:c.greeting_message||'',placeholder:'Hello! Welcome to our gym. How can I help you?'})}
       ${renderFormField({id:'bs-hours',label:'Business Hours',value:c.business_hours||'',placeholder:'Mon-Sat 6AM-10PM'})}

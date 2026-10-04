@@ -3,7 +3,7 @@ import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderMenuItem } from '../components.js';
 import { icon } from '../icons.js';
 export default { mount(el) {
-  el.innerHTML = `${renderHeader({title:'Import Members',showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+  el.innerHTML = `${renderHeader({title:'Import Members',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <h3 style="margin-bottom:var(--sp-lg)">Choose import method</h3>
     <div class="card">
       ${renderMenuItem({iconName:'upload',label:'Upload CSV',desc:'Import from a spreadsheet file',onClick:'member-import',iconBg:'var(--brand-subtle)',iconColor:'var(--brand)'})}

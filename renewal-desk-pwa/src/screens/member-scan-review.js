@@ -4,7 +4,7 @@ import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml } from '../utils.js';
 export default { mount(el, params) {
   const members = params?.members ? JSON.parse(params.members) : [];
-  el.innerHTML = `${renderHeader({title:`Review (${members.length})`,showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-lg)">
+  el.innerHTML = `${renderHeader({title:`Review (${members.length})`,showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <div class="card" style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:var(--fs-sm)">
         <thead><tr style="background:var(--gray-50)">

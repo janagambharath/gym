@@ -17,7 +17,7 @@ export default {
 
     el.innerHTML = `
       ${renderHeader({ title: 'Edit Member', showBack: true })}
-      <div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+      <div class="scroll-view"><div class="scroll-content form-scroll-content">
         <form id="edit-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
           ${renderFormField({ id: 'em-name', label: 'Full Name', value: m.full_name, required: true })}
           ${renderFormField({ id: 'em-phone', label: 'Phone', type: 'tel', value: m.phone, required: true })}

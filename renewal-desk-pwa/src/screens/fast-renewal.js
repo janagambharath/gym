@@ -4,7 +4,7 @@ import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { formatCurrency, escapeHtml } from '../utils.js';
 export default { mount(el, params) {
   const p = params || {};
-  el.innerHTML = `${renderHeader({ title:'Confirm Renewal', showBack:true })}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl);text-align:center">
+  el.innerHTML = `${renderHeader({ title:'Confirm Renewal', showBack:true })}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
     <div style="width:64px;height:64px;border-radius:var(--r-full);background:var(--success-surface);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-lg)">${icon('check',32,'var(--success)')}</div>
     <h2 style="margin-bottom:var(--sp-sm)">Renewal Payment</h2>
     <p style="font-size:var(--fs-xl);font-weight:var(--fw-bold);margin-bottom:var(--sp-xxl)">${escapeHtml(p.memberName||'Member')} — ${formatCurrency(p.amount||'0')}</p>

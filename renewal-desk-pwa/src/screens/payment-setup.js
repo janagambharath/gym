@@ -10,7 +10,7 @@ export default {
 
     el.innerHTML = `
       ${renderHeader({ title: 'Payment Setup', showBack: true })}
-      <div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+      <div class="scroll-view"><div class="scroll-content form-scroll-content">
         <form id="ps-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
           ${renderFormField({ id: 'ps-upi', label: 'UPI ID / VPA *', value: ps.upi_id || '', placeholder: 'e.g. yourgym@okhdfcbank', required: true })}
           ${renderFormField({ id: 'ps-label', label: 'Payment Label', value: ps.payment_label || '', placeholder: 'Displayed to members (e.g. Gym Name)' })}

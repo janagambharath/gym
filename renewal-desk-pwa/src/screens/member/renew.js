@@ -5,7 +5,7 @@ import { icon } from '../../icons.js'; import { formatCurrency, escapeHtml } fro
 export default { async mount(el) {
   const res = await apiRequest('/api/member/v1/plans');
   const plans = res.ok ? res.data.plans||res.data||[] : [];
-  el.innerHTML = `${renderHeader({title:'Renew Membership',showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+  el.innerHTML = `${renderHeader({title:'Renew Membership',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <div style="text-align:center;margin-bottom:var(--sp-xxl)">
       <div style="width:64px;height:64px;border-radius:var(--r-full);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-lg)">${icon('renewals',32,'var(--brand)')}</div>
       <h3>Select a plan to renew</h3>

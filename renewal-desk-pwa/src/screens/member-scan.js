@@ -3,7 +3,7 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js';
 export default { mount(el) {
-  el.innerHTML = `${renderHeader({title:'Scan Document',showBack:true})}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl);text-align:center">
+  el.innerHTML = `${renderHeader({title:'Scan Document',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
     <div style="width:80px;height:80px;border-radius:var(--r-full);background:var(--success-surface);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-xl)">${icon('camera',36,'var(--success)')}</div>
     <h3 style="margin-bottom:var(--sp-sm)">Scan a Register Page</h3>
     <p style="color:var(--text-secondary);margin-bottom:var(--sp-xxl)">Take a photo of your physical member register. AI will extract member details automatically.</p>

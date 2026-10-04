@@ -8,7 +8,7 @@ export default { async mount(el, params) {
   const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
   if (preId) { const r = await apiRequest(`/api/mobile/v1/members/${preId}`); if (r.ok) selectedMember = r.data; }
   const render = () => {
-    el.innerHTML = `${renderHeader({ title: 'Record Payment', showBack: true })}<div class="scroll-view"><div class="scroll-content" style="padding:var(--sp-xxl)">
+    el.innerHTML = `${renderHeader({ title: 'Record Payment', showBack: true })}<div class="scroll-view"><div class="scroll-content form-scroll-content">
       <form id="rp-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
         ${selectedMember ? `<div class="card card-body" style="display:flex;align-items:center;gap:var(--sp-md)">
           <div style="font-weight:var(--fw-bold);flex:1">${escapeHtml(selectedMember.full_name)}<br><span style="font-size:var(--fs-sm);color:var(--muted)">${escapeHtml(selectedMember.phone)}</span></div>

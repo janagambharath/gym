@@ -326,6 +326,16 @@ def register_members_routes(bp):
         access_state = MemberAccessState.query.filter_by(gym_id=g.gym_id, member_id=member.id).first()
         data["is_inside"] = (access_state.current_state == "INSIDE") if access_state else False
         data["last_entry_at"] = access_state.last_entry_at.isoformat() if (access_state and access_state.last_entry_at) else None
+
+        from app.mobile_api.member_api import get_recent_member_otp
+        recent_otp_info = get_recent_member_otp(member.id)
+        if recent_otp_info:
+            data["recent_otp"] = recent_otp_info["otp"]
+            data["recent_otp_expires_in"] = recent_otp_info["expires_in_seconds"]
+        else:
+            data["recent_otp"] = None
+            data["recent_otp_expires_in"] = None
+
         return jsonify({"success": True, "data": data})
 
     @bp.route("/members", methods=["POST"])

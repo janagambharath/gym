@@ -31,24 +31,24 @@ class WhatsAppResult:
 
 
 class WhatsAppService:
-    def __init__(self, gym: Gym) -> None:
-        self.gym_id = gym.id
-        self.gym_enabled = gym.whatsapp_enabled
-        self.enabled = current_app.config["WHATSAPP_ENABLED"]
+    def __init__(self, gym: Gym | None) -> None:
+        self.gym_id = gym.id if gym else 0
+        self.enabled = bool(current_app.config.get("WHATSAPP_ENABLED"))
+        self.gym_enabled = (gym.whatsapp_enabled if gym else False) or self.enabled
         self.whatsapp_business_account_id = (
-            gym.whatsapp_business_account_id
+            (gym.whatsapp_business_account_id if gym else None)
             or current_app.config.get("WHATSAPP_BUSINESS_ACCOUNT_ID")
         )
         self.phone_number_id = (
-            gym.phone_number_id
+            (gym.phone_number_id if gym else None)
             or current_app.config.get("WHATSAPP_PHONE_NUMBER_ID")
         )
         # Per-gym BISU token takes priority; fall back to global env token
         self.access_token = (
-            gym.get_whatsapp_token()
-            or current_app.config["WHATSAPP_ACCESS_TOKEN"]
+            (gym.get_whatsapp_token() if gym else None)
+            or current_app.config.get("WHATSAPP_ACCESS_TOKEN")
         )
-        self.api_version = current_app.config["WHATSAPP_API_VERSION"]
+        self.api_version = current_app.config.get("WHATSAPP_API_VERSION", "v20.0")
 
 
     def connect_webhooks(self) -> WhatsAppResult:
@@ -217,6 +217,15 @@ class WhatsAppService:
                     if res.ok:
                         return res
 
+        # 4. If button parameter was rejected or unexpected, try without button
+        if res.error and button_parameters:
+            err_lower = res.error.lower()
+            if "button" in err_lower or "component" in err_lower or "parameter" in err_lower or "100" in err_lower:
+                for try_lang in [lang, "en", "en_US"]:
+                    res = _do_send(try_lang, with_buttons=False)
+                    if res.ok:
+                        return res
+
         return res
 
     def send_image(self, *, to: str, image_url: str, caption: str) -> WhatsAppResult:
@@ -379,7 +388,7 @@ class WhatsAppService:
         return WhatsAppResult(ok=False, error=f"Failed after {retries} attempts: {last_error}")
 
     def _configuration_error(self) -> str | None:
-        if not self.gym_enabled:
+        if not self.gym_enabled and not self.enabled:
             return "WhatsApp is not enabled for this gym"
         if not self.phone_number_id:
             return "Gym WhatsApp phone number ID is missing"
