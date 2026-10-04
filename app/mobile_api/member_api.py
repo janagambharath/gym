@@ -344,8 +344,9 @@ def request_otp():
             configured_tpl = current_app.config.get("WHATSAPP_OTP_TEMPLATE_NAME", "").strip()
             if configured_tpl:
                 otp_templates_to_try.append(configured_tpl)
-            if "vynla_otp" not in otp_templates_to_try:
-                otp_templates_to_try.append("vynla_otp")
+            for default_name in ["vynla_otp", "otp", "auth_otp", "verification_code", "login_otp"]:
+                if default_name not in otp_templates_to_try:
+                    otp_templates_to_try.append(default_name)
 
             otp_button_param = [{
                 "type": "button",
@@ -392,34 +393,45 @@ def request_otp():
         delivery_error = str(exc)
         _logger.exception("Failed to send OTP via WhatsApp for phone %s", phone[-4:])
 
-    # If reviewer bypass is active or testing, allow through
-    if current_app.config.get("TESTING") or (_is_reviewer_bypass_enabled() and (phone.endswith("9999999999") or phone.endswith("7995854994"))):
+    bypass_active = _is_reviewer_bypass_enabled() and (phone.endswith("9999999999") or phone.endswith("7995854994"))
+
+    # For unit testing without real Meta credentials, mock delivery as OK
+    if current_app.config.get("TESTING") and not delivery_error:
         delivery_ok = True
 
     delivery_warning = None
     if not delivery_ok:
         if delivery_error:
-            if "131047" in delivery_error or "24 hours" in delivery_error.lower():
-                delivery_warning = "WhatsApp delivery requires an initial message. Tap 'Message gym on WhatsApp' below, then tap Resend Code."
+            if "131042" in delivery_error or "eligibility" in delivery_error.lower() or "payment" in delivery_error.lower():
+                delivery_warning = (
+                    "Meta WhatsApp Error 131042 (Business eligibility payment issue): "
+                    "A valid payment method or GSTIN must be added to your WhatsApp Business Account in Meta Business Suite. "
+                    "Meta is pausing automatic delivery until billing is linked."
+                )
+            elif "131047" in delivery_error or "24 hours" in delivery_error.lower():
+                delivery_warning = "WhatsApp delivery requires an initial conversation. Tap 'Message gym on WhatsApp' below, then tap Resend Code."
             elif "not enabled" in delivery_error.lower() or "missing" in delivery_error.lower() or "not active" in delivery_error.lower():
                 delivery_warning = "WhatsApp messaging is not active for this gym yet. Ask gym staff for your 6-digit login code."
             else:
-                delivery_warning = f"WhatsApp delivery note: {delivery_error}. You can ask gym staff for your code or tap Resend Code."
+                delivery_warning = f"WhatsApp delivery note: {delivery_error}."
         else:
             delivery_warning = "WhatsApp code could not be confirmed. Ask gym staff for your 6-digit code or tap Resend Code."
+
+        if bypass_active:
+            delivery_warning += f" (Reviewer/Test code: {otp})"
 
     resp_payload = {
         "success": True,
         "delivery_ok": delivery_ok,
+        "delivery_error": delivery_error if not delivery_ok else None,
         "delivery_warning": delivery_warning,
-        "message": "Verification code sent to your WhatsApp number." if delivery_ok else "Verification code generated.",
+        "message": "Verification code sent to your WhatsApp number." if delivery_ok else (delivery_warning or "Verification code generated."),
         "challenge": challenge,
         "wa_chat_url": wa_chat_url,
         "gym_name": member.gym.name if member.gym else None,
         "powered_by": "VYNLA",
+        "test_otp": otp if (current_app.config.get("TESTING") or bypass_active) else None,
     }
-    if current_app.config.get("TESTING"):
-        resp_payload["test_otp"] = otp
 
     return jsonify(resp_payload)
 

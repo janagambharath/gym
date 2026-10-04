@@ -62,8 +62,10 @@ function renderLogin(message = '') {
     renderOtp(phone, data.challenge || data.challenge_token, {
       delivery_ok: data.delivery_ok,
       delivery_warning: data.delivery_warning,
+      delivery_error: data.delivery_error,
       wa_chat_url: data.wa_chat_url,
-      gym_name: data.gym_name
+      gym_name: data.gym_name,
+      test_otp: data.test_otp,
     });
   });
 }
@@ -85,6 +87,18 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
   } else {
     bannerHtml = notice('Verification code sent to your WhatsApp number.', 'success');
   }
+
+  const testOtpCard = meta.test_otp ? `
+    <div id="quick-otp-card" style="margin-top:14px;padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <span style="font-size:12px;color:#1e40af;font-weight:600;display:block">Reviewer / Quick Login Code:</span>
+        <strong style="font-size:22px;letter-spacing:4px;color:#1d4ed8">${esc(meta.test_otp)}</strong>
+      </div>
+      <button type="button" id="fill-otp-btn" style="border:0;background:#2563eb;color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer">
+        Use Code
+      </button>
+    </div>
+  ` : '';
 
   const waHelpSection = meta.wa_chat_url ? `
     <div style="margin-top:16px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;text-align:center">
@@ -108,6 +122,7 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
           Enter the 6-digit code sent to <strong style="color:#14213d">${esc(phone)}</strong> on WhatsApp.
         </p>
         <div id="otp-banner">${bannerHtml}</div>
+        <div id="test-otp-card-container">${testOtpCard}</div>
         <form id="otp-form">
           <label style="display:block;font-weight:600;font-size:14px;margin:16px 0 6px">Verification code</label>
           <input id="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required maxlength="6" autofocus style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #cbd5e1;border-radius:10px;font-size:24px;letter-spacing:8px;text-align:center;font-weight:700">
@@ -138,6 +153,17 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
   const verifyBtn = document.querySelector('#verify-btn');
   const resendBtn = document.querySelector('#resend-btn');
   const bannerContainer = document.querySelector('#otp-banner');
+
+  function bindFillOtpBtn() {
+    const fillBtn = document.querySelector('#fill-otp-btn');
+    if (fillBtn && meta.test_otp) {
+      fillBtn.onclick = () => {
+        otpInput.value = meta.test_otp;
+        otpInput.focus();
+      };
+    }
+  }
+  bindFillOtpBtn();
 
   backBtn.onclick = () => {
     if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
@@ -186,6 +212,24 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
     }
     if (data.wa_chat_url) {
       meta.wa_chat_url = data.wa_chat_url;
+    }
+    if (data.test_otp) {
+      meta.test_otp = data.test_otp;
+      const cardContainer = document.querySelector('#test-otp-card-container');
+      if (cardContainer) {
+        cardContainer.innerHTML = `
+          <div id="quick-otp-card" style="margin-top:14px;padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <span style="font-size:12px;color:#1e40af;font-weight:600;display:block">Reviewer / Quick Login Code:</span>
+              <strong style="font-size:22px;letter-spacing:4px;color:#1d4ed8">${esc(meta.test_otp)}</strong>
+            </div>
+            <button type="button" id="fill-otp-btn" style="border:0;background:#2563eb;color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer">
+              Use Code
+            </button>
+          </div>
+        `;
+        bindFillOtpBtn();
+      }
     }
     if (data.delivery_warning) {
       bannerContainer.innerHTML = notice(data.delivery_warning, 'warning');

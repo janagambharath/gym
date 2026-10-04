@@ -162,7 +162,8 @@ class WhatsAppService:
             with_body: bool = True,
             with_buttons: bool = False,
             button_subtype: str = "url",
-            button_idx: int = 0,
+            button_idx: int | str = 0,
+            force_button_params: list[dict] | None = None,
         ) -> WhatsAppResult:
             components: list[dict] = []
             if with_body and body_parameters:
@@ -174,27 +175,28 @@ class WhatsAppService:
                     ],
                 })
             if with_buttons:
-                if button_parameters:
+                if force_button_params is not None:
+                    components.extend(force_button_params)
+                elif button_subtype == "copy_code" and body_parameters:
+                    components.append({
+                        "type": "button",
+                        "sub_type": "copy_code",
+                        "index": button_idx,
+                        "parameters": [
+                            {"type": "coupon_code", "coupon_code": str(body_parameters[0])}
+                        ],
+                    })
+                elif button_parameters and button_subtype == "url":
                     components.extend(button_parameters)
-                elif body_parameters:
-                    if button_subtype == "copy_code":
-                        components.append({
-                            "type": "button",
-                            "sub_type": "copy_code",
-                            "index": button_idx,
-                            "parameters": [
-                                {"type": "coupon_code", "coupon_code": str(body_parameters[0])}
-                            ],
-                        })
-                    else:
-                        components.append({
-                            "type": "button",
-                            "sub_type": "url",
-                            "index": button_idx,
-                            "parameters": [
-                                {"type": "text", "text": str(body_parameters[0])}
-                            ],
-                        })
+                elif body_parameters and button_subtype == "url":
+                    components.append({
+                        "type": "button",
+                        "sub_type": "url",
+                        "index": button_idx,
+                        "parameters": [
+                            {"type": "text", "text": str(body_parameters[0])}
+                        ],
+                    })
             tpl: dict = {
                 "name": template_name,
                 "language": {"code": lang or "en"},
@@ -224,37 +226,38 @@ class WhatsAppService:
                     if res.ok:
                         return res
 
-        # 3. If button parameter was required (131008 / button requires parameter)
+        # 3. If button parameter was required or rejected (131008 / button requires parameter)
         if res.error and ("131008" in res.error or "button" in res.error.lower() or "component" in res.error.lower() or "parameter" in res.error.lower()):
             for try_lang in [lang, "en", "en_US"]:
-                # Try URL button with body
-                res = _do_send(try_lang, with_body=True, with_buttons=True, button_subtype="url", button_idx=0)
-                if res.ok:
-                    return res
-                # Try URL button without body (static body)
-                res = _do_send(try_lang, with_body=False, with_buttons=True, button_subtype="url", button_idx=0)
-                if res.ok:
-                    return res
-                # Try copy_code button
-                res = _do_send(try_lang, with_body=False, with_buttons=True, button_subtype="copy_code", button_idx=0)
-                if res.ok:
-                    return res
+                for b_idx in [0, "0"]:
+                    # Try URL button with body
+                    res = _do_send(try_lang, with_body=True, with_buttons=True, button_subtype="url", button_idx=b_idx)
+                    if res.ok:
+                        return res
+                    # Try URL button without body (static body)
+                    res = _do_send(try_lang, with_body=False, with_buttons=True, button_subtype="url", button_idx=b_idx)
+                    if res.ok:
+                        return res
+                    # Try copy_code button
+                    res = _do_send(try_lang, with_body=False, with_buttons=True, button_subtype="copy_code", button_idx=b_idx)
+                    if res.ok:
+                        return res
 
         # 4. If button parameter was rejected or unexpected, try without button
-        if res.error and button_parameters:
+        if res.error and (button_parameters or "button" in res.error.lower() or "component" in res.error.lower()):
             err_lower = res.error.lower()
-            if "button" in err_lower or "component" in err_lower or "parameter" in err_lower or "100" in err_lower:
+            if "button" in err_lower or "component" in err_lower or "parameter" in err_lower or "100" in err_lower or "131008" in err_lower:
                 for try_lang in [lang, "en", "en_US"]:
                     res = _do_send(try_lang, with_body=True, with_buttons=False)
                     if res.ok:
                         return res
 
         # 5. If body parameter was rejected, try without body (only buttons)
-        if res.error and button_parameters and body_parameters:
+        if res.error and (button_parameters or body_parameters):
             err_lower = res.error.lower()
-            if "body" in err_lower or "parameter" in err_lower or "100" in err_lower or "131008" in err_lower:
+            if "body" in err_lower or "parameter" in err_lower or "100" in err_lower:
                 for try_lang in [lang, "en", "en_US"]:
-                    res = _do_send(try_lang, with_body=False, with_buttons=True)
+                    res = _do_send(try_lang, with_body=False, with_buttons=True, button_subtype="url", button_idx=0)
                     if res.ok:
                         return res
 
