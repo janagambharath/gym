@@ -15,12 +15,21 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table("members", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column("address", sa.Text(), nullable=True)
-        )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_columns = {col["name"] for col in inspector.get_columns("members")}
+    if "address" not in existing_columns:
+        with op.batch_alter_table("members", schema=None) as batch_op:
+            batch_op.add_column(
+                sa.Column("address", sa.Text(), nullable=True)
+            )
 
 
 def downgrade():
-    with op.batch_alter_table("members", schema=None) as batch_op:
-        batch_op.drop_column("address")
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_columns = {col["name"] for col in inspector.get_columns("members")}
+    if "address" in existing_columns:
+        with op.batch_alter_table("members", schema=None) as batch_op:
+            batch_op.drop_column("address")
+
