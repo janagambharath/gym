@@ -5,6 +5,7 @@ export interface Member {
   full_name: string;
   phone: string;
   email?: string | null;
+  address?: string | null;
   joined_on?: string | null;
   status: string;
   membership_start: string | null;

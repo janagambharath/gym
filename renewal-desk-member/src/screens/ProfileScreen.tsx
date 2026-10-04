@@ -130,6 +130,7 @@ export const ProfileScreen: React.FC = () => {
               <Text style={styles.memberName}>{member?.full_name || 'Gym Member'}</Text>
               <Text style={styles.memberPhone}>+91 {member?.phone?.replace(/\D/g, '')}</Text>
               {member?.email && <Text style={styles.memberEmail}>{member.email}</Text>}
+              {member?.address && <Text style={styles.memberEmail}>📍 {member.address}</Text>}
             </View>
           </View>
           <View style={styles.statusPillRow}>
