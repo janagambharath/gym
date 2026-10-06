@@ -1,0 +1,279 @@
+{# ── RRR brand constant: flip the product name back in one edit ── #}
+{% set RRR_BRAND = 'RRR' %}
+{% set RRR_TAG = 'Gym Growth System' %}
+{% extends "base.html" %}
+{% block title %}{{ RRR_BRAND }} Dashboard | {{ RRR_TAG }}{% endblock %}
+{% block page_title %}{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-primary" href="{{ url_for('payments.create') }}"><i class="bi bi-receipt"></i> Record Payment</a>
+<a class="btn btn-primary" href="{{ url_for('members.create') }}"><i class="bi bi-person-plus"></i> Add Member</a>
+{% endblock %}
+{% block content %}
+{# ── Embed real member/plan/visit data for the client-side RRR engine.
+     Template-only: no backend changes. Readers: Gym.members / Gym.plans /
+     BridgeInstallation.attendance_events relationships. ── #}
+{% set ns = namespace(members=[], plans=[], events=[]) %}
+{% for m in current_user.gym.members if not m.deleted_at %}
+{% set ns.members = ns.members + [{
+  'id': m.id,
+  'name': m.full_name,
+  'phone': m.phone,
+  'status': m.status,
+  'end': m.membership_end.isoformat() if m.membership_end else None,
+  'joined': m.joined_on.isoformat() if m.joined_on else None,
+  'plan_name': m.plan.name if m.plan else None,
+  'plan_price': m.plan.price|string if m.plan else None
+}] %}
+{% endfor %}
+{% for p in current_user.gym.plans %}
+{% set ns.plans = ns.plans + [{'name': p.name, 'price': p.price|string}] %}
+{% endfor %}
+{% if current_user.gym.bridge_installation %}
+{% for e in (current_user.gym.bridge_installation.attendance_events|sort(attribute='event_time', reverse=True))[:5000] %}
+{% set ns.events = ns.events + [{'mid': e.member_id, 't': e.event_time.isoformat() if e.event_time else None}] %}
+{% endfor %}
+{% endif %}
+<script id="rrr-data" type="application/json">{{ {'members': ns.members, 'plans': ns.plans, 'events': ns.events}|tojson }}</script>
+<script>
+  window.RRR_CTX = {
+    csrf: "{{ csrf_token() }}",
+    statsCollected: "{{ stats.collected }}",
+    gymName: {{ current_user.gym.name|tojson }}
+  };
+  window.RRR_URLS = {
+    reminders: "{{ url_for('reminders.index') }}",
+    announcements: "{{ url_for('gym.announcements') }}",
+    memberNew: "{{ url_for('members.create') }}",
+    members: "{{ url_for('members.index') }}"
+  };
+</script>
+
+<div class="rrr-dash" id="rrr-dash">
+  <div class="rrr-hero">
+    <h1>Grow more from the members you already have.</h1>
+    <p>Revenue. Retain. Recover. The complete gym growth system.</p>
+  </div>
+  <div class="rrr-stat-row" id="rrr-stats"><div class="rrr-stat"><div class="lbl">Loading…</div></div></div>
+  <div class="rrr-fw-row" id="rrr-fw"></div>
+  <div class="rrr-panels">
+    <div class="rrr-panel" id="rrr-donut-panel"></div>
+    <div class="rrr-panel" id="rrr-qa-panel"></div>
+  </div>
+  <div class="rrr-lists" id="rrr-lists"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  /* ═══ RRR engine — mirrors renewal-desk-pwa/src/rrr.js (keep in sync) ═══ */
+  var GREEN = '#16a34a', ORANGE = '#f59e0b', RED = '#ef4444';
+  var raw = JSON.parse(document.getElementById('rrr-data').textContent || '{"members":[],"plans":[],"events":[]}');
+  var members = raw.members || [], plans = raw.plans || [], events = raw.events || [];
+
+  function fmtINR(v) { v = Number(v) || 0; return '₹' + Math.round(v).toLocaleString('en-IN'); }
+  function fmtInt(v) { return (Number(v) || 0).toLocaleString('en-IN'); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function startOfToday() { var d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+  function parseD(iso) { if (!iso) return null; var d = new Date(iso.length <= 10 ? iso + 'T00:00:00' : iso); return isNaN(d) ? null : d; }
+  function daysBetween(a, b) { return Math.round((b - a) / 86400000); }
+  function priceOf(m) { var n = parseFloat(m.plan_price); return isNaN(n) ? 0 : n; }
+
+  var today = startOfToday();
+  var prices = plans.map(function (p) { return parseFloat(p.price); }).filter(function (n) { return !isNaN(n) && n > 0; });
+  var maxPrice = prices.length ? Math.max.apply(null, prices) : 0;
+
+  // visits: memberId -> sorted timestamps
+  var visits = {};
+  events.forEach(function (e) {
+    if (e.mid == null || !e.t) return;
+    var t = new Date(e.t).getTime();
+    if (isNaN(t)) return;
+    (visits[e.mid] = visits[e.mid] || []).push(t);
+  });
+  Object.keys(visits).forEach(function (k) { visits[k].sort(function (a, b) { return a - b; }); });
+  var hasVisitData = Object.keys(visits).length > 0;
+
+  function vstats(ts) {
+    var d30 = today.getTime() - 30 * 864e5, d60 = today.getTime() - 60 * 864e5, d7 = today.getTime() - 7 * 864e5;
+    var last = null, c30 = 0, cPrior = 0, c7 = 0;
+    ts.forEach(function (t) {
+      if (last === null || t > last) last = t;
+      if (t >= d30) c30++; else if (t >= d60) cPrior++;
+      if (t >= d7) c7++;
+    });
+    return { last: last, c30: c30, cPrior: cPrior, c7: c7 };
+  }
+
+  var active = members.filter(function (m) { return m.status === 'active'; });
+
+  // ── RETAIN ──
+  var atRisk = [];
+  var bd = { declining: [], lowEng: [], planEnding: [], noVisits: [] };
+  active.forEach(function (m) {
+    var end = parseD(m.end), due = end ? daysBetween(today, end) : null;
+    var joined = parseD(m.joined), age = joined ? Math.max(0, daysBetween(joined, today)) : 999;
+    var v = vstats(visits[m.id] || []);
+    var price = priceOf(m), reasons = [];
+    if (due !== null && due >= 0 && due <= 30) { reasons.push({ k: 'plan_ending', label: 'Plan Ends (' + due + 'd)' }); bd.planEnding.push(m); }
+    if (v.last !== null) {
+      var d = daysBetween(new Date(v.last), today);
+      if (d >= 14) { reasons.push({ k: 'no_visit', label: 'No Visits (' + d + ' days)' }); bd.noVisits.push(m); }
+    } else if (hasVisitData && age > 60) { reasons.push({ k: 'no_visit', label: 'No Visits (60+ days)' }); bd.noVisits.push(m); }
+    if (v.cPrior >= 4 && v.c30 < v.cPrior * 0.7) { reasons.push({ k: 'declining', label: 'Declining Attendance' }); bd.declining.push(m); }
+    if (v.c30 <= 2 && age > 30) { reasons.push({ k: 'low_engagement', label: 'Low Engagement' }); bd.lowEng.push(m); }
+    if (reasons.length) atRisk.push({ m: m, reasons: reasons, primary: reasons[0], value: price });
+  });
+
+  // ── RECOVER ──
+  var segs = { recent: [], mid: [], old: [] }, recover = [];
+  members.forEach(function (m) {
+    var end = parseD(m.end);
+    if (!(m.status === 'expired' || (end && end < today))) return;
+    var ds = end ? Math.max(0, daysBetween(end, today)) : 999;
+    var seg = ds <= 30 ? 'recent' : ds <= 90 ? 'mid' : 'old';
+    var label = (ds <= 30 ? 'Expired' : 'Inactive') + ' (' + ds + ' days)';
+    segs[seg].push(m);
+    recover.push({ m: m, seg: seg, label: label, value: priceOf(m), ds: ds });
+  });
+  recover.sort(function (a, b) { return a.ds - b.ds; });
+
+  // ── REVENUE (real plan prices only — PT/nutrition rows omitted: no real prices) ──
+  var opps = [], revExt = [], revUp = [];
+  active.forEach(function (m) {
+    var end = parseD(m.end), due = end ? daysBetween(today, end) : null, price = priceOf(m);
+    if (due !== null && due >= 0 && due <= 30 && price > 0) { opps.push({ m: m, tag: 'Extend Membership', value: price }); revExt.push(m); }
+    if (prices.length >= 2 && price > 0 && price < maxPrice - 0.005) { opps.push({ m: m, tag: 'Upgrade Plan', value: maxPrice - price }); revUp.push(m); }
+  });
+  opps.sort(function (a, b) { return b.value - a.value; });
+
+  // ── Lifecycle ──
+  var riskIds = {}; atRisk.forEach(function (r) { riskIds[r.m.id] = 1; });
+  var monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  var fresh = members.filter(function (m) { var j = parseD(m.joined); return j && j >= monthStart; }).length;
+  var segsLife = [
+    { label: 'Active', count: active.filter(function (m) { return !riskIds[m.id]; }).length, color: GREEN },
+    { label: 'At Risk', count: atRisk.length, color: ORANGE },
+    { label: 'Expired / Inactive', count: recover.length, color: RED },
+    { label: 'New (This Month)', count: fresh, color: '#cbd5e1' }
+  ];
+  var totalLife = segsLife.reduce(function (s, x) { return s + x.count; }, 0) || 1;
+
+  var recentVisit = active.filter(function (m) {
+    var ts = visits[m.id] || [];
+    return ts.some(function (t) { return t >= today.getTime() - 7 * 864e5; });
+  }).length;
+  var attRate = hasVisitData && active.length ? Math.round(recentVisit / active.length * 100) : null;
+
+  function initials(name) {
+    return (name || '?').trim().split(/\s+/).map(function (w) { return w[0]; }).slice(0, 2).join('').toUpperCase();
+  }
+  function avColor(name) { var h = [152, 24, 210, 32, 262, 12][(name || '').length % 6]; return 'background:hsl(' + h + ' 45% 88%);color:hsl(' + h + ' 45% 32%)'; }
+  function remindForm(id, cls, label) {
+    return '<form method="post" action="/reminders/members/' + id + '/send-test" style="display:inline">' +
+      '<input type="hidden" name="csrf_token" value="' + esc(window.RRR_CTX.csrf) + '">' +
+      '<button class="rrr-act ' + cls + '" type="submit">' + label + '</button></form>';
+  }
+
+  /* ── Stat cards ── */
+  document.getElementById('rrr-stats').innerHTML =
+    statCard(fmtInt(members.length), 'Total Members', 'bi-people', '#eef2ff', '#4f46e5') +
+    statCard(attRate === null ? '—' : attRate + '%', 'Attendance Rate', 'bi-check-circle', '#e8f7ee', GREEN) +
+    statCard(fmtINR(window.RRR_CTX.statsCollected), 'Revenue Collected', 'bi-currency-rupee', '#e8f7ee', GREEN);
+  function statCard(val, lbl, ico, bg, fg) {
+    return '<div class="rrr-stat"><span class="ico" style="background:' + bg + ';color:' + fg + '"><i class="bi ' + ico + '"></i></span>' +
+      '<div><div class="val">' + val + '</div><div class="lbl">' + lbl + '</div></div></div>';
+  }
+
+  /* ── Framework cards ── */
+  function fwCard(kind, title, sub, count, countLbl, money, moneyLbl, breakdown, anchor) {
+    var rows = breakdown.map(function (b) {
+      return '<div class="rrr-bd-row"><span class="n">' + fmtInt(b.n) + '</span><span>' + esc(b.label) + '</span>' +
+        (b.v ? '<span class="v">' + esc(b.v) + '</span>' : '') + '<i class="bi bi-chevron-right"></i></div>';
+    }).join('');
+    return '<div class="rrr-fw ' + kind + '" id="rrr-' + anchor + '">' +
+      '<div class="rrr-fw-head"><span class="rrr-fw-ico"><i class="bi ' + (kind === 'green' ? 'bi-graph-up-arrow' : kind === 'orange' ? 'bi-shield' : 'bi-arrow-counterclockwise') + '"></i></span>' +
+      '<div><div class="rrr-fw-title">' + title + '</div><div class="rrr-fw-sub">' + sub + '</div></div></div>' +
+      '<div class="rrr-fw-big"><div><div class="rrr-fw-count">' + fmtInt(count) + '</div><div class="rrr-fw-count-lbl">' + countLbl + '</div></div>' +
+      '<div class="rrr-fw-money">' + money + '<small>' + moneyLbl + '</small></div></div>' +
+      (rows ? '<div class="rrr-bd">' + rows + '</div>' : '') + '</div>';
+  }
+  var sum = function (a) { return a.reduce(function (s, x) { return s + x; }, 0); };
+  document.getElementById('rrr-fw').innerHTML =
+    fwCard('green', 'REVENUE', 'Grow revenue from existing members',
+      opps.length, 'Revenue Opportunities', '~ ' + fmtINR(opps.reduce(function (s, o) { return s + o.value; }, 0)), 'potential revenue',
+      [
+        { label: 'Extend Membership', n: revExt.length, v: '~ ' + fmtINR(sum(revExt.map(priceOf))) },
+        { label: 'Upgrade to Premium', n: revUp.length, v: revUp.length ? '~ ' + fmtINR(sum(revUp.map(function (m) { return maxPrice - priceOf(m); }))) : '' }
+      ], 'revenue') +
+    fwCard('orange', 'RETAIN', 'Prevent potential revenue loss',
+      atRisk.length, 'At Risk Members', '~ ' + fmtINR(atRisk.reduce(function (s, r) { return s + r.value; }, 0)), 'potential revenue at risk',
+      [
+        { label: 'Declining Attendance', n: bd.declining.length },
+        { label: 'Low Engagement', n: bd.lowEng.length },
+        { label: 'Plan Ending Soon (≤ 30 days)', n: bd.planEnding.length },
+        { label: 'No Visits 14+ Days', n: bd.noVisits.length }
+      ], 'retain') +
+    fwCard('red', 'RECOVER', 'Bring back lost revenue',
+      recover.length, 'Inactive / Expired Members', '~ ' + fmtINR(recover.reduce(function (s, r) { return s + r.value; }, 0)), 'lost potential revenue',
+      [
+        { label: 'Recently Expired (≤ 30 days)', n: segs.recent.length },
+        { label: 'Inactive (31–90 days)', n: segs.mid.length },
+        { label: 'Inactive (90+ days)', n: segs.old.length }
+      ], 'recover');
+
+  /* ── Donut + Quick actions ── */
+  var R = 54, C = 2 * Math.PI * R, off = 0, arcs = '';
+  segsLife.forEach(function (s) {
+    var frac = s.count / totalLife, len = Math.max(frac * C - 2, 0.5);
+    arcs += '<circle cx="70" cy="70" r="' + R + '" fill="none" stroke="' + s.color + '" stroke-width="20" ' +
+      'stroke-dasharray="' + len + ' ' + (C - len) + '" stroke-dashoffset="' + (C / 4 - off) + '"/>';
+    off += frac * C;
+  });
+  document.getElementById('rrr-donut-panel').innerHTML =
+    '<h3>Member Lifecycle</h3><div class="sub">This Month</div>' +
+    '<div class="rrr-donut-flex"><svg viewBox="0 0 140 140" width="150" height="150">' + arcs +
+    '<text x="70" y="72" text-anchor="middle" style="font-size:24px;font-weight:800;fill:#0f172a">' + fmtInt(members.length) + '</text>' +
+    '<text x="70" y="90" text-anchor="middle" style="font-size:11px;fill:#64748b">Total Members</text></svg>' +
+    '<div class="rrr-legend">' + segsLife.map(function (s) {
+      return '<div class="row"><span class="dot" style="background:' + s.color + '"></span>' + esc(s.label) +
+        '<b>' + fmtInt(s.count) + '</b><span class="pct">' + Math.round(s.count / totalLife * 100) + '%</span></div>';
+    }).join('') + '</div></div>' +
+    (!hasVisitData ? '<div class="rrr-note">No biometric visit data yet — visit-based risk appears once the bridge syncs check-ins.</div>' : '');
+
+  var U = window.RRR_URLS;
+  document.getElementById('rrr-qa-panel').innerHTML =
+    '<h3>Quick Actions</h3><div class="sub">&nbsp;</div><div class="rrr-qa">' +
+    '<a href="' + U.reminders + '"><i class="bi bi-whatsapp"></i>Send WhatsApp Campaign<i class="bi bi-chevron-right"></i></a>' +
+    '<a href="' + U.announcements + '"><i class="bi bi-tag"></i>Create Offer / Promotion<i class="bi bi-chevron-right"></i></a>' +
+    '<a href="' + U.memberNew + '"><i class="bi bi-person-plus"></i>Add New Member<i class="bi bi-chevron-right"></i></a>' +
+    '<a href="' + U.members + '"><i class="bi bi-upload"></i>Import Members (CSV)<i class="bi bi-chevron-right"></i></a>' +
+    '</div>';
+
+  /* ── Member lists ── */
+  function row(o, tagCls, tag, amt, action) {
+    return '<div class="rrr-mrow"><input type="checkbox" class="cb">' +
+      '<span class="rrr-mav" style="' + avColor(o.m.name) + '">' + esc(initials(o.m.name)) + '</span>' +
+      '<div><div class="nm">' + esc(o.m.name) + '</div><span class="rrr-mtag ' + tagCls + '">' + esc(tag) + '</span></div>' +
+      (amt ? '<span class="amt">' + amt + '</span>' : '') + action +
+      '<a class="kebab" href="/members/' + o.m.id + '" title="Open member">⋮</a></div>';
+  }
+  function listPanel(id, title, rowsHtml, emptyText) {
+    return '<div class="rrr-list" id="' + id + '"><div class="rrr-list-head"><h4>' + title + '</h4><a href="' + window.RRR_URLS.members + '">View All</a></div>' +
+      (rowsHtml || '<div class="rrr-empty">' + emptyText + '</div>') + '</div>';
+  }
+  var revRows = opps.slice(0, 5).map(function (o) {
+    return row(o, 'g', o.tag, fmtINR(o.value), '<a class="rrr-act" href="/members/' + o.m.id + '">Take Action</a>');
+  }).join('');
+  var retRows = atRisk.slice(0, 5).map(function (r) {
+    return row(r, 'o', r.primary.label, '', remindForm(r.m.id, 'warn', 'Reach Out'));
+  }).join('');
+  var recRows = recover.slice(0, 5).map(function (r) {
+    return row(r, 'r', r.label, '', remindForm(r.m.id, 'bad', 'Send Message'));
+  }).join('');
+  document.getElementById('rrr-lists').innerHTML =
+    listPanel('rrr-list-rev', 'Top Revenue Opportunities (' + opps.length + ')', revRows, 'No priced opportunities right now.') +
+    listPanel('rrr-list-ret', 'At Risk Members (' + atRisk.length + ')', retRows, 'No at-risk members.') +
+    listPanel('rrr-list-rec', 'Inactive / Expired Members (' + recover.length + ')', recRows, 'No inactive or expired members.');
+})();
+</script>
+{% endblock %}
