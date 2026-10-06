@@ -1,0 +1,155 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   RRR Gym Growth System — PWA styles (mobile-first)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.rrr-page { background: #f6f8fb; min-height: 100%; }
+
+/* ── Top bar ───────────────────────────────────────────────────────── */
+.rrr-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+  background: #fff; position: sticky; top: 0; z-index: 20;
+  border-bottom: 1px solid #eef1f5;
+}
+.rrr-brand { display: flex; align-items: center; gap: 8px; }
+.rrr-logo {
+  font-weight: 800; font-size: 26px; letter-spacing: -1px; line-height: 1;
+  color: #0f172a; font-style: italic;
+}
+.rrr-logo .rrr-logo-accent { color: #16a34a; font-style: normal; }
+.rrr-brand-sub { font-size: 10px; color: #64748b; line-height: 1.1; font-weight: 500; }
+.rrr-gym-pill {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  background: #f1f5f9; border-radius: 999px; padding: 7px 12px;
+  font-size: 12px; font-weight: 600; color: #334155; max-width: 38%;
+}
+.rrr-gym-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrr-icon-btn {
+  position: relative; width: 38px; height: 38px; border-radius: 50%;
+  background: #f1f5f9; border: none; display: flex; align-items: center; justify-content: center;
+  color: #475569; cursor: pointer; flex: none;
+}
+.rrr-icon-btn .dot {
+  position: absolute; top: 8px; right: 9px; width: 9px; height: 9px;
+  background: #ef4444; border-radius: 50%; border: 2px solid #fff;
+}
+.rrr-avatar-btn {
+  width: 38px; height: 38px; border-radius: 50%; border: none; flex: none;
+  background: #e2e8f0; color: #475569; font-weight: 700; font-size: 13px; cursor: pointer;
+}
+
+/* ── Headline ──────────────────────────────────────────────────────── */
+.rrr-hero { padding: 18px 16px 4px; }
+.rrr-hero h1 {
+  font-size: 27px; line-height: 1.18; font-weight: 800; color: #0b1526;
+  margin: 0 0 6px; letter-spacing: -0.4px;
+}
+.rrr-hero p { margin: 0; font-size: 13.5px; color: #64748b; }
+
+/* ── Stat cards ────────────────────────────────────────────────────── */
+.rrr-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 16px 4px; }
+.rrr-stat {
+  background: #fff; border-radius: 14px; padding: 12px 10px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); text-align: left;
+}
+.rrr-stat-top { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.rrr-stat-ico {
+  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.rrr-stat-value { font-size: 19px; font-weight: 800; color: #0f172a; letter-spacing: -0.3px; }
+.rrr-stat-label { font-size: 10.5px; color: #64748b; margin-top: 2px; line-height: 1.25; }
+
+/* ── Framework cards ───────────────────────────────────────────────── */
+.rrr-fw { display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 4px; }
+.rrr-fw-card { border-radius: 18px; padding: 16px; }
+.rrr-fw-card.green { background: #e9f8ef; }
+.rrr-fw-card.orange { background: #fef3e0; }
+.rrr-fw-card.red { background: #fdecec; }
+.rrr-fw-head { display: flex; align-items: center; gap: 10px; }
+.rrr-fw-ico {
+  width: 42px; height: 42px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.75);
+}
+.rrr-fw-title { font-size: 16px; font-weight: 800; letter-spacing: 0.4px; }
+.rrr-fw-sub { font-size: 12px; color: #64748b; margin-top: 1px; }
+.rrr-fw-body { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 10px; gap: 8px; }
+.rrr-fw-count { font-size: 40px; font-weight: 800; color: #0b1526; line-height: 1; letter-spacing: -1px; }
+.rrr-fw-count-label { font-size: 12px; color: #475569; margin-top: 4px; }
+.rrr-fw-money { text-align: right; }
+.rrr-fw-money .amt { font-size: 17px; font-weight: 800; }
+.rrr-fw-money .lbl { font-size: 10.5px; color: #64748b; }
+.rrr-fw-card.green .amt, .rrr-fw-card.green .rrr-fw-title { color: #16a34a; }
+.rrr-fw-card.orange .amt, .rrr-fw-card.orange .rrr-fw-title { color: #d97706; }
+.rrr-fw-card.red .amt, .rrr-fw-card.red .rrr-fw-title { color: #dc2626; }
+.rrr-viewall {
+  margin-top: 12px; width: 100%; border: none; border-radius: 12px; padding: 11px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.rrr-fw-card.green .rrr-viewall { background: #d9f2e3; color: #15803d; }
+.rrr-fw-card.orange .rrr-viewall { background: #fdeccd; color: #b45309; }
+.rrr-fw-card.red .rrr-viewall { background: #fadcdc; color: #b91c1c; }
+
+/* ── Cards / donut / lists ─────────────────────────────────────────── */
+.rrr-card {
+  background: #fff; border-radius: 18px; margin: 12px 16px 0; padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.rrr-card h3 { margin: 0; font-size: 16.5px; font-weight: 800; color: #0f172a; }
+.rrr-card .rrr-card-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+.rrr-donut-wrap { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
+.rrr-legend { flex: 1; display: flex; flex-direction: column; gap: 9px; }
+.rrr-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #475569; }
+.rrr-legend-dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+.rrr-legend-row b { color: #0f172a; margin-left: auto; font-weight: 700; }
+.rrr-legend-row .pct { color: #94a3b8; width: 38px; text-align: right; }
+
+.rrr-list-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 16px 8px; }
+.rrr-list-head h3 { margin: 0; font-size: 15.5px; font-weight: 800; color: #0f172a; }
+.rrr-link { background: none; border: none; color: #16a34a; font-size: 13px; font-weight: 700; cursor: pointer; }
+.rrr-rows { background: #fff; border-radius: 18px; margin: 0 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); }
+.rrr-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9; cursor: pointer; width: 100%; background: #fff; border-left: none; border-right: none; border-top: none;
+  text-align: left; font: inherit;
+}
+.rrr-row:last-child { border-bottom: none; }
+.rrr-avatar {
+  border-radius: 50%; flex: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 700;
+}
+.rrr-row-main { flex: 1; min-width: 0; }
+.rrr-row-name { font-size: 14px; font-weight: 700; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrr-tag {
+  display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 3px 9px; margin-top: 4px;
+}
+.rrr-tag.green { background: #e8f7ee; color: #15803d; }
+.rrr-tag.orange { background: #fef3e0; color: #b45309; }
+.rrr-tag.red { background: #fdecec; color: #b91c1c; }
+.rrr-row-amt { font-size: 13.5px; font-weight: 700; color: #334155; white-space: nowrap; }
+.rrr-row-chev { color: #cbd5e1; flex: none; }
+.rrr-empty { padding: 22px; text-align: center; color: #94a3b8; font-size: 13px; }
+
+.rrr-note {
+  margin: 12px 16px 0; padding: 10px 14px; border-radius: 12px;
+  background: #f1f5f9; color: #64748b; font-size: 12px; line-height: 1.45;
+}
+
+/* ── Bottom padding so content clears the tab bar ── */
+.rrr-bottom-pad { height: calc(76px + env(safe-area-inset-bottom, 0px)); }
+
+/* ── Section screens ── */
+.rrr-section-head { padding: 18px 16px 4px; }
+.rrr-breakdown { margin: 12px 16px 0; background: #fff; border-radius: 18px; overflow: hidden; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06); }
+.rrr-bd-row {
+  display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid #f1f5f9;
+  font-size: 13.5px; font-weight: 600; color: #334155;
+}
+.rrr-bd-row:last-child { border-bottom: none; }
+.rrr-bd-row .n { font-weight: 800; color: #0f172a; font-size: 15px; min-width: 30px; }
+.rrr-bd-row .v { margin-left: auto; font-weight: 700; font-size: 13px; }
+.rrr-bd-row .chev { color: #cbd5e1; }
+
+/* ── Skeleton ── */
+.rrr-skel { border-radius: 14px; background: linear-gradient(90deg, #eef1f5 25%, #f8fafc 50%, #eef1f5 75%); background-size: 200% 100%; animation: rrr-shimmer 1.2s infinite; }
+@keyframes rrr-shimmer { to { background-position: -200% 0; } }
