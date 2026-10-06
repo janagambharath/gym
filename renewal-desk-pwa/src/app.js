@@ -17,8 +17,13 @@ let activeTab = 'dashboard';
 // ─── Tab Configuration ───────────────────────────────────────────────
 
 const TAB_CONFIG = {
-  dashboard: { screen: 'dashboard', label: 'Home' },
+  dashboard: { screen: 'dashboard', label: 'Dashboard' },
+  revenue: { screen: 'rrr-revenue', label: 'Revenue' },
+  retain: { screen: 'rrr-retain', label: 'Retain' },
+  recover: { screen: 'rrr-recover', label: 'Recover' },
   members: { screen: 'members', label: 'Members' },
+  // Legacy tabs — hidden from the tab bar but kept so existing in-app
+  // navigation (navigate.switchTab('renewals' | 'payments' | 'more')) keeps working.
   renewals: { screen: 'renewals', label: 'Renewals' },
   payments: { screen: 'payments', label: 'Payments' },
   more: { screen: 'settings', label: 'Options' },
@@ -34,6 +39,9 @@ function registerScreens() {
 
   // Tabs
   router.register('dashboard', () => import('./screens/dashboard.js'), { auth: true });
+  router.register('rrr-revenue', () => import('./screens/rrr-section.js').then((m) => ({ default: m.makeSectionScreen('revenue') })), { auth: true });
+  router.register('rrr-retain', () => import('./screens/rrr-section.js').then((m) => ({ default: m.makeSectionScreen('retain') })), { auth: true });
+  router.register('rrr-recover', () => import('./screens/rrr-section.js').then((m) => ({ default: m.makeSectionScreen('recover') })), { auth: true });
   router.register('members', () => import('./screens/members.js'), { auth: true });
   router.register('renewals', () => import('./screens/renewals.js'), { auth: true });
   router.register('payments', () => import('./screens/payments.js'), { auth: true });
@@ -189,6 +197,9 @@ function checkInstallPrompt() {
 export async function boot() {
   appEl = document.getElementById('app');
   if (!appEl) return;
+
+  const { BRAND } = await import('./rrr.js');
+  document.title = `${BRAND.name} — ${BRAND.tagline}`;
 
   renderAppShell();
   registerScreens();
