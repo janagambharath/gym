@@ -1,16 +1,12 @@
-{# ── RRR brand constant: flip the product name back in one edit ── #}
-{% set RRR_BRAND = 'RRR' %}
-{% set RRR_TAG = 'Gym Growth System' %}
 <!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}{{ RRR_BRAND }} | {{ RRR_TAG }}{% endblock %}</title>
+    <title>{% block title %}RenewalDesk{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/app.css') }}" rel="stylesheet">
-    <link href="{{ url_for('static', filename='css/rrr.css') }}" rel="stylesheet">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
 </head>
@@ -23,19 +19,19 @@
 <div class="app-shell">
     <aside class="sidebar">
         <div class="sidebar-inner">
-            <a class="rrr-side-brand" href="{{ url_for('admin.dashboard' if current_user.is_super_admin else 'gym.dashboard') }}">
-                <span class="rrr-side-logo"><span class="accent">R</span>RR</span>
-                <span class="rrr-side-tag">{{ RRR_TAG }}</span>
+            <a class="sidebar-brand" href="{{ url_for('admin.dashboard' if current_user.is_super_admin else 'gym.dashboard') }}">
+                <img src="{{ url_for('static', filename='img/logo.png') }}" alt="RenewalDesk" class="brand-logo me-2" style="width:32px;height:32px;object-fit:contain;border-radius:6px">
+                <span>
+                    <span class="brand-name d-block">RenewalDesk</span>
+                    <span class="brand-tag">Operations</span>
+                </span>
             </a>
-            {% if not current_user.is_super_admin %}
-            <div class="rrr-gym-card">
-                <div class="gimg"><i class="bi bi-building"></i></div>
-                <div>
-                    <div class="gname">{{ current_user.gym.name }}</div>
-                    <div class="gcity">{{ (current_user.gym.address or 'Gym')|truncate(28) }}</div>
+            <div class="sidebar-context">
+                <div class="sidebar-context-label">{{ 'Workspace' if current_user.is_super_admin else 'Gym' }}</div>
+                <div class="sidebar-context-name">
+                    {% if current_user.is_super_admin %}Platform Admin{% else %}{{ current_user.gym.name }}{% endif %}
                 </div>
             </div>
-            {% endif %}
             <nav class="sidebar-section">
                 <div class="sidebar-section-label">Operations</div>
                 {% if current_user.is_super_admin %}
@@ -51,36 +47,54 @@
                 {% else %}
 
                 <a class="nav-item {{ 'active' if request.endpoint == 'gym.dashboard' else '' }}" href="{{ url_for('gym.dashboard') }}">
-                    <i class="bi bi-house-door nav-icon"></i> Dashboard
+                    <i class="bi bi-speedometer2 nav-icon"></i> Dashboard
                 </a>
-                <a class="nav-item" href="{{ url_for('gym.dashboard') }}#rrr-revenue">
-                    <i class="bi bi-graph-up-arrow nav-icon"></i> Revenue
-                </a>
-                <a class="nav-item" href="{{ url_for('gym.dashboard') }}#rrr-retain">
-                    <i class="bi bi-shield nav-icon"></i> Retain
-                </a>
-                <a class="nav-item" href="{{ url_for('gym.dashboard') }}#rrr-recover">
-                    <i class="bi bi-arrow-counterclockwise nav-icon"></i> Recover
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('operations.issues') else '' }}" href="{{ url_for('operations.issues') }}">
+                    <i class="bi bi-exclamation-octagon nav-icon"></i> Issues Center
                 </a>
                 <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('members.') else '' }}" href="{{ url_for('members.index') }}">
                     <i class="bi bi-people nav-icon"></i> Members
                 </a>
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('payments.') else '' }}" href="{{ url_for('payments.index') }}">
+                    <i class="bi bi-receipt nav-icon"></i> Payments
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('bot_web.inbox') else '' }}" href="{{ url_for('bot_web.inbox') }}">
+                    <i class="bi bi-chat-dots nav-icon"></i> AI Receptionist
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('bot_web.leads') else '' }}" href="{{ url_for('bot_web.leads') }}">
+                    <i class="bi bi-funnel nav-icon"></i> Leads Pipeline
+                </a>
                 <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('reminders.') else '' }}" href="{{ url_for('reminders.index') }}">
-                    <i class="bi bi-megaphone nav-icon"></i> Campaigns
+                    <i class="bi bi-whatsapp nav-icon"></i> Reminders
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint == 'gym.announcements' else '' }}" href="{{ url_for('gym.announcements') }}">
+                    <i class="bi bi-megaphone nav-icon"></i> Announcements
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('biometric.') else '' }}" href="{{ url_for('biometric.index') }}">
+                    <i class="bi bi-fingerprint nav-icon"></i> Biometric Bridge
                 </a>
                 {% if current_user.role == 'gym_owner' %}
-                <div class="sidebar-section-label">Management</div>
-                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('bot_web.setup') else '' }}" href="{{ url_for('bot_web.setup') }}">
-                    <i class="bi bi-robot nav-icon"></i> Automations
-                </a>
+                <div class="sidebar-section-label mt-3">Management</div>
                 <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('operations.reports') else '' }}" href="{{ url_for('operations.reports') }}">
-                    <i class="bi bi-bar-chart nav-icon"></i> Reports
+                    <i class="bi bi-graph-up-arrow nav-icon"></i> Reports & Funnels
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint == 'gym.plans' else '' }}" href="{{ url_for('gym.plans') }}">
+                    <i class="bi bi-calendar2-check nav-icon"></i> Plans
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('staff.') else '' }}" href="{{ url_for('staff.index') }}">
+                    <i class="bi bi-person-badge nav-icon"></i> Staff
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint.startswith('bot_web.setup') else '' }}" href="{{ url_for('bot_web.setup') }}">
+                    <i class="bi bi-robot nav-icon"></i> AI Bot Setup
                 </a>
                 <a class="nav-item {{ 'active' if request.endpoint == 'gym.whatsapp_settings' else '' }}" href="{{ url_for('gym.whatsapp_settings') }}">
-                    <i class="bi bi-plug nav-icon"></i> Integrations
+                    <i class="bi bi-whatsapp nav-icon"></i> WhatsApp Config
                 </a>
-                <a class="nav-item {{ 'active' if request.endpoint and request.endpoint in ['gym.settings', 'gym.template_form', 'gym.plans'] else '' }}" href="{{ url_for('gym.settings') }}">
+                <a class="nav-item {{ 'active' if request.endpoint in ['gym.settings', 'gym.template_form'] else '' }}" href="{{ url_for('gym.settings') }}">
                     <i class="bi bi-gear nav-icon"></i> Settings
+                </a>
+                <a class="nav-item {{ 'active' if request.endpoint == 'gym.activity_log' else '' }}" href="{{ url_for('gym.activity_log') }}">
+                    <i class="bi bi-clock-history nav-icon"></i> Audit Log
                 </a>
                 {% endif %}
                 {% endif %}
