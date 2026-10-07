@@ -63,7 +63,13 @@ export default {
 
     // Menu item clicks
     el.querySelectorAll('[data-action]').forEach(item => {
-      item.addEventListener('click', () => navigate.push(item.dataset.action));
+      item.addEventListener('click', () => {
+        if (item.dataset.action === 'access') {
+          navigate.switchTab('access');
+        } else {
+          navigate.push(item.dataset.action);
+        }
+      });
     });
 
     el.querySelector('#btn-logout').addEventListener('click', async () => {

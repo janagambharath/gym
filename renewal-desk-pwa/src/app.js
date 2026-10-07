@@ -17,11 +17,12 @@ let activeTab = 'dashboard';
 // ─── Tab Configuration ───────────────────────────────────────────────
 
 const TAB_CONFIG = {
-  dashboard: { screen: 'dashboard', label: 'Home' },
+  dashboard: { screen: 'dashboard', label: 'Dashboard' },
   members: { screen: 'members', label: 'Members' },
+  access: { screen: 'access', label: 'Access' },
   renewals: { screen: 'renewals', label: 'Renewals' },
   payments: { screen: 'payments', label: 'Payments' },
-  more: { screen: 'settings', label: 'Options' },
+  more: { screen: 'settings', label: 'More' },
 };
 
 // ─── Screen Registration ─────────────────────────────────────────────

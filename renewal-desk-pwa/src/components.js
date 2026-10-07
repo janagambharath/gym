@@ -88,11 +88,12 @@ export function bindHeaderEvents(el, { onBack, actions = [] } = {}) {
 // ─── Tab Bar ─────────────────────────────────────────────────────────
 
 const tabs = [
-  { id: 'dashboard', label: 'Home', icon: 'dashboard' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { id: 'members', label: 'Members', icon: 'members' },
+  { id: 'access', label: 'Access', icon: 'access' },
   { id: 'renewals', label: 'Renewals', icon: 'renewals' },
   { id: 'payments', label: 'Payments', icon: 'payments' },
-  { id: 'more', label: 'Options', icon: 'more' },
+  { id: 'more', label: 'More', icon: 'more' },
 ];
 
 export function renderTabBar(activeTab) {

@@ -1,6 +1,7 @@
 /* Access Control Screen */
 import { apiRequest, checkInMember } from '../api.js';
 import { navigate } from '../app.js';
+import { router } from '../router.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderBadge, renderEmptyState, renderAvatar, showToast } from '../components.js';
 import { icon } from '../icons.js';
 import { formatDateTime, formatInteger, escapeHtml } from '../utils.js';
@@ -43,15 +44,15 @@ export default {
               ${lastEventText ? `<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">Last event: ${escapeHtml(lastEventText)}</div>` : '<div style="margin-bottom:var(--sp-md)"></div>'}
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-lg)">
                 <div style="cursor:pointer" id="stat-inside">
-                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${formatInteger(s.inside_now || 0)}</div>
+                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--status-active)">${formatInteger(s.inside_now || 0)}</div>
                   <div style="font-size:var(--fs-xs);color:var(--muted)">Inside Now</div>
                 </div>
                 <div style="cursor:pointer" id="stat-entries">
-                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--success)">${formatInteger(s.entries_today || 0)}</div>
+                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${formatInteger(s.entries_today || 0)}</div>
                   <div style="font-size:var(--fs-xs);color:var(--muted)">Entries</div>
                 </div>
                 <div style="cursor:pointer" id="stat-exits">
-                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--text-secondary)">${formatInteger(s.exits_today || 0)}</div>
+                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--warning)">${formatInteger(s.exits_today || 0)}</div>
                   <div style="font-size:var(--fs-xs);color:var(--muted)">Exits</div>
                 </div>
               </div>
@@ -289,8 +290,8 @@ export default {
 
     el.innerHTML = `
       ${renderHeader({
-        title: 'Access Control',
-        showBack: true,
+        title: 'Live Access',
+        showBack: router.depth > 1,
         actions: [
           { icon: 'access', label: 'Check In', onClick: () => openCheckinModal() },
           { icon: 'refresh', label: 'Refresh', onClick: () => loadData() },
@@ -302,7 +303,11 @@ export default {
     bindHeaderEvents(el, {
       onBack: () => {
         if (refreshTimer) clearInterval(refreshTimer);
-        navigate.pop();
+        if (router.depth > 1) {
+          navigate.pop();
+        } else {
+          navigate.switchTab('dashboard');
+        }
       },
       actions: [
         { icon: 'access', onClick: () => openCheckinModal() },

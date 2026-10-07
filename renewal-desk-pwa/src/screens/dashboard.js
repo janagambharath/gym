@@ -196,30 +196,42 @@ async function loadDashboard(el) {
     ` : ''}
 
     ${data.access_summary ? `
-    <!-- Access Summary -->
+    <!-- Live Access Card (matches Android app) -->
     <div style="padding:0 var(--sp-lg) var(--sp-lg)">
-      <div class="card card-body" data-action="access">
-        <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-md)">
-          ${icon('access', 20, 'var(--brand)')}
-          <div style="font-weight:var(--fw-bold)">Access Control</div>
-          <div style="margin-left:auto;display:flex;align-items:center;gap:var(--sp-xs)">
-            <span style="width:8px;height:8px;border-radius:50%;background:${data.access_summary.device_online ? 'var(--success)' : 'var(--muted)'}"></span>
-            <span style="font-size:var(--fs-xs);color:var(--muted)">${data.access_summary.device_online ? 'Online' : 'Offline'}</span>
+      <div class="card card-body" data-action="access" style="cursor:pointer">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-sm)">
+          <div style="display:flex;align-items:center;gap:var(--sp-xs);font-weight:var(--fw-bold);font-size:var(--fs-base)">
+            ${icon('access', 18, 'var(--brand)')}
+            <span>Live Access</span>
           </div>
+          <span style="font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--brand)">View Feed →</span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-md);text-align:center">
+
+        <div style="display:flex;align-items:center;gap:var(--sp-xs);font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">
+          <span style="width:8px;height:8px;border-radius:50%;background:${data.access_summary.device_online ? 'var(--success)' : 'var(--muted)'}"></span>
+          <span>${escapeHtml(data.access_summary.device_name || 'Biometric Device')}: <b style="color:${data.access_summary.device_online ? 'var(--success)' : 'var(--muted)'}">${data.access_summary.device_online ? 'Online' : 'Offline'}</b></span>
+          ${data.access_summary.last_event_at ? `<span style="margin-left:auto">Last scan ${new Date(data.access_summary.last_event_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : ''}
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(${data.access_summary.denied_today > 0 ? 4 : 3},1fr);gap:var(--sp-xs);text-align:center;background:var(--gray-50, #f8f9fa);padding:var(--sp-md) var(--sp-xs);border-radius:var(--r-md);border:1px solid var(--border-light)">
           <div>
-            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--brand)">${data.access_summary.inside_now}</div>
-            <div style="font-size:var(--fs-xs);color:var(--muted)">Inside Now</div>
+            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-extrabold);color:var(--status-active)">${data.access_summary.inside_now}</div>
+            <div style="font-size:10px;color:var(--muted);font-weight:var(--fw-medium)">Inside Now</div>
           </div>
-          <div>
-            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--success)">${data.access_summary.entries_today}</div>
-            <div style="font-size:var(--fs-xs);color:var(--muted)">Entries</div>
+          <div style="border-left:1px solid var(--border-light)">
+            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-extrabold);color:var(--brand)">${data.access_summary.entries_today}</div>
+            <div style="font-size:10px;color:var(--muted);font-weight:var(--fw-medium)">Entries</div>
           </div>
-          <div>
-            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--text-secondary)">${data.access_summary.exits_today}</div>
-            <div style="font-size:var(--fs-xs);color:var(--muted)">Exits</div>
+          <div style="border-left:1px solid var(--border-light)">
+            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-extrabold);color:var(--warning)">${data.access_summary.exits_today}</div>
+            <div style="font-size:10px;color:var(--muted);font-weight:var(--fw-medium)">Exits</div>
           </div>
+          ${data.access_summary.denied_today > 0 ? `
+          <div style="border-left:1px solid var(--border-light)">
+            <div style="font-size:var(--fs-2xl);font-weight:var(--fw-extrabold);color:var(--critical)">${data.access_summary.denied_today}</div>
+            <div style="font-size:10px;color:var(--critical);font-weight:var(--fw-medium)">Denied</div>
+          </div>
+          ` : ''}
         </div>
       </div>
     </div>` : ''}
@@ -239,7 +251,7 @@ async function loadDashboard(el) {
         case 'members-expired': navigate.switchTab('members'); break;
         case 'renewals': navigate.switchTab('renewals'); break;
         case 'payments-pending': navigate.switchTab('payments'); break;
-        case 'access': navigate.push('access'); break;
+        case 'access': navigate.switchTab('access'); break;
         case 'action-expiring_today': navigate.switchTab('renewals'); break;
         case 'action-pending_payments': navigate.switchTab('payments'); break;
         case 'action-new_leads': navigate.push('bot-leads'); break;
