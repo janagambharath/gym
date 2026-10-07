@@ -249,24 +249,3 @@ def acknowledge_command(
     command.acknowledge(status, error_message)
     return True, None
 
-
-def queue_gym_reconciliation(gym_id: int) -> int:
-    """Re-queue enable/disable commands for every enrolled member in a gym.
-
-    This is the "force sync" operation: it walks every non-deleted member
-    that has a ``device_enroll_number`` and queues the correct command based
-    on current membership state.  Returns the number of commands queued.
-    """
-    enrolled = (
-        Member.query
-        .filter_by(gym_id=gym_id)
-        .filter(Member.device_enroll_number.isnot(None))
-        .filter(Member.deleted_at.is_(None))
-        .all()
-    )
-    count = 0
-    for member in enrolled:
-        queue_membership_command(member)
-        count += 1
-    return count
-
