@@ -364,3 +364,189 @@ def register_settings_routes(bp):
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Plan deleted."}})
 
+    # ── Biometric Bridge Management ──────────────────────────────────
+
+    @bp.route("/settings/bridge", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner")
+    def bridge_status():
+        """Get biometric bridge connection status and device info."""
+        from app.models.bridge import BridgeCommand, BridgeInstallation
+        from app.models.mixins import utcnow
+
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
+        if not bridge:
+            return jsonify({"success": True, "data": {"provisioned": False}})
+
+        now = utcnow()
+        hb = bridge.last_heartbeat_at
+        if hb and hb.tzinfo is None:
+            from datetime import timezone
+            hb = hb.replace(tzinfo=timezone.utc)
+        hb_age = (now - hb).total_seconds() if hb else None
+        device_online = hb_age is not None and hb_age <= 120 and bridge.is_active
+
+        pending = BridgeCommand.query.filter_by(bridge_id=bridge.id, status="pending").count()
+        failed = BridgeCommand.query.filter_by(bridge_id=bridge.id, status="failed").count()
+
+        return jsonify({"success": True, "data": {
+            "provisioned": True,
+            "is_active": bridge.is_active,
+            "device_online": device_online,
+            "last_heartbeat": hb.isoformat() if hb else None,
+            "heartbeat_age_seconds": int(hb_age) if hb_age is not None else None,
+            "display_name": bridge.display_name,
+            "device_serial": bridge.device_serial,
+            "installed_version": bridge.installed_version,
+            "pc_name": bridge.pc_name,
+            "os_info": bridge.os_info,
+            "public_id": bridge.public_id,
+            "status": bridge.status,
+            "pending_commands": pending,
+            "failed_commands": failed,
+            "first_paired_at": bridge.first_paired_at.isoformat() if bridge.first_paired_at else None,
+        }})
+
+    @bp.route("/settings/bridge/provision", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def bridge_provision():
+        """Provision a new biometric bridge for this gym."""
+        from app.models.bridge import BridgeInstallation
+
+        existing = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
+        if existing and existing.is_active:
+            return error_response(
+                "ALREADY_PROVISIONED",
+                "A bridge is already provisioned. Deactivate it first to create a new one.",
+                409,
+            )
+
+        data = request.get_json(silent=True) or {}
+        device_serial = (data.get("device_serial") or "").strip()
+        display_name = (data.get("display_name") or "Gym biometric device").strip()
+
+        if not device_serial:
+            return error_response("VALIDATION_ERROR", "device_serial is required.", 400)
+
+        if existing and not existing.is_active:
+            db.session.delete(existing)
+            db.session.flush()
+
+        installation, raw_key = BridgeInstallation.create_for_gym(
+            gym_id=g.gym_id,
+            display_name=display_name,
+            device_serial=device_serial,
+        )
+        db.session.add(installation)
+        audit(
+            action="bridge_provision",
+            resource_type="bridge",
+            resource_id=None,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"device_serial": device_serial},
+        )
+        db.session.commit()
+
+        return jsonify({"success": True, "data": {
+            "public_id": installation.public_id,
+            "api_key": raw_key,
+            "device_serial": device_serial,
+            "display_name": display_name,
+            "message": "Bridge provisioned. Save the API key — it won't be shown again.",
+        }}), 201
+
+    @bp.route("/settings/bridge/deactivate", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def bridge_deactivate():
+        """Deactivate the biometric bridge."""
+        from app.models.bridge import BridgeInstallation
+
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
+        if not bridge:
+            return error_response("NOT_FOUND", "No active bridge found.", 404)
+
+        bridge.is_active = False
+        bridge.status = "disabled"
+        audit(
+            action="bridge_deactivate",
+            resource_type="bridge",
+            resource_id=bridge.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+        )
+        db.session.commit()
+        return jsonify({"success": True, "data": {"message": "Bridge deactivated."}})
+
+    @bp.route("/settings/bridge/commands", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner")
+    def bridge_commands():
+        """List recent bridge commands with status."""
+        from app.models.bridge import BridgeCommand, BridgeInstallation
+
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
+        if not bridge:
+            return jsonify({"success": True, "data": {"commands": []}})
+
+        page = request.args.get("page", 1, type=int)
+        per_page = min(request.args.get("per_page", 25, type=int), 100)
+        status_filter = request.args.get("status")
+
+        query = BridgeCommand.query.filter_by(bridge_id=bridge.id)
+        if status_filter and status_filter in ("pending", "leased", "acked", "failed"):
+            query = query.filter_by(status=status_filter)
+
+        pagination = (
+            query.order_by(BridgeCommand.created_at.desc())
+            .paginate(page=page, per_page=per_page, error_out=False)
+        )
+
+        commands = []
+        for cmd in pagination.items:
+            commands.append({
+                "id": cmd.id,
+                "command_type": cmd.command_type,
+                "enroll_number": cmd.enroll_number,
+                "member_name": cmd.member_name,
+                "status": cmd.status,
+                "created_at": cmd.created_at.isoformat() if cmd.created_at else None,
+                "acknowledged_at": cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None,
+                "last_error": cmd.last_error,
+                "retry_attempt": cmd.retry_attempt,
+                "delivery_attempts": cmd.delivery_attempts,
+            })
+
+        return jsonify({"success": True, "data": {
+            "commands": commands,
+            "pagination": {
+                "page": pagination.page,
+                "per_page": pagination.per_page,
+                "total": pagination.total,
+                "total_pages": pagination.pages,
+            },
+        }})
+
+    @bp.route("/settings/bridge/reconcile", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def bridge_reconcile():
+        """Force re-sync all enrolled members' access state to the device."""
+        from app.services.bridge_service import queue_gym_reconciliation
+
+        count = queue_gym_reconciliation(g.gym_id)
+        db.session.commit()
+        audit(
+            action="bridge_reconcile",
+            resource_type="bridge",
+            resource_id=None,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"queued_count": count},
+        )
+        return jsonify({"success": True, "data": {
+            "queued_count": count,
+            "message": f"Re-syncing {count} enrolled member(s) to biometric device.",
+        }})

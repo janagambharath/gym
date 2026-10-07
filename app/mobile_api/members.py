@@ -40,6 +40,7 @@ def _serialize_member(m: Member) -> dict:
         "notes": m.notes,
         "whatsapp_opted_in": True,
         "has_biometric": m.device_enroll_number is not None,
+        "device_enroll_number": m.device_enroll_number,
     }
 
 
@@ -546,6 +547,81 @@ def register_members_routes(bp):
         invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Member deactivated."}})
+
+    @bp.route("/members/<int:member_id>/enroll", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def enroll_member_biometric(member_id: int):
+        """Set the biometric device enrollment number for a member."""
+        from app.services.bridge_service import canonical_enroll_number
+
+        member = (
+            Member.query.filter_by(id=member_id, gym_id=g.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if member is None:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+
+        data = request.get_json(silent=True) or {}
+        raw_enroll = data.get("enroll_number") or data.get("device_enroll_number")
+        if not raw_enroll:
+            return error_response("VALIDATION_ERROR", "enroll_number is required.", 400)
+
+        try:
+            enroll_number = canonical_enroll_number(raw_enroll)
+        except ValueError as ve:
+            return error_response("VALIDATION_ERROR", str(ve), 400)
+
+        # Check no other member has this enroll number in this gym
+        existing = (
+            Member.query.filter_by(gym_id=g.gym_id, device_enroll_number=enroll_number)
+            .filter(Member.id != member_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if existing:
+            return error_response(
+                "DUPLICATE_ENROLL",
+                f"Enroll #{enroll_number} is already assigned to {existing.full_name}.",
+                409,
+            )
+
+        member.device_enroll_number = enroll_number
+        queue_membership_command(member)
+        audit(action="biometric_enroll", resource_type="member", resource_id=member.id,
+              gym_id=g.gym_id, actor_id=g.current_user.id,
+              metadata={"enroll_number": enroll_number})
+        db.session.commit()
+        db.session.refresh(member)
+        return jsonify({"success": True, "data": _serialize_member(member),
+                        "message": f"{member.full_name} enrolled as #{enroll_number}."})
+
+    @bp.route("/members/<int:member_id>/unenroll", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def unenroll_member_biometric(member_id: int):
+        """Remove the biometric device enrollment number from a member."""
+        member = (
+            Member.query.filter_by(id=member_id, gym_id=g.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if member is None:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+
+        old_enroll = member.device_enroll_number
+        if not old_enroll:
+            return error_response("NOT_ENROLLED", "Member is not enrolled on any device.", 400)
+
+        member.device_enroll_number = None
+        audit(action="biometric_unenroll", resource_type="member", resource_id=member.id,
+              gym_id=g.gym_id, actor_id=g.current_user.id,
+              metadata={"old_enroll_number": old_enroll})
+        db.session.commit()
+        db.session.refresh(member)
+        return jsonify({"success": True, "data": _serialize_member(member),
+                        "message": f"{member.full_name} removed from biometric device."})
 
 
 def _parse_date(val) -> date | None:

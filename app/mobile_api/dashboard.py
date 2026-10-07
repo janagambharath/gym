@@ -225,6 +225,16 @@ def register_dashboard_routes(bp):
         subscription_status = billing["subscription_status"]
         subscription_ready = subscription_status in {"TRIAL", "ACTIVE", "PENDING", "PAYMENT_FAILED"}
 
+        # Biometric bridge check (optional step).
+        bridge_provisioned = False
+        try:
+            from app.models.bridge import BridgeInstallation
+            bridge_provisioned = BridgeInstallation.query.filter_by(
+                gym_id=gym.id, is_active=True
+            ).first() is not None
+        except Exception:
+            current_app.logger.warning("Could not check bridge status for onboarding gym=%s", gym.id)
+
         steps = [
             {"id": "gym_profile", "title": "Gym profile", "description": "Add your location so members and staff know which gym they are using.", "action_label": "Complete profile", "completed": profile_complete, "route": "Settings"},
             {"id": "plans_configured", "title": "Membership plans", "description": "Set a real price for at least one plan before assigning memberships.", "action_label": "Set up plans", "completed": plans_configured, "route": "Plans"},
@@ -232,6 +242,7 @@ def register_dashboard_routes(bp):
             {"id": "whatsapp_connected", "title": "Connect WhatsApp", "description": "Send renewal reminders and follow-ups from your gym's WhatsApp Business account.", "action_label": "Connect WhatsApp", "completed": whatsapp_connected, "route": "WhatsApp"},
             {"id": "member_payments", "title": "Collect member payments", "description": "Add your gym UPI ID so members can pay their own renewal amount in VYNLA.", "action_label": "Set up payments", "completed": member_payments_ready, "route": "PaymentSetup"},
             {"id": "subscription", "title": "Renewal Desk subscription", "description": "7 days free • No credit card required. Choose a plan before trial ends to keep using Renewal Desk.", "action_label": "View subscription", "completed": subscription_ready, "route": "Subscription", "status": subscription_status, "trial_ends_at": billing.get("expires_at")},
+            {"id": "biometric_setup", "title": "Biometric access control", "description": "Connect your eSSL biometric device to auto-block expired members and track gym entry/exit.", "action_label": "Set up biometric", "completed": bridge_provisioned, "route": "BiometricSetup", "optional": True},
         ]
 
         completed_count = sum(1 for s in steps if s["completed"])
