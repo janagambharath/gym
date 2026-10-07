@@ -1,14 +1,12 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Dashboard Screen — RRR Gym Growth System
-   Revenue. Retain. Recover. All figures computed client-side from real
-   member / plan / visit data (see ../rrr.js). Nothing is hardcoded.
+   Dashboard Screen — Full-featured, matching Android app exactly
    ═══════════════════════════════════════════════════════════════════════ */
 
-import { getCachedSession } from '../api.js';
+import { apiRequest, getCachedSession } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
+import { renderHeader, bindHeaderEvents, renderMetricCard, renderSectionHeader, renderMemberCard, renderPaymentCard, renderDashboardSkeleton, renderErrorState, showToast, renderAvatar } from '../components.js';
 import { icon } from '../icons.js';
-import { renderErrorState, showToast } from '../components.js';
-import { BRAND, RRR_META, fetchRRRData, computeRRR, donutSVG, avatarFor, fmtINR, fmtInt, esc } from '../rrr.js';
+import { formatCurrency, formatInteger, getGreeting, escapeHtml, getDaysText, getMemberDisplayStatus, formatDate } from '../utils.js';
 
 /** @type {import('../router.js').Screen} */
 export default {
@@ -17,163 +15,254 @@ export default {
     const gymName = session?.tenantName || 'Your Gym';
     const userName = session?.userName || '';
 
+    // Initial skeleton
     el.innerHTML = `
-      <div class="rrr-page">
-        <div class="rrr-topbar">
-          <div class="rrr-brand">
-            <span class="rrr-logo"><span class="rrr-logo-accent">R</span>RR</span>
-            <span class="rrr-brand-sub">${esc(BRAND.tagline)}</span>
-          </div>
-          <div class="rrr-gym-pill">
-            <span>${esc(gymName)}</span>
-            ${icon('chevronDown', 14, '#64748b')}
-          </div>
-          <button class="rrr-icon-btn" id="rrr-bell" aria-label="Notifications">
-            ${icon('notifications', 20)}<span class="dot"></span>
-          </button>
-          <button class="rrr-avatar-btn" id="rrr-avatar" aria-label="Account">
-            ${esc((userName || gymName || 'G').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase())}
-          </button>
+      <div class="app-header has-safe-top dash-top-bar">
+        <div class="dash-brand-block">
+          <img src="/icons/logo.png" alt="Renewal Desk" class="dash-brand-logo">
+          <span class="dash-brand-name">Renewal Desk</span>
         </div>
-        <div class="scroll-view" id="rrr-scroll">
-          <div style="padding:16px">
-            <div class="rrr-skel" style="height:34px;width:75%;margin-bottom:10px"></div>
-            <div class="rrr-skel" style="height:110px;margin-bottom:10px"></div>
-            <div class="rrr-skel" style="height:170px;margin-bottom:10px"></div>
-            <div class="rrr-skel" style="height:170px"></div>
+        ${gymName ? `
+          <div class="dash-gym-pill">
+            ${icon('fitness', 14, 'var(--text-secondary)')}
+            <span class="dash-gym-name">${escapeHtml(gymName)}</span>
           </div>
+        ` : ''}
+        <div class="header-right">
+          <button class="header-action" id="dash-notifications-btn" aria-label="Notifications">${icon('notifications', 22)}</button>
+          <button class="header-action avatar-action" id="dash-settings-btn" aria-label="Settings">${renderAvatar(userName || gymName, 'sm')}</button>
         </div>
+      </div>
+      <div class="scroll-view" id="dash-scroll">
+        ${renderDashboardSkeleton()}
       </div>`;
 
-    el.querySelector('#rrr-bell')?.addEventListener('click', () => navigate.push('notifications'));
-    el.querySelector('#rrr-avatar')?.addEventListener('click', () => navigate.switchTab('more'));
+    el.querySelector('#dash-notifications-btn')?.addEventListener('click', () => navigate.push('notifications'));
+    el.querySelector('#dash-settings-btn')?.addEventListener('click', () => navigate.switchTab('more'));
 
-    await loadRrrDashboard(el);
-  },
+    // Fetch data
+    await loadDashboard(el);
+  }
 };
 
-async function loadRrrDashboard(el) {
-  const scroll = el.querySelector('#rrr-scroll');
+async function loadDashboard(el) {
+  const scroll = el.querySelector('#dash-scroll');
   if (!scroll) return;
+  const session = getCachedSession();
+  const userName = session?.userName || '';
 
-  const res = await fetchRRRData();
-  if (!res.ok) {
-    scroll.innerHTML = `<div style="padding:24px">${renderErrorState(res.error.message, 'rrr-retry')}</div>`;
-    scroll.querySelector('#rrr-retry')?.addEventListener('click', () => loadRrrDashboard(el));
-    if (res.error.status === 401) handleLogout();
+  const [dashRes, upcomingRes, paymentsRes] = await Promise.all([
+    apiRequest('/api/mobile/v1/dashboard'),
+    apiRequest('/api/mobile/v1/renewals/upcoming'),
+    apiRequest('/api/mobile/v1/payments?page_size=5'),
+  ]);
+
+  if (!dashRes.ok) {
+    scroll.innerHTML = renderErrorState(dashRes.error.message, 'dash-retry');
+    scroll.querySelector('#dash-retry')?.addEventListener('click', () => loadDashboard(el));
+    if (dashRes.error.status === 401) handleLogout();
     return;
   }
 
-  const rrr = computeRRR(res.members, res.plans, res.visits);
-  const revenue30d = res.summary ? parseFloat(res.summary.revenue?.collected || '0') || 0 : 0;
+  const data = dashRes.data;
+  const upcoming = upcomingRes.ok ? upcomingRes.data.members || [] : [];
+  const payments = paymentsRes.ok ? (paymentsRes.data.payments || []) : [];
 
-  const statCard = (value, label, ico, bg, fg) => `
-    <div class="rrr-stat">
-      <div class="rrr-stat-top"><span class="rrr-stat-ico" style="background:${bg}">${icon(ico, 16, fg)}</span></div>
-      <div class="rrr-stat-value">${value}</div>
-      <div class="rrr-stat-label">${label}</div>
-    </div>`;
-
-  const fwCard = (meta, count, countLabel, money, moneyLabel, tab) => `
-    <div class="rrr-fw-card ${meta.key === 'revenue' ? 'green' : meta.key === 'retain' ? 'orange' : 'red'}">
-      <div class="rrr-fw-head">
-        <span class="rrr-fw-ico">${icon(meta.icon, 22, meta.color)}</span>
-        <div><div class="rrr-fw-title">${meta.title}</div><div class="rrr-fw-sub">${meta.subtitle}</div></div>
+  scroll.innerHTML = `<div class="scroll-content">
+    <div class="dash-greeting-card">
+      <div style="font-size:var(--fs-2xl);font-weight:var(--fw-bold);color:var(--text)">${getGreeting()}, ${escapeHtml(userName.split(' ')[0] || 'there')}</div>
+      <div style="font-size:var(--fs-sm);color:var(--text-secondary);margin-top:2px">Here's the live view of what needs your attention today.</div>
+    </div>
+    <!-- Metrics Grid -->
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div class="metric-grid">
+        ${renderMetricCard({ label: 'Active', value: formatInteger(data.total_active), iconName: 'members', color: 'var(--status-active)', bgColor: 'var(--status-active-surface)', onClick: 'members-active' })}
+        ${renderMetricCard({ label: 'Expiring Soon', value: formatInteger(data.expiring_soon), iconName: 'warning', color: 'var(--status-expiring)', bgColor: 'var(--status-expiring-surface)', onClick: 'renewals' })}
+        ${renderMetricCard({ label: 'Expired', value: formatInteger(data.expired), iconName: 'time', color: 'var(--status-expired)', bgColor: 'var(--status-expired-surface)', onClick: 'members-expired' })}
+        ${renderMetricCard({ label: 'Pending Pay', value: formatInteger(data.pending_payments), iconName: 'wallet', color: 'var(--status-pending)', bgColor: 'var(--status-pending-surface)', onClick: 'payments-pending' })}
       </div>
-      <div class="rrr-fw-body">
-        <div><div class="rrr-fw-count">${fmtInt(count)}</div><div class="rrr-fw-count-label">${countLabel}</div></div>
-        <div class="rrr-fw-money"><div class="amt">${money}</div><div class="lbl">${moneyLabel}</div></div>
-      </div>
-      <button class="rrr-viewall" data-goto="${tab}">View All ${icon('forward', 16)}</button>
-    </div>`;
-
-  const oppRow = (o) => `
-    <button class="rrr-row" data-member='${esc(JSON.stringify({ id: o.member.id }))}'>
-      ${avatarFor(o.member.full_name)}
-      <span class="rrr-row-main">
-        <span class="rrr-row-name">${esc(o.member.full_name)}</span><br>
-        <span class="rrr-tag green">${esc(o.tag)}</span>
-      </span>
-      <span class="rrr-row-amt">${fmtINR(o.value)}</span>
-      <span class="rrr-row-chev">${icon('chevronRight', 18)}</span>
-    </button>`;
-
-  const riskRow = (r) => `
-    <button class="rrr-row" data-member='${esc(JSON.stringify({ id: r.member.id }))}'>
-      ${avatarFor(r.member.full_name)}
-      <span class="rrr-row-main">
-        <span class="rrr-row-name">${esc(r.member.full_name)}</span><br>
-        <span class="rrr-tag ${r.primary.key === 'plan_ending' ? 'orange' : 'red'}">${esc(r.primary.label)}</span>
-      </span>
-      <span class="rrr-row-chev">${icon('chevronRight', 18)}</span>
-    </button>`;
-
-  const recRow = (r) => `
-    <button class="rrr-row" data-member='${esc(JSON.stringify({ id: r.member.id }))}'>
-      ${avatarFor(r.member.full_name)}
-      <span class="rrr-row-main">
-        <span class="rrr-row-name">${esc(r.member.full_name)}</span><br>
-        <span class="rrr-tag red">${esc(r.label)}</span>
-      </span>
-      <span class="rrr-row-chev">${icon('chevronRight', 18)}</span>
-    </button>`;
-
-  const listBlock = (title, rows, tab, emptyText) => `
-    <div class="rrr-list-head"><h3>${title}</h3><button class="rrr-link" data-goto="${tab}">View All</button></div>
-    <div class="rrr-rows">${rows.length ? rows.slice(0, 4).map((r) => r.html).join('') : `<div class="rrr-empty">${emptyText}</div>`}</div>`;
-
-  const total = rrr.lifecycle.reduce((s, x) => s + x.count, 0);
-
-  scroll.innerHTML = `
-    <div class="rrr-hero">
-      <h1>${esc(BRAND.headline)}</h1>
-      <p>${esc(BRAND.subhead)}</p>
     </div>
 
-    <div class="rrr-stats">
-      ${statCard(fmtInt(rrr.stats.totalMembers), 'Total Members', 'members', '#eef2ff', '#4f46e5')}
-      ${statCard(rrr.stats.attendanceRate === null ? '—' : rrr.stats.attendanceRate + '%', 'Attendance Rate', 'check', '#e8f7ee', '#16a34a')}
-      ${statCard(fmtINR(revenue30d), 'Revenue · 30 days', 'cash', '#e8f7ee', '#16a34a')}
-    </div>
-    ${!rrr.stats.hasVisitData ? `<div class="rrr-note">No biometric visit data yet — attendance-based risk appears once the bridge syncs check-ins.</div>` : ''}
-
-    <div class="rrr-fw">
-      ${fwCard(RRR_META.revenue, rrr.revenue.opps.length, 'Revenue Opportunities', '~ ' + fmtINR(rrr.revenue.potential), 'potential revenue', 'revenue')}
-      ${fwCard(RRR_META.retain, rrr.retain.members.length, 'At Risk Members', '~ ' + fmtINR(rrr.retain.atRiskValue), 'potential revenue at risk', 'retain')}
-      ${fwCard(RRR_META.recover, rrr.recover.members.length, 'Inactive / Expired Members', '~ ' + fmtINR(rrr.recover.lostValue), 'lost potential revenue', 'recover')}
-    </div>
-
-    <div class="rrr-card">
-      <h3>Member Lifecycle</h3>
-      <div class="rrr-donut-wrap">
-        ${donutSVG(rrr.lifecycle)}
-        <div class="rrr-legend">
-          ${rrr.lifecycle.map((s) => `
-            <div class="rrr-legend-row">
-              <span class="rrr-legend-dot" style="background:${s.color}"></span>${esc(s.label)}
-              <b>${fmtInt(s.count)}</b><span class="pct">${total ? Math.round((s.count / total) * 100) : 0}%</span>
-            </div>`).join('')}
+    <!-- Revenue Card -->
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div class="revenue-card">
+        <div class="revenue-card-label">Revenue Today</div>
+        <div class="revenue-card-value">${formatCurrency(data.revenue_today || '0')}</div>
+        <div class="revenue-breakdown">
+          <div class="revenue-breakdown-item">
+            <div class="revenue-breakdown-label">This Week</div>
+            <div class="revenue-breakdown-value">${formatCurrency(data.revenue_week || '0')}</div>
+          </div>
+          <div class="revenue-breakdown-item">
+            <div class="revenue-breakdown-label">This Month</div>
+            <div class="revenue-breakdown-value">${formatCurrency(data.revenue_month || '0')}</div>
+          </div>
         </div>
       </div>
     </div>
 
-    ${listBlock('Top Revenue Opportunities', rrr.revenue.opps.map((o) => ({ html: oppRow(o) })), 'revenue', 'No priced opportunities right now.')}
-    ${listBlock('At Risk Members', rrr.retain.members.map((r) => ({ html: riskRow(r) })), 'retain', 'No at-risk members. 🎉')}
-    ${listBlock('Inactive / Expired Members', rrr.recover.members.map((r) => ({ html: recRow(r) })), 'recover', 'No inactive or expired members.')}
+    ${data.recovery_rate ? `
+    <!-- Recovery Rate -->
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div class="card card-body">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-md)">
+          <div>
+            <div style="font-size:var(--fs-sm);color:var(--text-secondary)">Revenue at Risk</div>
+            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--status-expiring)">${formatCurrency(data.recovery_rate.revenue_at_risk)}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:var(--fs-sm);color:var(--text-secondary)">Recovered</div>
+            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--status-active)">${formatCurrency(data.recovery_rate.revenue_recovered)}</div>
+          </div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-bar-fill" style="width:${Math.min(parseFloat(data.recovery_rate.recovery_rate) || 0, 100)}%;background:var(--success)"></div>
+        </div>
+        <div style="font-size:var(--fs-xs);color:var(--muted);margin-top:var(--sp-xs);text-align:center">${data.recovery_rate.recovery_rate}% recovery rate</div>
+      </div>
+    </div>` : ''}
 
-    <div class="rrr-bottom-pad"></div>`;
+    <!-- Quick Actions -->
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div class="quick-actions">
+        <button class="quick-action" data-action="add-member">
+          <div class="quick-action-icon" style="background:var(--brand-subtle)">${icon('add', 20, 'var(--brand)')}</div>
+          <div class="quick-action-label">Add Member</div>
+        </button>
+        <button class="quick-action" data-action="renew">
+          <div class="quick-action-icon" style="background:var(--success-surface)">${icon('renewals', 20, 'var(--success)')}</div>
+          <div class="quick-action-label">Renew</div>
+        </button>
+        <button class="quick-action" data-action="payment">
+          <div class="quick-action-icon" style="background:var(--status-pending-surface)">${icon('wallet', 20, 'var(--status-pending)')}</div>
+          <div class="quick-action-label">Payment</div>
+        </button>
+        <button class="quick-action" data-action="whatsapp">
+          <div class="quick-action-icon" style="background:#dcfce7">${icon('whatsapp', 20, 'var(--whatsapp)')}</div>
+          <div class="quick-action-label">WhatsApp</div>
+        </button>
+      </div>
+    </div>
 
-  scroll.querySelectorAll('[data-goto]').forEach((b) =>
-    b.addEventListener('click', () => navigate.switchTab(b.dataset.goto))
-  );
-  scroll.querySelectorAll('[data-member]').forEach((row) =>
-    row.addEventListener('click', () => {
-      try {
-        const { id } = JSON.parse(row.dataset.member);
-        const m = res.members.find((x) => String(x.id) === String(id));
-        if (m) navigate.push('member-detail', { member: JSON.stringify(m) });
-        else showToast('Member not found', 'error');
-      } catch { /* ignore */ }
-    })
-  );
+    ${data.bot_summary && data.bot_summary.handover_count > 0 ? `
+    <!-- Handover Alert -->
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div class="card card-body" style="background:var(--warning-surface);border-color:var(--warning-border)" data-action="bot-conversations">
+        <div style="display:flex;align-items:center;gap:var(--sp-md)">
+          ${icon('chatbubble', 24, 'var(--warning)')}
+          <div style="flex:1">
+            <div style="font-weight:var(--fw-bold);color:var(--warning-dark)">${data.bot_summary.handover_count} customer${data.bot_summary.handover_count > 1 ? 's' : ''} need attention</div>
+            <div style="font-size:var(--fs-sm);color:var(--warning)">AI bot has flagged conversations requiring human response</div>
+          </div>
+          ${icon('chevronRight', 18, 'var(--warning)')}
+        </div>
+      </div>
+    </div>` : ''}
+
+    ${data.todays_actions && data.todays_actions.length > 0 ? `
+    <!-- Today's Actions -->
+    ${renderSectionHeader("Today's Actions")}
+    <div style="padding:0 var(--sp-lg) var(--sp-lg);display:flex;flex-direction:column;gap:var(--sp-sm)">
+      ${data.todays_actions.map(a => `
+        <div class="card card-body" style="padding:var(--sp-md) var(--sp-lg);cursor:pointer" data-action="action-${a.type}">
+          <div style="display:flex;align-items:center;gap:var(--sp-md)">
+            <div style="width:36px;height:36px;border-radius:var(--r-md);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">
+              ${icon(a.type === 'expiring_today' ? 'warning' : a.type === 'pending_payments' ? 'wallet' : 'person', 18, 'var(--brand)')}
+            </div>
+            <div style="flex:1">
+              <div style="font-weight:var(--fw-semibold)">${escapeHtml(a.label)}</div>
+              <div style="font-size:var(--fs-sm);color:var(--brand)">${escapeHtml(a.action)}</div>
+            </div>
+            <span class="badge badge-pending">${a.count}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>` : ''}
+
+    <!-- Upcoming Renewals -->
+    ${upcoming.length > 0 ? `
+      ${renderSectionHeader('Upcoming Renewals', 'View All', 'view-all-renewals')}
+      <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
+        ${upcoming.slice(0, 5).map(m => renderMemberCard(m)).join('')}
+      </div>
+    ` : ''}
+
+    <!-- Recent Payments -->
+    ${payments.length > 0 ? `
+      ${renderSectionHeader('Recent Payments', 'View All', 'view-all-payments')}
+      <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
+        ${payments.slice(0, 5).map(p => renderPaymentCard(p)).join('')}
+      </div>
+    ` : ''}
+
+    ${data.access_summary ? `
+    <!-- Access Summary -->
+    <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div class="card card-body" data-action="access">
+        <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-md)">
+          ${icon('access', 20, 'var(--brand)')}
+          <div style="font-weight:var(--fw-bold)">Access Control</div>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:var(--sp-xs)">
+            <span style="width:8px;height:8px;border-radius:50%;background:${data.access_summary.device_online ? 'var(--success)' : 'var(--muted)'}"></span>
+            <span style="font-size:var(--fs-xs);color:var(--muted)">${data.access_summary.device_online ? 'Online' : 'Offline'}</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-md);text-align:center">
+          <div>
+            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--brand)">${data.access_summary.inside_now}</div>
+            <div style="font-size:var(--fs-xs);color:var(--muted)">Inside Now</div>
+          </div>
+          <div>
+            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--success)">${data.access_summary.entries_today}</div>
+            <div style="font-size:var(--fs-xs);color:var(--muted)">Entries</div>
+          </div>
+          <div>
+            <div style="font-size:var(--fs-3xl);font-weight:var(--fw-extrabold);color:var(--text-secondary)">${data.access_summary.exits_today}</div>
+            <div style="font-size:var(--fs-xs);color:var(--muted)">Exits</div>
+          </div>
+        </div>
+      </div>
+    </div>` : ''}
+  </div>`;
+
+  // Bind click events
+  scroll.querySelectorAll('[data-action]').forEach(el => {
+    el.addEventListener('click', () => {
+      const action = el.dataset.action;
+      switch (action) {
+        case 'add-member': navigate.push('add-member'); break;
+        case 'renew': navigate.switchTab('renewals'); break;
+        case 'payment': navigate.push('record-payment'); break;
+        case 'whatsapp': navigate.push('whatsapp'); break;
+        case 'bot-conversations': navigate.push('bot-conversations'); break;
+        case 'members-active': navigate.switchTab('members'); break;
+        case 'members-expired': navigate.switchTab('members'); break;
+        case 'renewals': navigate.switchTab('renewals'); break;
+        case 'payments-pending': navigate.switchTab('payments'); break;
+        case 'access': navigate.push('access'); break;
+        case 'action-expiring_today': navigate.switchTab('renewals'); break;
+        case 'action-pending_payments': navigate.switchTab('payments'); break;
+        case 'action-new_leads': navigate.push('bot-leads'); break;
+      }
+    });
+  });
+
+  scroll.querySelector('#view-all-renewals')?.addEventListener('click', () => navigate.switchTab('renewals'));
+  scroll.querySelector('#view-all-payments')?.addEventListener('click', () => navigate.switchTab('payments'));
+
+  // Member card clicks
+  scroll.querySelectorAll('[data-member-id]').forEach(card => {
+    card.addEventListener('click', () => {
+      const memberId = card.dataset.memberId;
+      const member = upcoming.find(m => String(m.id) === memberId);
+      if (member) navigate.push('member-detail', { member: JSON.stringify(member) });
+    });
+  });
+
+  // Payment card clicks
+  scroll.querySelectorAll('[data-payment-id]').forEach(card => {
+    card.addEventListener('click', () => {
+      navigate.push('payment-detail', { paymentId: card.dataset.paymentId });
+    });
+  });
 }
