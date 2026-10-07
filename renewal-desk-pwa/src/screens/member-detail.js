@@ -3,7 +3,7 @@ import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderSectionHeader, showToast, showConfirm, renderErrorState } from '../components.js';
 import { icon } from '../icons.js';
-import { escapeHtml, formatDate, formatCurrency, getMemberDisplayStatus, getMemberStatusColor, getDaysText, getInitials, getAvatarColor } from '../utils.js';
+import { escapeHtml, formatDate, formatDateTime, formatCurrency, getMemberDisplayStatus, getMemberStatusColor, getDaysText, getInitials, getAvatarColor } from '../utils.js';
 
 export default {
   async mount(el, params) {
@@ -102,7 +102,37 @@ export default {
                 ${renderInfoRow('Access Status', member.is_inside ? '<span style="color:var(--success);font-weight:var(--fw-bold)">● Inside Gym Now</span>' : 'Outside')}
                 ${member.is_inside && member.last_entry_at ? renderInfoRow('Entered At', formatDateTime(member.last_entry_at)) : ''}
                 ${renderInfoRow('WhatsApp', member.whatsapp_opted_in ? 'Opted In' : 'Not opted in')}
-                ${renderInfoRow('Biometric', member.has_biometric ? 'Enrolled' : 'Not enrolled')}
+                ${renderInfoRow('Biometric', member.has_biometric ? `Enrolled (ID #${escapeHtml(member.device_enroll_number || 'Enrolled')})` : 'Not enrolled')}
+              </div>
+            </div>
+
+            <!-- Biometric Device Access -->
+            <div style="padding:0 var(--sp-lg) var(--sp-lg)">
+              <div class="card card-body">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-md)">
+                  <div style="font-weight:var(--fw-bold);display:flex;align-items:center;gap:var(--sp-xs)">
+                    ${icon('access', 18, 'var(--brand)')} Biometric Access (eSSL)
+                  </div>
+                  ${member.has_biometric ? '<span class="badge badge-success">● Synced</span>' : '<span class="badge badge-muted">Not Enrolled</span>'}
+                </div>
+                ${member.has_biometric ? `
+                  ${renderInfoRow('Machine Enroll ID', `<b style="font-size:var(--fs-lg);color:var(--brand)">#${escapeHtml(member.device_enroll_number || 'Enrolled')}</b>`)}
+                  <div style="display:flex;gap:var(--sp-sm);margin-top:var(--sp-md)">
+                    <button class="btn btn-outline btn-sm btn-full" id="btn-change-enroll" style="display:flex;align-items:center;justify-content:center;gap:6px">
+                      ${icon('edit', 14)} Change ID
+                    </button>
+                    <button class="btn btn-danger btn-sm btn-full" id="btn-unenroll-bio" style="display:flex;align-items:center;justify-content:center;gap:6px">
+                      ${icon('delete', 14, 'white')} Unenroll
+                    </button>
+                  </div>
+                ` : `
+                  <div style="font-size:var(--fs-xs);color:var(--text-secondary);margin-bottom:var(--sp-md);line-height:1.5">
+                    Not enrolled on biometric turnstile or terminal. Assign machine user ID to enable auto-block/unblock and attendance tracking.
+                  </div>
+                  <button class="btn btn-primary btn-sm btn-full" id="btn-enroll-bio" style="display:flex;align-items:center;justify-content:center;gap:6px">
+                    ${icon('access', 16, 'white')} Enroll on Biometric Terminal
+                  </button>
+                `}
               </div>
             </div>
 
@@ -155,11 +185,60 @@ export default {
         if (res.ok) {
           member.is_inside = !isCheckingOut;
           showToast(res.data?.message || (isCheckingOut ? `${member.full_name} checked out` : `${member.full_name} checked in!`), 'success');
-          loadData();
+          render();
         } else {
           showToast(res.error?.message || 'Action failed', 'error');
           btn.disabled = false;
           btn.innerHTML = member.is_inside ? `${icon('back', 18)} Check Out Member` : `${icon('access', 18, 'white')} Check In Member (Attendance)`;
+        }
+      });
+
+      const promptEnroll = async () => {
+        const val = window.prompt(
+          `Enter machine Enroll Number (User ID) for ${member.full_name}:`,
+          member.device_enroll_number || ''
+        );
+        if (val === null) return;
+        const trimmed = val.trim();
+        if (!trimmed) {
+          showToast('Please enter an enroll number', 'error');
+          return;
+        }
+        const enrollRes = await apiRequest(`/api/mobile/v1/members/${member.id}/enroll`, {
+          method: 'POST',
+          body: { enroll_number: trimmed },
+        });
+        if (enrollRes.ok) {
+          showToast(`Biometric ID #${trimmed} saved & synchronized!`, 'success');
+          member.has_biometric = true;
+          member.device_enroll_number = trimmed;
+          render();
+        } else {
+          showToast(enrollRes.error?.message || 'Enrollment failed', 'error');
+        }
+      };
+
+      el.querySelector('#btn-enroll-bio')?.addEventListener('click', promptEnroll);
+      el.querySelector('#btn-change-enroll')?.addEventListener('click', promptEnroll);
+
+      el.querySelector('#btn-unenroll-bio')?.addEventListener('click', async () => {
+        const yes = await showConfirm({
+          title: 'Remove Biometric Enrollment?',
+          message: `This will unassign device ID #${member.device_enroll_number} and block terminal access for ${member.full_name}.`,
+          confirmText: 'Unenroll',
+          destructive: true,
+        });
+        if (!yes) return;
+        const unenrollRes = await apiRequest(`/api/mobile/v1/members/${member.id}/unenroll`, {
+          method: 'POST',
+        });
+        if (unenrollRes.ok) {
+          showToast('Biometric enrollment removed', 'success');
+          member.has_biometric = false;
+          member.device_enroll_number = null;
+          render();
+        } else {
+          showToast(unenrollRes.error?.message || 'Failed to unenroll', 'error');
         }
       });
 

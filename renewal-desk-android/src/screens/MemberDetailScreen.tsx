@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -49,6 +53,10 @@ export function MemberDetailScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [showDeactivate, setShowDeactivate] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [enrollNumberInput, setEnrollNumberInput] = useState('');
+  const [enrolling, setEnrolling] = useState(false);
+  const [unenrolling, setUnenrolling] = useState(false);
   const session = getCachedSession();
 
   const displayStatus = getMemberDisplayStatus(member);
@@ -117,6 +125,53 @@ export function MemberDetailScreen({
     }
     setSendingReminder(false);
   }, [member.id, member.full_name, onLogout, sendingReminder]);
+
+  const handleOpenEnrollModal = useCallback(() => {
+    setEnrollNumberInput(member.device_enroll_number ? String(member.device_enroll_number) : '');
+    setShowEnrollModal(true);
+  }, [member.device_enroll_number]);
+
+  const handleSaveEnrollment = useCallback(async () => {
+    if (!enrollNumberInput.trim()) {
+      showMessage('Please enter a device enroll number', 'error');
+      return;
+    }
+    setEnrolling(true);
+    const res = await apiRequest<{ message: string; enroll_number: string }>(
+      `/api/mobile/v1/members/${member.id}/enroll`,
+      {
+        method: 'POST',
+        body: { enroll_number: enrollNumberInput.trim() },
+      }
+    );
+    setEnrolling(false);
+    if (res.ok) {
+      setShowEnrollModal(false);
+      showMessage(`Biometric Enroll #${res.data.enroll_number} saved & synchronized!`, 'success');
+      void fetchMemberData();
+      onMemberUpdated?.();
+    } else {
+      showMessage(res.error.message, 'error');
+    }
+  }, [enrollNumberInput, member.id, fetchMemberData, onMemberUpdated]);
+
+  const handleUnenroll = useCallback(async () => {
+    setUnenrolling(true);
+    const res = await apiRequest<{ message: string }>(
+      `/api/mobile/v1/members/${member.id}/unenroll`,
+      {
+        method: 'POST',
+      }
+    );
+    setUnenrolling(false);
+    if (res.ok) {
+      showMessage('Biometric enrollment removed from device.', 'success');
+      void fetchMemberData();
+      onMemberUpdated?.();
+    } else {
+      showMessage(res.error.message, 'error');
+    }
+  }, [member.id, fetchMemberData, onMemberUpdated]);
 
   const verifiedPaidAmount = payments
     .filter((payment) => ['verified', 'paid'].includes(payment.status.toLowerCase()))
@@ -334,12 +389,82 @@ export function MemberDetailScreen({
           </View>
           <View style={styles.activityRow}>
             <View>
-              <Text style={styles.activityTitle}>Biometric / Access Device</Text>
+              <Text style={styles.activityTitle}>Biometric Terminal</Text>
               <Text style={styles.activitySub}>
-                {member.has_biometric ? 'Enrolled on Access Device' : 'Not enrolled on device'}
+                {member.has_biometric ? `ID #${member.device_enroll_number || 'Enrolled'} · Active` : 'Not enrolled on machine'}
               </Text>
             </View>
             <StatusBadge status={member.has_biometric ? 'active' : 'pending'} />
+          </View>
+        </View>
+
+        {/* Biometric Access Management Card */}
+        <View style={styles.card}>
+          <View style={styles.sectionTitleRow}>
+            <View style={[styles.sectionIcon, { backgroundColor: colors.brandSubtle }]}>
+              <Icon name="access" size={17} color={colors.brand} />
+            </View>
+            <Text style={styles.sectionTitle}>Biometric Device Access</Text>
+          </View>
+
+          <View style={styles.biometricCardContent}>
+            {member.has_biometric ? (
+              <View style={styles.biometricActiveBox}>
+                <View style={styles.biometricRow}>
+                  <View>
+                    <Text style={styles.biometricLabel}>Machine Enroll Number</Text>
+                    <Text style={styles.biometricValue}>#{member.device_enroll_number || 'Enrolled'}</Text>
+                  </View>
+                  <View style={[styles.statusPill, { backgroundColor: '#DCFCE7' }]}>
+                    <Text style={[styles.statusPillText, { color: colors.successDark }]}>● Synced on Device</Text>
+                  </View>
+                </View>
+                <View style={styles.biometricBtnRow}>
+                  <TouchableOpacity
+                    style={[styles.biometricActionBtn, { borderColor: colors.brand }]}
+                    onPress={handleOpenEnrollModal}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="edit" size={14} color={colors.brand} />
+                    <Text style={[styles.biometricActionBtnText, { color: colors.brand }]}>Change ID</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.biometricActionBtn, { borderColor: colors.critical }]}
+                    onPress={() => {
+                      Alert.alert(
+                        'Remove Biometric Enrollment?',
+                        `This will unassign device ID #${member.device_enroll_number} and block biometric access for ${member.full_name}.`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Remove', style: 'destructive', onPress: () => void handleUnenroll() },
+                        ]
+                      );
+                    }}
+                    disabled={unenrolling}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="delete" size={14} color={colors.critical} />
+                    <Text style={[styles.biometricActionBtnText, { color: colors.critical }]}>
+                      {unenrolling ? 'Removing...' : 'Unenroll'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.biometricEmptyBox}>
+                <Text style={styles.biometricEmptyText}>
+                  Not enrolled on eSSL biometric device yet. Assign a machine user ID to enable automatic fingerprint entry/turnstile lock.
+                </Text>
+                <TouchableOpacity
+                  style={styles.enrollCtaBtn}
+                  onPress={handleOpenEnrollModal}
+                  activeOpacity={0.8}
+                >
+                  <Icon name="access" size={16} color={colors.textInverse} />
+                  <Text style={styles.enrollCtaBtnText}>Enroll on Biometric Device</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
 
@@ -447,6 +572,65 @@ export function MemberDetailScreen({
         }}
         onCancel={() => setShowDeactivate(false)}
       />
+
+      {/* Biometric Enrollment Modal */}
+      <Modal
+        visible={showEnrollModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEnrollModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderLeft}>
+                <View style={[styles.sectionIcon, { backgroundColor: colors.brandSubtle, width: 28, height: 28 }]}>
+                  <Icon name="access" size={16} color={colors.brand} />
+                </View>
+                <Text style={styles.modalTitle}>Assign Biometric ID</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowEnrollModal(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Icon name="close" size={20} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              Enter the User ID / Enroll Number for {member.full_name} from your eSSL biometric machine.
+            </Text>
+
+            <Text style={styles.inputLabel}>Device Enroll Number</Text>
+            <TextInput
+              style={styles.modalInput}
+              keyboardType="number-pad"
+              placeholder="e.g. 101"
+              placeholderTextColor={colors.muted}
+              value={enrollNumberInput}
+              onChangeText={setEnrollNumberInput}
+              autoFocus
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowEnrollModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={() => void handleSaveEnrollment()}
+                disabled={enrolling}
+              >
+                {enrolling ? (
+                  <ActivityIndicator color={colors.textInverse} size="small" />
+                ) : (
+                  <Text style={styles.modalSaveBtnText}>Save & Sync</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -718,6 +902,175 @@ const styles = StyleSheet.create({
   successBannerText: {
     color: colors.success,
     fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  biometricCardContent: {
+    marginTop: spacing.md,
+  },
+  biometricActiveBox: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderLight,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  biometricRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  biometricLabel: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+  },
+  biometricValue: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.bold,
+    marginTop: 2,
+  },
+  statusPill: {
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  statusPillText: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
+  biometricBtnRow: {
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  biometricActionBtn: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+  },
+  biometricActionBtnText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  biometricEmptyBox: {
+    backgroundColor: colors.gray50,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  biometricEmptyText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  enrollCtaBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm + 2,
+  },
+  enrollCtaBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  modalOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  modalCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    width: '100%',
+    maxWidth: 400,
+    ...shadows.lg,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  modalHeaderLeft: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  modalTitle: {
+    color: colors.text,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold,
+  },
+  modalDesc: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  inputLabel: {
+    color: colors.text,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+    marginBottom: spacing.xs,
+  },
+  modalInput: {
+    backgroundColor: colors.gray50,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.semibold,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    marginBottom: spacing.lg,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modalCancelBtn: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: spacing.sm + 2,
+  },
+  modalCancelBtnText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  modalSaveBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    flex: 1,
+    paddingVertical: spacing.sm + 2,
+  },
+  modalSaveBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
   },
 });

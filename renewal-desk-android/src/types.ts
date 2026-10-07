@@ -23,6 +23,7 @@ export type Member = {
   notes: string | null;
   whatsapp_opted_in: boolean;
   has_biometric: boolean;
+  device_enroll_number?: string | null;
   is_inside?: boolean;
 };
 
