@@ -104,11 +104,13 @@ scripts/backup_db.sh
 
 If `AWS_S3_BUCKET` is set, the backup script expects the AWS CLI to be available in that cron environment.
 
-## Biometric bridge (gym laptop)
+## Biometric bridge (Windows connector host)
 
 This app includes a protected, outbound-polling API for the Windows
-`RenewalDeskBridge` at each gym. It is deliberately separate from browser
-session routes: the laptop authenticates with a per-gym key, protocol version,
+`RenewalDeskBridge` at each gym. The connector can run on a gym PC or on an
+approved hosted Windows Server VM with eBioServer; a hosted VM removes the
+need for a physical laptop at the gym. It is deliberately separate from browser
+session routes: the connector authenticates with a per-gym key, protocol version,
 and the eSSL terminal serial number. No public connection to the terminal is
 needed.
 

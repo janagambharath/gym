@@ -6,7 +6,11 @@ using Newtonsoft.Json;
 
 namespace eBioServerBridge
 {
-    /// <summary>DPAPI-protected secrets for the local gym PC only.</summary>
+    /// <summary>
+    /// DPAPI-protected secrets for the Windows host running the connector.
+    /// This may be the gym PC for a local installation or a dedicated Windows
+    /// Server VM for an approved hosted eBioServer installation.
+    /// </summary>
     public static class LocalSecretStore
     {
         private static readonly string SecretFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bridge_secrets.dat");

@@ -164,7 +164,7 @@ def register_rrr_routes(bp):
         return jsonify({"success": True, "data": {
             "integration": integration_payload(integration), "pairing_code": code,
             "expires_at": integration.pairing_code_expires_at.isoformat(),
-            "instructions": "Enter this code in the eBioServer Bridge on the gym PC. Do not share it.",
+            "instructions": "Enter this code in the eBioServer Bridge on the approved Windows connector host. Do not share it.",
         }})
 
     @bp.post("/rrr/integrations/<int:integration_id>/commission")
