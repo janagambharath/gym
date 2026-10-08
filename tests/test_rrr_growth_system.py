@@ -4,7 +4,7 @@ from app.extensions import db
 from app.mobile_api.token_service import create_access_token
 from app.models import Member
 from app.models import BridgeInstallation
-from app.models.rrr import RRRAttendanceEvent, RRRDevice, RRRIntegration
+from app.models.rrr import RRRAdmsCommand, RRRAttendanceEvent, RRRDevice, RRRIntegration
 from app.services.rrr_service import normalize_attendance
 
 
@@ -135,7 +135,7 @@ def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, 
     settings = provision.get_json()["data"]["terminal_settings"]
     assert settings["server_mode"] == "ADMS"
     assert settings["path"] == "/iclock"
-    assert settings["warning"].startswith("Attendance receiver only")
+    assert settings["warning"].startswith("Attendance plus owner-controlled")
 
     hello = client.get("/iclock/cdata?SN=ELITE-X2008-01&options=all")
     assert hello.status_code == 200
@@ -161,3 +161,29 @@ def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, 
     no_command = client.get("/iclock/getrequest?SN=ELITE-X2008-01")
     assert no_command.status_code == 200
     assert no_command.get_data(as_text=True) == "OK"
+
+
+def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_gym):
+    provision = client.post(
+        "/api/mobile/v1/rrr/integrations/adms/provision",
+        headers=headers(seed_gym), json={"device_serial": "ELITE-X2008-CMD"},
+    )
+    integration_id = provision.get_json()["data"]["integration"]["id"]
+    assert client.get("/iclock/cdata?SN=ELITE-X2008-CMD").status_code == 200
+
+    queued = client.post(
+        f"/api/mobile/v1/rrr/integrations/{integration_id}/adms/commands",
+        headers=headers(seed_gym), json={"action": "block_test", "test_enroll_number": "98765"},
+    )
+    assert queued.status_code == 201
+    command_id = queued.get_json()["data"]["command"]["id"]
+    assert RRRAdmsCommand.query.get(command_id).status == "queued"
+
+    delivered = client.get("/iclock/getrequest?SN=ELITE-X2008-CMD")
+    assert delivered.status_code == 200
+    assert delivered.get_data(as_text=True) == f"C:{command_id}:DATA UPDATE USERINFO PIN=98765\tPri=1\n"
+    ack = client.post(f"/iclock/devicecmd?SN=ELITE-X2008-CMD&ID={command_id}&Return=0&CMD=DATA")
+    assert ack.status_code == 200
+    saved = db.session.get(RRRAdmsCommand, command_id)
+    assert saved.status == "acked"
+    assert saved.result_code == "0"

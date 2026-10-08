@@ -38,6 +38,7 @@ from app.models.rrr import (
     RRROpportunity,
     RRRAutomationRun,
     RRRDevice,
+    RRRAdmsCommand,
 )
 from app.models.template import NotificationTemplate
 from app.models.user import User
@@ -83,6 +84,7 @@ __all__ = [
     "RRROpportunity",
     "RRRAutomationRun",
     "RRRDevice",
+    "RRRAdmsCommand",
     "User",
     "UserPushToken",
     "db",

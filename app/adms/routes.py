@@ -2,10 +2,10 @@
 
 The public ADMS wire protocol is terminal-firmware specific.  This receiver
 handles the safe subset common to eSSL/ZK-style terminals: registration,
-configuration polling, and ATTLOG upload.  It never emits a block/unblock
-command.  A device command must not be guessed: command delivery stays behind
-the existing eBioServer connector until a real terminal trace and supervised
-physical-door commissioning prove the firmware grammar.
+configuration polling, ATTLOG upload, and an owner-triggered commissioning
+queue.  The queue uses the documented PUSH SDK command envelope and records
+the terminal acknowledgement.  It is deliberately limited to a test identity;
+automatic access control is not enabled by this receiver.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from flask import Blueprint, Response, current_app, request
 from app.extensions import db, limiter
 from app.models.gym import Gym
 from app.models.mixins import utcnow
-from app.models.rrr import RRRDevice, RRRIntegration
+from app.models.rrr import RRRAdmsCommand, RRRDevice, RRRIntegration
 from app.services.rrr_service import normalize_attendance
 
 
@@ -134,6 +134,7 @@ def direct_adms_enabled():
 
 
 @adms_bp.route("/iclock/cdata", methods=["GET", "POST"])
+@adms_bp.route("/iclock/cdata.aspx", methods=["GET", "POST"])
 @limiter.limit("180 per minute")
 def cdata():
     integration = _device()
@@ -152,6 +153,7 @@ def cdata():
 
 
 @adms_bp.route("/iclock/registry", methods=["GET", "POST"])
+@adms_bp.route("/iclock/registry.aspx", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
 def registry():
     integration = _device()
@@ -163,15 +165,62 @@ def registry():
 
 
 @adms_bp.get("/iclock/getrequest")
+@adms_bp.get("/iclock/getrequest.aspx")
 @limiter.limit("180 per minute")
 def getrequest():
     integration = _device()
     if integration is None:
         return _plain("Unknown device", 404)
     _touch(integration)
+    # Re-send a delivered command until the terminal posts its result.  DATA
+    # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from
+    # silently dropping a physical-access request.
+    command = RRRAdmsCommand.query.filter_by(
+        integration_id=integration.id, status="delivered"
+    ).order_by(RRRAdmsCommand.id.asc()).first()
+    if command is None:
+        command = RRRAdmsCommand.query.filter_by(
+            integration_id=integration.id, status="queued"
+        ).order_by(RRRAdmsCommand.id.asc()).first()
+        if command is None:
+            db.session.commit()
+            return _plain("OK")
+        command.status = "delivered"
+        command.delivered_at = utcnow()
     db.session.commit()
-    # Intentionally no access-control command output.  The installed X2008
-    # firmware's command grammar and acknowledgement semantics are not in the
-    # public eSSL documentation; guessing could disable a real member or leave
-    # a door in an unsafe state.
+    # PUSH SDK command IDs must be simple positive integers. The database ID
+    # is monotonic and is retained as the audit correlation ID.
+    return _plain(f"C:{command.id}:{command.command_text}\n")
+
+
+@adms_bp.route("/iclock/devicecmd", methods=["GET", "POST"])
+@adms_bp.route("/iclock/devicecmd.aspx", methods=["GET", "POST"])
+@limiter.limit("180 per minute")
+def devicecmd():
+    """Record the terminal's execution result for a queued test command."""
+    integration = _device()
+    if integration is None:
+        return _plain("Unknown device", 404)
+    _touch(integration)
+    raw_id = str(request.args.get("ID") or request.form.get("ID") or "").strip()
+    try:
+        command_id = int(raw_id)
+    except (TypeError, ValueError):
+        db.session.commit()
+        return _plain("OK")
+    command = RRRAdmsCommand.query.filter_by(
+        id=command_id, integration_id=integration.id
+    ).first()
+    if command is None:
+        db.session.commit()
+        return _plain("OK")
+    result = str(request.args.get("Return") or request.form.get("Return") or "").strip()[:32]
+    detail = str(
+        request.args.get("Content") or request.form.get("Content") or request.args.get("CMD") or request.form.get("CMD") or ""
+    ).strip()[:500]
+    command.result_code = result or None
+    command.result_message = detail or None
+    command.acknowledged_at = utcnow()
+    command.status = "acked" if result == "0" else "failed"
+    db.session.commit()
     return _plain("OK")

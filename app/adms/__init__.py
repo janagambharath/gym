@@ -1,6 +1,6 @@
 """Direct eSSL/ZK-style ADMS receiver.
 
-This package intentionally supports terminal registration and attendance first.
-Access-control command delivery remains disabled until a specific terminal
-firmware has completed a supervised protocol/door commissioning test.
+This package supports terminal registration, attendance, and a narrow,
+owner-triggered commissioning queue. Automatic access control remains disabled
+until a specific terminal has completed a supervised protocol/door test.
 """

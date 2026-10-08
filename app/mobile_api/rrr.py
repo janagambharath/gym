@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import re
 from urllib.parse import urlparse
 
 from flask import current_app, g, jsonify, request
@@ -10,7 +11,7 @@ from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
-from app.models.rrr import RRRAttendanceEvent, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
+from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
 from app.services.rrr_service import (
     DEFAULT_RULES,
@@ -20,6 +21,33 @@ from app.services.rrr_service import (
     remap_unresolved,
     rules_for_gym,
 )
+
+
+def _direct_adms_command_text(action: str, enroll_number: str | None) -> str:
+    """Return only documented, server-generated PUSH SDK test commands.
+
+    Pri=1 is the vendor's inactive-user value and Pri=0 is a normal user.
+    We intentionally do not use deletion: a commissioning test must preserve
+    the temporary identity and its enrolled biometric template.
+    """
+    if action == "probe_info":
+        return "INFO"
+    priority = "1" if action == "block_test" else "0"
+    return f"DATA UPDATE USERINFO PIN={enroll_number}\tPri={priority}"
+
+
+def _adms_command_payload(row: RRRAdmsCommand) -> dict:
+    return {
+        "id": row.id,
+        "action": row.action,
+        "status": row.status,
+        "test_enroll_number": row.test_enroll_number,
+        "result_code": row.result_code,
+        "result_message": row.result_message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "delivered_at": row.delivered_at.isoformat() if row.delivered_at else None,
+        "acknowledged_at": row.acknowledged_at.isoformat() if row.acknowledged_at else None,
+    }
 
 
 def register_rrr_routes(bp):
@@ -174,8 +202,8 @@ def register_rrr_routes(bp):
     def provision_direct_adms():
         """Register one terminal serial for direct, cloud ADMS attendance.
 
-        Access-control commands are deliberately not enabled by this route.
-        The direct ADMS command grammar is a firmware-specific safety gate.
+        Access-control automation is deliberately not enabled by this route.
+        Owners can later run a narrowly scoped, acknowledged test command.
         """
         payload = request.get_json(silent=True) or {}
         serial = str(payload.get("device_serial") or "").strip()[:120]
@@ -212,9 +240,69 @@ def register_rrr_routes(bp):
             "terminal_settings": {
                 "server_mode": "ADMS", "server_address": host, "server_port": port,
                 "https": configured_base.scheme == "https", "path": "/iclock",
-                "warning": "Attendance receiver only. Direct block/unblock remains disabled until a supervised firmware command test passes.",
+                "warning": "Attendance plus owner-controlled commissioning only. Automatic block/unblock remains disabled until a supervised terminal test passes.",
             },
         }})
+
+    @bp.get("/rrr/integrations/<int:integration_id>/adms/commands")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def direct_adms_commands(integration_id: int):
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        rows = RRRAdmsCommand.query.filter_by(integration_id=integration.id).order_by(
+            RRRAdmsCommand.id.desc()
+        ).limit(20).all()
+        return jsonify({"success": True, "data": {"commands": [_adms_command_payload(row) for row in rows]}})
+
+    @bp.post("/rrr/integrations/<int:integration_id>/adms/commands")
+    @limiter.limit("20 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def queue_direct_adms_test_command(integration_id: int):
+        """Queue a narrow, auditable live-terminal commissioning command.
+
+        These commands are not automatic membership actions. They exist solely
+        to prove the installed terminal's PUSH command/acknowledgement path
+        while the device contains no real gym member identities.
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        if integration.status != "connected":
+            return error_response("DEVICE_OFFLINE", "Wait until the terminal is connected before queuing a test.", 409)
+        payload = request.get_json(silent=True) or {}
+        action = str(payload.get("action") or "").strip().lower()
+        if action not in {"probe_info", "block_test", "unblock_test"}:
+            return error_response("VALIDATION_ERROR", "action must be probe_info, block_test, or unblock_test.", 422)
+        enroll_number = None
+        if action != "probe_info":
+            enroll_number = str(payload.get("test_enroll_number") or "").strip()
+            if not re.fullmatch(r"[1-9][0-9]{0,8}", enroll_number):
+                return error_response("VALIDATION_ERROR", "test_enroll_number must be a 1–9 digit number.", 422)
+        existing = RRRAdmsCommand.query.filter(
+            RRRAdmsCommand.integration_id == integration.id,
+            RRRAdmsCommand.status.in_(("queued", "delivered")),
+        ).first()
+        if existing is not None:
+            return error_response("COMMAND_PENDING", "Wait for the current terminal command acknowledgement before sending another test.", 409)
+        command_text = _direct_adms_command_text(action, enroll_number)
+        row = RRRAdmsCommand(
+            gym_id=g.gym_id, integration_id=integration.id, action=action,
+            test_enroll_number=enroll_number, command_text=command_text,
+            requested_by_id=g.user_id,
+        )
+        db.session.add(row)
+        db.session.flush()
+        audit(action="direct_adms_test_command_queued", resource_type="rrr_adms_command", resource_id=row.id,
+              gym_id=g.gym_id, actor_id=g.user_id, metadata={"action": action, "test_enroll_number": enroll_number})
+        db.session.commit()
+        return jsonify({"success": True, "data": {"command": _adms_command_payload(row)}}), 201
 
     @bp.post("/rrr/integrations/<int:integration_id>/commission")
     @token_required

@@ -86,6 +86,41 @@ class RRRDevice(TenantMixin, TimestampMixin, db.Model):
     integration = db.relationship("RRRIntegration")
 
 
+class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
+    """One auditable command issued to a direct ADMS terminal.
+
+    The command body is generated server-side from a narrowly scoped test
+    action.  It is deliberately not an arbitrary raw-command console.
+    """
+    __tablename__ = "rrr_adms_commands"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('probe_info', 'block_test', 'unblock_test')",
+            name="ck_rrr_adms_command_action",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'delivered', 'acked', 'failed')",
+            name="ck_rrr_adms_command_status",
+        ),
+        Index("ix_rrr_adms_command_device_status", "integration_id", "status", "id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    integration_id = db.Column(
+        db.Integer, db.ForeignKey("rrr_integrations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action = db.Column(db.String(24), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="queued", index=True)
+    test_enroll_number = db.Column(db.String(32), nullable=True)
+    command_text = db.Column(db.Text, nullable=False)
+    delivered_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    acknowledged_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    result_code = db.Column(db.String(32), nullable=True)
+    result_message = db.Column(db.String(500), nullable=True)
+    requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    integration = db.relationship("RRRIntegration")
+
+
 class RRRIdentityMapping(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "rrr_identity_mappings"
     __table_args__ = (

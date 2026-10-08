@@ -20,6 +20,8 @@ async function load(el) {
   const bridge = integrations.find(x => x.type === 'ebioserver');
   const devices = result.ok ? result.data.devices || [] : [];
   const settings = directSettings();
+  const commandsResult = direct ? await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`) : null;
+  const commands = commandsResult?.ok ? commandsResult.data.commands || [] : [];
 
   el.innerHTML = `<main class="rrr-page rrr-integrations-page">
     <header class="rrr-header rrr-integrations-header">
@@ -34,7 +36,7 @@ async function load(el) {
     <section class="rrr-connection-grid">
       <article class="rrr-connect-card rrr-connect-card-primary">
         <div class="rrr-card-top"><span class="rrr-option-icon">☁</span><div><span class="rrr-status-pill ${direct?.status === 'connected' ? 'is-live' : ''}">${direct?.status === 'connected' ? 'LIVE' : 'RECOMMENDED'}</span><h2>Direct Cloud</h2><p>No gym PC or bridge required for attendance.</p></div></div>
-        ${direct ? directPanel(direct, settings) : directForm()}
+        ${direct ? directPanel(direct, settings, commands) : directForm()}
       </article>
       <article class="rrr-connect-card">
         <div class="rrr-card-top"><span class="rrr-option-icon rrr-option-muted">⌘</span><div><span class="rrr-status-pill">FALLBACK</span><h2>eBioServer Bridge</h2><p>Use only when your licensed eBioServer stays on a gym PC.</p></div></div>
@@ -74,12 +76,28 @@ async function load(el) {
     const box = el.querySelector('#rrr-pair-code'); box.hidden = false;
     box.textContent = pair.ok ? `Pairing code: ${pair.data.pairing_code} · expires ${new Date(pair.data.expires_at).toLocaleTimeString()}` : 'Could not create a pairing code.';
   });
+  el.querySelectorAll('[data-adms-action]').forEach(button => button.addEventListener('click', async () => {
+    const action = button.dataset.admsAction;
+    const testEnrollNumber = el.querySelector('#rrr-test-enroll-number')?.value.trim();
+    if (action !== 'probe_info' && !/^[1-9][0-9]{0,8}$/.test(testEnrollNumber || '')) {
+      el.querySelector('#rrr-command-error').textContent = 'Enter the temporary device User ID first.';
+      return;
+    }
+    button.disabled = true;
+    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`, {
+      method: 'POST', body: { action, test_enroll_number: testEnrollNumber },
+    });
+    if (response.ok) await load(el);
+    else { button.disabled = false; el.querySelector('#rrr-command-error').textContent = response.error?.message || 'The terminal did not accept another test yet.'; }
+  }));
 }
 
 function directForm() {
   return `<form id="rrr-direct-form" class="rrr-direct-form"><label>Terminal serial number<input name="device_serial" autocomplete="off" placeholder="Example: X2008-123456" required></label><label>Friendly name <input name="device_name" value="Elite Gym Entry" maxlength="120"></label><p id="rrr-direct-error" class="rrr-form-error"></p><button class="rrr-primary-button" type="submit">Continue <span>→</span></button></form>`;
 }
 
-function directPanel(direct, settings) {
-  return `<div class="rrr-direct-live"><div class="rrr-device-identity"><b>${escapeHtml(direct.device_name || 'Elite Gym Entry')}</b><span>${escapeHtml(direct.device_serial)}</span></div><div class="rrr-server-card"><span>Cloud Server Address</span><code>${escapeHtml(settings.host)}</code><small>Port ${settings.port} · HTTPS ${settings.https} · Mode ADMS</small></div><p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch.</p><button id="rrr-mappings" class="rrr-primary-button">Check connection status <span>→</span></button></div>`;
+function directPanel(direct, settings, commands) {
+  const latest = commands[0];
+  const latestText = latest ? `${latest.action.replace('_', ' ')} · ${latest.status}${latest.result_code ? ` · result ${latest.result_code}` : ''}` : 'No commissioning command sent.';
+  return `<div class="rrr-direct-live"><div class="rrr-device-identity"><b>${escapeHtml(direct.device_name || 'Elite Gym Entry')}</b><span>${escapeHtml(direct.device_serial)}</span></div><div class="rrr-server-card"><span>Cloud Server Address</span><code>${escapeHtml(settings.host)}</code><small>Port ${settings.port} · HTTPS ${settings.https} · Mode ADMS</small></div><p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch.</p><section class="rrr-command-console"><div><b>Live commissioning</b><span>${escapeHtml(latestText)}</span></div><button class="rrr-secondary-button" data-adms-action="probe_info">1. Send safe connection probe</button><label>Temporary device User ID<input id="rrr-test-enroll-number" inputmode="numeric" pattern="[0-9]*" placeholder="Example: 999"></label><div class="rrr-command-actions"><button class="rrr-test-block" data-adms-action="block_test">2. Test block</button><button class="rrr-test-unblock" data-adms-action="unblock_test">3. Test unblock</button></div><p id="rrr-command-error" class="rrr-form-error"></p></section></div>`;
 }
