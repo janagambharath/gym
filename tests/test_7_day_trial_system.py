@@ -1,4 +1,4 @@
-"""Comprehensive regression tests for Renewal Desk 7-Day Canonical Trial System."""
+"""Comprehensive regression tests for the 14-day new-gym trial policy."""
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
@@ -11,13 +11,13 @@ from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.services.mobile_billing_service import entitlement_for
 
 
-def test_canonical_trial_days_is_exactly_7():
-    """Verify the authoritative trial duration constant is strictly 7 days."""
-    assert DEFAULT_TRIAL_DAYS == 7
+def test_canonical_trial_days_is_exactly_14():
+    """New gyms receive the current 14-calendar-day trial policy."""
+    assert DEFAULT_TRIAL_DAYS == 14
 
 
-def test_mobile_signup_creates_exact_7_day_trial(client, app):
-    """Test mobile signup creates a trial ending in exactly 7 calendar days."""
+def test_mobile_signup_creates_exact_14_day_trial(client, app):
+    """Test mobile signup creates a trial ending in exactly 14 calendar days."""
     payload = {
         "full_name": "Trial Tester",
         "email": "trial.tester@example.test",
@@ -34,12 +34,12 @@ def test_mobile_signup_creates_exact_7_day_trial(client, app):
         gym = Gym.query.filter_by(name="Iron Pulse 7Day").first()
         assert gym is not None
         assert gym.subscription_status == "trial"
-        expected_expiry = date.today() + timedelta(days=7)
+        expected_expiry = date.today() + timedelta(days=14)
         assert gym.trial_ends_at == expected_expiry
 
 
-def test_mobile_register_creates_exact_7_day_trial(client, app):
-    """Test mobile registration endpoint assigns exactly 7 days."""
+def test_mobile_register_creates_exact_14_day_trial(client, app):
+    """Test mobile registration endpoint assigns exactly 14 days."""
     payload = {
         "owner_name": "Gulf Owner",
         "email": "gulf.owner@example.test",
@@ -57,12 +57,12 @@ def test_mobile_register_creates_exact_7_day_trial(client, app):
     with app.app_context():
         gym = Gym.query.filter_by(name="Dubai Power 7D").first()
         assert gym is not None
-        assert gym.trial_ends_at == date.today() + timedelta(days=7)
+        assert gym.trial_ends_at == date.today() + timedelta(days=14)
         assert gym.subscription_status == "trial"
 
 
 def test_trial_country_and_currency_independence(client, app):
-    """Verify trial duration is strictly 7 days regardless of country or currency."""
+    """Verify trial duration is strictly 14 days regardless of country or currency."""
     countries = [
         ("US", "USD", "America/New_York", "+15551234567", "US Gym"),
         ("GB", "GBP", "Europe/London", "+447911123456", "UK Gym"),
@@ -86,7 +86,7 @@ def test_trial_country_and_currency_independence(client, app):
         with app.app_context():
             g = Gym.query.filter_by(email=email).first()
             assert g is not None
-            assert g.trial_ends_at == date.today() + timedelta(days=7)
+            assert g.trial_ends_at == date.today() + timedelta(days=14)
 
 
 def test_client_cannot_manipulate_trial_duration(client, app):
@@ -111,20 +111,20 @@ def test_client_cannot_manipulate_trial_duration(client, app):
     with app.app_context():
         g = Gym.query.filter_by(name="Hacker Fitness").first()
         assert g is not None
-        # Server ignores injected trial fields and enforces canonical 7 days
-        assert g.trial_ends_at == date.today() + timedelta(days=7)
+        # Server ignores injected trial fields and enforces the canonical 14 days.
+        assert g.trial_ends_at == date.today() + timedelta(days=14)
         assert g.subscription_status == "trial"
 
 
 def test_trial_entitlement_serialization(app):
-    """Verify entitlement_for serializes 7-day trial with exact ISO expiry."""
+    """Verify entitlement_for serializes a 14-day trial with exact ISO expiry."""
     with app.app_context():
         gym = Gym(
             name="Entitlement Gym",
             slug="entitlement-gym",
             subscription_status="trial",
             billing_source="MANUAL",
-            trial_ends_at=date.today() + timedelta(days=7),
+            trial_ends_at=date.today() + timedelta(days=14),
         )
         db.session.add(gym)
         db.session.flush()
@@ -134,7 +134,7 @@ def test_trial_entitlement_serialization(app):
         assert ent["billing_source"] == "MANUAL"
         assert ent["expires_at"] is not None
 
-        expected_dt = datetime.combine(date.today() + timedelta(days=7), time.max, tzinfo=timezone.utc)
+        expected_dt = datetime.combine(date.today() + timedelta(days=14), time.max, tzinfo=timezone.utc)
         assert ent["expires_at"] == expected_dt.isoformat()
 
 

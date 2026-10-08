@@ -25,6 +25,7 @@ from app.models.member import Member, MembershipPlan
 from app.models.member_access_state import MemberAccessState
 from app.models.mobile_token import MobileRefreshToken
 from app.models.mobile_idempotency import MobileIdempotencyKey
+from app.models.owner_operations import GymCashClose
 from app.models.payment_verification import PaymentVerification
 from app.models.push_token import UserPushToken
 from app.models.qr_settings import QRSettings
@@ -65,6 +66,7 @@ __all__ = [
 
     "Gym",
     "GooglePlaySubscription",
+    "GymCashClose",
     "GymBotConfig",
     "GymDeployment",
     "Member",

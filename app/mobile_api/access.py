@@ -1,13 +1,17 @@
-"""Mobile API access endpoints for the Live Access feature & Remote Gate Control."""
+"""Mobile API access endpoints for the Live Access feature.
+
+Physical unlock is deliberately not exposed here.  A former placeholder route
+only recorded an entry event and implied a door had opened, which is unsafe for
+an owner-facing access product.  Device commands remain available through the
+commissioned, acknowledged command pipeline instead.
+"""
 from __future__ import annotations
 
-import secrets
 from datetime import timezone
 from flask import g, jsonify, request
 
 from app.extensions import db, limiter
 from app.mobile_api.middleware import roles_required, token_required
-from app.models.access_event import AccessEvent
 from app.models.bridge import BridgeCommand, BridgeInstallation
 from app.models.member import Member
 from app.models.mixins import utcnow
@@ -33,6 +37,14 @@ def register_access_routes(bp):
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         summary = get_access_summary(g.gym_id, gym_timezone)
         summary["has_legacy_events"] = has_legacy_attendance_events(g.gym_id)
+        # There is no confirmed controller protocol for a generic remote door
+        # pulse.  Never render a button which could suggest the physical door
+        # was unlocked when it was not.
+        summary["remote_unlock_available"] = False
+        summary["remote_unlock_reason"] = (
+            "Remote physical unlock is unavailable until this installed controller "
+            "has a verified command protocol and commissioning record."
+        )
 
         # Telemetry and hardware health
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
@@ -156,50 +168,20 @@ def register_access_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def remote_unlock():
-        """Trigger a 5-second remote gate unlock / door open pulse from mobile."""
-        data = request.get_json(silent=True) or {}
-        pulse_seconds = int(data.get("pulse_seconds", 5))
-        reason = (data.get("reason") or "Manual mobile unlock").strip()
-
-        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
-        actor = g.current_user.full_name if hasattr(g, "current_user") and g.current_user else "Gym Owner"
-
-        # Record manual unlock event in AccessEvent log
-        evt = AccessEvent(
-            gym_id=g.gym_id,
-            bridge_id=bridge.id if bridge else None,
-            event_type="ENTRY",
-            direction="IN",
-            event_timestamp=utcnow(),
-            received_timestamp=utcnow(),
-            member_name=f"Manual Gate Buzz ({actor})",
-            device_name=bridge.display_name if bridge else "Entrance Turnstile",
-            device_enroll_number="0",
-            source_event_id=f"remote-unlock-{secrets.token_hex(8)}",
-            verify_method=15,  # Manual / remote trigger code
-            is_invalid=False,
-            membership_status="authorized",
-        )
-        db.session.add(evt)
-
+        """Refuse an unverified physical command; no access event is fabricated."""
         audit(
-            action="remote_gate_unlock",
+            action="remote_gate_unlock_refused",
             resource_type="bridge",
-            resource_id=bridge.id if bridge else None,
+            resource_id=None,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"pulse_seconds": pulse_seconds, "reason": reason},
+            metadata={"reason": "controller_protocol_not_commissioned"},
         )
         db.session.commit()
-
-        return jsonify({
-            "success": True,
-            "data": {
-                "pulse_seconds": pulse_seconds,
-                "message": f"Gate unlocked for {pulse_seconds} seconds.",
-                "unlocked_at": utcnow().isoformat(),
-            },
-        })
+        return jsonify({"success": False, "error": {
+            "code": "UNSUPPORTED_DEVICE_COMMAND",
+            "message": "No physical unlock command was sent. Commission a verified controller command before enabling remote unlock.",
+        }}), 409
 
     @bp.route("/access/retry-sync", methods=["POST"])
     @token_required

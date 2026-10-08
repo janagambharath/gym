@@ -273,28 +273,6 @@ export function AccessScreen({
     setCheckingInId(null);
   }, [loadAll]);
 
-  const [quickUnlocking, setQuickUnlocking] = useState(false);
-
-  const handleQuickUnlock = useCallback(async () => {
-    if (quickUnlocking) return;
-    setQuickUnlocking(true);
-    const res = await apiRequest<{ pulse_seconds: number; message: string }>('/api/mobile/v1/access/remote-unlock', {
-      method: 'POST',
-      body: { pulse_seconds: 5 },
-    });
-    if (res.ok) {
-      setActionMessage('Turnstile gate unlocked for 5 seconds!');
-      setTimeout(() => {
-        setQuickUnlocking(false);
-        setActionMessage(null);
-      }, 5000);
-      void loadAll();
-    } else {
-      Alert.alert('Remote Unlock Failed', res.error.message || 'Could not unlock gate.');
-      setQuickUnlocking(false);
-    }
-  }, [quickUnlocking, loadAll]);
-
   const [retryingSync, setRetryingSync] = useState(false);
 
   const handleRetrySync = useCallback(async () => {
@@ -347,9 +325,10 @@ export function AccessScreen({
   };
 
   const renderCheckInButton = () => (
-    <View style={styles.actionButtonRow}>
+    <View>
+      <View style={styles.actionButtonRow}>
       <TouchableOpacity
-        style={styles.checkInHalfBtn}
+        style={styles.checkInBtn}
         onPress={() => {
           setShowCheckInModal(true);
           void fetchCandidateMembers('');
@@ -359,18 +338,12 @@ export function AccessScreen({
         <Icon name="access" size={16} color={colors.textInverse} />
         <Text style={styles.checkInBtnText}>+ Check In</Text>
       </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.quickUnlockBtn, quickUnlocking && styles.quickUnlockBtnActive]}
-        onPress={handleQuickUnlock}
-        disabled={quickUnlocking}
-        activeOpacity={0.8}
-      >
-        <Icon name="lock" size={16} color={quickUnlocking ? colors.successDark : colors.success} />
-        <Text style={[styles.quickUnlockBtnText, quickUnlocking && styles.quickUnlockBtnTextActive]}>
-          {quickUnlocking ? 'Unlocking (5s)...' : 'Open Gate (5s)'}
+      </View>
+      {!summary?.remote_unlock_available && (
+        <Text style={styles.remoteUnlockNotice}>
+          {summary?.remote_unlock_reason || 'Physical remote unlock is not commissioned for this controller.'}
         </Text>
-      </TouchableOpacity>
+      )}
     </View>
   );
 
@@ -842,14 +815,14 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.medium,
   },
 
-  // Action Buttons (Check In + Quick Unlock)
+  // Action buttons
   actionButtonRow: {
     flexDirection: 'row',
     gap: spacing.sm,
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
   },
-  checkInHalfBtn: {
+  checkInBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -865,30 +838,12 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: fontWeight.bold,
   },
-  quickUnlockBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.surface,
-    borderColor: colors.success,
-    borderWidth: 1.5,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm + 2,
-    ...shadows.sm,
-  },
-  quickUnlockBtnActive: {
-    backgroundColor: colors.successSurface,
-    borderColor: colors.successDark,
-  },
-  quickUnlockBtnText: {
-    color: colors.success,
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
-  },
-  quickUnlockBtnTextActive: {
-    color: colors.successDark,
+  remoteUnlockNotice: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    lineHeight: 17,
   },
 
   // Failed commands / hardware health

@@ -28,6 +28,7 @@ def create_mobile_api_blueprint() -> Blueprint:
     from app.mobile_api.campaigns import register_campaign_routes
     from app.mobile_api.inbox import register_inbox_routes
     from app.mobile_api.rrr import register_rrr_routes
+    from app.mobile_api.owner_operations import register_owner_operation_routes
 
     register_auth_routes(bp)
     register_dashboard_routes(bp)
@@ -46,6 +47,7 @@ def create_mobile_api_blueprint() -> Blueprint:
     register_campaign_routes(bp)
     register_inbox_routes(bp)
     register_rrr_routes(bp)
+    register_owner_operation_routes(bp)
 
     return bp
 

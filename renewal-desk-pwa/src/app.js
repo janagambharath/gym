@@ -43,6 +43,8 @@ function registerScreens() {
   router.register('renewals', () => import('./screens/renewals.js'), { auth: true });
   router.register('payments', () => import('./screens/payments.js'), { auth: true });
   router.register('settings', () => import('./screens/settings.js'), { auth: true });
+  router.register('owner-leads', () => import('./screens/owner-leads.js'), { auth: true });
+  router.register('owner-finance', () => import('./screens/owner-finance.js'), { auth: true });
 
   // Stack screens
   router.register('member-detail', () => import('./screens/member-detail.js'), { auth: true });
@@ -111,6 +113,8 @@ const DESKTOP_NAVIGATION = [
     { tab: 'members', label: 'Members', icon: 'members' },
     { screen: 'renewals', label: 'Renewals', icon: 'renewals' },
     { screen: 'payments', label: 'Payments', icon: 'payments' },
+    { screen: 'owner-finance', label: 'Daily collections', icon: 'wallet' },
+    { screen: 'owner-leads', label: 'Leads & trials', icon: 'members' },
     { screen: 'access', label: 'Access control', icon: 'access' },
   ]},
   { label: 'Engagement', items: [

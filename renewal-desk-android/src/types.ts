@@ -519,6 +519,8 @@ export type AccessSummary = {
   pending_commands?: number;
   failed_commands?: number;
   heartbeat_age_seconds?: number | null;
+  remote_unlock_available?: boolean;
+  remote_unlock_reason?: string;
 };
 
 export type AccessEvent = {

@@ -13,7 +13,10 @@ export default { async mount(el) { await load(el); } };
 
 async function load(el) {
   el.innerHTML = '<div class="rrr-loading">Building your owner workspace…</div>';
-  const result = await apiRequest('/api/mobile/v1/rrr/dashboard');
+  const [result, todayResult] = await Promise.all([
+    apiRequest('/api/mobile/v1/rrr/dashboard'),
+    apiRequest('/api/mobile/v1/owner/today'),
+  ]);
   if (!result.ok) {
     el.innerHTML = `<div class="rrr-empty"><h2>Your dashboard is temporarily unavailable</h2><p>${escapeHtml(result.error?.message || 'Please try again.')}</p><button id="rrr-retry">Retry</button></div>`;
     el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el));
@@ -26,6 +29,7 @@ async function load(el) {
   const integration = data.integration;
   const integrationName = integration?.type === 'adms_direct' ? 'Direct Cloud' : 'eBioServer';
   const priorityCount = ['revenue', 'retain', 'recover'].reduce((total, key) => total + (data.pillars[key]?.count || 0), 0);
+  const today = todayResult.ok ? todayResult.data : null;
 
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page">
     <header class="rrr-workspace-bar">
@@ -42,6 +46,7 @@ async function load(el) {
       <article><span class="rrr-kpi-icon amber">${icon('warning', 20)}</span><div><strong>${formatInteger(data.unmapped_count)}</strong><span>Identity reviews</span></div><small>${data.unmapped_count ? 'Map punches now' : 'All caught up'}</small></article>
       <article><span class="rrr-kpi-icon violet">${icon('wallet', 20)}</span><div><strong>${formatCurrency(Object.values(data.pillars).reduce((sum, pillar) => sum + Number(pillar.potential_revenue || 0), 0))}</strong><span>Growth pipeline</span></div><small>Potential value</small></article>
     </section>
+    ${today ? ownerToday(today) : ''}
     <section class="rrr-growth-section"><div class="rrr-section-heading"><div><span class="rrr-eyebrow">GROWTH ENGINE</span><h2>Where to focus next</h2></div><button id="rrr-rules">Tune signals ${icon('settings', 15)}</button></div><div class="rrr-pillars">${['revenue', 'retain', 'recover'].map(key => pillar(data, key)).join('')}</div></section>
     <section class="rrr-owner-grid">
       <article class="rrr-panel rrr-impact-panel"><div class="rrr-panel-head"><div><h2>Growth impact</h2><p>Potential value waiting in your member base</p></div><span>Live</span></div><div class="rrr-impact-bars">${['revenue', 'retain', 'recover'].map(key => impactBar(data, key)).join('')}</div></article>
@@ -58,6 +63,11 @@ async function load(el) {
   el.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => {
     const destinations = { add: 'add-member', payment: 'record-payment', campaign: 'campaign-create', access: 'access' };
     navigate.push(destinations[button.dataset.action]);
+  }));
+  el.querySelectorAll('[data-owner-route]').forEach(button => button.addEventListener('click', () => {
+    const route = button.dataset.ownerRoute;
+    if (route === 'rrr-list') navigate.switchTab(button.dataset.ownerPillar || 'revenue');
+    else if (route) navigate.push(route);
   }));
 }
 
@@ -77,4 +87,10 @@ function impactBar(data, key) {
 function list(items, key) {
   const m = pillarMeta[key];
   return `<article class="rrr-panel rrr-member-list"><div class="rrr-panel-head"><div><h2>${m.title}</h2><p>${m.eyebrow}</p></div><button data-pillar="${key}">View all</button></div>${items.length ? items.map(item => `<div class="rrr-member-row"><span class="rrr-member-dot ${m.color}"></span><div><b>${escapeHtml(item.member.name)}</b><span>${escapeHtml(item.reason)}</span></div><strong>${formatCurrency(item.potential_revenue)}</strong></div>`).join('') : '<p class="rrr-no-data">No action needed right now.</p>'}</article>`;
+}
+
+function ownerToday(today) {
+  const actions = today.actions || [];
+  const topActions = actions.slice(0, 5);
+  return `<section class="rrr-owner-today"><div class="rrr-today-heading"><div><span class="rrr-eyebrow">OWNER TODAY</span><h2>Make the next shift count</h2><p>Collections, people and live systems in one honest queue.</p></div><button data-owner-route="owner-finance">Daily collections ${icon('chevronRight', 15)}</button></div><div class="rrr-today-grid"><article class="rrr-today-collections"><span>Collected today</span><strong>${formatCurrency(today.collections?.total || 0)}</strong><div><b>${formatCurrency(today.collections?.expected_cash || 0)}</b><small>cash expected</small></div><div class="rrr-cash-close ${today.cash_close?.closed ? 'closed' : ''}">${today.cash_close?.closed ? `${icon('check', 14)} Cash close recorded` : `${icon('warning', 14)} Cash close not recorded`}</div><button data-owner-route="owner-finance">${today.cash_close?.closed ? 'Review cash close' : 'Close cash now'} ${icon('chevronRight', 15)}</button></article><article class="rrr-today-queue"><div class="rrr-panel-head"><div><h2>Priority queue</h2><p>${topActions.length ? 'Work these before the shift ends.' : 'No urgent work is waiting.'}</p></div><span>${actions.reduce((sum, item) => sum + Number(item.count || 0), 0)}</span></div>${topActions.length ? topActions.map(action => `<button class="rrr-today-action ${action.priority}" data-owner-route="${escapeHtml(action.route)}" ${action.pillar ? `data-owner-pillar="${escapeHtml(action.pillar)}"` : ''}><i>${icon(action.kind === 'lead' ? 'phone' : action.kind === 'payment' ? 'payments' : action.kind === 'trial' ? 'calendar' : action.kind === 'mapping' ? 'members' : action.kind === 'integration' ? 'fitness' : 'warning', 16)}</i><div><b>${escapeHtml(action.title)}</b><span>${escapeHtml(action.detail)}</span></div><strong>${formatInteger(action.count)}</strong>${icon('chevronRight', 15)}</button>`).join('') : '<p class="rrr-no-data">Start by adding a member or recording a payment.</p>'}</article></div></section>`;
 }

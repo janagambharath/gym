@@ -183,6 +183,15 @@ class BotLead(TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="new", index=True)
     assigned_staff_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    # Sales-operation fields are shared by WhatsApp, walk-in, referral and
+    # phone leads.  They allow the owner to run a follow-up queue without
+    # requiring the WhatsApp bot entitlement.
+    next_follow_up_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    last_contacted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    trial_scheduled_for = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    trial_attended_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    lost_reason = db.Column(db.String(255), nullable=True)
+    converted_member_id = db.Column(db.Integer, db.ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
 
     gym = db.relationship("Gym", backref=db.backref("bot_leads", cascade="all, delete-orphan"))
     conversation = db.relationship("BotConversation", back_populates="lead")
