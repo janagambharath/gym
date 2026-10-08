@@ -102,8 +102,9 @@ def register_rrr_routes(bp):
                 value = int(requested[key])
             except (TypeError, ValueError):
                 return error_response("VALIDATION_ERROR", f"{key} must be a whole number.", 422)
-            if value < 1 or value > 365:
-                return error_response("VALIDATION_ERROR", f"{key} must be between 1 and 365.", 422)
+            maximum = 100 if key == "attendance_drop_percent" else 365
+            if value < 1 or value > maximum:
+                return error_response("VALIDATION_ERROR", f"{key} must be between 1 and {maximum}.", 422)
             RRRRule.query.filter_by(gym_id=g.gym_id, rule_key=key).first().value = value
         audit(action="rrr_rules_updated", resource_type="rrr_rule", gym_id=g.gym_id, actor_id=g.user_id)
         db.session.commit()

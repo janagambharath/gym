@@ -1,0 +1,11 @@
+import{a as i,i as t,f as s,j as l,b as c,e as p,s as d,n as o}from"./index-CIoZzya4.js";const f={mount(n,r){const a=r||{};n.innerHTML=`${i({title:"Confirm Renewal",showBack:!0})}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
+    <div style="width:64px;height:64px;border-radius:var(--r-full);background:var(--success-surface);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-lg)">${t("check",32,"var(--success)")}</div>
+    <h2 style="margin-bottom:var(--sp-sm)">Renewal Payment</h2>
+    <p style="font-size:var(--fs-xl);font-weight:var(--fw-bold);margin-bottom:var(--sp-xxl)">${s(a.memberName||"Member")} — ${l(a.amount||"0")}</p>
+    <div class="card card-body" style="text-align:left;margin-bottom:var(--sp-xxl)">
+      ${a.planName?`<div class="info-row"><span class="info-row-label">Plan</span><span class="info-row-value">${s(a.planName)}</span></div>`:""}
+      ${a.paymentMethod?`<div class="info-row"><span class="info-row-label">Method</span><span class="info-row-value">${s(a.paymentMethod)}</span></div>`:""}
+      ${a.membershipEnd?`<div class="info-row"><span class="info-row-label">New Expiry</span><span class="info-row-value">${s(a.membershipEnd)}</span></div>`:""}
+    </div>
+    <button class="btn btn-success btn-lg btn-full" id="fr-confirm">${t("check",18,"white")} Confirm Renewal</button>
+  </div></div>`,c(n,{onBack:()=>o.pop()}),n.querySelector("#fr-confirm")?.addEventListener("click",async()=>{const e=await p(`/api/mobile/v1/payments/${a.paymentId}/verify`,{method:"POST"});d(e.ok?"Renewal confirmed!":e.error.message,e.ok?"success":"error"),e.ok&&o.pop()})}};export{f as default};
