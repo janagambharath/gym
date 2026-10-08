@@ -75,6 +75,7 @@ type FastRenewalParams = {
 
 type DashboardStackParamList = {
   DashboardHome: undefined;
+  RrrGrowth: undefined;
   MemberDetail: { member: Member };
   RenewMember: { member: Member };
   AddMember: undefined;
@@ -98,7 +99,6 @@ type DashboardStackParamList = {
   FastRenewal: FastRenewalParams;
   Inbox: undefined;
   PaymentSetup: undefined;
-  RrrGrowth: undefined;
 };
 
 type MembersStackParamList = {
@@ -258,9 +258,13 @@ function DashboardStackScreen({
             onNavigateCampaigns={() => props.navigation.navigate('Campaigns')}
             onNavigateInbox={() => props.navigation.navigate('Inbox')}
             onNavigatePaymentSetup={() => props.navigation.navigate('PaymentSetup')}
+            onNavigateRrr={() => props.navigation.navigate('RrrGrowth')}
             refreshToken={refreshToken}
           />
         )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="RrrGrowth">
+        {(props) => <RrrGrowthScreen onBack={() => props.navigation.goBack()} />}
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="ImportMembers">
         {(props) => (

@@ -43,6 +43,7 @@ type DashboardScreenProps = {
   onNavigateCampaigns?: () => void;
   onNavigateInbox?: () => void;
   onNavigatePaymentSetup?: () => void;
+  onNavigateRrr?: () => void;
   refreshToken?: number;
 };
 
@@ -68,11 +69,13 @@ export function DashboardScreen({
   onNavigateCampaigns,
   onNavigateInbox,
   onNavigatePaymentSetup,
+  onNavigateRrr,
   refreshToken,
 }: DashboardScreenProps) {
   const [data, setData] = useState<DashboardData | undefined>();
   const [upcoming, setUpcoming] = useState<Member[]>([]);
   const [recentPayments, setRecentPayments] = useState<Payment[]>([]);
+  const [rrrSummary, setRrrSummary] = useState<any>();
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -94,10 +97,11 @@ export function DashboardScreen({
     let cancelled = false;
 
     const fetchAll = async () => {
-      const [dashRes, upcomingRes, paymentsRes] = await Promise.all([
+      const [dashRes, upcomingRes, paymentsRes, rrrRes] = await Promise.all([
         apiRequest<DashboardData>('/api/mobile/v1/dashboard'),
         apiRequest<{ members: Member[] }>('/api/mobile/v1/renewals/upcoming'),
         apiRequest<{ payments: Payment[]; pagination: unknown }>('/api/mobile/v1/payments?page_size=5'),
+        apiRequest<any>('/api/mobile/v1/rrr/dashboard'),
       ]);
 
       if (cancelled) return;
@@ -112,6 +116,7 @@ export function DashboardScreen({
 
       if (upcomingRes.ok) setUpcoming(upcomingRes.data.members.slice(0, 5));
       if (paymentsRes.ok) setRecentPayments(paymentsRes.data.payments.slice(0, 5));
+      if (rrrRes.ok) setRrrSummary(rrrRes.data);
 
       setLoading(false);
       setRefreshing(false);
@@ -250,6 +255,25 @@ export function DashboardScreen({
                 else if (route === 'Bot') onNavigateBotOverview?.();
               }}
             />
+
+            <TouchableOpacity style={styles.rrrIntegrationCard} onPress={onNavigateRrr} activeOpacity={0.82}>
+              <View style={styles.rrrIntegrationHeader}>
+                <View>
+                  <Text style={styles.rrrIntegrationTitle}>RRR Growth & eBioServer</Text>
+                  <Text style={styles.rrrIntegrationSub}>
+                    {rrrSummary?.integration?.status === 'connected'
+                      ? `Connected · ${rrrSummary.integration.records_synced || 0} punches synced`
+                      : 'Review Revenue, Retain, Recover and connect eBioServer'}
+                  </Text>
+                </View>
+                <Icon name="forward" size={18} color={colors.brand} />
+              </View>
+              <View style={styles.rrrPillarCounts}>
+                <Text style={styles.rrrPillarText}>Revenue {rrrSummary?.pillars?.revenue?.count ?? '—'}</Text>
+                <Text style={styles.rrrPillarText}>Retain {rrrSummary?.pillars?.retain?.count ?? '—'}</Text>
+                <Text style={styles.rrrPillarText}>Recover {rrrSummary?.pillars?.recover?.count ?? '—'}</Text>
+              </View>
+            </TouchableOpacity>
 
             {/* 🚨 Urgent Staff Handover Alert Box */}
             {data.bot_summary?.recent_handovers && data.bot_summary.recent_handovers.length > 0 ? (
@@ -1388,6 +1412,40 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     padding: spacing.lg,
     ...shadows.sm,
+  },
+  rrrIntegrationCard: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    marginBottom: spacing.md,
+    padding: spacing.md,
+  },
+  rrrIntegrationHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  rrrIntegrationTitle: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
+  rrrIntegrationSub: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    marginTop: 3,
+  },
+  rrrPillarCounts: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  rrrPillarText: {
+    color: '#087B4A',
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
   },
   firstActionHeader: {
     alignItems: 'center',

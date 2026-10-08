@@ -67,6 +67,11 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹  Settings</Text></TouchableOpacity>
       <Text style={styles.title}>RRR Growth System</Text>
       <Text style={styles.subtitle}>Live Revenue, Retain and Recover opportunities from your gym records.</Text>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>How the eBioServer connection works</Text>
+        <Text style={styles.copy}>The bridge runs on the same computer as eBioServer. Its localhost address is for that computer only; your phone manages the link through RRR and does not connect to localhost or the gym LAN.</Text>
+        <Text style={styles.copy}>If this laptop is away from the gym, it can sync only if the X2008 is already sending attendance to this licensed eBioServer. Do not change ADMS or device network settings as part of pairing.</Text>
+      </View>
       {['revenue', 'retain', 'recover'].map((pillar) => <View style={styles.card} key={pillar}>
         <Text style={styles.cardTitle}>{pillar.toUpperCase()}</Text>
         <Text style={styles.metric}>{pillars[pillar]?.count ?? 0} opportunities</Text>
