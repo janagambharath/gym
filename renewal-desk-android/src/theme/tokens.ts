@@ -2,7 +2,7 @@
  * Renewal Desk Design System — Design Tokens
  *
  * Derived from the 5 visual references. Premium B2B SaaS palette:
- * white surfaces, refined dark typography, restrained blue primary,
+ * white surfaces, refined dark typography, confident RRR green primary,
  * semantic status colors, subtle borders and elevation.
  */
 
@@ -10,10 +10,10 @@
 
 export const colors = {
   // Brand
-  brand: '#2563EB',
-  brandDark: '#1D4ED8',
-  brandLight: '#3B82F6',
-  brandSubtle: '#EFF6FF',
+  brand: '#0F9F62',
+  brandDark: '#087B4A',
+  brandLight: '#38C981',
+  brandSubtle: '#ECFBF3',
 
   // Surfaces
   background: '#F8F9FB',
@@ -29,7 +29,7 @@ export const colors = {
   // Borders
   border: '#E2E8F0',
   borderLight: '#F1F5F9',
-  borderFocus: '#2563EB',
+  borderFocus: '#0F9F62',
 
   // Semantic — Success
   success: '#059669',

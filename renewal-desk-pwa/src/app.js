@@ -12,6 +12,7 @@ import { icon } from './icons.js';
 let appEl = null;
 let screenContainer = null;
 let tabBarEl = null;
+let desktopNavEl = null;
 let activeTab = 'dashboard';
 
 // ─── Tab Configuration ───────────────────────────────────────────────
@@ -88,16 +89,51 @@ function registerScreens() {
 
 function renderAppShell() {
   appEl.innerHTML = `
+    <aside id="desktop-owner-nav" class="desktop-owner-nav" aria-label="Owner navigation"></aside>
     <div id="screen-container" style="flex:1;position:relative;overflow:hidden"></div>
     <div id="tab-bar-container"></div>
   `;
   screenContainer = document.getElementById('screen-container');
   tabBarEl = document.getElementById('tab-bar-container');
+  desktopNavEl = document.getElementById('desktop-owner-nav');
+  renderDesktopNavigation();
   router.init(screenContainer);
+}
+
+const DESKTOP_NAVIGATION = [
+  { label: 'Growth', items: [
+    { tab: 'dashboard', label: 'Overview', icon: 'dashboard' },
+    { tab: 'revenue', label: 'Revenue', icon: 'stats' },
+    { tab: 'retain', label: 'Retain', icon: 'shield' },
+    { tab: 'recover', label: 'Recover', icon: 'renewals' },
+  ]},
+  { label: 'Operations', items: [
+    { tab: 'members', label: 'Members', icon: 'members' },
+    { screen: 'renewals', label: 'Renewals', icon: 'renewals' },
+    { screen: 'payments', label: 'Payments', icon: 'payments' },
+    { screen: 'access', label: 'Access control', icon: 'access' },
+  ]},
+  { label: 'Engagement', items: [
+    { screen: 'campaigns', label: 'Campaigns', icon: 'megaphone' },
+    { screen: 'inbox', label: 'Inbox', icon: 'inbox' },
+    { screen: 'whatsapp', label: 'WhatsApp', icon: 'whatsapp' },
+  ]},
+];
+
+function renderDesktopNavigation() {
+  if (!desktopNavEl) return;
+  desktopNavEl.innerHTML = `
+    <div class="desktop-nav-brand"><span class="desktop-nav-mark">RRR</span><div><b>RRR</b><span>Gym Growth System</span></div></div>
+    <button class="desktop-new-member" data-screen="add-member">${icon('add', 18)} Add member</button>
+    <div class="desktop-nav-scroll">${DESKTOP_NAVIGATION.map(section => `<section><p>${section.label}</p>${section.items.map(item => `<button class="desktop-nav-item ${item.tab === activeTab ? 'is-active' : ''}" ${item.tab ? `data-tab="${item.tab}"` : `data-screen="${item.screen}"`}>${icon(item.icon, 19)}<span>${item.label}</span></button>`).join('')}</section>`).join('')}</div>
+    <div class="desktop-nav-footer"><button class="desktop-nav-item" data-screen="rrr-integrations">${icon('fitness', 19)}<span>Integrations</span></button><button class="desktop-nav-item" data-screen="reports">${icon('report', 19)}<span>Reports</span></button><button class="desktop-nav-item" data-screen="settings">${icon('settings', 19)}<span>Settings</span></button></div>`;
+  desktopNavEl.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => switchTab(button.dataset.tab)));
+  desktopNavEl.querySelectorAll('[data-screen]').forEach(button => button.addEventListener('click', () => navigate.push(button.dataset.screen)));
 }
 
 function showTabBar(tab) {
   activeTab = tab;
+  renderDesktopNavigation();
   tabBarEl.innerHTML = renderTabBar(tab);
   tabBarEl.style.display = '';
 
