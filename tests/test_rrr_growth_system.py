@@ -4,7 +4,7 @@ from app.extensions import db
 from app.mobile_api.token_service import create_access_token
 from app.models import Member
 from app.models import BridgeInstallation
-from app.models.rrr import RRRAttendanceEvent, RRRIntegration
+from app.models.rrr import RRRAttendanceEvent, RRRDevice, RRRIntegration
 from app.services.rrr_service import normalize_attendance
 
 
@@ -79,10 +79,44 @@ def test_attendance_deduplication_is_source_neutral(seed_gym):
         external_event_id="same-log", device_serial="SERIAL",
     )
     second, second_created = normalize_attendance(
-        gym_id=gym.id, source="ebioserver", biometric_user_id="same", punch_time=when,
-        external_event_id="same-log", device_serial="SERIAL",
+        gym_id=gym.id, source="direct_bridge", biometric_user_id="same", punch_time=when,
+        external_event_id="different-source-log", device_serial="SERIAL",
     )
     db.session.commit()
     assert first_created is True
     assert second_created is False
     assert first.id == second.id
+
+
+def test_ebio_reports_devices_and_owner_selection_reaches_connector_config(client, seed_gym):
+    issued = client.post(
+        "/api/mobile/v1/rrr/integrations/ebioserver/pairing", headers=headers(seed_gym), json={}
+    ).get_json()["data"]
+    paired = client.post("/api/bridge/v2/pair", json={
+        "pairingCode": issued["pairing_code"], "deviceSerial": "INITIAL-SERIAL",
+        "deviceName": "Initial device", "version": "1.1.0-ebioserver",
+    })
+    assert paired.status_code == 201
+    api_key = paired.get_json()["apiKey"]
+    installation = BridgeInstallation.query.filter_by(gym_id=seed_gym["gym"].id).one()
+    bridge_headers = {
+        "X-Api-Key": api_key,
+        "X-RenewalDesk-Bridge-Protocol": "2",
+        "X-Device-Serial": "INITIAL-SERIAL",
+    }
+    heartbeat = client.post("/api/bridge/v1/heartbeat", headers=bridge_headers, json={
+        "gymId": installation.public_id, "status": "online",
+        "devices": [{"serialNumber": "ELITE-X2008", "deviceName": "Elite Gym X2008", "status": "Connected"}],
+    })
+    assert heartbeat.status_code == 200
+    device = RRRDevice.query.filter_by(gym_id=seed_gym["gym"].id, serial_number="ELITE-X2008").one()
+    integration = RRRIntegration.query.filter_by(gym_id=seed_gym["gym"].id, connector_type="ebioserver").one()
+
+    selected = client.post(
+        f"/api/mobile/v1/rrr/integrations/{integration.id}/device",
+        headers=headers(seed_gym), json={"device_id": device.id},
+    )
+    assert selected.status_code == 200
+    config = client.get("/api/bridge/v1/config", headers=bridge_headers)
+    assert config.status_code == 200
+    assert config.get_json()["selectedDeviceSerial"] == "ELITE-X2008"

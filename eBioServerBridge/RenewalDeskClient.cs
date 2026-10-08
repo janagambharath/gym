@@ -25,7 +25,7 @@ namespace eBioServerBridge
             _lastError = string.Empty;
         }
 
-        public bool SendHeartbeat(string status)
+        public bool SendHeartbeat(string status, DeviceInfo[] devices)
         {
             var payload = new
             {
@@ -35,9 +35,30 @@ namespace eBioServerBridge
                 version = "1.0.0-ebioserver",
                 bridgeVersion = "1.0.0-ebioserver",
                 pcName = Environment.MachineName,
-                osInfo = Environment.OSVersion.ToString()
+                osInfo = Environment.OSVersion.ToString(),
+                devices = devices ?? new DeviceInfo[0]
             };
             return Post("/api/bridge/v1/heartbeat", payload);
+        }
+
+        public ConnectorConfig GetConnectorConfig()
+        {
+            try
+            {
+                string url = _baseUrl + "/api/bridge/v1/config";
+                var request = CreateRequest(url, "GET");
+                using (var response = (HttpWebResponse)request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream()))
+                {
+                    _lastError = string.Empty;
+                    return JsonConvert.DeserializeObject<ConnectorConfig>(reader.ReadToEnd());
+                }
+            }
+            catch (Exception ex)
+            {
+                _lastError = "GetConnectorConfig: " + ex.Message;
+                return null;
+            }
         }
 
         public bool SendAttendance(AttendanceEvent evt)
@@ -172,6 +193,8 @@ namespace eBioServerBridge
         public string GymId { get; set; }
         [JsonProperty("deviceEnrollNumber")]
         public string DeviceEnrollNumber { get; set; }
+        [JsonProperty("deviceSerial")]
+        public string DeviceSerial { get; set; }
         [JsonProperty("eventTime")]
         public DateTime EventTime { get; set; }
         [JsonProperty("verifyMethod")]
@@ -203,5 +226,11 @@ namespace eBioServerBridge
         [JsonProperty("ok")] public bool Ok { get; set; }
         [JsonProperty("apiKey")] public string ApiKey { get; set; }
         [JsonProperty("gymId")] public string GymId { get; set; }
+    }
+
+    public class ConnectorConfig
+    {
+        [JsonProperty("selectedDeviceSerial")] public string SelectedDeviceSerial { get; set; }
+        [JsonProperty("selectedDeviceName")] public string SelectedDeviceName { get; set; }
     }
 }

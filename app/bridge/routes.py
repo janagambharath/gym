@@ -18,6 +18,7 @@ from app.models import (
     GymDeployment,
     Member,
     RRRIntegration,
+    RRRDevice,
 )
 from app.models.bridge import (
     generate_bridge_api_key,
@@ -162,6 +163,26 @@ def heartbeat():
             integration.status = "connected" if installation.status == "online" else "degraded"
             integration.last_success_at = utcnow() if installation.status == "online" else integration.last_success_at
             integration.last_error = None if installation.status == "online" else clean_status[:500]
+            raw_devices = _payload_value(payload, "devices", "Devices")
+            if isinstance(raw_devices, list):
+                from app.models.rrr import RRRDevice
+                for item in raw_devices[:100]:
+                    if not isinstance(item, dict):
+                        continue
+                    serial = str(_payload_value(item, "serialNumber", "SerialNumber", "serial_number") or "").strip()[:120]
+                    if not serial:
+                        continue
+                    device = RRRDevice.query.filter_by(gym_id=installation.gym_id, serial_number=serial).first()
+                    if device is None:
+                        device = RRRDevice(gym_id=installation.gym_id, integration_id=integration.id,
+                                           serial_number=serial, device_name="eSSL device")
+                        db.session.add(device)
+                    device.integration_id = integration.id
+                    device.device_name = str(_payload_value(item, "deviceName", "DeviceName", "name") or "eSSL device")[:160]
+                    device.status = str(_payload_value(item, "status", "Status") or "unknown")[:32]
+                    device.last_seen_at = utcnow()
+                    device.is_selected = device.serial_number == integration.device_serial
+
 
     # Capture optional client telemetry (V2 clients)
     version = _payload_value(payload, "version", "bridgeVersion", "installed_version")
@@ -179,6 +200,20 @@ def heartbeat():
 
     db.session.commit()
     return jsonify({"ok": True, "serverTime": utcnow().isoformat()})
+
+
+@bridge_bp.get("/config")
+@limiter.limit("120 per minute", key_func=_bridge_rate_limit_key)
+def connector_config():
+    """Return only owner-selected non-secret settings to the paired connector."""
+    installation = _authenticated_bridge()
+    integration = RRRIntegration.query.filter_by(
+        gym_id=installation.gym_id, connector_type="ebioserver"
+    ).first()
+    return jsonify({
+        "selectedDeviceSerial": integration.device_serial if integration else installation.device_serial,
+        "selectedDeviceName": integration.device_name if integration else installation.device_name,
+    })
 
 
 
@@ -225,6 +260,17 @@ def attendance():
     event_id = event_id.strip()
     if len(event_id) > 128:
         return _json_error(422, "invalid_attendance", "eventId is too long.")
+
+    event_device_serial = installation.device_serial
+    if installation.connector_type == "ebioserver":
+        candidate_serial = _payload_value(payload, "deviceSerial", "DeviceSerial")
+        if isinstance(candidate_serial, str) and candidate_serial.strip():
+            candidate_serial = candidate_serial.strip()[:120]
+            known_device = RRRDevice.query.filter_by(
+                gym_id=installation.gym_id, serial_number=candidate_serial
+            ).first()
+            if known_device is not None:
+                event_device_serial = candidate_serial
 
     member = Member.query.filter_by(
         gym_id=installation.gym_id, device_enroll_number=enroll_number
@@ -279,7 +325,7 @@ def attendance():
             biometric_user_id=enroll_number,
             punch_time=event_time,
             external_event_id=event_id,
-            device_serial=installation.device_serial,
+            device_serial=event_device_serial,
             direction=str(att_state) if att_state is not None else None,
             verify_method=str(verify_method),
             integration_id=integration.id if integration else None,

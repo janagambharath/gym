@@ -25,6 +25,7 @@ namespace eBioServerBridge
         private static int _totalErrors;
         private static int _totalCommands;
         private static bool _running = true;
+        private static List<DeviceInfo> _devices = new List<DeviceInfo>();
         private static readonly string StateFile = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory, "bridge_state.json");
 
@@ -71,6 +72,22 @@ namespace eBioServerBridge
                 secrets.RenewalDeskApiKey = _config.RenewalDeskApiKey;
                 secrets.RenewalDeskGymId = _config.RenewalDeskGymId;
                 changedSecrets = true;
+            }
+
+            // Discover a local device before pairing when setup did not supply
+            // its serial. Owner selection can later switch through cloud config.
+            if (string.IsNullOrWhiteSpace(_config.DeviceSerial) && !string.IsNullOrWhiteSpace(_config.eBioServerUrl))
+            {
+                var discovery = new EBioServerClient(_config.eBioServerUrl, _config.eBioServerSoapEndpoint,
+                    secrets.EBioServerApiUser, secrets.EBioServerApiPassword);
+                var discovered = discovery.GetDeviceList();
+                var firstDevice = discovered.Find(d => !string.IsNullOrWhiteSpace(d.SerialNumber));
+                if (firstDevice != null)
+                {
+                    _config.DeviceSerial = firstDevice.SerialNumber;
+                    _config.DeviceName = firstDevice.DeviceName;
+                    Log("Using discovered eBioServer device for initial pairing: " + firstDevice.DeviceName + " (" + firstDevice.SerialNumber + ")", ConsoleColor.Cyan);
+                }
             }
 
             if (!string.IsNullOrEmpty(_config.PairingCode) && string.IsNullOrEmpty(secrets.RenewalDeskApiKey))
@@ -134,9 +151,9 @@ namespace eBioServerBridge
             Log("Testing eBioServer connection...", ConsoleColor.White);
             if (_ebioClient.IsConnected())
             {
-                var devices = _ebioClient.GetDeviceList();
-                Log(string.Format("eBioServer connected! Devices found: {0}", devices.Count), ConsoleColor.Green);
-                foreach (var dev in devices)
+                _devices = _ebioClient.GetDeviceList();
+                Log(string.Format("eBioServer connected! Devices found: {0}", _devices.Count), ConsoleColor.Green);
+                foreach (var dev in _devices)
                 {
                     Log(string.Format("  Device: {0} | Serial: {1} | Status: {2}",
                         dev.DeviceName, dev.SerialNumber, dev.Status), ConsoleColor.Cyan);
@@ -156,6 +173,10 @@ namespace eBioServerBridge
 
             Log("Bridge running. Press Ctrl+C to stop.", ConsoleColor.White);
             Console.WriteLine();
+
+            // Register discovered devices before the first attendance batch.
+            if (_cloudClient != null)
+                SendHeartbeat();
 
             // Main loop
             DateTime lastHeartbeat = DateTime.MinValue;
@@ -202,10 +223,17 @@ namespace eBioServerBridge
 
         private static void PollDeviceLogs()
         {
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
-            var logs = _ebioClient.GetDeviceLogs(today);
-            if (!string.IsNullOrEmpty(_ebioClient.LastError))
-                return;
+            var logs = new List<DeviceLogEntry>();
+            // Bounded look-back recovers punches across midnight or brief
+            // outages; cloud event IDs make replay idempotent.
+            for (int daysBack = 2; daysBack >= 0; daysBack--)
+            {
+                string date = DateTime.Now.Date.AddDays(-daysBack).ToString("yyyy-MM-dd");
+                var dayLogs = _ebioClient.GetDeviceLogs(date);
+                if (!string.IsNullOrEmpty(_ebioClient.LastError)) return;
+                logs.AddRange(dayLogs);
+            }
+            logs.Sort((left, right) => left.LogDate.CompareTo(right.LogDate));
 
             // Filter out already-seen logs
             var newLogs = new List<DeviceLogEntry>();
@@ -243,6 +271,7 @@ namespace eBioServerBridge
                     evt.EventId = string.Format("ebio-{0}-{1}", log.LogId, log.LogDate.Ticks);
                     evt.GymId = _config.RenewalDeskGymId;
                     evt.DeviceEnrollNumber = log.EmployeeCode;
+                    evt.DeviceSerial = log.SerialNumber;
                     evt.EventTime = log.LogDate;
                     evt.VerifyMethod = 1; // fingerprint
                     evt.AttState = attState;
@@ -252,16 +281,21 @@ namespace eBioServerBridge
                     if (sent)
                     {
                         _totalSynced++;
+                        if (log.LogId > _lastLogId) _lastLogId = log.LogId;
                     }
                     else
                     {
                         _totalErrors++;
                         Log("  Cloud upload failed: " + _cloudClient.LastError, ConsoleColor.Red);
+                        // Keep this and later records eligible for replay.
+                        break;
                     }
                 }
-
-                if (log.LogId > _lastLogId)
+                else if (log.LogId > _lastLogId)
+                {
+                    // Local-only mode has no remote acknowledgment to wait for.
                     _lastLogId = log.LogId;
+                }
             }
 
             SaveState();
@@ -386,10 +420,23 @@ namespace eBioServerBridge
         {
             bool connected = _ebioClient.IsConnected();
             string status = connected ? "online" : "device_disconnected";
-            bool sent = _cloudClient.SendHeartbeat(status);
+            if (connected)
+                _devices = _ebioClient.GetDeviceList();
+            bool sent = _cloudClient.SendHeartbeat(status, _devices.ToArray());
             if (!sent)
             {
                 Log("Heartbeat failed: " + _cloudClient.LastError, ConsoleColor.Yellow);
+                return;
+            }
+            var selected = _cloudClient.GetConnectorConfig();
+            if (selected != null && !string.IsNullOrWhiteSpace(selected.SelectedDeviceSerial))
+            {
+                var known = _devices.Find(d => string.Equals(d.SerialNumber, selected.SelectedDeviceSerial, StringComparison.OrdinalIgnoreCase));
+                if (known != null)
+                {
+                    _config.DeviceSerial = known.SerialNumber;
+                    _config.DeviceName = known.DeviceName;
+                }
             }
         }
 

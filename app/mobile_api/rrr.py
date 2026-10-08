@@ -9,7 +9,7 @@ from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
-from app.models.rrr import RRRAttendanceEvent, RRRIntegration, RRROpportunity, RRRRule
+from app.models.rrr import RRRAttendanceEvent, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
 from app.services.rrr_service import (
     DEFAULT_RULES,
@@ -114,7 +114,42 @@ def register_rrr_routes(bp):
     @roles_required("gym_owner", "staff")
     def rrr_integrations():
         rows = RRRIntegration.query.filter_by(gym_id=g.gym_id).order_by(RRRIntegration.connector_type).all()
-        return jsonify({"success": True, "data": {"integrations": [integration_payload(x) for x in rows]}})
+        devices = RRRDevice.query.filter_by(gym_id=g.gym_id).order_by(RRRDevice.device_name).all()
+        return jsonify({"success": True, "data": {
+            "integrations": [integration_payload(x) for x in rows],
+            "devices": [{"id": d.id, "serial_number": d.serial_number, "name": d.device_name,
+                         "status": d.status, "selected": d.is_selected,
+                         "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None}
+                        for d in devices],
+        }})
+
+    @bp.post("/rrr/integrations/<int:integration_id>/device")
+    @token_required
+    @roles_required("gym_owner")
+    def select_rrr_device(integration_id: int):
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="ebioserver"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "eBioServer integration was not found.", 404)
+        payload = request.get_json(silent=True) or {}
+        try:
+            device_id = int(payload.get("device_id"))
+        except (TypeError, ValueError):
+            return error_response("VALIDATION_ERROR", "device_id is required.", 422)
+        device = RRRDevice.query.filter_by(id=device_id, gym_id=g.gym_id, integration_id=integration.id).first()
+        if device is None:
+            return error_response("NOT_FOUND", "Device was not reported by the paired connector.", 404)
+        for known in RRRDevice.query.filter_by(gym_id=g.gym_id, integration_id=integration.id).all():
+            known.is_selected = known.id == device.id
+        integration.device_serial = device.serial_number
+        integration.device_name = device.device_name
+        integration.commands_enabled = False
+        integration.commissioning_status = "not_started"
+        audit(action="rrr_device_selected", resource_type="rrr_integration", resource_id=integration.id,
+              gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": device.serial_number})
+        db.session.commit()
+        return jsonify({"success": True, "data": {"integration": integration_payload(integration)}})
 
     @bp.post("/rrr/integrations/ebioserver/pairing")
     @limiter.limit("10 per hour")
@@ -141,9 +176,14 @@ def register_rrr_routes(bp):
         payload = request.get_json(silent=True) or {}
         if payload.get("physical_test_passed") is not True:
             return error_response("VALIDATION_ERROR", "physical_test_passed must be true after a supervised door test.", 422)
-        attendance_exists = RRRAttendanceEvent.query.filter_by(gym_id=g.gym_id, integration_id=row.id, processing_status="processed").first()
+        attendance_query = RRRAttendanceEvent.query.filter_by(
+            gym_id=g.gym_id, integration_id=row.id, processing_status="processed"
+        )
+        if row.device_serial:
+            attendance_query = attendance_query.filter_by(device_serial=row.device_serial)
+        attendance_exists = attendance_query.first()
         if attendance_exists is None:
-            return error_response("COMMISSIONING_REQUIRED", "A mapped real attendance event is required before commands can be enabled.", 409)
+            return error_response("COMMISSIONING_REQUIRED", "A mapped real attendance event from the selected device is required before commands can be enabled.", 409)
         row.commissioning_status = "physical_test_passed"
         row.commands_enabled = True
         audit(action="ebioserver_commands_enabled", resource_type="rrr_integration", resource_id=row.id,

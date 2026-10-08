@@ -16,26 +16,31 @@ credentials and it never connects to the gym LAN directly.
 ## Pair from the owner mobile app
 
 1. Open **RRR → Integrations → eSSL eBioServer** and generate a pairing code.
-2. On the gym PC, set only the non-secret values in `appsettings.json`:
+2. On the gym PC, set the non-secret values in `appsettings.json`. Leave
+   `DeviceSerial` blank to let the connector discover the first available
+   eBioServer device for pairing; the owner can select the intended X2008 in
+   RRR after the paired PC reports its inventory.
 
    ```json
    {
      "eBioServerUrl": "http://localhost:8081",
      "eBioServerSoapEndpoint": "/WebService.asmx",
      "RenewalDeskApiBaseUrl": "https://YOUR-RRR-DOMAIN",
-     "DeviceSerial": "BOCKZ220260338",
-     "DeviceName": "Elite Gym X2008",
+     "DeviceSerial": "",
+     "DeviceName": "",
      "PairingCode": "six-digit-code-from-mobile"
    }
    ```
 
 3. For first launch only, enter the local eBioServer service user/password in
-   the same configuration. The bridge moves them, the cloud key, and gym ID to
+   the configuration on the gym PC (never in Git, screenshots, mobile, or
+   cloud settings). The bridge moves them, the cloud key, and gym ID to
    `bridge_secrets.dat`, encrypted with Windows DPAPI for that PC user, then
    clears the plaintext fields from `appsettings.json`.
-4. Start the bridge. It validates the local SOAP service, discovers devices,
-   exchanges the short-lived pairing code, and starts outbound HTTPS polling.
-5. In RRR, select the discovered device and make a real fingerprint punch with
+4. Start the bridge. It discovers the local device, exchanges the short-lived
+   pairing code, reports sanitized device inventory, and starts outbound HTTPS
+   polling. RRR never receives local eBioServer credentials.
+5. In RRR, select the discovered X2008 and make a real fingerprint punch with
    a mapped Elite Gym member. RRR must show that attendance before the
    integration is considered verified.
 

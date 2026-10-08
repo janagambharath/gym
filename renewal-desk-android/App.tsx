@@ -41,6 +41,7 @@ import { RecordPaymentScreen } from './src/screens/RecordPaymentScreen';
 import { RenewalsScreen } from './src/screens/RenewalsScreen';
 import { RenewMemberScreen } from './src/screens/RenewMemberScreen';
 import { ReportsScreen } from './src/screens/ReportsScreen';
+import { RrrGrowthScreen } from './src/screens/RrrGrowthScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
@@ -97,6 +98,7 @@ type DashboardStackParamList = {
   FastRenewal: FastRenewalParams;
   Inbox: undefined;
   PaymentSetup: undefined;
+  RrrGrowth: undefined;
 };
 
 type MembersStackParamList = {
@@ -138,6 +140,7 @@ type AccessStackParamList = {
 
 type MoreStackParamList = {
   MoreHome: undefined;
+  RrrGrowth: undefined;
   Subscription: undefined;
   WhatsApp: undefined;
   BotOverview: undefined;
@@ -900,8 +903,12 @@ function MoreStackScreen({ onLogout }: { onLogout: () => void }) {
             onNavigateAccess={() => props.navigation.navigate('AccessHome')}
             onNavigatePayments={() => props.navigation.navigate('PaymentsHome')}
             onNavigatePaymentSetup={() => props.navigation.navigate('PaymentSetup')}
+            onNavigateRrr={() => props.navigation.navigate('RrrGrowth')}
           />
         )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="RrrGrowth">
+        {(props) => <RrrGrowthScreen onBack={() => props.navigation.goBack()} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="Subscription">
         {(props) => <SubscriptionScreen onBack={() => props.navigation.goBack()} />}

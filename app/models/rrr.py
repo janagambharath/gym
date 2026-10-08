@@ -71,6 +71,21 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
         return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
+class RRRDevice(TenantMixin, TimestampMixin, db.Model):
+    """Sanitized device inventory reported by a paired gym-PC connector."""
+    __tablename__ = "rrr_devices"
+    __table_args__ = (UniqueConstraint("gym_id", "serial_number", name="uq_rrr_device_serial"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    integration_id = db.Column(db.Integer, db.ForeignKey("rrr_integrations.id", ondelete="CASCADE"), nullable=False, index=True)
+    serial_number = db.Column(db.String(120), nullable=False)
+    device_name = db.Column(db.String(160), nullable=False, default="eSSL device")
+    status = db.Column(db.String(32), nullable=True)
+    last_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    is_selected = db.Column(db.Boolean, nullable=False, default=False)
+    integration = db.relationship("RRRIntegration")
+
+
 class RRRIdentityMapping(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "rrr_identity_mappings"
     __table_args__ = (

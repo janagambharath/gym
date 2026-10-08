@@ -49,9 +49,10 @@ def ensure_default_rules(gym_id: int) -> list[RRRRule]:
 
 def _dedupe_key(source: str, device_serial: str | None, external_event_id: str | None,
                 biometric_user_id: str, punch_time, raw_payload: str = "") -> str:
+    # The same physical punch may arrive through eBioServer and a direct SDK
+    # connector. Source IDs differ, so deduplicate by physical device/user/time.
     stable = "|".join((
-        source, device_serial or "", external_event_id or "",
-        biometric_user_id, punch_time.isoformat(), raw_payload,
+        device_serial or "", biometric_user_id, punch_time.isoformat(),
     ))
     return hashlib.sha256(stable.encode("utf-8")).hexdigest()
 
@@ -162,6 +163,15 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                     reason_text=f"Membership expired {abs(days)} day(s) ago on {member.membership_end.isoformat()}.",
                     priority="high", potential_revenue=value,
                 ))
+        pending_payment = PaymentVerification.query.filter_by(
+            gym_id=gym_id, member_id=member.id, status="pending", is_test=False
+        ).order_by(PaymentVerification.created_at.asc()).first()
+        if pending_payment and pending_payment.created_at and (now - pending_payment.created_at).days >= 1:
+            created.append(_upsert_opportunity(
+                gym_id=gym_id, member=member, pillar="retain", reason_code="payment_friction",
+                reason_text=f"A payment of ₹{pending_payment.amount} has been awaiting verification since {pending_payment.created_at.date().isoformat()}.",
+                priority="high", potential_revenue=Decimal(str(pending_payment.amount or 0)),
+            ))
         visit = last_visit.get(member.id)
         if member.status == "active" and (visit is None or (now - visit).days >= rules["no_visit_days"]):
             no_visit_days = rules["no_visit_days"] if visit is None else max(0, (now - visit).days)
@@ -170,6 +180,25 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                 reason_text=f"No attendance recorded for {no_visit_days} day(s).",
                 priority="high" if no_visit_days >= 30 else "medium", potential_revenue=value,
             ))
+        # Explainable attendance decline: compare the most recent 14-day
+        # window against the preceding 14-day baseline. Skip sparse histories.
+        recent_start = now - timedelta(days=14)
+        baseline_start = now - timedelta(days=28)
+        recent_count = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, member_id=member.id).filter(
+            RRRAttendanceEvent.punch_time >= recent_start
+        ).count()
+        baseline_count = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, member_id=member.id).filter(
+            RRRAttendanceEvent.punch_time >= baseline_start,
+            RRRAttendanceEvent.punch_time < recent_start,
+        ).count()
+        if member.status == "active" and baseline_count >= 2:
+            decline = round((baseline_count - recent_count) / baseline_count * 100)
+            if decline >= rules["attendance_drop_percent"]:
+                created.append(_upsert_opportunity(
+                    gym_id=gym_id, member=member, pillar="retain", reason_code="attendance_decline",
+                    reason_text=f"Attendance is down {decline}%: {recent_count} visits in the last 14 days versus {baseline_count} in the prior 14 days.",
+                    priority="high" if decline >= 75 else "medium", potential_revenue=value,
+                ))
     return created
 
 

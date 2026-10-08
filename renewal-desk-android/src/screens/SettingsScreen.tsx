@@ -34,6 +34,7 @@ type SettingsScreenProps = {
   onNavigateAccess?: () => void;
   onNavigatePayments?: () => void;
   onNavigatePaymentSetup?: () => void;
+  onNavigateRrr?: () => void;
 };
 
 export function SettingsScreen({
@@ -49,6 +50,7 @@ export function SettingsScreen({
   onNavigateAccess,
   onNavigatePayments,
   onNavigatePaymentSetup,
+  onNavigateRrr,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings | undefined>();
@@ -208,8 +210,9 @@ export function SettingsScreen({
 
         {/* 5. Staff & Access Control */}
         <View style={styles.card}>
-          <SectionHeader title="Staff & Access Control" icon={<Icon name="staff" size={18} color={colors.brand} />} />
+          <SectionHeader title="Integrations & Access" icon={<Icon name="staff" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
+            <MenuItem icon="analytics" label="RRR Growth System & eBioServer" onPress={onNavigateRrr} />
             {session?.userRole === 'gym_owner' ? (
               <MenuItem icon="staff" label="Staff Management & Permissions" onPress={onNavigateStaff} />
             ) : null}
@@ -219,8 +222,9 @@ export function SettingsScreen({
 
         {/* 6. Analytics & Reports */}
         <View style={styles.card}>
-          <SectionHeader title="Analytics & Reports" icon={<Icon name="analytics" size={18} color={colors.brand} />} />
+          <SectionHeader title="RRR Growth & Reports" icon={<Icon name="analytics" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
+            <MenuItem icon="analytics" label="Revenue · Retain · Recover" onPress={onNavigateRrr} />
             <MenuItem icon="analytics" label="Operational Analytics & Performance" onPress={onNavigateReports} />
           </View>
         </View>
