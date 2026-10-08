@@ -79,6 +79,31 @@ namespace eBioServerBridge
             return Post("/api/bridge/v1/commands/" + Uri.EscapeDataString(commandId) + "/ack", payload);
         }
 
+        public static PairingResult Pair(string baseUrl, string pairingCode, string deviceSerial, string deviceName)
+        {
+            try
+            {
+                var request = (HttpWebRequest)WebRequest.Create(baseUrl.TrimEnd('/') + "/api/bridge/v2/pair");
+                request.Method = "POST";
+                request.ContentType = "application/json; charset=utf-8";
+                request.Timeout = 15000;
+                var payload = new {
+                    pairingCode = pairingCode, deviceSerial = deviceSerial, deviceName = deviceName,
+                    version = "1.1.0-ebioserver", pcName = Environment.MachineName,
+                    osInfo = Environment.OSVersion.ToString()
+                };
+                byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload));
+                request.ContentLength = bytes.Length;
+                using (var stream = request.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+                using (var response = (HttpWebResponse)request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream()))
+                {
+                    return JsonConvert.DeserializeObject<PairingResult>(reader.ReadToEnd());
+                }
+            }
+            catch { return null; }
+        }
+
         private bool Post(string path, object payload)
         {
             try
@@ -171,5 +196,12 @@ namespace eBioServerBridge
         public string MemberName { get; set; }
         [JsonProperty("delaySeconds")]
         public int DelaySeconds { get; set; }
+    }
+
+    public class PairingResult
+    {
+        [JsonProperty("ok")] public bool Ok { get; set; }
+        [JsonProperty("apiKey")] public string ApiKey { get; set; }
+        [JsonProperty("gymId")] public string GymId { get; set; }
     }
 }

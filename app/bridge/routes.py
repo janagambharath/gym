@@ -17,6 +17,7 @@ from app.models import (
     BridgeRelease,
     GymDeployment,
     Member,
+    RRRIntegration,
 )
 from app.models.bridge import (
     generate_bridge_api_key,
@@ -153,6 +154,14 @@ def heartbeat():
     installation.last_status = clean_status
     installation.status = "online" if clean_status.lower() in ("online", "ok", "healthy") else clean_status.lower()
     installation.last_heartbeat_at = utcnow()
+    if installation.connector_type == "ebioserver":
+        integration = RRRIntegration.query.filter_by(
+            gym_id=installation.gym_id, connector_type="ebioserver"
+        ).first()
+        if integration:
+            integration.status = "connected" if installation.status == "online" else "degraded"
+            integration.last_success_at = utcnow() if installation.status == "online" else integration.last_success_at
+            integration.last_error = None if installation.status == "online" else clean_status[:500]
 
     # Capture optional client telemetry (V2 clients)
     version = _payload_value(payload, "version", "bridgeVersion", "installed_version")
@@ -256,6 +265,41 @@ def attendance():
             "AccessEvent processing failed for attendance event_id=%s", event_id
         )
 
+    # Store the same event in the RRR source-neutral pipeline.  This keeps
+    # historical bridge clients compatible while allowing eBioServer, CSV and
+    # direct SDK events to be analysed together without fabricated metrics.
+    try:
+        from app.services.rrr_service import normalize_attendance
+        integration = RRRIntegration.query.filter_by(
+            gym_id=installation.gym_id, connector_type=installation.connector_type
+        ).first()
+        normalized, _ = normalize_attendance(
+            gym_id=installation.gym_id,
+            source=installation.connector_type,
+            biometric_user_id=enroll_number,
+            punch_time=event_time,
+            external_event_id=event_id,
+            device_serial=installation.device_serial,
+            direction=str(att_state) if att_state is not None else None,
+            verify_method=str(verify_method),
+            integration_id=integration.id if integration else None,
+            raw_payload=event_id,
+        )
+        if integration:
+            integration.records_synced += 1
+            integration.last_success_at = utcnow()
+            integration.status = "connected"
+            if normalized.processing_status == "unmapped":
+                integration.unmapped_records += 1
+            else:
+                integration.commissioning_status = (
+                    "attendance_verified" if integration.commissioning_status == "not_started"
+                    else integration.commissioning_status
+                )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("RRR attendance normalization failed event_id=%s", event_id)
+
     try:
         db.session.commit()
     except IntegrityError:
@@ -268,6 +312,14 @@ def attendance():
 @limiter.limit("120 per minute", key_func=_bridge_rate_limit_key)
 def pending_commands():
     installation = _authenticated_bridge()
+    if installation.connector_type == "ebioserver":
+        integration = RRRIntegration.query.filter_by(
+            gym_id=installation.gym_id, connector_type="ebioserver"
+        ).first()
+        if integration is None or not integration.commands_enabled:
+            # eBioServer is read-only until a mapped real punch and supervised
+            # physical test have both been recorded by the owner.
+            return jsonify([])
     sent_id = request.args.get("gymId", "")
     if not hmac.compare_digest(sent_id, installation.public_id):
         return _json_error(403, "bridge_id_mismatch", "gymId does not match this bridge.")
@@ -428,18 +480,33 @@ def pair_bridge():
     if not device_serial:
         return _json_error(422, "invalid_device_serial", "Biometric device serial is required.")
 
-    # Find deployment with active pairing code
-    dep = GymDeployment.query.filter_by(pairing_code=pairing_code).first()
-    if not dep or not dep.pairing_code_expires_at:
-        return _json_error(401, "pairing_code_invalid", "Invalid or expired pairing code.")
-
-    expires_at = dep.pairing_code_expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < utcnow():
-        return _json_error(401, "pairing_code_expired", "Pairing code has expired. Generate a new code from admin dashboard.")
-
-    gym = dep.gym
+    # Owner mobile onboarding codes take precedence.  The old admin deployment
+    # code remains supported for existing direct-SDK installations.
+    integration = RRRIntegration.query.filter_by(
+        pairing_code_hash=RRRIntegration.hash_pairing_code(pairing_code),
+        connector_type="ebioserver",
+    ).first()
+    dep = None
+    if integration:
+        expires_at = integration.pairing_code_expires_at
+        if not expires_at or (expires_at.replace(tzinfo=timezone.utc) if expires_at.tzinfo is None else expires_at) < utcnow():
+            return _json_error(401, "pairing_code_expired", "Pairing code has expired. Generate a new code in RRR.")
+        gym = integration.gym if hasattr(integration, "gym") else None
+        if gym is None:
+            from app.models import Gym
+            gym = db.session.get(Gym, integration.gym_id)
+        connector_type = "ebioserver"
+    else:
+        dep = GymDeployment.query.filter_by(pairing_code=pairing_code).first()
+        if not dep or not dep.pairing_code_expires_at:
+            return _json_error(401, "pairing_code_invalid", "Invalid or expired pairing code.")
+        expires_at = dep.pairing_code_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < utcnow():
+            return _json_error(401, "pairing_code_expired", "Pairing code has expired. Generate a new code from admin dashboard.")
+        gym = dep.gym
+        connector_type = "direct_bridge"
     if not gym or gym.status != "active":
         return _json_error(403, "gym_inactive", "Gym is not active for bridge pairing.")
 
@@ -471,6 +538,7 @@ def pair_bridge():
             first_paired_at=utcnow(),
             last_heartbeat_at=utcnow(),
             status="paired",
+            connector_type=connector_type,
             is_active=True,
         )
         db.session.add(installation)
@@ -490,6 +558,7 @@ def pair_bridge():
         installation.last_heartbeat_at = utcnow()
         installation.status = "paired"
         installation.is_active = True
+        installation.connector_type = connector_type
 
     # Associate with latest release if matched
     matched_release = BridgeRelease.query.filter_by(version=version).first()
@@ -497,18 +566,26 @@ def pair_bridge():
         installation.release_id = matched_release.id
         installation.release_channel = matched_release.release_channel
 
-    # Burn / invalidate pairing code
-    dep.pairing_code = None
-    dep.pairing_code_expires_at = None
-    if "bridge_connected" in dep.checklist_json:
-        dep.checklist_json["bridge_connected"]["status"] = "passed"
-        dep.checklist_json["bridge_connected"]["details"] = f"Paired {device_serial} (v{version})"
-
-    dep.add_timeline_event(
-        event=f"Biometric Bridge V2 Paired ({device_serial})",
-        actor=pc_name or "Bridge Client",
-        details=f"Version: {version}, OS: {os_info}, ID: {installation.public_id}",
-    )
+    # Burn / invalidate pairing code.
+    if integration:
+        integration.pairing_code_hash = None
+        integration.pairing_code_expires_at = None
+        integration.device_serial = device_serial
+        integration.device_name = str(_payload_value(payload, "deviceName", "device_name") or "").strip()[:160] or None
+        integration.status = "connected"
+        integration.is_primary = True
+        integration.last_success_at = utcnow()
+    elif dep:
+        dep.pairing_code = None
+        dep.pairing_code_expires_at = None
+        if "bridge_connected" in dep.checklist_json:
+            dep.checklist_json["bridge_connected"]["status"] = "passed"
+            dep.checklist_json["bridge_connected"]["details"] = f"Paired {device_serial} (v{version})"
+        dep.add_timeline_event(
+            event=f"Biometric Bridge V2 Paired ({device_serial})",
+            actor=pc_name or "Bridge Client",
+            details=f"Version: {version}, OS: {os_info}, ID: {installation.public_id}",
+        )
 
 
     audit(
@@ -516,7 +593,7 @@ def pair_bridge():
         resource_type="bridge",
         resource_id=installation.id,
         gym_id=gym.id,
-        metadata={"device_serial": device_serial, "version": version},
+        metadata={"device_serial": device_serial, "version": version, "connector_type": connector_type},
     )
     db.session.commit()
 

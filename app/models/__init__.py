@@ -30,6 +30,14 @@ from app.models.push_token import UserPushToken
 from app.models.qr_settings import QRSettings
 from app.models.reminder_log import ReminderLog
 from app.models.renewal_history import RenewalHistory
+from app.models.rrr import (
+    RRRIntegration,
+    RRRIdentityMapping,
+    RRRAttendanceEvent,
+    RRRRule,
+    RRROpportunity,
+    RRRAutomationRun,
+)
 from app.models.template import NotificationTemplate
 from app.models.user import User
 
@@ -67,6 +75,12 @@ __all__ = [
     "QRSettings",
     "ReminderLog",
     "RenewalHistory",
+    "RRRIntegration",
+    "RRRIdentityMapping",
+    "RRRAttendanceEvent",
+    "RRRRule",
+    "RRROpportunity",
+    "RRRAutomationRun",
     "User",
     "UserPushToken",
     "db",

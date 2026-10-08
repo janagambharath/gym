@@ -18,11 +18,10 @@ let activeTab = 'dashboard';
 
 const TAB_CONFIG = {
   dashboard: { screen: 'dashboard', label: 'Dashboard' },
+  revenue: { screen: 'rrr-list', label: 'Revenue', params: { pillar: 'revenue' } },
+  retain: { screen: 'rrr-list', label: 'Retain', params: { pillar: 'retain' } },
+  recover: { screen: 'rrr-list', label: 'Recover', params: { pillar: 'recover' } },
   members: { screen: 'members', label: 'Members' },
-  access: { screen: 'access', label: 'Access' },
-  renewals: { screen: 'renewals', label: 'Renewals' },
-  payments: { screen: 'payments', label: 'Payments' },
-  more: { screen: 'settings', label: 'More' },
 };
 
 // ─── Screen Registration ─────────────────────────────────────────────
@@ -34,7 +33,9 @@ function registerScreens() {
   router.register('member-login', () => import('./screens/member-login.js'));
 
   // Tabs
-  router.register('dashboard', () => import('./screens/dashboard.js'), { auth: true });
+  router.register('dashboard', () => import('./screens/rrr-dashboard.js'), { auth: true });
+  router.register('rrr-list', () => import('./screens/rrr-list.js'), { auth: true });
+  router.register('rrr-integrations', () => import('./screens/rrr-integrations.js'), { auth: true });
   router.register('members', () => import('./screens/members.js'), { auth: true });
   router.register('renewals', () => import('./screens/renewals.js'), { auth: true });
   router.register('payments', () => import('./screens/payments.js'), { auth: true });
@@ -121,7 +122,7 @@ async function switchTab(tabId, recordHistory = true) {
   }
   activeTab = tabId;
   showTabBar(tabId);
-  await router.switchTab(tabId, config.screen);
+  await router.switchTab(tabId, config.screen, config.params || {});
 }
 
 // ─── Navigation API (used by screens) ────────────────────────────────

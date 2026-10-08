@@ -40,6 +40,8 @@ Desktop.ini
 *.aab
 *.keystore
 *.jks
+bridge_secrets.dat
+bridge_state.json
 original_keystore/
 scratch_*
 

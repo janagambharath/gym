@@ -132,7 +132,7 @@ export function DashboardScreen({
       <View style={styles.topBar}>
         <View style={styles.brandBlock}>
           <BrandMark />
-          <Text style={styles.brandName}>Renewal Desk</Text>
+          <Text style={styles.brandName}>RRR Growth System</Text>
         </View>
         {session?.tenantName ? (
           <View style={styles.gymSelector}>
@@ -831,7 +831,7 @@ function BrandMark() {
       source={require('../../assets/logo.png')}
       style={styles.brandMark}
       resizeMode="contain"
-      accessibilityLabel="Renewal Desk"
+      accessibilityLabel="RRR Gym Growth System"
     />
   );
 }

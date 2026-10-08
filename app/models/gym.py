@@ -18,7 +18,7 @@ DEFAULT_WHATSAPP_RENEWAL_REMINDER_TEMPLATE = (
     "Please complete your renewal payment to keep access active."
 )
 
-DEFAULT_TRIAL_DAYS: int = 7
+DEFAULT_TRIAL_DAYS: int = 14
 
 
 class Gym(TimestampMixin, db.Model):

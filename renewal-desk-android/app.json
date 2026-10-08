@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Renewal Desk",
+    "name": "RRR Gym Growth System",
     "slug": "renewal-desk-android",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -42,7 +42,7 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#2563EB"
+          "color": "#0F9F62"
         }
       ],
       "expo-font",

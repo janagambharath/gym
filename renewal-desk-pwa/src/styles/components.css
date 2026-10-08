@@ -124,6 +124,32 @@
   letter-spacing: -0.3px;
 }
 
+/* RRR responsive growth dashboard */
+.rrr-page { background:#f6f8fb; color:#142033; height:100%; overflow:auto; padding:20px; padding-bottom:calc(76px + var(--safe-bottom)); box-sizing:border-box; }
+.rrr-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:26px; }
+.rrr-brand { display:flex; align-items:center; gap:8px; font-weight:700; }
+.rrr-brand b { color:#fff; background:linear-gradient(135deg,#1ccc7b,#087b4a); padding:7px 10px; border-radius:8px; letter-spacing:-1px; font-size:20px; }
+.rrr-brand span { font-size:14px; color:#405064; }
+.rrr-connection,.rrr-panel button,.rrr-pillar button,.rrr-opportunity button { border:0; border-radius:8px; padding:8px 11px; color:#087b4a; background:#e9f9f0; font-weight:700; cursor:pointer; }
+.rrr-connection.connected { color:#087b4a; }
+.rrr-hero { max-width:760px; margin-bottom:18px; }
+.rrr-hero h1,.rrr-detail h1 { font-size:clamp(25px,4vw,38px); line-height:1.08; margin:0 0 7px; letter-spacing:-1.2px; }
+.rrr-hero p,.rrr-detail>p { margin:0; color:#66758a; font-size:16px; }
+.rrr-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:22px 0; }
+.rrr-kpis article,.rrr-panel,.rrr-pillar { background:#fff; border:1px solid #e7edf2; border-radius:14px; box-shadow:0 2px 9px rgba(15,23,42,.04); }
+.rrr-kpis article { padding:16px; display:flex; flex-direction:column; gap:3px; }
+.rrr-kpis strong { font-size:28px; }.rrr-kpis span{font-size:13px;color:#6b778b;}
+.rrr-pillars { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.rrr-pillar { padding:18px; }.rrr-pillar h2 { margin:0; font-size:20px; }.rrr-pillar p { margin:4px 0 20px; color:#607086; font-size:13px; }
+.rrr-pillar-bottom { display:grid; grid-template-columns:auto 1fr; align-items:end; gap:4px 9px; }.rrr-pillar-bottom strong { font-size:35px; line-height:1; }.rrr-pillar-bottom span{font-size:13px;color:#64748b;padding-bottom:4px;}.rrr-pillar-bottom em{grid-column:1/3;font-style:normal;font-weight:700;color:#087b4a;}.rrr-pillar-bottom button{grid-column:1/3;margin-top:10px;justify-self:start;}
+.rrr-pillar.green{background:linear-gradient(120deg,#ecfff6,#fff)}.rrr-pillar.amber{background:linear-gradient(120deg,#fff8e9,#fff)}.rrr-pillar.red{background:linear-gradient(120deg,#fff0f2,#fff)}
+.rrr-insights,.rrr-list-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:14px; }.rrr-list-grid{grid-template-columns:repeat(3,minmax(0,1fr));}
+.rrr-panel { padding:17px; }.rrr-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.rrr-panel h2{font-size:16px;margin:0}.rrr-panel p{font-size:13px;color:#64748b;line-height:1.45}.rrr-panel-head button{background:none;padding:0;color:#0f9f62}.rrr-ok{color:#087b4a;font-weight:700}.rrr-warn{color:#b7791f;font-weight:700}
+.rrr-bars{display:flex;gap:12px;align-items:end;min-height:102px}.rrr-bars>div{flex:1;display:flex;flex-direction:column;gap:5px;font-size:12px;color:#64748b}.rrr-bars i{display:block;height:70px;border-radius:7px 7px 2px 2px;background:#4ac985}.rrr-bars i.retain{height:52px;background:#f8bd48}.rrr-bars i.recover{height:37px;background:#f17479}.rrr-bars strong{color:#15243a;font-size:13px}
+.rrr-member-row{display:flex;justify-content:space-between;gap:8px;border-top:1px solid #edf1f5;padding:11px 0}.rrr-member-row:first-of-type{border-top:0}.rrr-member-row b{display:block;font-size:13px}.rrr-member-row span{display:block;font-size:11px;color:#7a889a;margin-top:3px}.rrr-member-row strong{font-size:12px;white-space:nowrap;color:#087b4a}.rrr-no-data{padding:16px 0;text-align:center}.rrr-loading,.rrr-empty{padding:32px;text-align:center;color:#64748b}.rrr-detail{max-width:900px;margin:auto}.rrr-detail .rrr-header button{background:transparent;border:0;font-size:24px}.rrr-opportunity{display:flex;align-items:center;justify-content:space-between;gap:14px;border-top:1px solid #edf1f5;padding:15px 0}.rrr-opportunity:first-of-type{border-top:0}.rrr-opportunity h2{font-size:16px;margin:0}.rrr-opportunity p{margin:4px 0}.rrr-opportunity small{text-transform:capitalize;color:#a16118}.rrr-opportunity>div:last-child{display:flex;align-items:end;flex-direction:column;gap:8px}.rrr-opportunity strong{color:#087b4a}
+@media (min-width:900px){.rrr-page{padding:32px 42px 42px}.rrr-page:before{content:'RRR';position:fixed;left:0;top:0;bottom:0;width:188px;padding:31px 24px;background:#101d2b;color:#39ce82;font-size:28px;font-weight:900;letter-spacing:-2px;z-index:1}.rrr-page{padding-left:230px}.rrr-header{position:relative}.rrr-header:after{content:'Dashboard  ·  Revenue  ·  Retain  ·  Recover  ·  Members';position:fixed;left:24px;top:94px;width:142px;white-space:pre-line;color:#d4dfeb;font-size:13px;line-height:3.2;z-index:2}.rrr-page .rrr-hero{max-width:none}.rrr-page .rrr-list-grid{grid-template-columns:repeat(3,minmax(0,1fr));}.rrr-page .rrr-insights{grid-template-columns:1.2fr .8fr}.rrr-page{padding-bottom:42px}#tab-bar-container{display:none!important}}
+@media (max-width:680px){.rrr-page{padding:16px}.rrr-header{margin-bottom:18px}.rrr-brand span{font-size:12px}.rrr-hero h1{font-size:27px}.rrr-kpis{gap:8px}.rrr-kpis article{padding:12px}.rrr-kpis strong{font-size:22px}.rrr-kpis span{font-size:11px}.rrr-pillars,.rrr-insights,.rrr-list-grid{grid-template-columns:1fr}.rrr-pillar{padding:15px}.rrr-pillar-bottom{grid-template-columns:auto 1fr auto}.rrr-pillar-bottom em{grid-column:auto}.rrr-pillar-bottom button{grid-column:3;grid-row:1/3;align-self:center}.rrr-list-grid{margin-bottom:20px}.rrr-opportunity{align-items:flex-start}.rrr-opportunity>div:last-child{align-items:flex-end}.tab-label{font-size:10px!important}}
+
 .dash-gym-pill {
   display: flex;
   align-items: center;

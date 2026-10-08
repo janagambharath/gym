@@ -241,7 +241,7 @@ def register_dashboard_routes(bp):
             {"id": "members_imported", "title": "Members", "description": "Add your first member or import your existing member list.", "action_label": "Add members", "completed": members_imported, "route": "Members"},
             {"id": "whatsapp_connected", "title": "Connect WhatsApp", "description": "Send renewal reminders and follow-ups from your gym's WhatsApp Business account.", "action_label": "Connect WhatsApp", "completed": whatsapp_connected, "route": "WhatsApp"},
             {"id": "member_payments", "title": "Collect member payments", "description": "Add your gym UPI ID so members can pay their own renewal amount in VYNLA.", "action_label": "Set up payments", "completed": member_payments_ready, "route": "PaymentSetup"},
-            {"id": "subscription", "title": "Renewal Desk subscription", "description": "7 days free • No credit card required. Choose a plan before trial ends to keep using Renewal Desk.", "action_label": "View subscription", "completed": subscription_ready, "route": "Subscription", "status": subscription_status, "trial_ends_at": billing.get("expires_at")},
+            {"id": "subscription", "title": "RRR subscription", "description": "14 days free • No credit card required. Choose a plan before trial ends to keep using RRR.", "action_label": "View subscription", "completed": subscription_ready, "route": "Subscription", "status": subscription_status, "trial_ends_at": billing.get("expires_at")},
             {"id": "biometric_setup", "title": "Biometric access control", "description": "Connect your eSSL biometric device to auto-block expired members and track gym entry/exit.", "action_label": "Set up biometric", "completed": bridge_provisioned, "route": "BiometricSetup", "optional": True},
         ]
 
@@ -258,7 +258,7 @@ def register_dashboard_routes(bp):
                 "trial": {
                     "is_active": subscription_status == "TRIAL",
                     "ends_at": billing.get("expires_at") if subscription_status == "TRIAL" else None,
-                    "days": 7,
+                    "days": 14,
                 },
                 "steps": steps,
             },

@@ -5,10 +5,10 @@
 
 :root {
   /* ── Brand ──────────────────────────────────────────────────────── */
-  --brand: #2563EB;
-  --brand-dark: #1D4ED8;
-  --brand-light: #3B82F6;
-  --brand-subtle: #EFF6FF;
+  --brand: #0F9F62;
+  --brand-dark: #087B4A;
+  --brand-light: #3BCB85;
+  --brand-subtle: #ECFBF3;
 
   /* ── Surfaces ───────────────────────────────────────────────────── */
   --bg: #F8F9FB;

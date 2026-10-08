@@ -51,6 +51,56 @@ namespace eBioServerBridge
                 return;
             }
 
+            // Credentials are only accepted from the setup JSON once.  They
+            // are immediately moved to a DPAPI-protected local file bound to
+            // the Windows account running this bridge.
+            var secrets = LocalSecretStore.Load() ?? new BridgeSecrets();
+            bool changedSecrets = false;
+            if (string.IsNullOrEmpty(secrets.EBioServerApiUser) && !string.IsNullOrEmpty(_config.eBioServerApiUser))
+            {
+                secrets.EBioServerApiUser = _config.eBioServerApiUser;
+                changedSecrets = true;
+            }
+            if (string.IsNullOrEmpty(secrets.EBioServerApiPassword) && !string.IsNullOrEmpty(_config.eBioServerApiPassword))
+            {
+                secrets.EBioServerApiPassword = _config.eBioServerApiPassword;
+                changedSecrets = true;
+            }
+            if (string.IsNullOrEmpty(secrets.RenewalDeskApiKey) && !string.IsNullOrEmpty(_config.RenewalDeskApiKey))
+            {
+                secrets.RenewalDeskApiKey = _config.RenewalDeskApiKey;
+                secrets.RenewalDeskGymId = _config.RenewalDeskGymId;
+                changedSecrets = true;
+            }
+
+            if (!string.IsNullOrEmpty(_config.PairingCode) && string.IsNullOrEmpty(secrets.RenewalDeskApiKey))
+            {
+                var paired = RenewalDeskClient.Pair(_config.RenewalDeskApiBaseUrl, _config.PairingCode,
+                    _config.DeviceSerial, _config.DeviceName);
+                if (paired == null || !paired.Ok || string.IsNullOrEmpty(paired.ApiKey))
+                {
+                    Log("ERROR: Pairing failed. Generate a new code in the RRR mobile app.", ConsoleColor.Red);
+                    return;
+                }
+                secrets.RenewalDeskApiKey = paired.ApiKey;
+                secrets.RenewalDeskGymId = paired.GymId;
+                changedSecrets = true;
+            }
+            if (changedSecrets)
+            {
+                LocalSecretStore.Save(secrets);
+                _config.eBioServerApiUser = "";
+                _config.eBioServerApiPassword = "";
+                _config.RenewalDeskApiKey = "";
+                _config.RenewalDeskGymId = "";
+                _config.PairingCode = "";
+                File.WriteAllText(configPath, JsonConvert.SerializeObject(_config, Formatting.Indented));
+            }
+            _config.eBioServerApiUser = secrets.EBioServerApiUser;
+            _config.eBioServerApiPassword = secrets.EBioServerApiPassword;
+            _config.RenewalDeskApiKey = secrets.RenewalDeskApiKey;
+            _config.RenewalDeskGymId = secrets.RenewalDeskGymId;
+
             // Initialize clients
             _ebioClient = new EBioServerClient(
                 _config.eBioServerUrl,
@@ -405,6 +455,8 @@ namespace eBioServerBridge
         public string RenewalDeskApiKey { get; set; }
         public string RenewalDeskGymId { get; set; }
         public string DeviceSerial { get; set; }
+        public string DeviceName { get; set; }
+        public string PairingCode { get; set; }
         public int PollIntervalSeconds { get; set; }
         public int HeartbeatIntervalSeconds { get; set; }
         public int CommandPollIntervalSeconds { get; set; }
@@ -412,8 +464,6 @@ namespace eBioServerBridge
         public BridgeConfig()
         {
             eBioServerSoapEndpoint = "/WebService.asmx";
-            eBioServerApiUser = "essl";
-            eBioServerApiPassword = "admin";
             PollIntervalSeconds = 15;
             HeartbeatIntervalSeconds = 60;
             CommandPollIntervalSeconds = 10;

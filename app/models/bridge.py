@@ -66,6 +66,8 @@ class BridgeInstallation(TimestampMixin, db.Model):
     status = db.Column(
         db.String(32), nullable=False, default="paired", index=True
     )  # pending, paired, online, offline, revoked, disabled
+    connector_type = db.Column(db.String(32), nullable=False, default="direct_bridge", index=True)
+    device_name = db.Column(db.String(160), nullable=True)
 
     gym = db.relationship("Gym", back_populates="bridge_installation")
     release = db.relationship(
