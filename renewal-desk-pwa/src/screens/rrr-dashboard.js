@@ -26,10 +26,12 @@ async function load(el) {
   const session = getCachedSession();
   const name = session?.tenantName || 'Your Gym';
   const integration = data.integration;
+  const isDirect = integration?.type === 'adms_direct';
+  const integrationName = isDirect ? 'Direct Cloud' : 'eBioServer';
   el.innerHTML = `<main class="rrr-page">
     <header class="rrr-header">
       <div class="rrr-brand"><b>RRR</b><span>Gym Growth System</span></div>
-      <button id="rrr-integrations" class="rrr-connection ${integration?.status === 'connected' ? 'connected' : ''}">${integration?.status === 'connected' ? 'eBio Connected' : 'Connect eBioServer'}</button>
+      <button id="rrr-integrations" class="rrr-connection ${integration?.status === 'connected' ? 'connected' : ''}">${integration?.status === 'connected' ? `${integrationName} connected` : 'Connect attendance'}</button>
     </header>
     <section class="rrr-hero"><h1>Grow more from the members you already have.</h1><p>Revenue. Retain. Recover. The complete gym growth system for ${escapeHtml(name)}.</p></section>
     <section class="rrr-kpis">
@@ -43,7 +45,7 @@ async function load(el) {
         <div class="rrr-bars">${['revenue','retain','recover'].map(k => `<div><i class="${k}"></i><b>${pillarMeta[k].title}</b><strong>${formatCurrency(data.pillars[k].potential_revenue)}</strong></div>`).join('')}</div>
       </article>
       <article class="rrr-panel"><div class="rrr-panel-head"><h2>Integration Health</h2><span class="${integration?.status === 'connected' ? 'rrr-ok' : 'rrr-warn'}">${escapeHtml(integration?.status || 'Not configured')}</span></div>
-        <p>${integration?.device_name ? `${escapeHtml(integration.device_name)} · ` : ''}${integration?.device_serial ? escapeHtml(integration.device_serial) : 'Pair your licensed local eBioServer from the gym PC.'}</p>
+        <p>${integration?.device_name ? `${escapeHtml(integration.device_name)} · ` : ''}${integration?.device_serial ? escapeHtml(integration.device_serial) : 'Connect your eSSL terminal directly to RRR. No gym PC is needed for attendance.'}</p>
         <button id="rrr-health">Manage integration</button>
       </article>
     </section>

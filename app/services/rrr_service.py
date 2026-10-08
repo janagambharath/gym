@@ -228,7 +228,13 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
         RRRAttendanceEvent.gym_id == gym_id, RRRAttendanceEvent.member_id.isnot(None),
         RRRAttendanceEvent.punch_time >= month_start,
     ).scalar() or 0
-    integration = RRRIntegration.query.filter_by(gym_id=gym_id, connector_type="ebioserver").first()
+    # Direct ADMS is the preferred no-PC integration. Keep existing eBioServer
+    # installations visible as a fallback so those gyms are not disrupted.
+    integrations = RRRIntegration.query.filter_by(gym_id=gym_id).all()
+    integration = next((row for row in integrations if row.connector_type == "adms_direct" and row.status == "connected"), None)
+    integration = integration or next((row for row in integrations if row.connector_type == "ebioserver" and row.status == "connected"), None)
+    integration = integration or next((row for row in integrations if row.connector_type == "adms_direct"), None)
+    integration = integration or next((row for row in integrations if row.connector_type == "ebioserver"), None)
     return {
         "members": {"total": total_members, "active": active_members,
                     "attendance_rate": round((active_visitors / active_members * 100), 1) if active_members else 0},

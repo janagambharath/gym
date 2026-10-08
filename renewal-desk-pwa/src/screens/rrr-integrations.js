@@ -4,30 +4,82 @@ import { escapeHtml } from '../utils.js';
 
 export default { async mount(el) { await load(el); } };
 
+function directSettings() {
+  return {
+    host: new URL(window.location.origin).host,
+    port: window.location.protocol === 'https:' ? '443' : '80',
+    https: window.location.protocol === 'https:' ? 'On' : 'Off',
+  };
+}
+
 async function load(el) {
-  el.innerHTML = '<div class="rrr-loading">Loading integration status…</div>';
+  el.innerHTML = '<div class="rrr-loading">Preparing your connection workspace…</div>';
   const result = await apiRequest('/api/mobile/v1/rrr/integrations');
-  const integration = result.ok ? (result.data.integrations || []).find(x => x.type === 'ebioserver') : null;
+  const integrations = result.ok ? result.data.integrations || [] : [];
+  const direct = integrations.find(x => x.type === 'adms_direct');
+  const bridge = integrations.find(x => x.type === 'ebioserver');
   const devices = result.ok ? result.data.devices || [] : [];
-  el.innerHTML = `<main class="rrr-page rrr-detail"><header class="rrr-header"><button id="rrr-back">←</button><div class="rrr-brand"><b>RRR</b><span>Integrations</span></div></header><h1>eSSL eBioServer</h1><p>Your phone manages the connection through RRR. eBioServer credentials stay on the gym PC.</p><section class="rrr-panel"><h2>${escapeHtml(integration?.status || 'Not configured')}</h2><p>${integration?.device_serial ? `Selected device: ${escapeHtml(integration.device_name || integration.device_serial)} (${escapeHtml(integration.device_serial)})` : 'Pair the eBioServer Bridge from the licensed gym PC.'}</p><p>Commissioning: ${escapeHtml(integration?.commissioning_status || 'not started')} · ${integration?.records_synced || 0} records synced · ${integration?.unmapped_records || 0} unmapped</p>${devices.length ? `<h3>Devices reported by the gym-PC connector</h3>${devices.map(d => `<p>${escapeHtml(d.name)} · ${escapeHtml(d.serial_number)} · ${escapeHtml(d.status || 'unknown')} ${d.selected ? '· Selected' : `<button data-select-device="${d.id}">Select device</button>`}</p>`).join('')}` : '<p>No device inventory reported yet. Keep the paired connector running; it checks eBioServer through the gym PC.</p>'}<button id="rrr-pair">Generate pairing code</button><button id="rrr-mappings">Review unmapped punches</button><button id="rrr-rules">Signal thresholds</button><div id="rrr-pair-code"></div>${integration?.commissioning_status === 'attendance_verified' && !integration?.commands_enabled ? '<button id="rrr-commission">Enable after supervised door test</button>' : ''}</section></main>`;
+  const settings = directSettings();
+
+  el.innerHTML = `<main class="rrr-page rrr-integrations-page">
+    <header class="rrr-header rrr-integrations-header">
+      <button id="rrr-back" class="rrr-back-button" aria-label="Back">←</button>
+      <div class="rrr-brand"><b>RRR</b><span>Gym Growth System</span></div>
+      <span class="rrr-help-label">Device setup</span>
+    </header>
+    <section class="rrr-setup-hero">
+      <div><span class="rrr-eyebrow">ELITE GYM · ATTENDANCE</span><h1>Connect your terminal, not another computer.</h1><p>Choose Direct Cloud for the cleanest setup. RRR receives attendance securely from your eSSL device and turns it into member actions.</p></div>
+      <div class="rrr-setup-progress"><b>${direct?.status === 'connected' ? 'Connected' : 'Step 1 of 3'}</b><span>${direct?.records_synced || 0} verified records</span></div>
+    </section>
+    <section class="rrr-connection-grid">
+      <article class="rrr-connect-card rrr-connect-card-primary">
+        <div class="rrr-card-top"><span class="rrr-option-icon">☁</span><div><span class="rrr-status-pill ${direct?.status === 'connected' ? 'is-live' : ''}">${direct?.status === 'connected' ? 'LIVE' : 'RECOMMENDED'}</span><h2>Direct Cloud</h2><p>No gym PC or bridge required for attendance.</p></div></div>
+        ${direct ? directPanel(direct, settings) : directForm()}
+      </article>
+      <article class="rrr-connect-card">
+        <div class="rrr-card-top"><span class="rrr-option-icon rrr-option-muted">⌘</span><div><span class="rrr-status-pill">FALLBACK</span><h2>eBioServer Bridge</h2><p>Use only when your licensed eBioServer stays on a gym PC.</p></div></div>
+        ${bridge ? `<div class="rrr-bridge-summary"><b>${escapeHtml(bridge.status || 'Not configured')}</b><span>${escapeHtml(bridge.device_name || bridge.device_serial || 'Awaiting device selection')}</span></div>` : '<p class="rrr-muted-copy">Not needed for Direct Cloud. It remains available for existing eBioServer installations.</p>'}
+        <button class="rrr-secondary-button" id="rrr-pair">Generate bridge pairing code</button><div id="rrr-pair-code" class="rrr-code-box" hidden></div>
+      </article>
+    </section>
+    <section class="rrr-steps-panel">
+      <div class="rrr-panel-head"><div><span class="rrr-eyebrow">WHAT HAPPENS NEXT</span><h2>Three small steps. Then RRR takes over.</h2></div></div>
+      <ol class="rrr-setup-steps">
+        <li class="${direct ? 'done' : ''}"><b>1</b><div><strong>Register the terminal</strong><span>Save the terminal serial number in RRR.</span></div></li>
+        <li class="${direct?.status === 'connected' ? 'done' : ''}"><b>2</b><div><strong>Point it to RRR Cloud</strong><span>Enter the server address shown above in Cloud Server Settings.</span></div></li>
+        <li class="${direct?.last_success_at ? 'done' : ''}"><b>3</b><div><strong>Make one real punch</strong><span>RRR confirms the event, then you map any unknown member once.</span></div></li>
+      </ol>
+      ${direct ? `<button class="rrr-link-button" id="rrr-mappings">Review unknown punches (${direct.unmapped_records || 0}) →</button>` : ''}
+    </section>
+    ${devices.length ? `<section class="rrr-device-list"><h2>Bridge device inventory</h2>${devices.map(d => `<div><b>${escapeHtml(d.name)}</b><span>${escapeHtml(d.serial_number)} · ${escapeHtml(d.status || 'unknown')}</span></div>`).join('')}</section>` : ''}
+    <aside class="rrr-safety-note"><span>ⓘ</span><p><b>Access-control safety:</b> direct attendance is available now. Physical door block/unblock stays disabled until this exact terminal completes a supervised commissioning test and returns a verified command acknowledgement.</p></aside>
+  </main>`;
+
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.switchTab('dashboard'));
   el.querySelector('#rrr-mappings')?.addEventListener('click', () => navigate.push('rrr-mappings'));
-  el.querySelector('#rrr-rules')?.addEventListener('click', () => navigate.push('rrr-rules'));
+  el.querySelector('#rrr-direct-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const button = event.currentTarget.querySelector('button');
+    button.disabled = true; button.textContent = 'Saving terminal…';
+    const response = await apiRequest('/api/mobile/v1/rrr/integrations/adms/provision', { method: 'POST', body: {
+      device_serial: String(form.get('device_serial') || '').trim(),
+      device_name: String(form.get('device_name') || '').trim(),
+    }});
+    if (response.ok) await load(el);
+    else { button.disabled = false; button.textContent = 'Continue'; el.querySelector('#rrr-direct-error').textContent = response.error?.message || 'We could not save that terminal. Check the serial number.'; }
+  });
   el.querySelector('#rrr-pair')?.addEventListener('click', async () => {
     const pair = await apiRequest('/api/mobile/v1/rrr/integrations/ebioserver/pairing', { method: 'POST', body: {} });
-    const box = el.querySelector('#rrr-pair-code');
-    box.textContent = pair.ok ? `Pairing code: ${pair.data.pairing_code} (expires ${new Date(pair.data.expires_at).toLocaleTimeString()})` : 'Could not create pairing code.';
+    const box = el.querySelector('#rrr-pair-code'); box.hidden = false;
+    box.textContent = pair.ok ? `Pairing code: ${pair.data.pairing_code} · expires ${new Date(pair.data.expires_at).toLocaleTimeString()}` : 'Could not create a pairing code.';
   });
-  el.querySelectorAll('[data-select-device]').forEach(button => button.addEventListener('click', async () => {
-    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${integration.id}/device`, {
-      method: 'POST', body: { device_id: Number(button.dataset.selectDevice) },
-    });
-    if (response.ok) await load(el);
-    else alert(response.error?.message || 'Could not select the device.');
-  }));
-  el.querySelector('#rrr-commission')?.addEventListener('click', async () => {
-    if (!confirm('Confirm that a supervised physical door test passed.')) return;
-    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${integration.id}/commission`, { method: 'POST', body: { physical_test_passed: true } });
-    if (response.ok) load(el);
-  });
+}
+
+function directForm() {
+  return `<form id="rrr-direct-form" class="rrr-direct-form"><label>Terminal serial number<input name="device_serial" autocomplete="off" placeholder="Example: X2008-123456" required></label><label>Friendly name <input name="device_name" value="Elite Gym Entry" maxlength="120"></label><p id="rrr-direct-error" class="rrr-form-error"></p><button class="rrr-primary-button" type="submit">Continue <span>→</span></button></form>`;
+}
+
+function directPanel(direct, settings) {
+  return `<div class="rrr-direct-live"><div class="rrr-device-identity"><b>${escapeHtml(direct.device_name || 'Elite Gym Entry')}</b><span>${escapeHtml(direct.device_serial)}</span></div><div class="rrr-server-card"><span>Cloud Server Address</span><code>${escapeHtml(settings.host)}</code><small>Port ${settings.port} · HTTPS ${settings.https} · Mode ADMS</small></div><p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch.</p><button id="rrr-mappings" class="rrr-primary-button">Check connection status <span>→</span></button></div>`;
 }
