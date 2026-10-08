@@ -270,6 +270,7 @@ def get_service_indicators(gym: Gym) -> dict[str, dict[str, str]]:
 
 # ─── 1. Super Admin Dashboard ────────────────────────────────────────────────
 
+@admin_bp.route("")
 @admin_bp.route("/")
 @login_required
 @roles_required("super_admin")

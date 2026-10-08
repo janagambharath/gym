@@ -9,10 +9,12 @@ from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
+import urllib.parse
+
 from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Member, MembershipPlan, MobileIdempotencyKey, PaymentVerification, RenewalHistory
+from app.models import Gym, Member, MembershipPlan, MobileIdempotencyKey, PaymentVerification, RenewalHistory
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
@@ -20,7 +22,62 @@ from app.services.payment_service import cancel_payment, delete_payment, reject_
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
+def _generate_receipt(p: PaymentVerification) -> dict:
+    gym = getattr(g, "current_user", None) and getattr(g.current_user, "gym", None)
+    if not gym and p.gym_id:
+        gym = Gym.query.get(p.gym_id)
+    gym_name = gym.name if gym else "Gym"
+
+    member = p.member
+    member_name = member.full_name if member else "Member"
+    member_phone = (member.phone if member else "") or ""
+    plan_name = p.plan.name if p.plan else (member.plan.name if member and member.plan else "Gym Membership")
+    paid_on_str = p.paid_on.strftime("%d %b %Y") if p.paid_on else (p.created_at.strftime("%d %b %Y") if p.created_at else "")
+    amount_val = p.amount if p.amount is not None else 0
+    amount_str = f"₹{amount_val:,.2f}"
+    method_str = (p.method or "CASH").upper()
+    ref_str = p.reference or f"REC-{p.id:06d}"
+    valid_till_str = member.membership_end.strftime("%d %b %Y") if member and member.membership_end else "N/A"
+
+    receipt_text = (
+        f"🧾 *PAYMENT RECEIPT*\n"
+        f"*{gym_name}*\n"
+        f"────────────────────────\n"
+        f"👤 *Member:* {member_name}\n"
+        f"📋 *Plan:* {plan_name}\n"
+        f"💰 *Amount Paid:* {amount_str}\n"
+        f"💳 *Mode:* {method_str}\n"
+        f"📅 *Date:* {paid_on_str}\n"
+        f"🔖 *Receipt #:* {ref_str}\n"
+        f"⏳ *Valid Till:* {valid_till_str}\n"
+        f"────────────────────────\n"
+        f"Thank you for training with us! Stay fit & healthy! 💪"
+    )
+
+    clean_phone = "".join(ch for ch in member_phone if ch.isdigit())
+    if len(clean_phone) == 10:
+        clean_phone = f"91{clean_phone}"
+
+    encoded_text = urllib.parse.quote(receipt_text)
+    whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_text}" if clean_phone else f"https://wa.me/?text={encoded_text}"
+
+    return {
+        "payment_id": p.id,
+        "receipt_number": ref_str,
+        "member_name": member_name,
+        "member_phone": member_phone,
+        "gym_name": gym_name,
+        "amount": str(p.amount),
+        "plan_name": plan_name,
+        "paid_on": paid_on_str,
+        "valid_until": valid_till_str,
+        "receipt_text": receipt_text,
+        "whatsapp_url": whatsapp_url,
+    }
+
+
 def _serialize_payment(p: PaymentVerification) -> dict:
+    receipt = _generate_receipt(p)
     return {
         "id": p.id,
         "member_id": p.member_id,
@@ -43,6 +100,8 @@ def _serialize_payment(p: PaymentVerification) -> dict:
         "verified_by": p.verified_by.full_name if p.verified_by else None,
         "verified_at": p.verified_at.isoformat() if p.verified_at else None,
         "created_at": p.created_at.isoformat() if p.created_at else None,
+        "receipt": receipt,
+        "whatsapp_url": receipt["whatsapp_url"],
     }
 
 
@@ -190,6 +249,23 @@ def register_payments_routes(bp):
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)
         return jsonify({"success": True, "data": _serialize_payment(payment)})
+
+    @bp.route("/payments/<int:payment_id>/receipt", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def get_payment_receipt(payment_id: int):
+        payment = (
+            PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id)
+            .options(
+                joinedload(PaymentVerification.member),
+                joinedload(PaymentVerification.plan),
+                joinedload(PaymentVerification.created_by),
+            )
+            .first()
+        )
+        if payment is None:
+            return error_response("NOT_FOUND", "Payment not found.", 404)
+        return jsonify({"success": True, "data": _generate_receipt(payment)})
 
     @bp.route("/payments", methods=["POST"])
     @token_required

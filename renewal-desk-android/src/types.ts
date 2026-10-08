@@ -14,7 +14,7 @@ export type Member = {
   email: string | null;
   address?: string | null;
   gender: string | null;
-  status: 'active' | 'expired' | 'deleted';
+  status: 'active' | 'expired' | 'paused' | 'deleted';
   membership_start: string | null;
   membership_end: string | null;
   days_until_expiry: number | null;
@@ -83,6 +83,20 @@ export type Payment = {
   verified_by: string | null;
   verified_at: string | null;
   created_at: string | null;
+  receipt?: {
+    payment_id: number;
+    receipt_number: string;
+    member_name: string;
+    member_phone: string;
+    gym_name: string;
+    amount: string;
+    plan_name: string;
+    paid_on: string;
+    valid_until: string;
+    receipt_text: string;
+    whatsapp_url: string;
+  };
+  whatsapp_url?: string | null;
 };
 
 export type PaymentSummaryToday = {
@@ -498,6 +512,13 @@ export type AccessSummary = {
   device_name: string | null;
   last_heartbeat: string | null;
   has_legacy_events?: boolean;
+  bridge_provisioned?: boolean;
+  bridge_online?: boolean;
+  device_serial?: string;
+  installed_version?: string;
+  pending_commands?: number;
+  failed_commands?: number;
+  heartbeat_age_seconds?: number | null;
 };
 
 export type AccessEvent = {

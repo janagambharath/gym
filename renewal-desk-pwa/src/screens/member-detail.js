@@ -150,6 +150,15 @@ export default {
               <button class="btn btn-outline btn-full" id="btn-record-payment">
                 ${icon('wallet', 18)} Record Payment
               </button>
+              ${member.status === 'paused' ? `
+                <button class="btn btn-full" id="btn-unfreeze" style="font-weight:var(--fw-semibold);background:var(--success);color:white;display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
+                  ${icon('check', 18, 'white')} Resume Membership (Unpause)
+                </button>
+              ` : `
+                <button class="btn btn-outline btn-full" id="btn-freeze" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
+                  ${icon('lock', 18)} Pause / Freeze Membership
+                </button>
+              `}
               <button class="btn btn-whatsapp btn-full" id="btn-send-reminder">
                 ${icon('whatsapp', 18, 'white')} Send WhatsApp Reminder
               </button>
@@ -244,6 +253,45 @@ export default {
 
       el.querySelector('#btn-renew')?.addEventListener('click', () => navigate.push('renew-member', { member: JSON.stringify(member) }));
       el.querySelector('#btn-record-payment')?.addEventListener('click', () => navigate.push('record-payment', { memberId: String(member.id) }));
+
+      el.querySelector('#btn-freeze')?.addEventListener('click', async () => {
+        const daysStr = window.prompt(`How many days would you like to pause ${member.full_name}'s membership? (e.g. 7, 14, 30)`, '14');
+        if (!daysStr) return;
+        const days = parseInt(daysStr, 10);
+        if (isNaN(days) || days < 1) {
+          showToast('Invalid number of days', 'error');
+          return;
+        }
+        const reason = window.prompt('Reason for pause (optional, e.g. Travel, Injury):', '') || '';
+        const res = await apiRequest(`/api/mobile/v1/members/${member.id}/freeze`, {
+          method: 'POST',
+          body: { days, reason }
+        });
+        if (res.ok) {
+          showToast(res.data?.message || 'Membership paused successfully', 'success');
+          member = res.data?.data || res.data;
+          render();
+        } else {
+          showToast(res.error?.message || 'Failed to pause membership', 'error');
+        }
+      });
+
+      el.querySelector('#btn-unfreeze')?.addEventListener('click', async () => {
+        const yes = await showConfirm({
+          title: 'Resume Membership',
+          message: `Resume ${member.full_name}'s membership and restore biometric access?`,
+          confirmText: 'Resume',
+        });
+        if (!yes) return;
+        const res = await apiRequest(`/api/mobile/v1/members/${member.id}/unfreeze`, { method: 'POST' });
+        if (res.ok) {
+          showToast('Membership resumed!', 'success');
+          member = res.data?.data || res.data;
+          render();
+        } else {
+          showToast(res.error?.message || 'Failed to resume membership', 'error');
+        }
+      });
 
       el.querySelector('#btn-send-reminder')?.addEventListener('click', async () => {
         const res = await apiRequest('/api/mobile/v1/whatsapp/send-reminder', { method: 'POST', body: { member_id: member.id } });

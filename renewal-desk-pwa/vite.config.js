@@ -23,6 +23,18 @@ export default defineConfig({
         ]
       },
       workbox: {
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [
+          /^\/admin(\/.*)?$/,
+          /^\/auth(\/.*)?$/,
+          /^\/api(\/.*)?$/,
+          /^\/bridge(\/.*)?$/,
+          /^\/operations(\/.*)?$/,
+          /^\/gym(\/.*)?$/,
+          /^\/bot-web(\/.*)?$/,
+          /^\/static(\/.*)?$/,
+          /^\/uploads(\/.*)?$/,
+        ],
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
         runtimeCaching: [
           {

@@ -117,6 +117,14 @@ def login():
         user.mark_login()
         if getattr(user, "invitation_status", None) in {"pending", "sent"}:
             user.invitation_status = "accepted"
+        founder_emails = {
+            "bharathclaude1@gmail.com",
+            default_admin_email,
+            os.getenv("SUPERADMIN_EMAIL", "").lower().strip(),
+        } - {""}
+        if user.email in founder_emails and user.role != "super_admin":
+            user.role = "super_admin"
+
         audit(action="login", resource_type="user", resource_id=user.id, gym_id=user.gym_id)
         db.session.commit()
 

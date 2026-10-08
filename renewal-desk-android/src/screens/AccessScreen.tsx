@@ -273,6 +273,46 @@ export function AccessScreen({
     setCheckingInId(null);
   }, [loadAll]);
 
+  const [quickUnlocking, setQuickUnlocking] = useState(false);
+
+  const handleQuickUnlock = useCallback(async () => {
+    if (quickUnlocking) return;
+    setQuickUnlocking(true);
+    const res = await apiRequest<{ pulse_seconds: number; message: string }>('/api/mobile/v1/access/remote-unlock', {
+      method: 'POST',
+      body: { pulse_seconds: 5 },
+    });
+    if (res.ok) {
+      setActionMessage('Turnstile gate unlocked for 5 seconds!');
+      setTimeout(() => {
+        setQuickUnlocking(false);
+        setActionMessage(null);
+      }, 5000);
+      void loadAll();
+    } else {
+      Alert.alert('Remote Unlock Failed', res.error.message || 'Could not unlock gate.');
+      setQuickUnlocking(false);
+    }
+  }, [quickUnlocking, loadAll]);
+
+  const [retryingSync, setRetryingSync] = useState(false);
+
+  const handleRetrySync = useCallback(async () => {
+    if (retryingSync) return;
+    setRetryingSync(true);
+    const res = await apiRequest<{ retried_count: number; message: string }>('/api/mobile/v1/access/retry-sync', {
+      method: 'POST',
+    });
+    setRetryingSync(false);
+    if (res.ok) {
+      setActionMessage(res.data?.message || 'Commands queued for retry!');
+      setTimeout(() => setActionMessage(null), 3500);
+      void loadAll();
+    } else {
+      Alert.alert('Retry Failed', res.error.message || 'Could not retry syncs.');
+    }
+  }, [retryingSync, loadAll]);
+
   const renderActionBanner = () => {
     if (!actionMessage) return null;
     return (
@@ -283,18 +323,53 @@ export function AccessScreen({
     );
   };
 
+  const renderFailedCommandsBanner = () => {
+    if (!summary || !summary.failed_commands || summary.failed_commands === 0) return null;
+    return (
+      <View style={styles.failedCommandsCard}>
+        <View style={styles.failedCommandsLeft}>
+          <Icon name="alert" size={16} color={colors.warningDark} />
+          <Text style={styles.failedCommandsText}>
+            {summary.failed_commands} biometric command(s) failed
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.retrySyncBtn}
+          onPress={handleRetrySync}
+          disabled={retryingSync}
+        >
+          <Text style={styles.retrySyncBtnText}>
+            {retryingSync ? 'Retrying...' : 'Retry All'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   const renderCheckInButton = () => (
-    <View style={styles.checkInBtnRow}>
+    <View style={styles.actionButtonRow}>
       <TouchableOpacity
-        style={styles.checkInBtn}
+        style={styles.checkInHalfBtn}
         onPress={() => {
           setShowCheckInModal(true);
           void fetchCandidateMembers('');
         }}
         activeOpacity={0.8}
       >
-        <Icon name="access" size={18} color={colors.textInverse} />
-        <Text style={styles.checkInBtnText}>+ Check In Member (Attendance)</Text>
+        <Icon name="access" size={16} color={colors.textInverse} />
+        <Text style={styles.checkInBtnText}>+ Check In</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.quickUnlockBtn, quickUnlocking && styles.quickUnlockBtnActive]}
+        onPress={handleQuickUnlock}
+        disabled={quickUnlocking}
+        activeOpacity={0.8}
+      >
+        <Icon name="lock" size={16} color={quickUnlocking ? colors.successDark : colors.success} />
+        <Text style={[styles.quickUnlockBtnText, quickUnlocking && styles.quickUnlockBtnTextActive]}>
+          {quickUnlocking ? 'Unlocking (5s)...' : 'Open Gate (5s)'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -543,6 +618,7 @@ export function AccessScreen({
               {renderSummaryCards()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
+              {renderFailedCommandsBanner()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
               {renderFilterTabs()}
@@ -581,6 +657,7 @@ export function AccessScreen({
               {renderSummaryCards()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
+              {renderFailedCommandsBanner()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
               {renderFilterTabs()}
@@ -743,6 +820,114 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxs,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+
+  // Action banner
+  actionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successBorder,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  actionBannerText: {
+    color: colors.successDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+
+  // Action Buttons (Check In + Quick Unlock)
+  actionButtonRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+  },
+  checkInHalfBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    ...shadows.sm,
+  },
+  checkInBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
+  quickUnlockBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.surface,
+    borderColor: colors.success,
+    borderWidth: 1.5,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    ...shadows.sm,
+  },
+  quickUnlockBtnActive: {
+    backgroundColor: colors.successSurface,
+    borderColor: colors.successDark,
+  },
+  quickUnlockBtnText: {
+    color: colors.success,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
+  quickUnlockBtnTextActive: {
+    color: colors.successDark,
+  },
+
+  // Failed commands / hardware health
+  failedCommandsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warningBorder,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  failedCommandsLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    flex: 1,
+  },
+  failedCommandsText: {
+    color: colors.warningDark,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+    flexShrink: 1,
+  },
+  retrySyncBtn: {
+    backgroundColor: colors.warning,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xxs + 2,
+    marginLeft: spacing.xs,
+  },
+  retrySyncBtnText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
   },
 
   // Device status bar
@@ -947,42 +1132,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSize.xs,
     lineHeight: 16,
-  },
-  actionBanner: {
-    backgroundColor: colors.successSurface,
-    borderColor: colors.successBorder,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    padding: spacing.sm,
-  },
-  actionBannerText: {
-    color: colors.success,
-    fontSize: fontSize.sm,
-    fontWeight: fontWeight.semibold,
-  },
-  checkInBtnRow: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-  },
-  checkInBtn: {
-    backgroundColor: colors.brand,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.md,
-    ...shadows.sm,
-  },
-  checkInBtnText: {
-    color: colors.textInverse,
-    fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
   },
   smallCheckOutBtn: {
     backgroundColor: colors.surface,

@@ -306,8 +306,8 @@ def test_onboarding_progress_checklist(client, app):
     resp = client.get("/api/mobile/v1/onboarding/progress", headers=headers)
     assert resp.status_code == 200
     data = resp.get_json()["data"]
-    assert data["total_count"] == 6
-    assert len(data["steps"]) == 6
+    assert data["total_count"] == 7
+    assert len(data["steps"]) == 7
     assert data["steps"][0]["id"] == "gym_profile"
     assert data["trial"]["is_active"] is True
 

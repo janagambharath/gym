@@ -57,6 +57,10 @@ export function MemberDetailScreen({
   const [enrollNumberInput, setEnrollNumberInput] = useState('');
   const [enrolling, setEnrolling] = useState(false);
   const [unenrolling, setUnenrolling] = useState(false);
+  const [showFreezeModal, setShowFreezeModal] = useState(false);
+  const [freezeDaysInput, setFreezeDaysInput] = useState('14');
+  const [freezeReasonInput, setFreezeReasonInput] = useState('');
+  const [freezing, setFreezing] = useState(false);
   const session = getCachedSession();
 
   const displayStatus = getMemberDisplayStatus(member);
@@ -172,6 +176,53 @@ export function MemberDetailScreen({
       showMessage(res.error.message, 'error');
     }
   }, [member.id, fetchMemberData, onMemberUpdated]);
+
+  const handleFreeze = useCallback(async () => {
+    const days = parseInt(freezeDaysInput, 10);
+    if (isNaN(days) || days < 1) {
+      showMessage('Please enter a valid number of days to pause', 'error');
+      return;
+    }
+    setFreezing(true);
+    const res = await apiRequest<{ data: Member; message: string }>(`/api/mobile/v1/members/${member.id}/freeze`, {
+      method: 'POST',
+      body: { days, reason: freezeReasonInput.trim() },
+    });
+    setFreezing(false);
+    setShowFreezeModal(false);
+    if (res.ok) {
+      showMessage(res.data?.message || 'Membership paused successfully.', 'success');
+      void fetchMemberData();
+      onMemberUpdated?.();
+    } else {
+      showMessage(res.error.message, 'error');
+    }
+  }, [freezeDaysInput, freezeReasonInput, member.id, fetchMemberData, onMemberUpdated]);
+
+  const handleUnfreeze = useCallback(async () => {
+    Alert.alert(
+      'Resume Membership?',
+      `Resume ${member.full_name}'s membership and restore biometric gate access?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Resume',
+          onPress: async () => {
+            const res = await apiRequest<{ data: Member; message: string }>(`/api/mobile/v1/members/${member.id}/unfreeze`, {
+              method: 'POST',
+            });
+            if (res.ok) {
+              showMessage(res.data?.message || 'Membership resumed!', 'success');
+              void fetchMemberData();
+              onMemberUpdated?.();
+            } else {
+              showMessage(res.error.message, 'error');
+            }
+          },
+        },
+      ]
+    );
+  }, [member.id, member.full_name, fetchMemberData, onMemberUpdated]);
 
   const verifiedPaidAmount = payments
     .filter((payment) => ['verified', 'paid'].includes(payment.status.toLowerCase()))
@@ -526,6 +577,25 @@ export function MemberDetailScreen({
           </TouchableOpacity>
         </View>
 
+        {/* Pause / Resume Membership Button */}
+        {member.status === 'paused' ? (
+          <PrimaryButton
+            title="Resume Membership (Unpause)"
+            icon={<Icon name="checkmark" size={18} color={colors.textInverse} />}
+            onPress={handleUnfreeze}
+            variant="primary"
+            style={{ backgroundColor: colors.success, borderColor: colors.success, marginTop: spacing.sm }}
+          />
+        ) : member.status !== 'deleted' ? (
+          <PrimaryButton
+            title="Pause / Freeze Membership"
+            icon={<Icon name="lock" size={18} color={colors.textSecondary} />}
+            onPress={() => setShowFreezeModal(true)}
+            variant="outline"
+            style={{ marginTop: spacing.sm }}
+          />
+        ) : null}
+
         {/* Notes */}
         {member.notes ? (
           <View style={styles.card}>
@@ -625,6 +695,73 @@ export function MemberDetailScreen({
                   <ActivityIndicator color={colors.textInverse} size="small" />
                 ) : (
                   <Text style={styles.modalSaveBtnText}>Save & Sync</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Freeze / Pause Modal */}
+      <Modal
+        visible={showFreezeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFreezeModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderLeft}>
+                <View style={[styles.sectionIcon, { backgroundColor: colors.brandSubtle, width: 28, height: 28 }]}>
+                  <Icon name="lock" size={16} color={colors.brand} />
+                </View>
+                <Text style={styles.modalTitle}>Pause Membership</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowFreezeModal(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Icon name="close" size={20} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              Temporarily freeze {member.full_name}&apos;s membership. Gate access will be locked and expiry will be extended.
+            </Text>
+
+            <Text style={[styles.biometricLabel, { marginTop: spacing.md }]}>Number of Days</Text>
+            <TextInput
+              style={styles.modalInput}
+              keyboardType="number-pad"
+              value={freezeDaysInput}
+              onChangeText={setFreezeDaysInput}
+              placeholder="e.g. 14"
+              placeholderTextColor={colors.muted}
+            />
+
+            <Text style={[styles.biometricLabel, { marginTop: spacing.sm }]}>Reason (Optional)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={freezeReasonInput}
+              onChangeText={setFreezeReasonInput}
+              placeholder="e.g. Travel, Medical, Exam"
+              placeholderTextColor={colors.muted}
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowFreezeModal(false)}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalSaveBtn}
+                onPress={() => void handleFreeze()}
+                disabled={freezing}
+              >
+                {freezing ? (
+                  <ActivityIndicator color={colors.textInverse} size="small" />
+                ) : (
+                  <Text style={styles.modalSaveBtnText}>Confirm Pause</Text>
                 )}
               </TouchableOpacity>
             </View>

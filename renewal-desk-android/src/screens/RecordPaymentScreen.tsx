@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -112,9 +113,36 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
       setSaving(false);
 
       if (result.ok) {
-        Alert.alert('Success', `Payment of ${formatCurrency(parsedAmount)} recorded for ${selectedMember.full_name}.`);
-        onCreated?.(result.data);
-        onBack();
+        const whatsappUrl = result.data?.whatsapp_url || result.data?.receipt?.whatsapp_url;
+        if (whatsappUrl) {
+          Alert.alert(
+            'Payment Recorded! 🎉',
+            `Payment of ${formatCurrency(parsedAmount)} recorded for ${selectedMember.full_name}. Send digital receipt via WhatsApp?`,
+            [
+              {
+                text: 'Done',
+                style: 'cancel',
+                onPress: () => {
+                  onCreated?.(result.data);
+                  onBack();
+                },
+              },
+              {
+                text: 'Send WhatsApp',
+                style: 'default',
+                onPress: () => {
+                  void Linking.openURL(whatsappUrl);
+                  onCreated?.(result.data);
+                  onBack();
+                },
+              },
+            ]
+          );
+        } else {
+          Alert.alert('Success', `Payment of ${formatCurrency(parsedAmount)} recorded for ${selectedMember.full_name}.`);
+          onCreated?.(result.data);
+          onBack();
+        }
       } else {
         Alert.alert('Error', result.error.message);
       }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import abort, flash, redirect, url_for
+from flask import abort, flash, redirect, request, url_for
 from flask_login import current_user, logout_user
 
 
@@ -11,7 +11,7 @@ def roles_required(*roles: str):
         @wraps(view)
         def wrapped(*args, **kwargs):
             if not current_user.is_authenticated:
-                return redirect(url_for("auth.login"))
+                return redirect(url_for("auth.login", next=request.path))
             if current_user.role not in roles:
                 abort(403)
             return view(*args, **kwargs)

@@ -57,13 +57,26 @@ export default {
                 </div>
               </div>
 
-              <!-- Quick Manual Check-In CTA Button -->
-              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border)">
-                <button class="btn btn-primary btn-full" id="btn-open-checkin" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-sm)">
-                  ${icon('access', 18, 'white')} + Check In Member (Attendance)
+              <!-- Quick Gate Control & Attendance CTA Buttons -->
+              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-sm)">
+                <button class="btn btn-primary" id="btn-open-checkin" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs)">
+                  ${icon('access', 16, 'white')} + Check In
+                </button>
+                <button class="btn btn-secondary" id="btn-quick-unlock" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs);background:rgba(16,185,129,0.1);color:#059669;border-color:rgba(16,185,129,0.3)">
+                  ${icon('lock', 16)} Open Gate (5s)
                 </button>
               </div>
             </div>
+
+            ${s.failed_commands > 0 ? `
+              <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.3);display:flex;align-items:center;justify-content:space-between">
+                <div style="font-size:var(--fs-xs);color:#B45309;display:flex;align-items:center;gap:var(--sp-xs)">
+                  ${icon('alert', 16, '#B45309')}
+                  <span><strong>${formatInteger(s.failed_commands)} command(s)</strong> failed to sync</span>
+                </div>
+                <button class="btn btn-sm btn-primary" id="btn-retry-sync" style="font-size:var(--fs-xs);padding:4px 10px">Retry All</button>
+              </div>
+            ` : ''}
 
             ${s.denied_today > 0 ? `
               <div class="card" id="banner-denied" style="margin-top:var(--sp-md);padding:var(--sp-md);background:var(--critical-surface);border-color:var(--critical-border);display:flex;align-items:center;justify-content:space-between;cursor:pointer">
@@ -167,6 +180,49 @@ export default {
 
       // Open Check In Modal
       scroll.querySelector('#btn-open-checkin')?.addEventListener('click', () => openCheckinModal());
+
+      // Quick Remote Gate Unlock (5s pulse)
+      scroll.querySelector('#btn-quick-unlock')?.addEventListener('click', async () => {
+        const btn = scroll.querySelector('#btn-quick-unlock');
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = `${icon('lock', 16)} Unlocking (5s)...`;
+        }
+        const res = await apiRequest('/api/mobile/v1/access/remote-unlock', {
+          method: 'POST',
+          body: { pulse_seconds: 5 },
+        });
+        if (res.ok) {
+          showToast('Turnstile gate unlocked for 5 seconds!', 'success');
+          setTimeout(() => {
+            if (btn) {
+              btn.disabled = false;
+              btn.innerHTML = `${icon('lock', 16)} Open Gate (5s)`;
+            }
+          }, 5000);
+          await loadData();
+        } else {
+          showToast(res.error?.message || 'Remote unlock failed', 'error');
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `${icon('lock', 16)} Open Gate (5s)`;
+          }
+        }
+      });
+
+      // Retry Failed Biometric Syncs
+      scroll.querySelector('#btn-retry-sync')?.addEventListener('click', async () => {
+        const btn = scroll.querySelector('#btn-retry-sync');
+        if (btn) btn.disabled = true;
+        const res = await apiRequest('/api/mobile/v1/access/retry-sync', { method: 'POST' });
+        if (res.ok) {
+          showToast(res.data?.message || 'Commands queued for retry', 'success');
+          await loadData();
+        } else {
+          showToast(res.error?.message || 'Could not retry syncs', 'error');
+          if (btn) btn.disabled = false;
+        }
+      });
 
       // Bind member link navigation
       scroll.querySelectorAll('[data-member-link]').forEach(row => {

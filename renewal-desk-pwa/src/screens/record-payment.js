@@ -46,7 +46,20 @@ export default { async mount(el, params) {
         method: el.querySelector('#rp-method').value, plan_id: el.querySelector('#rp-plan').value ? Number(el.querySelector('#rp-plan').value) : null,
         reference: el.querySelector('#rp-ref').value.trim()||null, notes: el.querySelector('#rp-notes').value.trim()||null };
       const r = await apiRequest('/api/mobile/v1/payments', { method:'POST', body, headers:{'Idempotency-Key':uuid()} });
-      if (r.ok) { showToast('Payment recorded!','success'); navigate.pop(); } else { showToast(r.error.message,'error'); btn.disabled=false; }
+      if (r.ok) {
+        showToast('Payment recorded!','success');
+        const waUrl = r.data?.whatsapp_url || r.data?.receipt?.whatsapp_url;
+        if (waUrl) {
+          const share = window.confirm('Payment recorded successfully! Send digital receipt via WhatsApp?');
+          if (share) {
+            window.open(waUrl, '_blank');
+          }
+        }
+        navigate.pop();
+      } else {
+        showToast(r.error.message,'error');
+        btn.disabled=false;
+      }
     });
   }; render();
 }};

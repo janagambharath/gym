@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -200,6 +202,25 @@ export function PaymentDetailScreen({ paymentId, onBack, onUpdated }: PaymentDet
             </View>
           ) : null}
 
+          {/* Share WhatsApp Receipt */}
+          <View style={styles.actionColumn}>
+            <TouchableOpacity
+              style={styles.whatsAppReceiptBtn}
+              onPress={() => {
+                const url = payment.whatsapp_url || payment.receipt?.whatsapp_url;
+                if (url) {
+                  void Linking.openURL(url);
+                } else {
+                  Alert.alert('No Receipt URL', 'Could not open WhatsApp for this payment.');
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <Icon name="whatsapp" size={18} color="#FFFFFF" />
+              <Text style={styles.whatsAppReceiptBtnText}>Share WhatsApp Receipt</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Actions for Pending / Processing Payments */}
           {isPending ? (
             <View style={styles.actionColumn}>
@@ -360,4 +381,19 @@ const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
   sectionHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   sectionTitle: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold },
+  whatsAppReceiptBtn: {
+    backgroundColor: '#25D366',
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+    ...shadows.sm,
+  },
+  whatsAppReceiptBtnText: {
+    color: '#FFFFFF',
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold,
+  },
 });

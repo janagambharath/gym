@@ -118,6 +118,10 @@ def create_app(config_name: str | None = None) -> Flask:
             take priority.  This catch-all only fires for paths that
             don't match any blueprint route.
             """
+            backend_prefixes = ("admin", "auth", "api", "bridge", "gym", "operations", "bot-web", "static", "uploads")
+            if any(filename == p or filename.startswith(f"{p}/") for p in backend_prefixes):
+                abort(404)
+
             file_path = _pwa_dist / filename
             if file_path.is_file():
                 return send_from_directory(str(_pwa_dist), filename)

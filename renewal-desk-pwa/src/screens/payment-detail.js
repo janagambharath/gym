@@ -28,6 +28,7 @@ export default { async mount(el, params) {
         ${p.verified_at ? renderInfoRow('Verified At', formatDateTime(p.verified_at)) : ''}
       </div></div>
       <div style="padding:0 var(--sp-lg) var(--sp-lg);display:flex;flex-direction:column;gap:var(--sp-sm)">
+        ${(p.whatsapp_url || p.receipt?.whatsapp_url) ? `<a href="${escapeHtml(p.whatsapp_url || p.receipt?.whatsapp_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-full" id="pd-share-receipt" style="background:#25D366;border-color:#25D366;color:#ffffff;display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);text-decoration:none">${icon('share',18,'white')} Share WhatsApp Receipt</a>` : ''}
         ${p.status === 'pending' ? `<button class="btn btn-success btn-full" id="pd-verify">${icon('check',18,'white')} Verify Payment</button>
         <button class="btn btn-danger btn-full" id="pd-reject">${icon('close',18,'white')} Reject Payment</button>` : ''}
         <button class="btn btn-secondary btn-full btn-sm" id="pd-delete" style="margin-top:var(--sp-md)">${icon('delete',16)} Delete Payment</button>

@@ -1,7 +1,7 @@
 """Mobile API members endpoints."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from flask import g, jsonify, request
@@ -547,6 +547,109 @@ def register_members_routes(bp):
         invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Member deactivated."}})
+
+    @bp.route("/members/<int:member_id>/freeze", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def freeze_member(member_id: int):
+        member = (
+            Member.query.filter_by(id=member_id, gym_id=g.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if member is None:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+
+        if member.status == "paused":
+            return error_response("ALREADY_PAUSED", "Member is already paused.", 400)
+
+        data = request.get_json(silent=True) or {}
+        try:
+            days = int(data.get("days") or data.get("freeze_days") or 14)
+            if days < 1 or days > 365:
+                return error_response("VALIDATION_ERROR", "Pause duration must be between 1 and 365 days.", 400)
+        except (ValueError, TypeError):
+            return error_response("VALIDATION_ERROR", "Invalid days parameter.", 400)
+
+        reason = (data.get("reason") or "").strip()
+
+        tz = g.current_user.gym.timezone or "Asia/Kolkata"
+        today = today_for_gym(tz)
+
+        # Extend membership end date by the paused days
+        if member.membership_end:
+            member.membership_end = member.membership_end + timedelta(days=days)
+
+        member.status = "paused"
+        log_note = f"\n[Paused on {today.isoformat()} for {days} days" + (f": {reason}]" if reason else "]")
+        member.notes = (member.notes or "") + log_note
+
+        # Biometric gate turns to disable_user
+        queue_membership_command(member)
+
+        audit(
+            action="freeze_member",
+            resource_type="member",
+            resource_id=member.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"freeze_days": days, "reason": reason, "new_membership_end": member.membership_end.isoformat() if member.membership_end else None},
+        )
+        invalidate_dashboard_cache(g.gym_id)
+        db.session.commit()
+        db.session.refresh(member)
+
+        return jsonify({
+            "success": True,
+            "data": _serialize_member(member),
+            "message": f"{member.full_name}'s membership is paused for {days} days. Gate access disabled.",
+        })
+
+    @bp.route("/members/<int:member_id>/unfreeze", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def unfreeze_member(member_id: int):
+        member = (
+            Member.query.filter_by(id=member_id, gym_id=g.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if member is None:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+
+        if member.status != "paused":
+            return error_response("NOT_PAUSED", "Member is not currently paused.", 400)
+
+        tz = g.current_user.gym.timezone or "Asia/Kolkata"
+        today = today_for_gym(tz)
+
+        if member.membership_end and member.membership_end >= today:
+            member.status = "active"
+        else:
+            member.status = "expired"
+
+        log_note = f"\n[Resumed on {today.isoformat()}]"
+        member.notes = (member.notes or "") + log_note
+
+        queue_membership_command(member)
+
+        audit(
+            action="unfreeze_member",
+            resource_type="member",
+            resource_id=member.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"status": member.status},
+        )
+        invalidate_dashboard_cache(g.gym_id)
+        db.session.commit()
+        db.session.refresh(member)
+
+        return jsonify({
+            "success": True,
+            "data": _serialize_member(member),
+            "message": f"{member.full_name}'s membership resumed ({member.status}). Gate access updated.",
+        })
 
     @bp.route("/members/<int:member_id>/enroll", methods=["POST"])
     @token_required

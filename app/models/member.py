@@ -114,6 +114,8 @@ class Member(TenantMixin, TimestampMixin, db.Model):
         return utcnow() - last_inbound < timedelta(hours=24)
 
     def refresh_status(self) -> None:
+        if self.status in {"paused", "deleted"}:
+            return
         if self.membership_end is None:
             self.status = "expired"
         else:
