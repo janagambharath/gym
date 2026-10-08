@@ -78,6 +78,11 @@ class Config:
         os.getenv("BRIDGE_COMMAND_MAX_EXECUTION_ATTEMPTS", "5")
     )
 
+    # Direct terminal-to-cloud ADMS is opt-in.  It deliberately starts disabled:
+    # device firmware and the ADMS command grammar must be commissioned before
+    # a public endpoint is allowed to accept terminal traffic.
+    DIRECT_ADMS_ENABLED = os.getenv("DIRECT_ADMS_ENABLED", "false").lower() == "true"
+
     WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "false").lower() == "true"
     WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
     WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v20.0")
@@ -167,6 +172,7 @@ class TestingConfig(Config):
     WTF_CSRF_ENABLED = False
     ENABLE_SCHEDULER = False
     MOBILE_API_ENABLED = True
+    DIRECT_ADMS_ENABLED = True
     SQLALCHEMY_DATABASE_URI = os.getenv("TEST_DATABASE_URL", "sqlite:///:memory:")
 
 

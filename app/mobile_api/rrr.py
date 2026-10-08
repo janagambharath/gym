@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from urllib.parse import urlparse
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 
 from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
@@ -165,6 +166,54 @@ def register_rrr_routes(bp):
             "integration": integration_payload(integration), "pairing_code": code,
             "expires_at": integration.pairing_code_expires_at.isoformat(),
             "instructions": "Enter this code in the eBioServer Bridge on the approved Windows connector host. Do not share it.",
+        }})
+
+    @bp.post("/rrr/integrations/adms/provision")
+    @token_required
+    @roles_required("gym_owner")
+    def provision_direct_adms():
+        """Register one terminal serial for direct, cloud ADMS attendance.
+
+        Access-control commands are deliberately not enabled by this route.
+        The direct ADMS command grammar is a firmware-specific safety gate.
+        """
+        payload = request.get_json(silent=True) or {}
+        serial = str(payload.get("device_serial") or "").strip()[:120]
+        name = str(payload.get("device_name") or "Elite Gym eSSL terminal").strip()[:160]
+        if not serial:
+            return error_response("VALIDATION_ERROR", "device_serial is required.", 422)
+        owned_elsewhere = RRRIntegration.query.filter(
+            RRRIntegration.connector_type == "adms_direct",
+            RRRIntegration.device_serial == serial,
+            RRRIntegration.gym_id != g.gym_id,
+        ).first()
+        if owned_elsewhere is not None:
+            return error_response("CONFLICT", "That device serial is already registered to another gym.", 409)
+        row = RRRIntegration.query.filter_by(gym_id=g.gym_id, connector_type="adms_direct").first()
+        if row is None:
+            row = RRRIntegration(
+                gym_id=g.gym_id, connector_type="adms_direct", display_name="Direct eSSL ADMS",
+            )
+            db.session.add(row)
+        row.device_serial = serial
+        row.device_name = name
+        row.status = "not_configured"
+        row.commands_enabled = False
+        row.commissioning_status = "not_started"
+        parsed = urlparse(request.host_url)
+        configured_base = urlparse(str(current_app.config.get("PUBLIC_BASE_URL") or request.host_url))
+        host = configured_base.hostname or parsed.hostname
+        port = configured_base.port or (443 if configured_base.scheme == "https" else 80)
+        audit(action="direct_adms_provisioned", resource_type="rrr_integration", resource_id=row.id,
+              gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": serial})
+        db.session.commit()
+        return jsonify({"success": True, "data": {
+            "integration": integration_payload(row),
+            "terminal_settings": {
+                "server_mode": "ADMS", "server_address": host, "server_port": port,
+                "https": configured_base.scheme == "https", "path": "/iclock",
+                "warning": "Attendance receiver only. Direct block/unblock remains disabled until a supervised firmware command test passes.",
+            },
         }})
 
     @bp.post("/rrr/integrations/<int:integration_id>/commission")

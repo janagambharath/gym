@@ -120,3 +120,44 @@ def test_ebio_reports_devices_and_owner_selection_reaches_connector_config(clien
     config = client.get("/api/bridge/v1/config", headers=bridge_headers)
     assert config.status_code == 200
     assert config.get_json()["selectedDeviceSerial"] == "ELITE-X2008"
+
+
+def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, seed_member):
+    seed_member.device_enroll_number = "42"
+    db.session.commit()
+
+    provision = client.post(
+        "/api/mobile/v1/rrr/integrations/adms/provision",
+        headers=headers(seed_gym),
+        json={"device_serial": "ELITE-X2008-01", "device_name": "Elite Gym X2008"},
+    )
+    assert provision.status_code == 200
+    settings = provision.get_json()["data"]["terminal_settings"]
+    assert settings["server_mode"] == "ADMS"
+    assert settings["path"] == "/iclock"
+    assert settings["warning"].startswith("Attendance receiver only")
+
+    hello = client.get("/iclock/cdata?SN=ELITE-X2008-01&options=all")
+    assert hello.status_code == 200
+    assert "~SerialNumber=ELITE-X2008-01" in hello.get_data(as_text=True)
+
+    uploaded = client.post(
+        "/iclock/cdata?SN=ELITE-X2008-01&table=ATTLOG",
+        data="42\t2026-10-08 10:30:00\t0\t1\t0\t0\n",
+        content_type="text/plain",
+    )
+    assert uploaded.status_code == 200
+    event = RRRAttendanceEvent.query.filter_by(
+        gym_id=seed_gym["gym"].id, source="adms_direct", biometric_user_id="42"
+    ).one()
+    assert event.member_id == seed_member.id
+    integration = RRRIntegration.query.filter_by(
+        gym_id=seed_gym["gym"].id, connector_type="adms_direct"
+    ).one()
+    assert integration.status == "connected"
+    assert integration.commands_enabled is False
+
+    # A cloud terminal must never receive guessed access commands.
+    no_command = client.get("/iclock/getrequest?SN=ELITE-X2008-01")
+    assert no_command.status_code == 200
+    assert no_command.get_data(as_text=True) == "OK"

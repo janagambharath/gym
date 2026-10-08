@@ -265,6 +265,7 @@ def _init_extensions(app: Flask) -> None:
 
 def _register_blueprints(app: Flask) -> None:
     from app.admin.routes import admin_bp
+    from app.adms.routes import adms_bp
     from app.auth.routes import auth_bp
     from app.biometric.routes import biometric_bp
     from app.bot_web.routes import bot_web_bp
@@ -290,6 +291,11 @@ def _register_blueprints(app: Flask) -> None:
     app.register_blueprint(biometric_bp)
     app.register_blueprint(bot_web_bp)
     app.register_blueprint(operations_bp)
+    # ADMS terminals cannot present browser CSRF tokens.  The receiver is
+    # tenant-bound by the pre-provisioned terminal serial and disabled unless
+    # DIRECT_ADMS_ENABLED=true has been explicitly set in production.
+    csrf.exempt(adms_bp)
+    app.register_blueprint(adms_bp)
     # The gym-laptop agent uses an API key rather than browser cookies.  Keep
     # CSRF protection on every dashboard form and exempt only this strict,
     # independently authenticated machine API.

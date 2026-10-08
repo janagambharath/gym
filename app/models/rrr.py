@@ -22,7 +22,7 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
     __table_args__ = (
         UniqueConstraint("gym_id", "connector_type", name="uq_rrr_integration_type"),
         CheckConstraint(
-            "connector_type IN ('ebioserver', 'direct_bridge', 'csv')",
+            "connector_type IN ('ebioserver', 'direct_bridge', 'adms_direct', 'csv')",
             name="ck_rrr_integration_type",
         ),
         CheckConstraint(
