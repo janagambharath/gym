@@ -245,6 +245,8 @@ def register_renewals_routes(bp):
 
         member.membership_end = new_end
         member.status = "active"
+        # Pin the renewal amount as the expected value for reporting.
+        member.price = amount
         queue_membership_command(member)
 
         renewal = RenewalHistory(
@@ -252,6 +254,7 @@ def register_renewals_routes(bp):
             member_id=member.id,
             plan_id=member.plan_id,
             renewed_by_id=g.current_user.id,
+            previous_start=member.membership_start,
             previous_end=previous_end,
             new_start=new_start,
             new_end=new_end,
@@ -313,7 +316,13 @@ def register_renewals_routes(bp):
                     key=idempotency_key,
                     request_hash=request_hash,
                 )
-                if existing and matches_request:
+                if existing:
+                    if not matches_request:
+                        return error_response(
+                            "IDEMPOTENCY_KEY_REUSED",
+                            "This idempotency key was already used for a different renewal request.",
+                            409,
+                        )
                     return jsonify(existing.response_body), existing.status_code
             raise
 

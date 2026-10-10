@@ -43,3 +43,31 @@ export function clearSession() {
     localStorage.removeItem(SESSION_KEY);
   } catch { /* ignore */ }
 }
+
+
+const MEMBER_SESSION_KEY = 'renewal-desk.pwa-member-session.v1';
+
+/** @param {{ token: string, memberId?: number, memberName?: string }} session */
+export function saveMemberSession(session) {
+  try {
+    localStorage.setItem(MEMBER_SESSION_KEY, JSON.stringify(session));
+  } catch { /* quota exceeded — non-fatal */ }
+}
+
+/** @returns {{ token: string }|undefined} */
+export function loadMemberSession() {
+  try {
+    const raw = localStorage.getItem(MEMBER_SESSION_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed.token === 'string') ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearMemberSession() {
+  try {
+    localStorage.removeItem(MEMBER_SESSION_KEY);
+  } catch { /* ignore */ }
+}

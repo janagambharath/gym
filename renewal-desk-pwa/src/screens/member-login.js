@@ -1,5 +1,6 @@
 /* Member Login (OTP) Screen */
 import { memberRequestOtp, memberVerifyOtp } from '../api.js';
+import { saveMemberSession } from '../session.js';
 import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
 import { icon } from '../icons.js';
@@ -29,7 +30,10 @@ export default {
               <form id="otp-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
                 ${renderFormField({ id: 'ml-otp', label: 'Verification Code', placeholder: '123456', required: true })}
                 <button type="submit" class="btn btn-primary btn-lg btn-full">Verify & Login</button>
-                <button type="button" class="btn btn-secondary btn-full" id="otp-back">Change Number</button>
+                <div style="display:flex;gap:var(--sp-sm)">
+                  <button type="button" class="btn btn-secondary btn-full" id="otp-resend">Resend Code</button>
+                  <button type="button" class="btn btn-secondary btn-full" id="otp-back">Change Number</button>
+                </div>
               </form>
             `}
           </div>
@@ -48,10 +52,18 @@ export default {
           e.preventDefault();
           const otp = el.querySelector('#ml-otp').value.trim();
           const res = await memberVerifyOtp(phone, otp, challengeToken);
-          if (res.ok) { showToast('Welcome!', 'success'); navigate.push('member-home'); }
+          if (res.ok && res.data?.token) {
+            saveMemberSession({ token: res.data.token, memberName: res.data?.member?.name });
+            showToast('Welcome!', 'success'); navigate.push('member-home');
+          }
           else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }
         });
         el.querySelector('#otp-back')?.addEventListener('click', () => { step = 'phone'; render(); });
+        el.querySelector('#otp-resend')?.addEventListener('click', async () => {
+          const res = await memberRequestOtp(phone);
+          if (res.ok) { challengeToken = res.data.challenge || res.data.challenge_token; showToast('Code resent', 'success'); }
+          else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }
+        });
       }
     };
     render();

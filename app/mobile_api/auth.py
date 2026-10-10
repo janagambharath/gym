@@ -262,7 +262,12 @@ def register_auth_routes(bp):
             for cid in current_app.config.get("GOOGLE_OAUTH_ANDROID_CLIENT_ID", "").split(",")
             if cid.strip()
         )
-        if configured_client_ids and google_data.get("aud") not in configured_client_ids:
+        # Fail closed: without configured client IDs we cannot validate the
+        # token audience, so Google sign-in is unavailable rather than open.
+        if not configured_client_ids:
+            current_app.logger.error("Google OAuth attempted with no client IDs configured")
+            return error_response("GOOGLE_AUTH_UNAVAILABLE", "Google sign-in is not configured.", 503)
+        if google_data.get("aud") not in configured_client_ids:
             return error_response("GOOGLE_AUTH_FAILED", "Google token audience mismatch.", 401)
 
         google_email = (google_data.get("email") or "").strip().lower()

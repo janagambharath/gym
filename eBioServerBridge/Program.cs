@@ -21,6 +21,27 @@ namespace eBioServerBridge
         private static EBioServerClient _ebioClient;
         private static RenewalDeskClient _cloudClient;
         private static int _lastLogId;
+        private static Dictionary<string, int> _lastLogIdByDevice = new Dictionary<string, int>();
+
+        private static int GetWatermark(string deviceSerial)
+        {
+            int watermark;
+            if (!string.IsNullOrEmpty(deviceSerial) && _lastLogIdByDevice.TryGetValue(deviceSerial, out watermark))
+                return watermark;
+            return _lastLogId; // legacy single watermark (pre-upgrade state)
+        }
+
+        private static void SetWatermark(string deviceSerial, int logId)
+        {
+            if (string.IsNullOrEmpty(deviceSerial))
+            {
+                if (logId > _lastLogId) _lastLogId = logId;
+                return;
+            }
+            int current;
+            if (!_lastLogIdByDevice.TryGetValue(deviceSerial, out current) || logId > current)
+                _lastLogIdByDevice[deviceSerial] = logId;
+        }
         private static int _totalSynced;
         private static int _totalErrors;
         private static int _totalCommands;
@@ -40,7 +61,7 @@ namespace eBioServerBridge
             {
                 Log("ERROR: appsettings.json not found at " + configPath, ConsoleColor.Red);
                 Log("Create appsettings.json with eBioServer and Renewal Desk settings.", ConsoleColor.Yellow);
-                Console.ReadKey();
+                Environment.ExitCode = 1;
                 return;
             }
 
@@ -48,7 +69,7 @@ namespace eBioServerBridge
             if (string.IsNullOrEmpty(_config.eBioServerUrl))
             {
                 Log("ERROR: eBioServerUrl is required in appsettings.json", ConsoleColor.Red);
-                Console.ReadKey();
+                Environment.ExitCode = 1;
                 return;
             }
 
@@ -235,11 +256,32 @@ namespace eBioServerBridge
             }
             logs.Sort((left, right) => left.LogDate.CompareTo(right.LogDate));
 
-            // Filter out already-seen logs
+            // Filter out already-seen logs, per device. If a device's LogId
+            // counter resets (DB rebuild/purge), the watermark would swallow
+            // every future punch — detect the reset and re-baseline instead.
             var newLogs = new List<DeviceLogEntry>();
+            var maxSeenByDevice = new Dictionary<string, int>();
             foreach (var log in logs)
             {
-                if (log.LogId > _lastLogId)
+                string key = log.SerialNumber ?? "";
+                int maxSeen;
+                if (!maxSeenByDevice.TryGetValue(key, out maxSeen) || log.LogId > maxSeen)
+                    maxSeenByDevice[key] = log.LogId;
+            }
+            foreach (var log in logs)
+            {
+                string key = log.SerialNumber ?? "";
+                int watermark = GetWatermark(key);
+                int maxSeen = maxSeenByDevice[key];
+                if (maxSeen < watermark / 2 && watermark > 1000)
+                {
+                    // Counter reset: fall back to the date cursor (the 3-day
+                    // lookback above) instead of the ID cursor.
+                    Log(string.Format("LogId counter reset detected for device {0}; re-baselining.", key), ConsoleColor.Yellow);
+                    SetWatermark(key, 0);
+                    watermark = 0;
+                }
+                if (log.LogId > watermark)
                     newLogs.Add(log);
             }
 
@@ -281,7 +323,7 @@ namespace eBioServerBridge
                     if (sent)
                     {
                         _totalSynced++;
-                        if (log.LogId > _lastLogId) _lastLogId = log.LogId;
+                        SetWatermark(log.SerialNumber, log.LogId);
                     }
                     else
                     {
@@ -291,10 +333,10 @@ namespace eBioServerBridge
                         break;
                     }
                 }
-                else if (log.LogId > _lastLogId)
+                else
                 {
                     // Local-only mode has no remote acknowledgment to wait for.
-                    _lastLogId = log.LogId;
+                    SetWatermark(log.SerialNumber, log.LogId);
                 }
             }
 
@@ -329,8 +371,21 @@ namespace eBioServerBridge
 
                             if (result.Success)
                             {
-                                Log("  -> " + result.Message, ConsoleColor.Green);
-                                _totalCommands++;
+                                // SOAP success only means eBioServer queued the push for
+                                // the terminal's next poll. Verify before reporting done:
+                                // an offline terminal must not read as "blocked".
+                                bool? confirmed = _ebioClient.VerifyBlockState(cmd.EnrollNumber, true);
+                                if (confirmed == false)
+                                {
+                                    Log("  -> Server accepted the block but the device has not applied it yet; will retry.", ConsoleColor.Yellow);
+                                    ackStatus = "accepted";
+                                    errorMsg = "eBioServer accepted the block; device delivery unconfirmed.";
+                                }
+                                else
+                                {
+                                    Log("  -> " + result.Message, ConsoleColor.Green);
+                                    _totalCommands++;
+                                }
                             }
                             else
                             {
@@ -352,8 +407,18 @@ namespace eBioServerBridge
 
                             if (result.Success)
                             {
-                                Log("  -> " + result.Message, ConsoleColor.Green);
-                                _totalCommands++;
+                                bool? confirmed = _ebioClient.VerifyBlockState(cmd.EnrollNumber, false);
+                                if (confirmed == false)
+                                {
+                                    Log("  -> Server accepted the unblock but the device has not applied it yet; will retry.", ConsoleColor.Yellow);
+                                    ackStatus = "accepted";
+                                    errorMsg = "eBioServer accepted the unblock; device delivery unconfirmed.";
+                                }
+                                else
+                                {
+                                    Log("  -> " + result.Message, ConsoleColor.Green);
+                                    _totalCommands++;
+                                }
                             }
                             else
                             {
@@ -449,7 +514,12 @@ namespace eBioServerBridge
                 if (File.Exists(StateFile))
                 {
                     var state = JsonConvert.DeserializeObject<BridgeState>(File.ReadAllText(StateFile));
-                    if (state != null) _lastLogId = state.LastLogId;
+                    if (state != null)
+                    {
+                        _lastLogId = state.LastLogId;
+                        if (state.LastLogIdByDevice != null)
+                            _lastLogIdByDevice = state.LastLogIdByDevice;
+                    }
                 }
             }
             catch { }
@@ -461,8 +531,14 @@ namespace eBioServerBridge
             {
                 var state = new BridgeState();
                 state.LastLogId = _lastLogId;
+                state.LastLogIdByDevice = _lastLogIdByDevice;
                 state.LastSyncTime = DateTime.UtcNow.ToString("o");
-                File.WriteAllText(StateFile, JsonConvert.SerializeObject(state));
+                // Atomic write: a crash mid-write must not leave a torn file
+                // that LoadState then silently treats as "no state".
+                string tempFile = StateFile + ".tmp";
+                File.WriteAllText(tempFile, JsonConvert.SerializeObject(state));
+                File.Copy(tempFile, StateFile, true);
+                File.Delete(tempFile);
             }
             catch { }
         }
@@ -520,6 +596,7 @@ namespace eBioServerBridge
     public class BridgeState
     {
         public int LastLogId { get; set; }
+        public Dictionary<string, int> LastLogIdByDevice { get; set; }
         public string LastSyncTime { get; set; }
     }
 }

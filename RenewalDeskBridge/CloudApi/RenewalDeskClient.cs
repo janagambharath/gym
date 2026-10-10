@@ -18,7 +18,7 @@ namespace RenewalDeskBridge.CloudApi
     ///   POST /api/bridge/v1/commands/{id}/ack
     ///   POST /api/bridge/v1/enrollment/confirm
     /// </summary>
-    public class RenewalDeskClient
+    public class RenewalDeskClient : IDisposable
     {
         // Try a direct HTTPS connection first.  Some gym laptops have a stale
         // Windows proxy configuration which breaks System.Net.Http even though a
@@ -205,6 +205,12 @@ namespace RenewalDeskBridge.CloudApi
             }
             return details.ToString();
         }
+
+        public void Dispose()
+        {
+            _directHttp?.Dispose();
+            _proxyHttp?.Dispose();
+        }
     }
 
     public class AttendanceEventDto
@@ -244,4 +250,4 @@ namespace RenewalDeskBridge.CloudApi
         [JsonProperty("delaySeconds")]
         public int? DelaySeconds { get; set; }
     }
-}
+

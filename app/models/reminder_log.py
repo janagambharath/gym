@@ -22,7 +22,7 @@ class ReminderLog(TenantMixin, TimestampMixin, db.Model):
         Index("ix_reminders_member_cycle", "member_id", "cycle_end_date"),
         Index("ix_reminders_provider_message", "provider_message_id"),
         CheckConstraint(
-            "status IN ('pending', 'sent', 'failed', 'skipped')",
+            "status IN ('pending', 'sending', 'sent', 'failed', 'skipped')",
             name="ck_reminders_status",
         ),
     )

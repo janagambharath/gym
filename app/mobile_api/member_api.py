@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import logging
 import random
+import secrets
 import string
 import time
 from datetime import date, timedelta, datetime, timezone
@@ -71,6 +72,10 @@ def _member_qr_url(qr: QRSettings | None) -> str | None:
 
 
 def _is_reviewer_bypass_enabled() -> bool:
+    # Security: the Play-review bypass (fixed OTP) must NEVER be active in
+    # production. It is only honored when the app runs with TESTING=true.
+    if not current_app.config.get("TESTING"):
+        return False
     if current_app.config.get("ENABLE_REVIEWER_BYPASS"):
         return True
     return os.environ.get("ENABLE_REVIEWER_BYPASS", "").strip().lower() in ("true", "1", "yes")
@@ -84,25 +89,7 @@ def _token_secret() -> str:
 
 
 def _generate_otp() -> str:
-    return "".join(random.choices(string.digits, k=6))
-
-
-# In-memory store for recent member OTPs so gym staff can assist members if needed
-_RECENT_MEMBER_OTPS: dict[int, dict] = {}
-
-
-def get_recent_member_otp(member_id: int) -> dict | None:
-    data = _RECENT_MEMBER_OTPS.get(member_id)
-    if not data:
-        return None
-    now = int(time.time())
-    if now > data["expires_at"]:
-        _RECENT_MEMBER_OTPS.pop(member_id, None)
-        return None
-    return {
-        "otp": data["otp"],
-        "expires_in_seconds": data["expires_at"] - now,
-    }
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 def _normalize_phone(phone: str) -> str:
@@ -308,14 +295,6 @@ def request_otp():
     expires_at_ts = int(time.time()) + 600  # 10 minutes
     challenge = _sign_otp_challenge(phone, member.id, member.gym_id, otp, expires_at_ts)
 
-    # Cache recent OTP in memory so gym staff can assist the member if WhatsApp is delayed
-    _RECENT_MEMBER_OTPS[member.id] = {
-        "otp": otp,
-        "expires_at": expires_at_ts,
-        "phone": phone,
-        "created_at": int(time.time()),
-    }
-
     # Send OTP via WhatsApp
     delivery_ok = False
     delivery_error = None
@@ -430,7 +409,7 @@ def request_otp():
         "wa_chat_url": wa_chat_url,
         "gym_name": member.gym.name if member.gym else None,
         "powered_by": "VYNLA",
-        "test_otp": otp if (current_app.config.get("TESTING") or bypass_active) else None,
+        "test_otp": None  # never echo OTPs in responses,
     }
 
     return jsonify(resp_payload)

@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import secrets
 from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import case, func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import Member, MembershipPlan, PaymentVerification
@@ -91,7 +94,18 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
         raw_payload_hash=hashlib.sha256(raw_payload.encode("utf-8")).hexdigest() if raw_payload else None,
         processing_status="processed" if member else "unmapped",
     )
-    db.session.add(event)
+    # Insert in a savepoint: two concurrent ingestions of the same punch
+    # both pass the check above; the loser hits the unique constraint and
+    # must return the winner's row instead of 500ing the whole batch.
+    try:
+        with db.session.begin_nested():
+            db.session.add(event)
+            db.session.flush()
+    except IntegrityError:
+        existing = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
+        if existing is not None:
+            return existing, False
+        raise
     return event, True
 
 
@@ -119,9 +133,12 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
 
 
 def _upsert_opportunity(*, gym_id: int, member: Member, pillar: str, reason_code: str,
-                        reason_text: str, priority: str, potential_revenue: Decimal) -> RRROpportunity:
+                        reason_text: str, priority: str, potential_revenue: Decimal,
+                        existing: dict | None = None) -> RRROpportunity:
     key = f"{pillar}:{reason_code}:{member.id}"
-    row = RRROpportunity.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
+    row = (existing or {}).get(key)
+    if row is None and existing is None:
+        row = RRROpportunity.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
     if row is None:
         row = RRROpportunity(
             gym_id=gym_id, member_id=member.id, pillar=pillar, reason_code=reason_code,
@@ -129,6 +146,8 @@ def _upsert_opportunity(*, gym_id: int, member: Member, pillar: str, reason_code
             dedupe_key=key,
         )
         db.session.add(row)
+        if existing is not None:
+            existing[key] = row
     elif row.status in {"open", "actioned"}:
         row.reason_text = reason_text
         row.priority = priority
@@ -137,16 +156,81 @@ def _upsert_opportunity(*, gym_id: int, member: Member, pillar: str, reason_code
 
 
 def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> list[RRROpportunity]:
-    """Calculate explainable opportunities from persisted operational data."""
+    """Calculate explainable opportunities from persisted operational data.
+
+    Bulk-fetches everything up front: one members query (plan joined), one
+    pending-payments query, one grouped attendance query, one opportunities
+    query. No per-member queries — this runs on the dashboard request path.
+    """
     rules = rules_for_gym(gym_id)
     today = today_for_gym(gym_timezone)
     now = utcnow()
-    members = Member.query.filter_by(gym_id=gym_id).filter(Member.deleted_at.is_(None)).all()
+    members = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None))
+        .options(joinedload(Member.plan))
+        .all()
+    )
+    member_ids = [m.id for m in members]
+    if not member_ids:
+        return []
+
     last_visit = dict(
         db.session.query(RRRAttendanceEvent.member_id, func.max(RRRAttendanceEvent.punch_time))
         .filter(RRRAttendanceEvent.gym_id == gym_id, RRRAttendanceEvent.member_id.isnot(None))
         .group_by(RRRAttendanceEvent.member_id).all()
     )
+
+    # Oldest pending payment per member (bulk).
+    pending_sub = (
+        db.session.query(
+            PaymentVerification.member_id,
+            func.min(PaymentVerification.created_at).label("first_created"),
+        )
+        .filter(
+            PaymentVerification.gym_id == gym_id,
+            PaymentVerification.member_id.in_(member_ids),
+            PaymentVerification.status == "pending",
+            PaymentVerification.is_test.is_(False),
+        )
+        .group_by(PaymentVerification.member_id)
+        .subquery()
+    )
+    pending_rows = (
+        db.session.query(PaymentVerification)
+        .join(pending_sub, (PaymentVerification.member_id == pending_sub.c.member_id)
+              & (PaymentVerification.created_at == pending_sub.c.first_created))
+        .filter(PaymentVerification.gym_id == gym_id)
+        .all()
+    )
+    pending_by_member = {p.member_id: p for p in pending_rows}
+
+    # Attendance counts per member in one grouped query (recent 14d vs prior 14d).
+    recent_start = now - timedelta(days=14)
+    baseline_start = now - timedelta(days=28)
+    count_rows = (
+        db.session.query(
+            RRRAttendanceEvent.member_id,
+            func.sum(case((RRRAttendanceEvent.punch_time >= recent_start, 1), else_=0)).label("recent"),
+            func.sum(case(((RRRAttendanceEvent.punch_time >= baseline_start)
+                           & (RRRAttendanceEvent.punch_time < recent_start), 1), else_=0)).label("baseline"),
+        )
+        .filter(
+            RRRAttendanceEvent.gym_id == gym_id,
+            RRRAttendanceEvent.member_id.in_(member_ids),
+            RRRAttendanceEvent.punch_time >= baseline_start,
+        )
+        .group_by(RRRAttendanceEvent.member_id)
+        .all()
+    )
+    counts_by_member = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in count_rows}
+
+    # Existing open/actioned opportunities keyed by dedupe_key (bulk).
+    existing = {
+        row.dedupe_key: row
+        for row in RRROpportunity.query.filter_by(gym_id=gym_id).all()
+    }
+
     created = []
     for member in members:
         value = member.plan.price if member.plan else Decimal("0")
@@ -157,21 +241,22 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                     gym_id=gym_id, member=member, pillar="revenue", reason_code="expiry_approaching",
                     reason_text=f"Membership expires in {days} day(s) on {member.membership_end.isoformat()}.",
                     priority="high" if days <= 7 else "medium", potential_revenue=value,
+                    existing=existing,
                 ))
             if days < 0 and abs(days) <= rules["recent_expiry_days"]:
                 created.append(_upsert_opportunity(
                     gym_id=gym_id, member=member, pillar="recover", reason_code="recently_expired",
                     reason_text=f"Membership expired {abs(days)} day(s) ago on {member.membership_end.isoformat()}.",
                     priority="high", potential_revenue=value,
+                    existing=existing,
                 ))
-        pending_payment = PaymentVerification.query.filter_by(
-            gym_id=gym_id, member_id=member.id, status="pending", is_test=False
-        ).order_by(PaymentVerification.created_at.asc()).first()
+        pending_payment = pending_by_member.get(member.id)
         if pending_payment and pending_payment.created_at and (now - pending_payment.created_at).days >= 1:
             created.append(_upsert_opportunity(
                 gym_id=gym_id, member=member, pillar="retain", reason_code="payment_friction",
-                reason_text=f"A payment of ₹{pending_payment.amount} has been awaiting verification since {pending_payment.created_at.date().isoformat()}.",
+                reason_text=f"A payment of \u20b9{pending_payment.amount} has been awaiting verification since {pending_payment.created_at.date().isoformat()}.",
                 priority="high", potential_revenue=Decimal(str(pending_payment.amount or 0)),
+                existing=existing,
             ))
         visit = last_visit.get(member.id)
         if member.status == "active" and (visit is None or (now - visit).days >= rules["no_visit_days"]):
@@ -180,18 +265,11 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                 gym_id=gym_id, member=member, pillar="retain", reason_code="no_recent_visit",
                 reason_text=f"No attendance recorded for {no_visit_days} day(s).",
                 priority="high" if no_visit_days >= 30 else "medium", potential_revenue=value,
+                existing=existing,
             ))
-        # Explainable attendance decline: compare the most recent 14-day
-        # window against the preceding 14-day baseline. Skip sparse histories.
-        recent_start = now - timedelta(days=14)
-        baseline_start = now - timedelta(days=28)
-        recent_count = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, member_id=member.id).filter(
-            RRRAttendanceEvent.punch_time >= recent_start
-        ).count()
-        baseline_count = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, member_id=member.id).filter(
-            RRRAttendanceEvent.punch_time >= baseline_start,
-            RRRAttendanceEvent.punch_time < recent_start,
-        ).count()
+        # Explainable attendance decline: most recent 14-day window vs the
+        # preceding 14-day baseline. Skip sparse histories.
+        recent_count, baseline_count = counts_by_member.get(member.id, (0, 0))
         if member.status == "active" and baseline_count >= 2:
             decline = round((baseline_count - recent_count) / baseline_count * 100)
             if decline >= rules["attendance_drop_percent"]:
@@ -199,6 +277,7 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                     gym_id=gym_id, member=member, pillar="retain", reason_code="attendance_decline",
                     reason_text=f"Attendance is down {decline}%: {recent_count} visits in the last 14 days versus {baseline_count} in the prior 14 days.",
                     priority="high" if decline >= 75 else "medium", potential_revenue=value,
+                    existing=existing,
                 ))
     return created
 
@@ -251,7 +330,7 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     }
 
 
-def adms_terminal_settings(host_url: str | None = None) -> dict:
+def adms_terminal_settings(host_url: str | None = None, path_token: str | None = None) -> dict:
     """Authoritative values the owner types into the terminal's ADMS menu.
 
     Computed from PUBLIC_BASE_URL (falling back to the current request host)
@@ -273,7 +352,9 @@ def adms_terminal_settings(host_url: str | None = None) -> dict:
         "server_address": host,
         "server_port": port,
         "https": configured_base.scheme == "https",
-        "path": "/iclock",
+        # The per-integration path token makes the ADMS URL unguessable;
+        # without it the terminal falls back to serial-only auth.
+        "path": f"/iclock/{path_token}" if path_token else "/iclock",
     }
 
 
@@ -287,5 +368,8 @@ def integration_payload(row: RRRIntegration) -> dict:
         "commands_enabled": row.commands_enabled,
     }
     if row.connector_type == "adms_direct":
-        payload["terminal_settings"] = adms_terminal_settings()
+        # Backfill the token for integrations provisioned before it existed.
+        if not row.adms_path_token:
+            row.adms_path_token = secrets.token_urlsafe(32)
+        payload["terminal_settings"] = adms_terminal_settings(path_token=row.adms_path_token)
     return payload

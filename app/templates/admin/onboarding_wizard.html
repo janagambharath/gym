@@ -469,8 +469,9 @@
             <!-- Pairing Code Display Box -->
             <div class="p-4 border rounded bg-light-subtle text-center mb-4">
                 <span class="text-uppercase small fw-bold text-muted d-block mb-1">Gym Biometric Pairing Code</span>
-                <div class="display-4 fw-bold font-monospace text-primary letter-spacing-2 my-2">{{ dep.pairing_code or '834921' }}</div>
-                <div class="small text-muted mb-3">Valid for 24 hours. Enter this 6-digit code inside the Renewal Desk Windows Bridge app.</div>
+                {% set _pairing = session.get('bridge_pairing_' ~ gym.id) %}
+                <div class="display-4 fw-bold font-monospace text-primary letter-spacing-2 my-2">{{ _pairing or '••••••' }}</div>
+                <div class="small text-muted mb-3">Valid for 10 minutes. Enter this 6-digit code inside the Renewal Desk Windows Bridge app.{% if not _pairing %} Press Refresh for a new code.{% endif %}</div>
                 
                 <div class="d-flex justify-content-center gap-2">
                     <form method="post" action="{{ url_for('admin.generate_bridge_pairing', gym_id=gym.id) }}">

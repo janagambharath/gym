@@ -3,6 +3,7 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, renderAvatar, renderBadge, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatCurrency, formatDate, uuid, getMemberDisplayStatus } from '../utils.js';
 export default { async mount(el, params) {
+    const idempotencyKey = uuid(); // one key per form mount, reused across retries
   const member = params?.member ? JSON.parse(params.member) : null;
   if (!member) { el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No member selected</div></div>'; return; }
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
@@ -33,7 +34,7 @@ export default { async mount(el, params) {
     const body = { member_id: member.id, plan_id: Number(el.querySelector('#rn-plan').value),
       amount: el.querySelector('#rn-amount').value, method: el.querySelector('#rn-method').value,
       reference: el.querySelector('#rn-ref').value.trim() || null, notes: el.querySelector('#rn-notes').value.trim() || null };
-    const res = await apiRequest('/api/mobile/v1/payments', { method: 'POST', body, headers: { 'Idempotency-Key': uuid() } });
+    const res = await apiRequest('/api/mobile/v1/payments', { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } });
     if (res.ok) { showToast('Renewal recorded!', 'success'); navigate.pop(); } 
     else { showToast(res.error.message, 'error'); btn.disabled = false; btn.textContent = 'Renew & Record Payment'; }
   });

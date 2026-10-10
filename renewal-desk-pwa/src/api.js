@@ -3,7 +3,7 @@
    Mirrored from renewal-desk-android/src/services/apiClient.ts
    ═══════════════════════════════════════════════════════════════════════ */
 
-import { saveSession, loadSession, clearSession } from './session.js';
+import { saveSession, loadSession, clearSession, loadMemberSession } from './session.js';
 import { configureDisplayPreferences } from './utils.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
@@ -123,7 +123,12 @@ export async function apiRequest(path, options = {}) {
   };
 
   try {
-    const token = anonymous ? undefined : cachedSession?.accessToken;
+    // Member endpoints authenticate with the member JWT from the OTP login,
+    // never the gym owner's token (privilege confusion otherwise).
+    const isMemberPath = path.startsWith('/api/member/v1/');
+    const token = anonymous
+      ? undefined
+      : (isMemberPath ? loadMemberSession()?.token : cachedSession?.accessToken);
     let response = await makeRequest(token);
 
     if (response.status === 401 && !anonymous && cachedSession) {
@@ -249,21 +254,25 @@ export async function memberVerifyOtp(phone, otp, challengeToken) {
 }
 
 /** Upload an owner-selected payment QR image without setting a JSON content type. */
-export async function uploadPaymentQrImage(file) {
+export async function uploadPaymentQrImage(file, timeoutMs = 15000) {
   const form = new FormData();
   form.append('qr_image', file);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${API_BASE_URL}/api/mobile/v1/settings/payment/qr`, {
       method: 'POST',
       headers: { Accept: 'application/json', ...(cachedSession?.accessToken ? { Authorization: `Bearer ${cachedSession.accessToken}` } : {}) },
       body: form,
+      signal: controller.signal,
     });
     const envelope = await response.json();
     if (!response.ok || !envelope.success) return { ok: false, error: { message: envelope.error?.message || envelope.error || 'QR upload failed.' } };
     return { ok: true, data: envelope.data };
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError') return { ok: false, error: { message: 'QR upload timed out. Check your connection and retry.' } };
     return { ok: false, error: { message: 'Could not upload the QR image. Check your connection.' } };
-  }
+  } finally { clearTimeout(timeout); }
 }
 
 /** Record manual member check-in or check-out */

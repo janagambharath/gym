@@ -34,9 +34,12 @@ members_bp = Blueprint("members", __name__, url_prefix="/members")
 
 
 def _sync_expired_members() -> None:
-    """Persist overdue active memberships before presenting member data."""
-    if auto_expire_members_for_gym(current_user.gym):
-        db.session.commit()
+    """No-op: membership expiry is owned by the scheduler + run-reminders CLI.
+
+    Running the mutating, lock-holding auto-expire inside read endpoints
+    caused long page loads and blocked concurrent renewals. Kept as a
+    no-op so existing call sites need no changes.
+    """
 
 
 def _member_form(member: Member | None = None) -> MemberForm:
@@ -94,7 +97,7 @@ def bulk_renew():
             flash("Renewal days must be between 1 and 730.", "danger")
             return redirect(url_for("members.bulk_renew"))
         if amount is None:
-            flash("Amount must be zero or more.", "danger")
+            flash("Amount must be zero or more, with up to two decimal places.", "danger")
             return redirect(url_for("members.bulk_renew"))
 
         members = (
@@ -105,7 +108,7 @@ def bulk_renew():
                     Member.deleted_at.is_(None),
                     Member.id.in_(member_ids),
                 )
-                .order_by(Member.full_name.asc())
+                .order_by(Member.id.asc())
                 .with_for_update()
             )
             .scalars()
@@ -127,6 +130,8 @@ def bulk_renew():
             new_end = new_start + timedelta(days=renewal_days - 1)
             member.membership_end = new_end
             member.status = "active"
+            # Pin the expected renewal value for revenue-at-risk reporting.
+            member.price = amount
             queue_membership_command(member)
             renewed_ids.append(member.id)
             db.session.add(
@@ -135,6 +140,7 @@ def bulk_renew():
                     member_id=member.id,
                     plan_id=member.plan_id,
                     renewed_by_id=current_user.id,
+                    previous_start=member.membership_start,
                     previous_end=previous_end,
                     new_start=new_start,
                     new_end=new_end,
@@ -345,7 +351,17 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.email = form.email.data.strip() if form.email.data else None
 
     member.gender = form.gender.data or None
-    member.plan_id = form.plan_id.data or None
+    new_plan_id = form.plan_id.data or None
+    if new_plan_id != member.plan_id:
+        member.plan_id = new_plan_id
+        # Pin the plan price as the expected renewal value for reporting.
+        plan = (
+            MembershipPlan.query.filter_by(id=new_plan_id, gym_id=current_user.gym_id).first()
+            if new_plan_id
+            else None
+        )
+        if plan is not None:
+            member.price = plan.price
     member.membership_start = form.membership_start.data
     member.membership_end = form.membership_end.data
     member.status = form.status.data
@@ -379,7 +395,8 @@ def _parse_amount(raw_value: str | None) -> Decimal | None:
         amount = Decimal((raw_value or "0").strip() or "0")
     except (AttributeError, InvalidOperation):
         return None
-    if amount < 0:
+    # Match the mobile paths: max 2 decimal places so Postgres/SQLite agree.
+    if amount < 0 or not amount.is_finite() or amount.as_tuple().exponent < -2:
         return None
     return amount
 

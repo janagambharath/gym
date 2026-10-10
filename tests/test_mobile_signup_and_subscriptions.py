@@ -170,7 +170,7 @@ def test_whatsapp_onboarding_and_connection(client, app, monkeypatch):
         db.session.commit()
 
     # Set Meta config for embedded signup
-    app.config["META_APP_ID"] = "test_meta_app_id"
+    app.config["META_APP_ID"] = "1234567890123456"
     app.config["META_CONFIG_ID"] = "test_meta_config_id"
     from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
     monkeypatch.setattr(WhatsAppService, "connect_webhooks", lambda self: WhatsAppResult(ok=True))
@@ -190,11 +190,22 @@ def test_whatsapp_onboarding_and_connection(client, app, monkeypatch):
     assert "meta_app_id" in config_resp.get_json()["data"]
     assert len(config_resp.get_json()["data"]["supported_methods"]) == 2
 
+    # The signup page now requires the short-lived handshake minted by the
+    # authenticated onboarding-config call (never a full access token in URL).
+    handshake = config_resp.get_json()["data"]["signup_handshake"]
+    assert handshake
     signup_page = client.get(
-        "/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=test_meta_app_id&config_id=test_meta_config_id"
+        "/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=1234567890123456"
+        f"&config_id=test_meta_config_id&handshake={handshake}"
     )
     assert signup_page.status_code == 200
     assert signup_page.headers["Cache-Control"] == "no-store, max-age=0"
+
+    # Without the handshake the page is rejected.
+    no_handshake = client.get(
+        "/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=1234567890123456&config_id=test_meta_config_id"
+    )
+    assert no_handshake.status_code == 400
 
     # Connect WABA
     connect_resp = client.post("/api/mobile/v1/whatsapp/connect-waba", json={

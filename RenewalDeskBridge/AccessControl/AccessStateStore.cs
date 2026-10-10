@@ -14,11 +14,48 @@ namespace RenewalDeskBridge.AccessControl
     {
         private readonly string _connectionString;
 
+        /// <summary>Enroll numbers affected by the last corruption recovery, if any.</summary>
+        public List<string> LastRecoveryAffectedEnrollNumbers { get; private set; }
+
         public AccessStateStore()
         {
             string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "access_state.db");
             _connectionString = $"Data Source={dbPath};Version=3;";
-            EnsureSchema();
+            try
+            {
+                EnsureSchema();
+            }
+            catch (System.Data.SQLite.SQLiteException)
+            {
+                // Quarantine the corrupt file and recreate empty. The bridge
+                // stays fail-closed (it will not restore blocked members it
+                // can no longer track), and the UI must alert loudly with the
+                // affected enroll numbers for terminal-admin recovery.
+                LastRecoveryAffectedEnrollNumbers = ReadEnrollNumbersBestEffort(dbPath);
+                string quarantine = dbPath + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                try { File.Move(dbPath, quarantine); } catch { }
+                EnsureSchema();
+            }
+        }
+
+        private List<string> ReadEnrollNumbersBestEffort(string dbPath)
+        {
+            var result = new List<string>();
+            try
+            {
+                using (var conn = new System.Data.SQLite.SQLiteConnection($"Data Source={dbPath};Version=3;Read Only=True;"))
+                {
+                    conn.Open();
+                    using (var cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = "SELECT DISTINCT enroll_number FROM access_state";
+                        using (var reader = cmd.ExecuteReader())
+                            while (reader.Read()) result.Add(reader.GetString(0));
+                    }
+                }
+            }
+            catch { }
+            return result;
         }
 
         private void EnsureSchema()

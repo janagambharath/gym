@@ -1,5 +1,7 @@
 """Mobile API WhatsApp reminder endpoint."""
 from __future__ import annotations
+from functools import wraps
+import re
 
 from flask import current_app, g, jsonify, request
 from sqlalchemy.orm import joinedload
@@ -8,6 +10,7 @@ from app.extensions import db, limiter
 import requests
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
+from app.mobile_api.token_service import create_handshake_token, decode_handshake_token
 from app.models import Member, QRSettings, ReminderLog
 from app.services.audit_service import audit
 from app.services.error_messages import friendly_error
@@ -34,6 +37,40 @@ def _serialize_reminder_log(log: ReminderLog) -> dict:
         "created_at": log.created_at.isoformat() if log.created_at else None,
         "template_name": log.template.name if log.template else None,
     }
+
+
+
+def whatsapp_handshake_or_token_required(view):
+    """Accept the embedded-signup handshake token or a normal access token.
+
+    The handshake is minted by the authenticated onboarding-config endpoint
+    and is scoped to the whatsapp_embedded_signup purpose (10 minutes).
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            payload = decode_handshake_token(
+                auth_header[7:], "whatsapp_embedded_signup"
+            )
+            if payload is not None:
+                user = db.session.get(User, payload.get("sub"))
+                if (
+                    user is not None
+                    and user.is_active
+                    and user.gym_id == payload.get("gym_id")
+                    and user.gym is not None
+                    and user.gym.is_operational()
+                ):
+                    g.current_user = user
+                    g.user_id = user.id
+                    g.gym_id = user.gym_id
+                    return view(*args, **kwargs)
+                return error_response("UNAUTHORIZED", "Handshake is not valid for this account.", 401)
+        # Fall back to the standard access-token flow.
+        return token_required(view)(*args, **kwargs)
+
+    return wrapped
 
 
 def register_whatsapp_routes(bp):
@@ -337,6 +374,12 @@ def register_whatsapp_routes(bp):
             "data": {
                 "meta_app_id": meta_app_id,
                 "config_id": config_id,
+                # Short-lived, single-purpose token for the embedded-signup
+                # WebView page. The owner's full access token must never be
+                # placed in a page URL.
+                "signup_handshake": create_handshake_token(
+                    g.current_user.id, gym.id, "whatsapp_embedded_signup"
+                ),
                 "gym_id": gym.id,
                 "gym_name": gym.name,
                 "supported_methods": [
@@ -363,22 +406,31 @@ def register_whatsapp_routes(bp):
         This is intentionally unauthenticated — the React Native WebView
         cannot easily forward Bearer tokens for HTML page loads. The Meta
         App ID and Config ID are passed as query parameters from the
-        authenticated onboarding-config endpoint.
+        authenticated onboarding-config endpoint, along with a short-lived
+        handshake token (never the owner's full access token).
         """
         meta_app_id = request.args.get("meta_app_id", "")
         config_id = request.args.get("config_id", "")
         feature_type = request.args.get("feature_type", "")
-        token = request.args.get("token", "")
+        handshake = request.args.get("handshake", "")
 
-        if not meta_app_id or not config_id:
-            return "<h1>Configuration Error</h1><p>Meta App ID or Configuration ID is missing.</p>", 400
+        # Strict allowlists: every reflected value lands inside a JS string
+        # literal, so reject anything outside the expected shapes (XSS guard).
+        if not re.fullmatch(r"[0-9]{4,32}", meta_app_id):
+            return "<h1>Configuration Error</h1><p>Meta App ID is missing or invalid.</p>", 400
+        if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", config_id):
+            return "<h1>Configuration Error</h1><p>Configuration ID is missing or invalid.</p>", 400
+        if feature_type and not re.fullmatch(r"[a-z_]{1,32}", feature_type):
+            return "<h1>Configuration Error</h1><p>Feature type is invalid.</p>", 400
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{16,512}", handshake):
+            return "<h1>Configuration Error</h1><p>Signup handshake is missing or invalid.</p>", 400
 
         html = (
             _EMBEDDED_SIGNUP_HTML
             .replace("{{META_APP_ID}}", meta_app_id)
             .replace("{{META_CONFIG_ID}}", config_id)
             .replace("{{FEATURE_TYPE}}", feature_type)
-            .replace("{{AUTH_TOKEN}}", token)
+            .replace("{{AUTH_TOKEN}}", handshake)
         )
 
         from flask import make_response
@@ -408,7 +460,7 @@ def register_whatsapp_routes(bp):
         return resp
 
     @bp.route("/whatsapp/connect-waba", methods=["POST"])
-    @token_required
+    @whatsapp_handshake_or_token_required
     @roles_required("gym_owner")
     def connect_waba():
         """Connect or update tenant-scoped WABA and Phone Number ID.

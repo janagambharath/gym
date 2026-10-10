@@ -514,7 +514,9 @@
             <div class="p-3">
                 <div class="p-3 border rounded bg-light-subtle text-center mb-3">
                     <small class="text-muted text-uppercase fw-bold d-block mb-1">Active Pairing Code</small>
-                    <div class="h2 fw-bold font-monospace text-primary mb-1">{{ dep.pairing_code or '834921' }}</div>
+                    {% set _pairing = session.get('bridge_pairing_' ~ gym.id) %}
+                    <div class="h2 fw-bold font-monospace text-primary mb-1">{{ _pairing or '••••••' }}</div>
+                    {% if not _pairing %}<div class="small text-muted mb-2">Code shown once at generation — press Refresh for a new one.</div>{% endif %}
                     <form method="post" action="{{ url_for('admin.generate_bridge_pairing', gym_id=gym.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="btn btn-sm btn-outline-secondary" type="submit">Refresh Code</button>

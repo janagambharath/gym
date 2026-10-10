@@ -453,7 +453,9 @@ class WhatsAppOption2TestCase(unittest.TestCase):
             1,
         )
 
-    def test_members_page_expires_overdue_active_members_before_filtering(self) -> None:
+    def test_members_page_does_not_mutate_statuses_on_get(self) -> None:
+        # Expiry is owned by the scheduler / run-reminders CLI now: a GET on
+        # the members page must never mutate member statuses.
         self.member_one.membership_end = date.today() - timedelta(days=1)
         self.member_one.status = "active"
         self.member_two.membership_end = date.today() - timedelta(days=1)
@@ -464,12 +466,11 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         response = self.client.get("/members/?status=expired")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Member One", response.data)
-        self.assertNotIn(b"Member Two", response.data)
         db.session.refresh(self.member_one)
         db.session.refresh(self.member_two)
-        self.assertEqual(self.member_one.status, "expired")
+        self.assertEqual(self.member_one.status, "active")
         self.assertEqual(self.member_two.status, "active")
+        self.assertNotIn(b"Member One", response.data)
 
     def test_members_page_shows_delete_action_for_owner(self) -> None:
         self._login_owner()

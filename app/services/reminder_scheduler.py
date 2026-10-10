@@ -20,7 +20,10 @@ _LOCK_OWNER: str | None = None
 
 
 def _lock_ttl(app: Flask) -> int:
-    return max((app.config["REMINDER_JOB_MINUTES"] * 60 * 2), 300)
+    # Short TTL, kept alive by heartbeat during the run. If the worker dies
+    # mid-job the lock expires in minutes instead of 2x the job interval
+    # (which starved all reminders/expiry for up to 48h).
+    return 300
 
 
 def _deployment_id() -> str:
@@ -183,6 +186,10 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     )
             except Exception:
                 db.session.rollback()
+            finally:
+                # Heartbeat: prove we are alive so the short-TTL lock survives
+                # long runs but expires quickly if this worker dies.
+                _refresh_redis_lock(redis_url, _lock_ttl(app))
                 app.logger.exception("Auto-expiry failed for gym %s", gym.id)
                 continue
 
@@ -200,7 +207,8 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     from app.services.push_notification_service import notify_expiring_members_daily
                     notify_expiring_members_daily(gym, result.get("sent", 0), expired_count)
                 except Exception:
-                    pass
+                    # Never swallow: a broken push pipeline must be visible.
+                    app.logger.exception("Push notification failed for gym %s", gym.id)
             except Exception as exc:
                 db.session.rollback()
                 app.logger.exception("Reminder scan failed for gym %s", gym.id)

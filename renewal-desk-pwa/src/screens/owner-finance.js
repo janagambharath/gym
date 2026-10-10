@@ -26,9 +26,14 @@ async function load(el) {
   el.querySelector('#finance-back')?.addEventListener('click', () => navigate.switchTab('dashboard'));
   el.querySelector('#cash-close-form')?.addEventListener('submit', async event => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const response = await apiRequest('/api/mobile/v1/owner/cash-close', { method: 'POST', body: { counted_cash: form.get('counted_cash'), notes: form.get('notes') } });
-    if (response.ok) { showToast(`Cash close saved. Variance: ${formatCurrency(response.data.variance)}`, 'success'); await load(el); }
-    else showToast(response.error?.message || 'Could not save cash close.', 'error');
+    const btn = event.currentTarget.querySelector('[type="submit"]');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const form = new FormData(event.currentTarget);
+      const response = await apiRequest('/api/mobile/v1/owner/cash-close', { method: 'POST', body: { counted_cash: form.get('counted_cash'), notes: form.get('notes') } });
+      if (response.ok) { showToast(`Cash close saved. Variance: ${formatCurrency(response.data.variance)}`, 'success'); await load(el); }
+      else showToast(response.error?.message || 'Could not save cash close.', 'error');
+    } finally { btn.disabled = false; }
   });
 }

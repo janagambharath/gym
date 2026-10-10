@@ -37,6 +37,9 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="not_configured", index=True)
     is_primary = db.Column(db.Boolean, nullable=False, default=False)
     device_serial = db.Column(db.String(120), nullable=True, index=True)
+    # Per-integration secret embedded in the ADMS path (/iclock/<token>/...).
+    # Serial-only auth is enumerable; the token makes the path unguessable.
+    adms_path_token = db.Column(db.String(64), nullable=True, unique=True)
     device_name = db.Column(db.String(160), nullable=True)
     pairing_code_hash = db.Column(db.String(64), nullable=True, unique=True, index=True)
     pairing_code_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)

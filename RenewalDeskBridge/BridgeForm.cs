@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using RenewalDeskBridge.AccessControl;
 using RenewalDeskBridge.CloudApi;
 using RenewalDeskBridge.Config;
@@ -39,9 +40,32 @@ namespace RenewalDeskBridge
         public BridgeForm(bool x990AccessTestMode = false)
         {
             InitializeComponent();
+            // Reconnect automatically when the terminal session dies, and
+            // survive PC sleep/wake instead of leaving a dead session behind.
+            _device.OnDisconnected += () => { _ = ReconnectDeviceWithBackoffAsync(); };
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
             _x990AccessTestMode = x990AccessTestMode;
             _config = BridgeConfig.Load();
             _membershipAccess = new MembershipAccessService(_device, _accessState, _config);
+            // Loud, persistent alert if the access-state DB was recovered from
+            // corruption: blocked members are fail-closed and need a terminal
+            // admin to review the listed enroll numbers.
+            if (_accessState.LastRecoveryAffectedEnrollNumbers != null)
+            {
+                string affected = string.Join(", ", _accessState.LastRecoveryAffectedEnrollNumbers.ToArray());
+                if (string.IsNullOrEmpty(affected)) affected = "(unreadable)";
+                Log("ACCESS STATE DB WAS CORRUPT AND REBUILT. Affected enroll numbers: " + affected
+                    + ". Blocked members stay blocked (fail-closed) — have a terminal admin review them.");
+                MessageBox.Show(
+                    "The local access-state database was corrupt and has been rebuilt empty.
+
+" +
+                    "Affected enroll numbers: " + affected + "
+
+" +
+                    "Blocked members remain blocked (fail-closed). Ask a terminal admin to review them.",
+                    "Access State Recovered", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
             LoadConfigIntoFields();
             UpdateMembershipPolicyStatus();
 
@@ -126,6 +150,8 @@ namespace RenewalDeskBridge
                 }
             }
             _config.Save();
+            // Secrets go to DPAPI, never the plaintext file.
+            _config.SaveSecrets();
         }
 
         // ---------- Connect / Disconnect ----------
@@ -137,6 +163,7 @@ namespace RenewalDeskBridge
             if (_device.IsConnected)
             {
                 _cts?.Cancel();
+                _api?.Dispose();
                 _api = null;
                 _connectedDeviceSerial = string.Empty;
                 _device.Disconnect();
@@ -637,6 +664,63 @@ namespace RenewalDeskBridge
 
         // ---------- Background loops: heartbeat, command poll, retry flush ----------
 
+        private int _reconnectAttempts;
+
+        /// <summary>
+        /// Reconnect the terminal with exponential backoff after an unexpected
+        /// disconnect. Runs on a background thread; UI updates via RunOnUi.
+        /// </summary>
+        private async Task ReconnectDeviceWithBackoffAsync()
+        {
+            // Only auto-reconnect if the user had connected (not after a manual Disconnect).
+            if (string.IsNullOrWhiteSpace(_config.DeviceIp)) return;
+            if (_device.IsConnected) return;
+            int attempt = System.Threading.Interlocked.Increment(ref _reconnectAttempts);
+            int delaySeconds = Math.Min(300, (int)Math.Pow(2, Math.Min(attempt, 8)));
+            RunOnUi(() => Log($"Device connection lost. Reconnecting in {delaySeconds}s (attempt {attempt})..."));
+            try { await Task.Delay(TimeSpan.FromSeconds(delaySeconds)); } catch { return; }
+            if (_device.IsConnected) { System.Threading.Interlocked.Decrement(ref _reconnectAttempts); return; }
+            bool ok = false;
+            try
+            {
+                ok = _device.Connect(_config.DeviceIp, _config.DevicePort,
+                    _config.DeviceCommPassword, _config.MachineNumber,
+                    _config.EnableLiveAttendanceEvents);
+            }
+            catch (Exception ex) { RunOnUi(() => Log("Reconnect failed: " + ex.Message)); }
+            if (ok)
+            {
+                System.Threading.Interlocked.Exchange(ref _reconnectAttempts, 0);
+                RunOnUi(() =>
+                {
+                    UpdateDeviceStatus(true);
+                    Log("Reconnected to device.");
+                });
+            }
+            else
+            {
+                RunOnUi(() => { UpdateDeviceStatus(false); Log("Reconnect attempt failed; will retry with backoff."); });
+                // Schedule the next attempt.
+                _ = ReconnectDeviceWithBackoffAsync();
+            }
+        }
+
+        private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            if (e.Mode == PowerModes.Suspend)
+            {
+                RunOnUi(() => Log("PC suspending: tearing down the device session."));
+                try { _device.Disconnect(); } catch { }
+                RunOnUi(() => UpdateDeviceStatus(false));
+            }
+            else if (e.Mode == PowerModes.Resume)
+            {
+                RunOnUi(() => Log("PC resumed: reconnecting to the device."));
+                System.Threading.Interlocked.Exchange(ref _reconnectAttempts, 0);
+                _ = ReconnectDeviceWithBackoffAsync();
+            }
+        }
+
         private void StartBackgroundLoops(CancellationToken token)
         {
             ObserveBackgroundTask(HeartbeatLoopAsync(token), "Renewal Desk heartbeat loop");
@@ -683,6 +767,13 @@ namespace RenewalDeskBridge
                 {
                     RenewalDeskClient api = _api;
                     if (api == null) return;
+
+                    // Watchdog: detect a silently-dead terminal session (reboot,
+                    // cable flap, sleep) and trigger the reconnect path.
+                    if (_device.IsConnected && !_device.CheckSessionAlive())
+                    {
+                        RunOnUi(() => { UpdateDeviceStatus(false); Log("Device session died; reconnecting..."); });
+                    }
 
                     bool ok = await api.SendHeartbeatAsync(_device.IsConnected ? "online" : "device_disconnected");
                     RunOnUi(() =>
@@ -910,6 +1001,7 @@ namespace RenewalDeskBridge
         private void BridgeForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             _cts?.Cancel();
+            try { SystemEvents.PowerModeChanged -= OnPowerModeChanged; } catch { }
             if (_attendanceHandlerRegistered)
             {
                 _device.OnAttendance -= Device_OnAttendance;

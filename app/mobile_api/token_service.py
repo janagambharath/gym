@@ -82,6 +82,41 @@ def decode_access_token(token: str) -> dict | None:
     return payload
 
 
+# ── Handshake tokens (short-lived, single-purpose, HMAC-signed) ──────────
+# Used where a full Bearer <redacted> must not travel (e.g. embedded WebView pages):
+# minted from an authenticated endpoint, passed in the page URL, accepted once
+# by the matching API. Never a substitute for the access token.
+
+
+def create_handshake_token(user_id: int, gym_id: int, purpose: str) -> str:
+    """Create a 10-minute HMAC-signed token scoped to one purpose."""
+    now = int(time.time())
+    payload = {
+        "sub": user_id,
+        "gym_id": gym_id,
+        "typ": "handshake",
+        "purpose": purpose,
+        "iat": now,
+        "exp": now + 10 * 60,
+    }
+    header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    body = _b64url_encode(json.dumps(payload).encode())
+    signature = hmac.new(
+        _token_secret().encode(), f"{header}.{body}".encode(), hashlib.sha256
+    ).digest()
+    return f"{header}.{body}.{_b64url_encode(signature)}"
+
+
+def decode_handshake_token(token: str, purpose: str) -> dict | None:
+    """Validate a handshake token for the expected purpose. None if invalid."""
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+    if payload.get("typ") != "handshake" or payload.get("purpose") != purpose:
+        return None
+    return payload
+
+
 # ── Refresh tokens (opaque + server-stored hash) ────────────────────────
 
 

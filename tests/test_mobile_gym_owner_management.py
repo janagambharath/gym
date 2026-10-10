@@ -71,10 +71,22 @@ def test_mobile_staff_management_flow(client, app):
     staff_list = list_resp.get_json()["data"]["staff"]
     assert any(s["id"] == staff_id for s in staff_list)
 
-    # 3. Reset staff password
-    reset_resp = client.post(f"/api/mobile/v1/staff/{staff_id}/reset-password", headers=headers)
+    # 3. Reset staff password (caller-supplied, min 12 chars)
+    reset_resp = client.post(
+        f"/api/mobile/v1/staff/{staff_id}/reset-password",
+        json={"new_password": "SecureReset123!"},
+        headers=headers,
+    )
     assert reset_resp.status_code == 200
-    assert "new_password" in reset_resp.get_json()["data"]
+    assert reset_resp.get_json()["data"]["new_password"] == "SecureReset123!"
+
+    # 3b. Short passwords are rejected
+    bad_resp = client.post(
+        f"/api/mobile/v1/staff/{staff_id}/reset-password",
+        json={"new_password": "short"},
+        headers=headers,
+    )
+    assert bad_resp.status_code == 400
 
     # 4. Deactivate staff
     deact_resp = client.patch(f"/api/mobile/v1/staff/{staff_id}", json={"is_active": False}, headers=headers)
@@ -85,17 +97,16 @@ def test_mobile_staff_management_flow(client, app):
 def test_mobile_remote_unlock_and_sync(client, app):
     gym_id, plan_id, owner_id, headers = _create_owner_and_headers(client, app, "unlockowner@gym.com")
 
-    # 1. Remote unlock
+    # 1. Remote unlock is refused until a verified controller command is
+    # commissioned: no physical command is sent and no access event is fabricated.
     unlock_resp = client.post("/api/mobile/v1/access/remote-unlock", headers=headers)
-    assert unlock_resp.status_code == 200
-    assert unlock_resp.get_json()["data"]["pulse_seconds"] == 5
+    assert unlock_resp.status_code == 409
+    assert unlock_resp.get_json()["error"]["code"] == "UNSUPPORTED_DEVICE_COMMAND"
 
-    # 2. Verify audit event
+    # 2. No access event was fabricated
     with app.app_context():
         event = AccessEvent.query.filter_by(gym_id=gym_id, verify_method=15).first()
-        assert event is not None
-        assert event.event_type == "ENTRY"
-        assert event.is_invalid is False
+        assert event is None
 
     # 3. Retry sync
     retry_resp = client.post("/api/mobile/v1/access/retry-sync", headers=headers)
