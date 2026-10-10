@@ -10,8 +10,8 @@
   height: var(--header-height);
   padding: 0 var(--sp-lg);
   padding-top: var(--safe-top);
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
+  background: var(--brand);
+  border-bottom: 2px solid var(--brand-dark);
   flex-shrink: 0;
   position: relative;
   z-index: 10;
@@ -71,13 +71,16 @@
 }
 
 .header-title {
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-bold);
-  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-black);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--text-inverse);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 1.2;
+  line-height: 1.1;
 }
 
 .header-subtitle {
@@ -213,13 +216,13 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--r-full);
-  color: var(--text-secondary);
+  color: var(--text-inverse);
   position: relative;
   transition: background 0.15s;
 }
 
 .header-action:active {
-  background: var(--gray-100);
+  background: rgba(255,253,248,0.12);
 }
 
 .header-badge {
@@ -254,8 +257,8 @@
   align-items: stretch;
   height: calc(var(--tab-bar-height) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
-  background: var(--card);
-  border-top: 1px solid var(--border);
+  background: var(--brand);
+  border-top: 2px solid var(--brand-dark);
   flex-shrink: 0;
   width: 100%;
 }
@@ -267,12 +270,30 @@
   align-items: center;
   justify-content: center;
   gap: 2px;
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
+  color: rgba(255,253,248,0.45);
+  font-family: var(--font-display);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10px;
   transition: color 0.2s;
   padding: var(--sp-xs) 0;
   position: relative;
+}
+
+.tab-item.active {
+  color: var(--volt);
+}
+
+.tab-item.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 25%;
+  right: 25%;
+  height: 3px;
+  background: var(--volt);
+  border-radius: 0 0 3px 3px;
 }
 
 .tab-item.active {
@@ -413,10 +434,17 @@
 .btn-primary {
   background: var(--brand);
   color: var(--text-inverse);
+  box-shadow: var(--shadow-md);
+  border: 1.5px solid var(--brand-dark);
+  font-family: var(--font-display);
+  font-weight: var(--fw-extrabold);
+  letter-spacing: 0.03em;
 }
 
 .btn-primary:active {
   background: var(--brand-dark);
+  box-shadow: none;
+  transform: translate(2px, 2px);
 }
 
 .btn-secondary {

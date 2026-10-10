@@ -1,83 +1,84 @@
 /**
  * Renewal Desk Design System — Design Tokens
  *
- * Derived from the 5 visual references. Premium B2B SaaS palette:
- * white surfaces, refined dark typography, confident RRR green primary,
- * semantic status colors, subtle borders and elevation.
+ * "IRON & INK" — hand-crafted gym editorial system.
+ * Warm paper, ink black, volt accent. No generic SaaS purple.
  */
 
 // ─── Color Palette ───────────────────────────────────────────────────
 
 export const colors = {
-  // Brand
-  brand: '#0F9F62',
-  brandDark: '#087B4A',
-  brandLight: '#38C981',
-  brandSubtle: '#ECFBF3',
+  // Brand — ink black + volt
+  brand: '#16130E',
+  brandDark: '#0C0A07',
+  brandLight: '#2A251C',
+  brandSubtle: '#F1F4DC',
+  volt: '#D9F24F',
+  voltDark: '#B8D42E',
 
-  // Surfaces
-  background: '#F8F9FB',
-  card: '#FFFFFF',
-  surface: '#FFFFFF',
+  // Surfaces — warm paper
+  background: '#F5F2EB',
+  card: '#FFFDF8',
+  surface: '#FFFDF8',
 
   // Text
-  text: '#0F172A',
-  textSecondary: '#475569',
-  muted: '#94A3B8',
-  textInverse: '#FFFFFF',
+  text: '#16130E',
+  textSecondary: '#5C564A',
+  muted: '#A39C8B',
+  textInverse: '#FFFDF8',
 
   // Borders
-  border: '#E2E8F0',
-  borderLight: '#F1F5F9',
-  borderFocus: '#0F9F62',
+  border: '#E3DCCB',
+  borderLight: '#EFEADD',
+  borderFocus: '#16130E',
 
   // Semantic — Success
-  success: '#059669',
-  successDark: '#047857',
-  successSurface: '#ECFDF5',
-  successBorder: '#A7F3D0',
+  success: '#2D7A3D',
+  successDark: '#1F5A2C',
+  successSurface: '#EAF4E4',
+  successBorder: '#BFE0B5',
 
   // Semantic — Warning
-  warning: '#D97706',
-  warningDark: '#B45309',
-  warningSurface: '#FFFBEB',
-  warningBorder: '#FDE68A',
+  warning: '#B45309',
+  warningDark: '#92400E',
+  warningSurface: '#FBF3DF',
+  warningBorder: '#F0D9A8',
 
   // Semantic — Error / Critical
-  critical: '#DC2626',
-  criticalDark: '#B91C1C',
-  criticalSurface: '#FEF2F2',
-  criticalBorder: '#FECACA',
+  critical: '#C2410C',
+  criticalDark: '#9A3412',
+  criticalSurface: '#FBEDE3',
+  criticalBorder: '#F5C9A8',
 
   // Semantic — Info
-  info: '#2563EB',
-  infoSurface: '#EFF6FF',
-  infoBorder: '#BFDBFE',
+  info: '#1D4ED8',
+  infoSurface: '#E8EFFD',
+  infoBorder: '#B9CFF5',
 
   // Status-specific
-  statusActive: '#059669',
-  statusActiveSurface: '#ECFDF5',
-  statusExpiring: '#D97706',
-  statusExpiringSurface: '#FFFBEB',
-  statusExpired: '#DC2626',
-  statusExpiredSurface: '#FEF2F2',
-  statusPending: '#7C3AED',
-  statusPendingSurface: '#F5F3FF',
-  statusPaid: '#059669',
-  statusPaidSurface: '#ECFDF5',
-  statusFailed: '#DC2626',
-  statusFailedSurface: '#FEF2F2',
-  statusVerified: '#059669',
-  statusRejected: '#DC2626',
+  statusActive: '#2D7A3D',
+  statusActiveSurface: '#EAF4E4',
+  statusExpiring: '#B45309',
+  statusExpiringSurface: '#FBF3DF',
+  statusExpired: '#C2410C',
+  statusExpiredSurface: '#FBEDE3',
+  statusPending: '#6D5BD0',
+  statusPendingSurface: '#EFECFA',
+  statusPaid: '#2D7A3D',
+  statusPaidSurface: '#EAF4E4',
+  statusFailed: '#C2410C',
+  statusFailedSurface: '#FBEDE3',
+  statusVerified: '#2D7A3D',
+  statusRejected: '#C2410C',
 
   // WhatsApp
-  whatsapp: '#25D366',
-  whatsappDark: '#128C7E',
+  whatsapp: '#1FA855',
+  whatsappDark: '#147A3E',
 
-  // Neutral shades
-  gray50: '#F8FAFC',
-  gray100: '#F1F5F9',
-  gray200: '#E2E8F0',
+  // Neutral shades (warmed)
+  gray50: '#FAF8F3',
+  gray100: '#F1EDE2',
+  gray200: '#E3DCCB',
   gray300: '#CBD5E1',
   gray400: '#94A3B8',
   gray500: '#64748B',
