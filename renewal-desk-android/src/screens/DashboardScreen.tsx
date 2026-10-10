@@ -30,6 +30,7 @@ type DashboardScreenProps = {
   onNavigateAccess?: () => void;
   onNavigatePlans?: () => void;
   onNavigateMemberDetail?: (member: Member) => void;
+  onRenewMember?: (member: Member) => void;
   onNavigateAddMember?: () => void;
   onNavigateImportMembers?: () => void;
   onNavigateRecordPayment?: () => void;
@@ -56,6 +57,7 @@ export function DashboardScreen({
   onNavigateAccess,
   onNavigatePlans,
   onNavigateMemberDetail,
+  onRenewMember,
   onNavigateAddMember,
   onNavigateImportMembers,
   onNavigateRecordPayment,
@@ -741,7 +743,7 @@ export function DashboardScreen({
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={styles.upcomingRenewBtn}
-                        onPress={onNavigateRenewals}
+                        onPress={() => (onRenewMember ? onRenewMember(m) : onNavigateRenewals?.())}
                         activeOpacity={0.7}
                       >
                         <Text style={styles.upcomingRenewBtnText}>Renew</Text>

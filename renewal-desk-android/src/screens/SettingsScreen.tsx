@@ -35,6 +35,7 @@ type SettingsScreenProps = {
   onNavigatePayments?: () => void;
   onNavigatePaymentSetup?: () => void;
   onNavigateRrr?: () => void;
+  onNavigateEditGymProfile?: () => void;
 };
 
 export function SettingsScreen({
@@ -51,6 +52,7 @@ export function SettingsScreen({
   onNavigatePayments,
   onNavigatePaymentSetup,
   onNavigateRrr,
+  onNavigateEditGymProfile,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings | undefined>();
@@ -129,6 +131,16 @@ export function SettingsScreen({
               <InfoRow label="Address" value={gym.address ?? '—'} />
               <InfoRow label="Timezone" value={gym.timezone ?? 'Asia/Kolkata'} />
             </View>
+          ) : null}
+          {onNavigateEditGymProfile ? (
+            <TouchableOpacity
+              style={styles.editProfileBtn}
+              onPress={onNavigateEditGymProfile}
+              activeOpacity={0.7}
+            >
+              <Icon name="edit" size={15} color={colors.brand} />
+              <Text style={styles.editProfileBtnText}>Edit Gym Profile</Text>
+            </TouchableOpacity>
           ) : null}
         </View>
 
@@ -389,6 +401,23 @@ const styles = StyleSheet.create({
   },
   infoList: {
     marginTop: spacing.sm,
+  },
+  editProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.brand,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandSubtle,
+  },
+  editProfileBtnText: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
   },
   menuIconWrap: {
     alignItems: 'center',
