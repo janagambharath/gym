@@ -89,13 +89,17 @@ class RRRDevice(TenantMixin, TimestampMixin, db.Model):
 class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     """One auditable command issued to a direct ADMS terminal.
 
-    The command body is generated server-side from a narrowly scoped test
-    action.  It is deliberately not an arbitrary raw-command console.
+    The command body is generated server-side from a narrowly scoped action.
+    ``probe_info``/``block_test``/``unblock_test`` are the owner-driven
+    commissioning tests; ``block``/``unblock`` are the automatic membership
+    commands queued by ``queue_adms_membership_command`` once the owner
+    finishes supervised commissioning.  It is deliberately not an arbitrary
+    raw-command console.
     """
     __tablename__ = "rrr_adms_commands"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('probe_info', 'block_test', 'unblock_test')",
+            "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock')",
             name="ck_rrr_adms_command_action",
         ),
         CheckConstraint(

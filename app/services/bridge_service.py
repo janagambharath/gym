@@ -10,7 +10,9 @@ from sqlalchemy import and_, or_, select
 
 from app.extensions import db
 from app.models import BridgeCommand, BridgeInstallation, Member
+from app.models import RRRAdmsCommand, RRRIdentityMapping, RRRIntegration
 from app.models.mixins import utcnow
+from app.services.audit_service import audit
 
 
 _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
@@ -60,14 +62,170 @@ def _active_installation(gym_id: int) -> BridgeInstallation | None:
     return BridgeInstallation.query.filter_by(gym_id=gym_id, is_active=True).first()
 
 
+# ─── Direct ADMS automatic block/unblock ─────────────────────────────────────
+
+def adms_command_text(action: str, enroll_number: str | None) -> str:
+    """Return the PUSH SDK wire text for a direct-ADMS terminal command.
+
+    ``block``/``unblock`` are the automatic membership commands; the ``*_test``
+    variants are the owner-driven commissioning commands.  Both spellings share
+    the same wire format: Pri=1 is the vendor's inactive-user value and Pri=0
+    is a normal user.  Deletion is never used: commands must preserve the user
+    and its enrolled biometric template.
+    """
+
+    if action == "probe_info":
+        return "INFO"
+    if action in {"block", "block_test"}:
+        priority = "1"
+    elif action in {"unblock", "unblock_test"}:
+        priority = "0"
+    else:
+        raise ValueError(f"Unknown ADMS command action: {action!r}")
+    return f"DATA UPDATE USERINFO PIN={enroll_number}\tPri={priority}"
+
+
+def resolve_adms_enroll_number(member: Member) -> str | None:
+    """Return the terminal enroll number for a member on the direct-ADMS path.
+
+    Prefers the confirmed RRR identity mapping (the biometric ID the terminal
+    actually reported), then falls back to the member's device enroll number.
+    Returns ``None`` when the member has no usable terminal identity.
+    """
+
+    mapping = (
+        RRRIdentityMapping.query.filter_by(
+            gym_id=member.gym_id, member_id=member.id, status="confirmed"
+        )
+        .order_by(RRRIdentityMapping.id.desc())
+        .first()
+    )
+    candidate = (mapping.external_id if mapping else None) or member.device_enroll_number
+    if not candidate:
+        return None
+    return canonical_enroll_number(candidate)
+
+
+def _adms_integration(gym_id: int) -> RRRIntegration | None:
+    return RRRIntegration.query.filter_by(gym_id=gym_id, connector_type="adms_direct").first()
+
+
+def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRRAdmsCommand | None:
+    """Queue an automatic block/unblock for the direct-ADMS terminal.
+
+    This is the direct-path twin of :func:`queue_membership_command`.  It is
+    deliberately gated on ``commands_enabled``: the owner must finish the
+    supervised commissioning (mapped real attendance + acknowledged test
+    command + physical door test) before any automatic command is queued.
+
+    Delivery is pull-based (the terminal polls ``/iclock/getrequest`` and
+    re-sends ``delivered`` commands until acknowledged), so queueing while the
+    terminal is temporarily offline is safe.  Commands are never queued for a
+    terminal that has never connected.
+
+    Like the bridge twin, this function does not commit.
+    """
+
+    integration = _adms_integration(member.gym_id)
+    if integration is None or not integration.commands_enabled:
+        return None
+    if integration.last_success_at is None:
+        # The terminal never checked in; do not pile commands into the void.
+        return None
+
+    try:
+        enroll_number = resolve_adms_enroll_number(member)
+    except ValueError:
+        return None
+    if not enroll_number:
+        return None
+
+    action = "block" if desired_command_type(member) == "disable_user" else "unblock"
+    command_text = adms_command_text(action, enroll_number)
+
+    # Lock the latest command for this terminal identity so a concurrent
+    # renewal/expiry cannot reorder or duplicate the terminal's final state.
+    latest = db.session.execute(
+        select(RRRAdmsCommand)
+        .where(
+            RRRAdmsCommand.integration_id == integration.id,
+            RRRAdmsCommand.test_enroll_number == enroll_number,
+        )
+        .order_by(RRRAdmsCommand.id.desc())
+        .limit(1)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if latest is not None:
+        if latest.status == "queued":
+            if latest.action == action:
+                return latest
+            # A not-yet-delivered command can be replaced by the newest state.
+            latest.action = action
+            latest.test_enroll_number = enroll_number
+            latest.command_text = command_text
+            latest.result_code = None
+            latest.result_message = None
+            latest.requested_by_id = None
+            audit(
+                action=f"adms_membership_{action}_queued",
+                resource_type="rrr_adms_command",
+                resource_id=latest.id,
+                gym_id=member.gym_id,
+                metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True},
+            )
+            return latest
+        if latest.status == "delivered":
+            if latest.action == action:
+                # The terminal holds it and getrequest re-sends until acked.
+                return latest
+            # A different-state command is already in flight; queue the
+            # follow-up.  getrequest serves older IDs first, so the terminal
+            # converges on the newest state.
+        elif latest.status == "acked" and latest.action == action and not force:
+            return latest
+        # "failed" (or a forced repair) always queues a fresh command below.
+
+    command = RRRAdmsCommand(
+        gym_id=member.gym_id,
+        integration_id=integration.id,
+        action=action,
+        test_enroll_number=enroll_number,
+        command_text=command_text,
+        requested_by_id=None,
+    )
+    db.session.add(command)
+    db.session.flush()
+    audit(
+        action=f"adms_membership_{action}_queued",
+        resource_type="rrr_adms_command",
+        resource_id=command.id,
+        gym_id=member.gym_id,
+        metadata={"member_id": member.id, "enroll_number": enroll_number},
+    )
+    return command
+
+
 def queue_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
     """Queue the latest required terminal state, without duplicating work.
 
     This function deliberately does not commit.  Call it in the same database
     transaction as the membership change, so a renewal/expiry can never be
     saved without its corresponding device command.
+
+    Every membership change fans out to both connector paths: the legacy
+    Windows-bridge installation (when present) and the direct-ADMS terminal
+    (when commissioned).  The direct-ADMS leg is a no-op unless the gym's
+    direct integration has ``commands_enabled`` set by supervised
+    commissioning.
     """
 
+    bridge_command = _queue_bridge_membership_command(member, force=force)
+    queue_adms_membership_command(member, force=force)
+    return bridge_command
+
+
+def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
     if not member.device_enroll_number:
         return None
 

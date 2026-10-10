@@ -13,6 +13,7 @@ from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
 from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
+from app.services.bridge_service import adms_command_text
 from app.services.rrr_service import (
     DEFAULT_RULES,
     dashboard_for_gym,
@@ -26,14 +27,12 @@ from app.services.rrr_service import (
 def _direct_adms_command_text(action: str, enroll_number: str | None) -> str:
     """Return only documented, server-generated PUSH SDK test commands.
 
-    Pri=1 is the vendor's inactive-user value and Pri=0 is a normal user.
-    We intentionally do not use deletion: a commissioning test must preserve
-    the temporary identity and its enrolled biometric template.
+    The wire format is shared with the automatic membership commands in
+    ``app.services.bridge_service.adms_command_text``; this wrapper keeps the
+    owner-driven commissioning endpoint on the same bytes.
     """
-    if action == "probe_info":
-        return "INFO"
-    priority = "1" if action == "block_test" else "0"
-    return f"DATA UPDATE USERINFO PIN={enroll_number}\tPri={priority}"
+
+    return adms_command_text(action, enroll_number)
 
 
 def _adms_command_payload(row: RRRAdmsCommand) -> dict:
@@ -308,9 +307,13 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner")
     def commission_integration(integration_id: int):
-        row = RRRIntegration.query.filter_by(id=integration_id, gym_id=g.gym_id, connector_type="ebioserver").first()
+        row = RRRIntegration.query.filter(
+            RRRIntegration.id == integration_id,
+            RRRIntegration.gym_id == g.gym_id,
+            RRRIntegration.connector_type.in_(("ebioserver", "adms_direct")),
+        ).first()
         if row is None:
-            return error_response("NOT_FOUND", "eBioServer integration was not found.", 404)
+            return error_response("NOT_FOUND", "RRR integration was not found.", 404)
         payload = request.get_json(silent=True) or {}
         if payload.get("physical_test_passed") is not True:
             return error_response("VALIDATION_ERROR", "physical_test_passed must be true after a supervised door test.", 422)
@@ -322,9 +325,24 @@ def register_rrr_routes(bp):
         attendance_exists = attendance_query.first()
         if attendance_exists is None:
             return error_response("COMMISSIONING_REQUIRED", "A mapped real attendance event from the selected device is required before commands can be enabled.", 409)
+        if row.connector_type == "adms_direct":
+            # Machine proof that the PUSH command/acknowledgement path works
+            # both ways: the owner must have run at least one commissioning
+            # test command that the terminal acknowledged.
+            acked_test = RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.integration_id == row.id,
+                RRRAdmsCommand.action.in_(("probe_info", "block_test", "unblock_test")),
+                RRRAdmsCommand.status == "acked",
+            ).first()
+            if acked_test is None:
+                return error_response(
+                    "COMMISSIONING_REQUIRED",
+                    "Run a test command from the integration screen and wait for the terminal to acknowledge it before enabling automatic commands.",
+                    409,
+                )
         row.commissioning_status = "physical_test_passed"
         row.commands_enabled = True
-        audit(action="ebioserver_commands_enabled", resource_type="rrr_integration", resource_id=row.id,
+        audit(action=f"{row.connector_type}_commands_enabled", resource_type="rrr_integration", resource_id=row.id,
               gym_id=g.gym_id, actor_id=g.user_id)
         db.session.commit()
         return jsonify({"success": True, "data": integration_payload(row)})
@@ -351,7 +369,16 @@ def register_rrr_routes(bp):
         member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
         if member is None:
             return error_response("NOT_FOUND", "Member was not found.", 404)
-        resolved = remap_unresolved(g.gym_id, external_id.strip(), member, g.user_id)
+        external_id = external_id.strip()
+        event_source = (
+            RRRAttendanceEvent.query.filter_by(gym_id=g.gym_id, biometric_user_id=external_id)
+            .order_by(RRRAttendanceEvent.id.desc())
+            .first()
+        )
+        resolved = remap_unresolved(
+            g.gym_id, external_id, member, g.user_id,
+            source=event_source.source if event_source else None,
+        )
         audit(action="rrr_identity_mapped", resource_type="member", resource_id=member.id, gym_id=g.gym_id,
               actor_id=g.user_id, metadata={"external_id": external_id, "events_replayed": resolved})
         db.session.commit()

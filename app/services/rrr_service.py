@@ -95,12 +95,13 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     return event, True
 
 
-def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int | None) -> int:
+def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int | None,
+                   source: str | None = None) -> int:
     mapping = RRRIdentityMapping.query.filter_by(gym_id=gym_id, external_id=external_id).first()
     if mapping is None:
         mapping = RRRIdentityMapping(
             gym_id=gym_id, external_id=external_id, member_id=member.id,
-            source="ebioserver", status="confirmed", confirmed_by_id=user_id,
+            source=source or "ebioserver", status="confirmed", confirmed_by_id=user_id,
         )
         db.session.add(mapping)
     else:
