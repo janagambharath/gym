@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -55,6 +55,22 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const [plans, setPlans] = useState<Plan[]>(initialPlans);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState(countryPrefix);
+  const [dupWarning, setDupWarning] = useState<string | null>(null);
+  const dupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const checkDuplicatePhone = useCallback((digits: string) => {
+    if (dupTimer.current) clearTimeout(dupTimer.current);
+    setDupWarning(null);
+    if (digits.replace(/\D/g, '').length < 10) return;
+    dupTimer.current = setTimeout(async () => {
+      const clean = digits.replace(/\D/g, '');
+      const res = await apiRequest<{ members: { full_name: string; phone: string }[] }>(`/api/mobile/v1/members?q=${encodeURIComponent(clean)}&page_size=3`);
+      if (res.ok) {
+        const matches = (res.data.members || []).filter(m => String(m.phone).replace(/\D/g, '').endsWith(clean.slice(-10)));
+        if (matches.length) setDupWarning(`Possible duplicate: ${matches.map(m => m.full_name).join(', ')} already uses a similar number.`);
+      }
+    }, 600);
+  }, []);
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlans.length > 0 ? initialPlans[0].id : null);
@@ -226,12 +242,17 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
               <FormField
                 label="Phone Number *"
                 value={phone}
-                onChangeText={(t) => { setPhone(t); setErrors((e) => ({ ...e, phone: '' })); }}
+                onChangeText={(t) => { setPhone(t); setErrors((e) => ({ ...e, phone: '' })); checkDuplicatePhone(t); }}
                 placeholder={countryPrefix ? `${countryPrefix} 9876543210` : 'Enter phone number'}
                 error={errors.phone}
                 keyboardType="phone-pad"
                 returnKeyType="next"
               />
+              {dupWarning ? (
+                <View style={styles.dupWarning}>
+                  <Text style={styles.dupWarningText}>⚠️ {dupWarning}</Text>
+                </View>
+              ) : null}
 
               <FormField
                 label="Email"
@@ -514,6 +535,15 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
 }
 
 const styles = StyleSheet.create({
+  dupWarning: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warning,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  dupWarningText: { color: colors.warningDark, fontSize: fontSize.sm },
   additionalFeePill: {
     alignItems: 'center',
     backgroundColor: colors.brandSubtle,

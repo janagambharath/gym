@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   FlatList,
+  Linking,
   RefreshControl,
   StyleSheet,
   Text,
@@ -128,6 +129,22 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Icon name="renewals" size={18} color={colors.brand} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickIcon}
+          onPress={() => void Linking.openURL(`tel:${item.phone}`)}
+          accessibilityLabel={`Call ${item.full_name}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.quickIconText}>📞</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.quickIcon}
+          onPress={() => void Linking.openURL(`https://wa.me/${String(item.phone).replace(/\D/g, '')}`)}
+          accessibilityLabel={`WhatsApp ${item.full_name}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.quickIconText}>💬</Text>
         </TouchableOpacity>
       </View>
     );
@@ -341,6 +358,16 @@ const styles = StyleSheet.create({
     marginLeft: spacing.sm,
     width: 36,
   },
+  quickIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.gray100,
+    borderRadius: radius.md,
+    height: 36,
+    justifyContent: 'center',
+    marginLeft: spacing.xs,
+    width: 36,
+  },
+  quickIconText: { fontSize: 16 },
   safeArea: {
     backgroundColor: colors.background,
     flex: 1,

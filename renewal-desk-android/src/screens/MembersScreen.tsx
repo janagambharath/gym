@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -228,6 +229,13 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
           maxToRenderPerBatch={10}
           windowSize={5}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
+          refreshControl={
+            <RefreshControl
+              colors={[colors.brand]}
+              refreshing={loading}
+              onRefresh={() => setRequestRevision((r) => r + 1)}
+            />
+          }
         />
       )}
 

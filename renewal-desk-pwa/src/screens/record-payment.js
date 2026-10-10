@@ -1,6 +1,6 @@
 /* Record Payment Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js'; import { debounce, uuid, escapeHtml } from '../utils.js';
 export default { async mount(el, params) {
     const idempotencyKey = uuid(); // one key per form mount, reused across retries
@@ -51,10 +51,8 @@ export default { async mount(el, params) {
         showToast('Payment recorded!','success');
         const waUrl = r.data?.whatsapp_url || r.data?.receipt?.whatsapp_url;
         if (waUrl) {
-          const share = window.confirm('Payment recorded successfully! Send digital receipt via WhatsApp?');
-          if (share) {
-            window.open(waUrl, '_blank');
-          }
+          const share = await showConfirm({ title: 'Receipt Ready', message: 'Payment recorded successfully! Send the digital receipt via WhatsApp?', confirmText: 'Send Receipt' });
+          if (share) window.open(waUrl, '_blank');
         }
         navigate.pop();
       } else {

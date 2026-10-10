@@ -16,6 +16,7 @@ export default {
         <form id="add-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
           ${renderFormField({ id: 'am-name', label: 'Full Name', placeholder: 'Member name', required: true })}
           ${renderFormField({ id: 'am-phone', label: 'Phone', type: 'tel', placeholder: '9876543210', required: true })}
+          <div id="am-dup-warn" style="display:none" class="card card-body"></div>
           ${renderFormField({ id: 'am-email', label: 'Email', type: 'email', placeholder: 'member@example.com' })}
           ${renderFormField({ id: 'am-gender', label: 'Gender', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}
           ${renderFormField({ id: 'am-address', label: 'Address', type: 'textarea', placeholder: 'Member address...' })}
@@ -51,6 +52,26 @@ export default {
         methodGroup.style.display = paidSelect.value === 'paid' ? 'block' : 'none';
       });
     }
+
+    // Duplicate phone warning (non-blocking)
+    let dupTimer;
+    const phoneInput = el.querySelector('#am-phone');
+    const dupWarn = el.querySelector('#am-dup-warn');
+    phoneInput.addEventListener('input', () => {
+      clearTimeout(dupTimer);
+      dupWarn.style.display = 'none';
+      const digits = phoneInput.value.replace(/\D/g, '');
+      if (digits.length < 10) return;
+      dupTimer = setTimeout(async () => {
+        const res = await apiRequest(`/api/mobile/v1/members?q=${encodeURIComponent(digits)}&page_size=3`);
+        const matches = res.ok ? (res.data.members || []).filter(m => String(m.phone).replace(/\D/g, '').endsWith(digits.slice(-10))) : [];
+        if (matches.length) {
+          dupWarn.style.display = '';
+          dupWarn.innerHTML = `<div style="display:flex;gap:var(--sp-sm);align-items:center;color:var(--warning-dark)">
+            ${icon('warning', 18)}<div><b>Possible duplicate:</b> ${matches.map(m => escapeHtml(m.full_name)).join(', ')} already uses a similar number. Continue only if this is a different person.</div></div>`;
+        }
+      }, 600);
+    });
 
     el.querySelector('#add-form').addEventListener('submit', async (e) => {
       e.preventDefault();

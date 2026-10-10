@@ -36,6 +36,10 @@ export default {
             <div style="padding:var(--sp-xxl);text-align:center;background:var(--card);border-bottom:1px solid var(--border-light)">
               <div style="display:inline-flex">${renderAvatar(member.full_name, 'xl')}</div>
               <h2 style="font-size:var(--fs-3xl);margin-top:var(--sp-md);margin-bottom:var(--sp-xs)">${escapeHtml(member.full_name)}</h2>
+              <div style="margin-bottom:var(--sp-md);display:flex;gap:var(--sp-sm);justify-content:center">
+                <a href="tel:${escapeHtml(member.phone)}" class="btn btn-secondary" style="text-decoration:none">${icon('phone', 16)} Call</a>
+                <a href="https://wa.me/${escapeHtml(String(member.phone).replace(/\D/g, ''))}" target="_blank" rel="noopener" class="btn btn-whatsapp" style="text-decoration:none">${icon('whatsapp', 16, 'white')} WhatsApp</a>
+              </div>
               <div style="color:var(--text-secondary);font-size:var(--fs-base);margin-bottom:var(--sp-xs)">${escapeHtml(member.phone)}</div>
               ${member.address ? `
                 <div style="color:var(--text-secondary);font-size:var(--fs-sm);margin-bottom:var(--sp-sm);display:flex;align-items:center;justify-content:center;gap:6px">
