@@ -54,6 +54,11 @@ class Config:
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(5 * 1024 * 1024)))
     ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    # Optional override for the ADMS terminal-facing address. Set this when a
+    # plain-HTTP reverse proxy (e.g. nginx on a free Oracle Cloud VM) fronts the
+    # app for HTTP-only terminals: e.g. "http://203.0.113.10". When empty, the
+    # terminal settings fall back to PUBLIC_BASE_URL.
+    ADMS_PUBLIC_URL = os.getenv("ADMS_PUBLIC_URL", "").rstrip("/")
     STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local")
     AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "")
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")

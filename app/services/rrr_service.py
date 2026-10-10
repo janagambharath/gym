@@ -337,8 +337,10 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
 def adms_terminal_settings(host_url: str | None = None, path_token: str | None = None) -> dict:
     """Authoritative values the owner types into the terminal's ADMS menu.
 
-    Computed from PUBLIC_BASE_URL (falling back to the current request host)
-    so the app never shows a different address than the backend listens on.
+    Computed from ADMS_PUBLIC_URL (falling back to PUBLIC_BASE_URL, then the
+    current request host) so the app never shows a different address than the
+    backend listens on. Set ADMS_PUBLIC_URL to a plain-HTTP reverse proxy
+    address when terminals cannot do HTTPS.
     """
     from urllib.parse import urlparse
 
@@ -348,7 +350,7 @@ def adms_terminal_settings(host_url: str | None = None, path_token: str | None =
     if fallback is None and has_request_context():
         fallback = request.host_url
     parsed = urlparse(fallback or "")
-    configured_base = urlparse(str(current_app.config.get("PUBLIC_BASE_URL") or fallback or ""))
+    configured_base = urlparse(str(current_app.config.get("ADMS_PUBLIC_URL") or current_app.config.get("PUBLIC_BASE_URL") or fallback or ""))
     host = configured_base.hostname or parsed.hostname
     port = configured_base.port or (443 if configured_base.scheme == "https" else 80)
     return {
