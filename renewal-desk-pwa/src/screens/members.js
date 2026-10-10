@@ -59,7 +59,8 @@ export default {
       if (!append) listEl.innerHTML = renderListSkeleton();
       let url = `/api/mobile/v1/members?page=${page}&page_size=20`;
       if (query) url += `&q=${encodeURIComponent(query)}`;
-      if (filter !== 'all' && filter !== 'expiring') url += `&status=${filter}`;
+      if (filter === 'expiring') url += `&expiring_within_days=7`;
+      else if (filter !== 'all') url += `&status=${filter}`;
       const res = await apiRequest(url);
       loading = false;
       if (!res.ok) {
@@ -69,12 +70,7 @@ export default {
       }
       const newMembers = res.data.members || [];
       total = res.data.pagination?.total || 0;
-      if (filter === 'expiring') {
-        const filtered = newMembers.filter(m => m.days_until_expiry != null && m.days_until_expiry >= 0 && m.days_until_expiry <= 7);
-        members = append ? [...members, ...filtered] : filtered;
-      } else {
-        members = append ? [...members, ...newMembers] : newMembers;
-      }
+      members = append ? [...members, ...newMembers] : newMembers;
       if (members.length === 0) {
         listEl.innerHTML = renderEmptyState({ icon: 'members', title: 'No members found', text: query ? 'Try a different search term' : 'Add your first member to get started', actionText: !query ? 'Add Member' : undefined, actionId: 'add-empty' });
         listEl.querySelector('#add-empty')?.addEventListener('click', () => navigate.push('add-member'));
