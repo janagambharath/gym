@@ -9,7 +9,7 @@ type Opportunity = { id: number; pillar: string; reason: string; potential_reven
 type Device = { id: number; name: string; serial_number: string; status: string; selected: boolean };
 type Unresolved = { biometric_user_id: string; punch_time: string };
 type Person = { id: number; full_name: string };
-type Integration = { id: number; type: 'adms_direct' | 'ebioserver'; status: string; device_name?: string; device_serial?: string; records_synced?: number; terminal_settings?: TerminalSettings };
+type Integration = { id: number; type: 'adms_direct' | 'ebioserver'; status: string; device_name?: string; device_serial?: string; records_synced?: number; terminal_settings?: TerminalSettings; commands_enabled?: boolean; commissioning_status?: string };
 type TerminalSettings = { server_mode?: string; server_address?: string; server_port?: number; https?: boolean; path?: string; warning?: string };
 type Command = { id: number; action: string; status: string; result_code?: string };
 type Payload = { opportunities: Opportunity[]; pillars: Record<string, { count: number; potential_revenue: string }>; unmapped_count: number; members?: { total?: number; attendance_rate?: number } };
@@ -38,6 +38,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [deviceName, setDeviceName] = useState('Elite Gym Entry');
   const [testUserId, setTestUserId] = useState('');
   const [doorConfirmed, setDoorConfirmed] = useState(false);
+  const [directDoorConfirmed, setDirectDoorConfirmed] = useState(false);
   const [commissioning, setCommissioning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [pickerEvent, setPickerEvent] = useState<Unresolved | null>(null);
@@ -103,14 +104,21 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     const result = await apiRequest(`/api/mobile/v1/rrr/integrations/${bridge.id}/device`, { method: 'POST', body: { device_id: id } });
     if (result.ok) void load(); else Alert.alert('Could not select device', result.error.message);
   };
-  const commissionBridge = async () => {
-    if (!bridge) return;
-    if (!doorConfirmed) { Alert.alert('Door test required', 'Stand at the door and verify block/unblock works before enabling.'); return; }
+  const commissionIntegration = async (integration: Integration, confirmed: boolean) => {
+    if (!confirmed) { Alert.alert('Door test required', 'Stand at the door and verify block/unblock works before enabling.'); return; }
     setCommissioning(true);
-    const result = await apiRequest(`/api/mobile/v1/rrr/integrations/${bridge.id}/commission`, { method: 'POST', body: { physical_test_passed: true } });
+    const result = await apiRequest(`/api/mobile/v1/rrr/integrations/${integration.id}/commission`, { method: 'POST', body: { physical_test_passed: true } });
     setCommissioning(false);
     if (result.ok) { Alert.alert('Enabled', 'Automatic block/unblock is now active for this device.'); void load(); }
     else Alert.alert('Not ready yet', result.error.message);
+  };
+  const commissionBridge = async () => {
+    if (!bridge) return;
+    await commissionIntegration(bridge, doorConfirmed);
+  };
+  const commissionDirect = async () => {
+    if (!direct) return;
+    await commissionIntegration(direct, directDoorConfirmed);
   };
   const queue = async (action: 'probe_info' | 'block_test' | 'unblock_test') => {
     if (!direct) return;
@@ -140,14 +148,20 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     {(['revenue', 'retain', 'recover'] as const).map((pillar) => { const tone = tones[pillar]; const values = pillars[pillar]; return <View key={pillar} style={[styles.focus, { backgroundColor: tone.surface }]}><View style={styles.focusTop}><View><Text style={[styles.focusLabel, { color: tone.color }]}>{tone.label}</Text><Text style={styles.rowSub}>{tone.copy}</Text></View><Text style={[styles.focusCount, { color: tone.color }]}>{values?.count ?? 0}</Text></View><View style={styles.focusBottom}><Text style={styles.copy}>{pillar === 'revenue' ? 'Revenue opportunities' : pillar === 'retain' ? 'Members at risk' : 'Inactive / expired'}</Text><Text style={[styles.focusValue, { color: tone.color }]}>₹{money(Number(values?.potential_revenue || 0))}</Text></View>{(data?.opportunities || []).filter((item) => item.pillar === pillar).slice(0, 2).map((item) => <TouchableOpacity key={item.id} onPress={() => void markActioned(item.id)} style={styles.opportunity}><View><Text style={styles.rowTitle}>{item.member.name}</Text><Text style={styles.rowSub}>{item.reason}</Text></View><Text style={[styles.link, { color: tone.color }]}>Action ›</Text></TouchableOpacity>)}</View>; })}
     <View style={[styles.card, styles.directCard]}><View style={styles.cardHeader}><View><Text style={styles.cardEyebrow}>ATTENDANCE CONNECTION</Text><Text style={styles.cardTitle}>Direct Cloud</Text></View><View style={[styles.status, direct?.status === 'connected' ? styles.live : styles.setup]}><Text style={[styles.statusText, direct?.status === 'connected' ? styles.liveText : styles.setupText]}>{direct?.status === 'connected' ? 'LIVE' : 'SET UP'}</Text></View></View>
       {direct ? <><Text style={styles.deviceTitle}>{direct.device_name || 'Gym entry terminal'}</Text><Text style={styles.copy}>{direct.device_serial} · {direct.records_synced || 0} attendance records · {data?.unmapped_count || 0} need review</Text><View style={styles.server}><Text style={styles.serverLabel}>Terminal Cloud Server</Text><Text selectable style={styles.serverHost}>{direct.terminal_settings?.server_address || '—'}</Text><Text style={styles.serverMeta}>ADMS mode · Port {direct.terminal_settings?.server_port ?? '—'} · HTTPS {direct.terminal_settings?.https === false ? 'off' : 'on'} · Path {direct.terminal_settings?.path || '/iclock'}</Text></View><Text style={styles.copy}>Terminal: Menu → Comm. → Cloud Server Setting. Save these values and make a test punch. Your phone never joins the gym LAN.</Text></> : <><Text style={styles.copy}>Connect eSSL attendance directly to RRR Cloud—no gym PC or bridge is required for attendance.</Text><TextInput style={styles.textInput} value={serial} onChangeText={setSerial} placeholder="Terminal serial number" placeholderTextColor={colors.muted} autoCapitalize="characters" /><TextInput style={styles.textInput} value={deviceName} onChangeText={setDeviceName} placeholder="Friendly terminal name" placeholderTextColor={colors.muted} /><Button text="Save terminal and continue" onPress={() => void provision()} /></>}</View>
-    {direct && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>Only auditable test commands are available. Automatic access rules remain off until the terminal returns a supervised acknowledgment.</Text><Text style={styles.command}>{latest ? `${latest.action.replace('_', ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => void queue('probe_info')} secondary /><TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Temporary terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><View style={styles.commands}><TouchableOpacity style={styles.block} onPress={() => void queue('block_test')}><Text style={styles.blockText}>2. Test block</Text></TouchableOpacity><TouchableOpacity style={styles.unblock} onPress={() => void queue('unblock_test')}><Text style={styles.unblockText}>3. Test unblock</Text></TouchableOpacity></View></View>}
+    {direct && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>Only auditable test commands are available. Automatic access rules remain off until the terminal returns a supervised acknowledgment.</Text><Text style={styles.command}>{latest ? `${latest.action.replace('_', ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => void queue('probe_info')} secondary /><TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Temporary terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><View style={styles.commands}><TouchableOpacity style={styles.block} onPress={() => void queue('block_test')}><Text style={styles.blockText}>2. Test block</Text></TouchableOpacity><TouchableOpacity style={styles.unblock} onPress={() => void queue('unblock_test')}><Text style={styles.unblockText}>3. Test unblock</Text></TouchableOpacity></View>
+    <View style={styles.commissionRow}>
+      <TouchableOpacity style={styles.checkbox} onPress={() => setDirectDoorConfirmed(!directDoorConfirmed)}>
+        <Text style={styles.checkboxText}>{directDoorConfirmed ? '☑' : '☐'}</Text>
+      </TouchableOpacity>
+      <Text style={styles.copy}>I stood at the door and verified block/unblock works on the terminal.</Text>
+    </View><Button text={commissioning ? 'Enabling…' : direct.commands_enabled ? 'Automatic block/unblock is ON' : '4. Enable automatic block/unblock'} onPress={() => void commissionDirect()} /></View>}
     <View style={styles.card}><Text style={styles.cardEyebrow}>FALLBACK CONNECTION</Text><Text style={styles.cardTitle}>eBioServer bridge</Text><Text style={styles.copy}>Use only where licensed eBioServer must remain on a gym PC. Direct Cloud does not require it.</Text><Text style={styles.copy}>Status: {bridge?.status || 'not configured'} · {bridge?.device_name || bridge?.device_serial || 'No selected device'}</Text>{devices.map((device) => <View style={styles.deviceRow} key={device.id}><View><Text style={styles.rowTitle}>{device.name}</Text><Text style={styles.rowSub}>{device.serial_number} · {device.status}</Text></View>{!device.selected && <TouchableOpacity onPress={() => void selectDevice(device.id)}><Text style={styles.link}>Select</Text></TouchableOpacity>}</View>)}<Button text="Generate gym-PC pairing code" onPress={() => void pairBridge()} secondary />{!!pairingCode && <Text selectable style={styles.code}>{pairingCode}</Text>}
     {bridge && bridge.status === 'connected' && <><View style={styles.commissionRow}>
       <TouchableOpacity style={styles.checkbox} onPress={() => setDoorConfirmed(!doorConfirmed)}>
         <Text style={styles.checkboxText}>{doorConfirmed ? '☑' : '☐'}</Text>
       </TouchableOpacity>
       <Text style={styles.copy}>I stood at the door and verified block/unblock works on the terminal.</Text>
-    </View><Button text={commissioning ? 'Enabling…' : 'Enable automatic block/unblock'} onPress={() => void commissionBridge()} /></>}</View>
+    </View><Button text={commissioning ? 'Enabling…' : bridge.commands_enabled ? 'Automatic block/unblock is ON' : 'Enable automatic block/unblock'} onPress={() => void commissionBridge()} /></>}</View>
     <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolved.length} punches need a member</Text>{unresolved.length ? unresolved.slice(0, 5).map((event, index) => <View style={styles.deviceRow} key={`${event.biometric_user_id}-${index}`}><View><Text style={styles.rowTitle}>Terminal ID {event.biometric_user_id}</Text><Text style={styles.rowSub}>{new Date(event.punch_time).toLocaleString()}</Text></View><TouchableOpacity onPress={() => setPickerEvent(event)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity></View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}</View>
     <MemberPickerModal
       visible={pickerEvent !== null}
