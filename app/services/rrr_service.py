@@ -251,8 +251,34 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     }
 
 
-def integration_payload(row: RRRIntegration) -> dict:
+def adms_terminal_settings(host_url: str | None = None) -> dict:
+    """Authoritative values the owner types into the terminal's ADMS menu.
+
+    Computed from PUBLIC_BASE_URL (falling back to the current request host)
+    so the app never shows a different address than the backend listens on.
+    """
+    from urllib.parse import urlparse
+
+    from flask import current_app, has_request_context, request
+
+    fallback = host_url
+    if fallback is None and has_request_context():
+        fallback = request.host_url
+    parsed = urlparse(fallback or "")
+    configured_base = urlparse(str(current_app.config.get("PUBLIC_BASE_URL") or fallback or ""))
+    host = configured_base.hostname or parsed.hostname
+    port = configured_base.port or (443 if configured_base.scheme == "https" else 80)
     return {
+        "server_mode": "ADMS",
+        "server_address": host,
+        "server_port": port,
+        "https": configured_base.scheme == "https",
+        "path": "/iclock",
+    }
+
+
+def integration_payload(row: RRRIntegration) -> dict:
+    payload = {
         "id": row.id, "type": row.connector_type, "name": row.display_name, "status": row.status,
         "primary": row.is_primary, "device_serial": row.device_serial, "device_name": row.device_name,
         "last_success_at": row.last_success_at.isoformat() if row.last_success_at else None,
@@ -260,3 +286,6 @@ def integration_payload(row: RRRIntegration) -> dict:
         "unmapped_records": row.unmapped_records, "commissioning_status": row.commissioning_status,
         "commands_enabled": row.commands_enabled,
     }
+    if row.connector_type == "adms_direct":
+        payload["terminal_settings"] = adms_terminal_settings()
+    return payload

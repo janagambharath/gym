@@ -16,6 +16,7 @@ from app.services.audit_service import audit
 from app.services.bridge_service import adms_command_text
 from app.services.rrr_service import (
     DEFAULT_RULES,
+    adms_terminal_settings,
     dashboard_for_gym,
     ensure_default_rules,
     integration_payload,
@@ -146,8 +147,8 @@ def register_rrr_routes(bp):
         devices = RRRDevice.query.filter_by(gym_id=g.gym_id).order_by(RRRDevice.device_name).all()
         return jsonify({"success": True, "data": {
             "integrations": [integration_payload(x) for x in rows],
-            "devices": [{"id": d.id, "serial_number": d.serial_number, "name": d.device_name,
-                         "status": d.status, "selected": d.is_selected,
+            "devices": [{"id": d.id, "integration_id": d.integration_id, "serial_number": d.serial_number,
+                         "name": d.device_name, "status": d.status, "selected": d.is_selected,
                          "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None}
                         for d in devices],
         }})
@@ -227,20 +228,17 @@ def register_rrr_routes(bp):
         row.status = "not_configured"
         row.commands_enabled = False
         row.commissioning_status = "not_started"
-        parsed = urlparse(request.host_url)
-        configured_base = urlparse(str(current_app.config.get("PUBLIC_BASE_URL") or request.host_url))
-        host = configured_base.hostname or parsed.hostname
-        port = configured_base.port or (443 if configured_base.scheme == "https" else 80)
         audit(action="direct_adms_provisioned", resource_type="rrr_integration", resource_id=row.id,
               gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": serial})
         db.session.commit()
+        settings = adms_terminal_settings(request.host_url)
+        settings["warning"] = (
+            "Attendance works immediately. Automatic block/unblock unlocks after "
+            "the supervised commissioning test on the integrations screen."
+        )
         return jsonify({"success": True, "data": {
             "integration": integration_payload(row),
-            "terminal_settings": {
-                "server_mode": "ADMS", "server_address": host, "server_port": port,
-                "https": configured_base.scheme == "https", "path": "/iclock",
-                "warning": "Attendance plus owner-controlled commissioning only. Automatic block/unblock remains disabled until a supervised terminal test passes.",
-            },
+            "terminal_settings": settings,
         }})
 
     @bp.get("/rrr/integrations/<int:integration_id>/adms/commands")
