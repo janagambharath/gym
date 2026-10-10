@@ -5,10 +5,18 @@ import { icon } from '../icons.js'; import { formatDate, formatCurrency, escapeH
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Subscription',showBack:true})}<div class="scroll-view" id="sub-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  const res = await apiRequest('/api/mobile/v1/billing');
+  const res = await apiRequest('/api/mobile/v1/subscription/status');
   const scroll = el.querySelector('#sub-scroll');
   if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load subscription</div></div>`; return; }
-  const s = res.data;
+  const raw = res.data || {};
+  // Normalize the subscription/status payload into the screen's shape.
+  const s = {
+    plan_name: raw.plan_name || raw.plan?.name,
+    status: (raw.subscription_status || raw.status || 'active').toLowerCase(),
+    current_period_end: raw.renews_at || raw.expires_at,
+    member_limit: raw.max_members,
+    amount: raw.plan?.price ? Number(raw.plan.price) : null,
+  };
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-lg)"><div class="card card-body" style="text-align:center">
       <div style="width:56px;height:56px;border-radius:var(--r-full);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-md)">${icon('star',28,'var(--brand)')}</div>

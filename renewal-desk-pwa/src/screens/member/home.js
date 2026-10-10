@@ -3,8 +3,20 @@ import { apiRequest } from '../../api.js'; import { navigate } from '../../app.j
 import { renderHeader, renderBadge, renderMenuItem, renderMetricCard } from '../../components.js';
 import { icon } from '../../icons.js'; import { formatDate, formatCurrency, getDaysText, escapeHtml, formatInteger } from '../../utils.js';
 export default { async mount(el) {
-  const res = await apiRequest('/api/member/v1/home');
-  const d = res.ok ? res.data : {};
+  const res = await apiRequest('/api/member/v1/dashboard');
+  const raw = res.ok ? res.data : {};
+  // Normalize the dashboard payload into the home-screen shape.
+  const mem = raw.member || {};
+  const d = {
+    member_name: mem.full_name,
+    gym_name: raw.gym?.name,
+    membership: {
+      days_remaining: mem.days_left,
+      status: mem.status,
+      plan_name: mem.plan_name,
+      end_date: mem.membership_end,
+    },
+  };
   const m = d.membership || {};
   el.innerHTML = `${renderHeader({title:'My Gym'})}
     <div class="scroll-view"><div class="scroll-content">

@@ -24,7 +24,7 @@ export default { async mount(el, params) {
   el.querySelector('#bcd-send')?.addEventListener('click', async () => {
     const input = el.querySelector('#bcd-input'); const text = input.value.trim();
     if (!text) return; input.value = '';
-    const r = await apiRequest(`/api/mobile/v1/bot/conversations/${cid}/reply`, { method:'POST', body:{message:text} });
+    const r = await apiRequest(`/api/mobile/v1/bot/conversations/${cid}/message`, { method:'POST', body:{body:text} });
     showToast(r.ok?'Sent!':r.error.message, r.ok?'success':'error');
     if (r.ok) { // Re-render
       const chat = scroll.querySelector('.chat-container');

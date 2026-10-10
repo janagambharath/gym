@@ -6,7 +6,7 @@ from functools import wraps
 from urllib.parse import urlparse
 
 from flask import current_app, g, jsonify, request
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
@@ -259,6 +259,54 @@ def register_bot_routes(bp):
         })
 
     # ─── Conversations & Handover ─────────────────────────────────────
+
+    @bp.route("/bot/overview", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    @whatsapp_bot_entitlement_required
+    def bot_overview():
+        """Aggregate AI-receptionist stats for the PWA overview screen."""
+        total_conversations = (
+            db.session.query(func.count(BotConversation.id))
+            .filter_by(gym_id=g.gym_id)
+            .scalar()
+            or 0
+        )
+        total_leads = (
+            db.session.query(func.count(BotLead.id))
+            .filter_by(gym_id=g.gym_id)
+            .scalar()
+            or 0
+        )
+        handover_count = (
+            db.session.query(func.count(BotConversation.id))
+            .filter(
+                BotConversation.gym_id == g.gym_id,
+                BotConversation.handover_status.in_(["human_requested", "human_active"]),
+            )
+            .scalar()
+            or 0
+        )
+        closed_count = (
+            db.session.query(func.count(BotConversation.id))
+            .filter_by(gym_id=g.gym_id, state="closed")
+            .scalar()
+            or 0
+        )
+        resolution_rate = (
+            round(closed_count / total_conversations * 100, 1)
+            if total_conversations
+            else 0
+        )
+        return jsonify({
+            "success": True,
+            "data": {
+                "total_conversations": total_conversations,
+                "total_leads": total_leads,
+                "handover_count": handover_count,
+                "resolution_rate": resolution_rate,
+            },
+        })
 
     @bp.route("/bot/conversations", methods=["GET"])
     @token_required

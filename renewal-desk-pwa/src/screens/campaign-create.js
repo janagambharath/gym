@@ -25,9 +25,9 @@ export default { async mount(el) {
   el.querySelector('#cc-preview-btn')?.addEventListener('click',async()=>{
     const seg = el.querySelector('#cc-segment')?.value;
     if (!seg) { showToast('Select a segment first','error'); return; }
-    const r = await apiRequest(`/api/mobile/v1/campaigns/preview?segment=${seg}`);
+    const r = await apiRequest(`/api/mobile/v1/campaigns/segments/preview?type=${seg}`);
     const prev = el.querySelector('#cc-preview');
-    if (r.ok) { prev.classList.remove('hidden'); el.querySelector('#cc-preview-count').textContent = `${formatInteger(r.data.count||0)} recipients will receive this message`; }
+    if (r.ok) { prev.classList.remove('hidden'); el.querySelector('#cc-preview-count').textContent = `${formatInteger(r.data.total||0)} recipients will receive this message`; }
   });
   el.querySelector('#cc-form').addEventListener('submit',async(e)=>{
     e.preventDefault();

@@ -855,6 +855,74 @@ def request_renewal():
     }), 201
 
 
+@member_bp.route("/renew", methods=["POST"])
+@member_token_required
+@limiter.limit("10 per minute")
+def member_renew_with_plan():
+    """Member renews with a chosen plan — creates a payment claim for the gym owner to verify.
+
+    The PWA renew screen posts ``{"plan_id": <id>}`` here. Unlike
+    ``/renew/request`` (which reuses the member's current plan), this lets the
+    member pick any active plan from the gym's catalog.
+    """
+    member = g.current_member
+    data = request.get_json(silent=True) or {}
+    try:
+        plan_id = int(data.get("plan_id"))
+    except (TypeError, ValueError):
+        return jsonify({
+            "success": False,
+            "error": {"code": "VALIDATION_ERROR", "message": "plan_id is required."},
+        }), 422
+
+    plan = MembershipPlan.query.filter_by(
+        id=plan_id, gym_id=member.gym_id, is_active=True
+    ).first()
+    if plan is None:
+        return jsonify({
+            "success": False,
+            "error": {"code": "NOT_FOUND", "message": "That plan is not available."},
+        }), 404
+
+    existing = PaymentVerification.query.filter(
+        PaymentVerification.member_id == member.id,
+        PaymentVerification.gym_id == g.gym_id,
+        PaymentVerification.status.in_(["pending", "processing"]),
+    ).first()
+    if existing:
+        return jsonify({
+            "success": True,
+            "message": "You already have a pending renewal request. The gym will confirm it soon.",
+            "data": {"payment_id": existing.id},
+        })
+
+    payment = PaymentVerification(
+        gym_id=member.gym_id,
+        member_id=member.id,
+        amount=plan.price,
+        method="member_request",
+        notes=f"Self-service renewal request from {member.full_name} (plan: {plan.name})",
+        status="pending",
+        renewal_days=plan.duration_days or 30,
+    )
+    db.session.add(payment)
+    audit(
+        action="member_renewal_requested",
+        resource_type="payment",
+        resource_id=payment.id,
+        gym_id=member.gym_id,
+        actor_id=None,
+        metadata={"member_id": member.id, "plan_id": plan.id},
+    )
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "Renewal request submitted! The gym will verify your payment.",
+        "data": {"payment_id": payment.id},
+    }), 201
+
+
 # ── Automated UPI Renewal Flow ───────────────────────────────────────
 
 

@@ -241,6 +241,48 @@ def register_whatsapp_routes(bp):
             },
         })
 
+    @bp.route("/whatsapp/logs", methods=["GET"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def whatsapp_logs():
+        """Recent WhatsApp message log for the PWA WhatsApp screen.
+
+        Same underlying data as ``/whatsapp/reminders`` but shaped for the
+        PWA (``logs`` key with member/phone/template/sent_at fields).
+        """
+        page_size = min(request.args.get("page_size", 20, type=int), 100)
+
+        logs = (
+            ReminderLog.query.filter_by(gym_id=g.gym_id)
+            .options(
+                joinedload(ReminderLog.member),
+                joinedload(ReminderLog.template),
+            )
+            .order_by(ReminderLog.created_at.desc())
+            .limit(page_size)
+            .all()
+        )
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "logs": [
+                    {
+                        "id": log.id,
+                        "member_id": log.member_id,
+                        "member_name": log.member.full_name if log.member else None,
+                        "phone": log.phone_snapshot,
+                        "template": log.template.name if log.template else log.reminder_stage,
+                        "message_type": log.channel,
+                        "status": log.status,
+                        "sent_at": log.sent_at.isoformat() if log.sent_at else None,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                    }
+                    for log in logs
+                ],
+            },
+        })
+
     @bp.route("/whatsapp/broadcast/stats", methods=["GET"])
     @token_required
     @roles_required("gym_owner", "staff")

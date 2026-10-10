@@ -29,7 +29,7 @@ export default { mount(el, params) {
   }));
   el.querySelector('#sr-import')?.addEventListener('click',async()=>{
     const btn = el.querySelector('#sr-import'); btn.disabled = true; btn.textContent = 'Importing...';
-    const r = await apiRequest('/api/mobile/v1/members/batch',{method:'POST',body:{members}});
+    const r = await apiRequest('/api/mobile/v1/members/batch-create',{method:'POST',body:{members}});
     if (r.ok) { showToast(`${r.data?.imported||members.length} members imported!`,'success'); navigate.pop(); navigate.pop(); }
     else { showToast(r.error.message,'error'); btn.disabled = false; btn.textContent = `Import ${members.length} Members`; }
   });
