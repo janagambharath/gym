@@ -135,7 +135,7 @@ def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, 
     settings = provision.get_json()["data"]["terminal_settings"]
     assert settings["server_mode"] == "ADMS"
     assert settings["path"] == "/iclock"
-    assert settings["warning"].startswith("Attendance plus owner-controlled")
+    assert settings["warning"].startswith("Attendance works immediately.")
 
     hello = client.get("/iclock/cdata?SN=ELITE-X2008-01&options=all")
     assert hello.status_code == 200
