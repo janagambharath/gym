@@ -7,11 +7,14 @@ import { formatCurrency, formatInteger } from '../utils.js';
 
 export default {
   async mount(el) {
-    let payments = [], page = 1, total = 0, filter = 'all', loading = false;
+    let payments = [], page = 1, total = 0, filter = 'all', loading = false, search = '';
 
     el.innerHTML = `
       ${renderHeader({ title: 'Payments', showBack: true, actions: [{ icon: 'add', label: 'Record' }] })}
       <div id="pay-summary"></div>
+      <div style="padding:0 var(--sp-lg) var(--sp-sm)">
+        <input id="pay-search" class="search-input" type="search" placeholder="Search member, amount, reference…" autocomplete="off">
+      </div>
       <div class="filter-chips" id="pay-filters">
         <button class="filter-chip active" data-filter="all">All</button>
         <button class="filter-chip" data-filter="pending">Pending</button>
@@ -23,6 +26,11 @@ export default {
 
     bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('record-payment') }] });
     el.querySelector('#fab-pay').addEventListener('click', () => navigate.push('record-payment'));
+    let searchTimer;
+    el.querySelector('#pay-search').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { search = e.target.value; page = 1; load(); }, 400);
+    });
 
     el.querySelector('#pay-filters').addEventListener('click', (e) => {
       const chip = e.target.closest('.filter-chip');
@@ -39,6 +47,7 @@ export default {
       listEl.innerHTML = renderListSkeleton();
       let url = `/api/mobile/v1/payments?page=${page}&page_size=20`;
       if (filter !== 'all') url += `&status=${filter}`;
+      if (search.trim()) url += `&q=${encodeURIComponent(search.trim())}`;
       const [res, sumRes] = await Promise.all([
         apiRequest(url),
         page === 1 ? apiRequest('/api/mobile/v1/payments/summary') : Promise.resolve(null),

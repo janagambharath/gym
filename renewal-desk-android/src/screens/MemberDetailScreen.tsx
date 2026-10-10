@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   RefreshControl,
   ScrollView,
@@ -297,6 +298,14 @@ export function MemberDetailScreen({
             <View style={styles.identityInfo}>
               <Text style={styles.memberName} numberOfLines={1}>{member.full_name}</Text>
               <Text style={styles.memberPhone}>{member.phone}</Text>
+              <View style={styles.contactRow}>
+                <TouchableOpacity style={[styles.contactBtn, styles.callBtn]} onPress={() => void Linking.openURL(`tel:${member.phone}`)}>
+                  <Text style={[styles.contactBtnText, styles.callBtnText]}>📞 Call</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.contactBtn, styles.waBtn]} onPress={() => void Linking.openURL(`https://wa.me/${String(member.phone).replace(/\D/g, '')}`)}>
+                  <Text style={styles.contactBtnText}>💬 WhatsApp</Text>
+                </TouchableOpacity>
+              </View>
               {member.address ? (
                 <Text style={styles.memberAddress} numberOfLines={2}>📍 {member.address}</Text>
               ) : null}
@@ -945,6 +954,12 @@ const styles = StyleSheet.create({
     fontSize: fontSize.base,
     marginTop: spacing.xxs,
   },
+  contactRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  contactBtn: { flex: 1, borderRadius: radius.md, paddingVertical: spacing.sm, alignItems: 'center' },
+  callBtn: { backgroundColor: colors.brandSubtle, borderWidth: 1, borderColor: colors.brand },
+  waBtn: { backgroundColor: '#25D366' },
+  contactBtnText: { color: '#fff', fontWeight: fontWeight.bold, fontSize: fontSize.sm },
+  callBtnText: { color: colors.brandDark },
   memberAddress: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,

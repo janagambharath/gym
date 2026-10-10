@@ -46,7 +46,11 @@ export default {
                 <div class="list-item-title">${escapeHtml(m.full_name)}</div>
                 <div class="list-item-subtitle">${escapeHtml(m.phone)} · ${escapeHtml(m.plan?.name || '—')}</div>
               </div>
-              <button class="btn btn-primary btn-sm" data-renew='${escapeHtml(JSON.stringify(m))}'>Renew</button>
+              <div style="display:flex;gap:6px;align-items:center">
+                <a href="tel:${escapeHtml(m.phone)}" class="btn btn-secondary btn-sm" style="text-decoration:none" data-stop="1" aria-label="Call">${icon('phone', 15)}</a>
+                <a href="https://wa.me/${escapeHtml(String(m.phone).replace(/\D/g, ''))}" target="_blank" rel="noopener" class="btn btn-whatsapp btn-sm" style="text-decoration:none" data-stop="1" aria-label="WhatsApp">${icon('whatsapp', 15, 'white')}</a>
+                <button class="btn btn-primary btn-sm" data-renew='${escapeHtml(JSON.stringify(m))}'>Renew</button>
+              </div>
             </div>
           `).join('')}
         </div>`;
@@ -64,6 +68,9 @@ export default {
         e.stopPropagation();
         navigate.push('renew-member', { member: btn.dataset.renew });
       });
+    });
+    scroll.querySelectorAll('[data-stop]').forEach(link => {
+      link.addEventListener('click', (e) => e.stopPropagation());
     });
     scroll.querySelectorAll('[data-member]').forEach(item => {
       item.addEventListener('click', () => navigate.push('member-detail', { member: item.dataset.member }));
