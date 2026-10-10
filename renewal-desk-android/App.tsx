@@ -1260,17 +1260,19 @@ function MemberTabsNavigator({ onLogout }: { onLogout: () => void }) {
     <MemberTab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: colors.brand,
-        tabBarInactiveTintColor: colors.muted,
+        tabBarActiveTintColor: colors.volt,
+        tabBarInactiveTintColor: 'rgba(255,253,248,0.45)',
         tabBarLabelStyle: {
-          fontSize: fontSize.xs,
-          fontWeight: fontWeight.semibold,
+          fontSize: 10,
+          fontWeight: fontWeight.bold,
+          letterSpacing: 0.8,
+          textTransform: 'uppercase',
           marginTop: -2,
         },
         tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderTopWidth: 1,
+          backgroundColor: colors.brand,
+          borderTopColor: colors.brandDark,
+          borderTopWidth: 2,
           height: Platform.OS === 'ios' ? 84 : 64 + Math.max(insets.bottom, 0),
           paddingBottom: Platform.OS === 'ios' ? 24 : Math.max(insets.bottom, 8),
           paddingTop: 8,

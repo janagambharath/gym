@@ -1,87 +1,91 @@
 /* ═══════════════════════════════════════════════════════════════════════
    Renewal Desk PWA — Design Tokens
+   "IRON & INK" — hand-crafted gym editorial system
+   Warm paper, ink black, volt accent. No generic SaaS purple.
    Mirrored from renewal-desk-android/src/theme/tokens.ts
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
   /* ── Brand ──────────────────────────────────────────────────────── */
-  --brand: #0F9F62;
-  --brand-dark: #087B4A;
-  --brand-light: #3BCB85;
-  --brand-subtle: #ECFBF3;
+  --brand: #16130E;
+  --brand-dark: #0C0A07;
+  --brand-light: #2A251C;
+  --brand-subtle: #F1F4DC;
+  --volt: #D9F24F;
+  --volt-dark: #B8D42E;
 
   /* ── Surfaces ───────────────────────────────────────────────────── */
-  --bg: #F8F9FB;
-  --card: #FFFFFF;
-  --surface: #FFFFFF;
+  --bg: #F5F2EB;
+  --card: #FFFDF8;
+  --surface: #FFFDF8;
 
   /* ── Text ────────────────────────────────────────────────────────── */
-  --text: #0F172A;
-  --text-secondary: #475569;
-  --muted: #94A3B8;
-  --text-inverse: #FFFFFF;
+  --text: #16130E;
+  --text-secondary: #5C564A;
+  --muted: #A39C8B;
+  --text-inverse: #FFFDF8;
 
   /* ── Borders ─────────────────────────────────────────────────────── */
-  --border: #E2E8F0;
-  --border-light: #F1F5F9;
-  --border-focus: #2563EB;
+  --border: #E3DCCB;
+  --border-light: #EFEADD;
+  --border-focus: #16130E;
 
   /* ── Semantic — Success ──────────────────────────────────────────── */
-  --success: #059669;
-  --success-dark: #047857;
-  --success-surface: #ECFDF5;
-  --success-border: #A7F3D0;
+  --success: #2D7A3D;
+  --success-dark: #1F5A2C;
+  --success-surface: #EAF4E4;
+  --success-border: #BFE0B5;
 
   /* ── Semantic — Warning ──────────────────────────────────────────── */
-  --warning: #D97706;
-  --warning-dark: #B45309;
-  --warning-surface: #FFFBEB;
-  --warning-border: #FDE68A;
+  --warning: #B45309;
+  --warning-dark: #92400E;
+  --warning-surface: #FBF3DF;
+  --warning-border: #F0D9A8;
 
   /* ── Semantic — Critical ─────────────────────────────────────────── */
-  --critical: #DC2626;
-  --critical-dark: #B91C1C;
-  --critical-surface: #FEF2F2;
-  --critical-border: #FECACA;
+  --critical: #C2410C;
+  --critical-dark: #9A3412;
+  --critical-surface: #FBEDE3;
+  --critical-border: #F5C9A8;
 
   /* ── Semantic — Info ─────────────────────────────────────────────── */
-  --info: #2563EB;
-  --info-surface: #EFF6FF;
-  --info-border: #BFDBFE;
+  --info: #1D4ED8;
+  --info-surface: #E8EFFD;
+  --info-border: #B9CFF5;
 
   /* ── Status ──────────────────────────────────────────────────────── */
-  --status-active: #059669;
-  --status-active-surface: #ECFDF5;
-  --status-expiring: #D97706;
-  --status-expiring-surface: #FFFBEB;
-  --status-expired: #DC2626;
-  --status-expired-surface: #FEF2F2;
-  --status-pending: #7C3AED;
-  --status-pending-surface: #F5F3FF;
-  --status-paid: #059669;
-  --status-paid-surface: #ECFDF5;
-  --status-failed: #DC2626;
-  --status-failed-surface: #FEF2F2;
+  --status-active: #2D7A3D;
+  --status-active-surface: #EAF4E4;
+  --status-expiring: #B45309;
+  --status-expiring-surface: #FBF3DF;
+  --status-expired: #C2410C;
+  --status-expired-surface: #FBEDE3;
+  --status-pending: #6D5BD0;
+  --status-pending-surface: #EFECFA;
+  --status-paid: #2D7A3D;
+  --status-paid-surface: #EAF4E4;
+  --status-failed: #C2410C;
+  --status-failed-surface: #FBEDE3;
 
   /* ── WhatsApp ────────────────────────────────────────────────────── */
-  --whatsapp: #25D366;
-  --whatsapp-dark: #128C7E;
+  --whatsapp: #1FA855;
+  --whatsapp-dark: #147A3E;
 
-  /* ── Grays ───────────────────────────────────────────────────────── */
-  --gray-50: #F8FAFC;
-  --gray-100: #F1F5F9;
-  --gray-200: #E2E8F0;
-  --gray-300: #CBD5E1;
-  --gray-400: #94A3B8;
-  --gray-500: #64748B;
-  --gray-600: #475569;
-  --gray-700: #334155;
-  --gray-800: #1E293B;
-  --gray-900: #0F172A;
+  /* ── Grays (warmed) ──────────────────────────────────────────────── */
+  --gray-50: #FAF8F3;
+  --gray-100: #F1EDE2;
+  --gray-200: #E3DCCB;
+  --gray-300: #CFC6B0;
+  --gray-400: #A39C8B;
+  --gray-500: #7A7364;
+  --gray-600: #5C564A;
+  --gray-700: #403B31;
+  --gray-800: #26221B;
+  --gray-900: #16130E;
 
   /* ── Overlay ─────────────────────────────────────────────────────── */
-  --overlay: rgba(15, 23, 42, 0.5);
-  --overlay-light: rgba(15, 23, 42, 0.08);
+  --overlay: rgba(22, 19, 14, 0.55);
+  --overlay-light: rgba(22, 19, 14, 0.06);
 
   /* ── Spacing Scale ───────────────────────────────────────────────── */
   --sp-xxs: 2px;
@@ -95,9 +99,9 @@
   --sp-4xl: 40px;
   --sp-section: 48px;
 
-  /* ── Radius Scale ────────────────────────────────────────────────── */
-  --r-xs: 4px;
-  --r-sm: 6px;
+  /* ── Radius Scale (more architectural, less bubbly) ───────────────── */
+  --r-xs: 3px;
+  --r-sm: 5px;
   --r-md: 8px;
   --r-lg: 12px;
   --r-xl: 16px;
@@ -106,6 +110,7 @@
 
   /* ── Typography ──────────────────────────────────────────────────── */
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Archivo', 'Inter', -apple-system, sans-serif;
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
@@ -117,22 +122,25 @@
   --fs-4xl: 24px;
   --fs-5xl: 28px;
   --fs-6xl: 32px;
+  --fs-hero: 40px;
 
   --fw-normal: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-bold: 700;
   --fw-extrabold: 800;
+  --fw-black: 900;
 
-  --lh-tight: 1.2;
-  --lh-normal: 1.4;
-  --lh-relaxed: 1.6;
+  --lh-tight: 1.15;
+  --lh-normal: 1.45;
+  --lh-relaxed: 1.65;
 
-  /* ── Shadows ─────────────────────────────────────────────────────── */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-  --shadow-md: 0 2px 4px rgba(0,0,0,0.08);
-  --shadow-lg: 0 4px 8px rgba(0,0,0,0.1);
-  --shadow-xl: 0 8px 24px rgba(0,0,0,0.12);
+  /* ── Shadows (hard offset = hand-crafted, not soft AI blur) ───────── */
+  --shadow-sm: 2px 2px 0 rgba(22,19,14,0.08);
+  --shadow-md: 3px 3px 0 rgba(22,19,14,0.10);
+  --shadow-lg: 4px 4px 0 rgba(22,19,14,0.12);
+  --shadow-xl: 6px 6px 0 rgba(22,19,14,0.14);
+  --shadow-soft: 0 2px 12px rgba(22,19,14,0.07);
 
   /* ── iOS Safe Areas ──────────────────────────────────────────────── */
   --safe-top: env(safe-area-inset-top, 0px);
@@ -142,5 +150,34 @@
 
   /* ── Layout ──────────────────────────────────────────────────────── */
   --header-height: 56px;
-  --tab-bar-height: 56px;
+  --tab-bar-height: 60px;
+}
+
+/* ── Editorial helpers ─────────────────────────────────────────────── */
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.display-number {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Subtle paper grain — the anti-AI texture */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
