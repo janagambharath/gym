@@ -1,5 +1,5 @@
 /* Member Import (CSV) Screen */
-import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
+import { apiRequest, uploadFormData } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js';
 export default { mount(el) {
@@ -25,13 +25,9 @@ export default { mount(el) {
     const file = el.querySelector('#mi-file').files[0]; if (!file) return;
     const btn = el.querySelector('#mi-submit'); btn.disabled = true; btn.textContent = 'Importing...';
     const formData = new FormData(); formData.append('file', file);
-    try {
-      const resp = await fetch('https://gym-production-910c.up.railway.app/api/mobile/v1/members/import',{method:'POST',body:formData,
-        headers:{'Authorization':`Bearer ${JSON.parse(localStorage.getItem('renewal-desk.pwa-session.v1'))?.accessToken}`}});
-      const data = await resp.json();
-      if (data.success) { showToast(`${data.data?.imported||0} members imported!`,'success'); navigate.pop(); }
-      else showToast(data.error?.message||'Import failed','error');
-    } catch { showToast('Import failed','error'); }
+    const data = await uploadFormData('/api/mobile/v1/members/import', formData);
+    if (data.ok) { showToast(`${data.data?.imported||0} members imported!`,'success'); navigate.pop(); }
+    else showToast(data.error?.message||'Import failed','error');
     btn.disabled = false; btn.textContent = 'Import Members';
   });
 }};

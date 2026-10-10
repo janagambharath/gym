@@ -1,4 +1,4 @@
-import { apiRequest } from '../api.js';
+import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml } from '../utils.js';
 
@@ -69,7 +69,7 @@ async function load(el) {
       <span class="rrr-help-label">Device setup</span>
     </header>
     <section class="rrr-setup-hero">
-      <div><span class="rrr-eyebrow">ELITE GYM · ATTENDANCE</span><h1>Connect your terminal, not another computer.</h1><p>Choose Direct Cloud for the cleanest setup. RRR receives attendance securely from your eSSL device and turns it into member actions.</p></div>
+      <div><span class="rrr-eyebrow">${escapeHtml((getCachedSession()?.tenantName || 'YOUR GYM').toUpperCase())} · ATTENDANCE</span><h1>Connect your terminal, not another computer.</h1><p>Choose Direct Cloud for the cleanest setup. RRR receives attendance securely from your eSSL device and turns it into member actions.</p></div>
       <div class="rrr-setup-progress"><b>${direct && isLive(direct) ? 'Connected' : 'Step 1 of 3'}</b><span>${direct?.records_synced || 0} verified records</span></div>
     </section>
     <section class="rrr-connection-grid">

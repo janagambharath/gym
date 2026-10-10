@@ -1,5 +1,5 @@
 /* Member Scan Screen */
-import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
+import { apiRequest, uploadFormData } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js';
 export default { mount(el) {
@@ -26,13 +26,9 @@ export default { mount(el) {
     preview.classList.remove('hidden');
     preview.innerHTML = `<div class="full-loader"><div class="spinner"></div><div class="full-loader-text">Analyzing image with AI...</div></div>`;
     const formData = new FormData(); formData.append('image', file);
-    try {
-      const resp = await fetch('https://gym-production-910c.up.railway.app/api/mobile/v1/members/scan',{method:'POST',body:formData,
-        headers:{'Authorization':`Bearer ${JSON.parse(localStorage.getItem('renewal-desk.pwa-session.v1'))?.accessToken}`}});
-      const data = await resp.json();
-      if (data.success && data.data?.members) { navigate.replace('member-scan-review',{members:JSON.stringify(data.data.members)}); }
-      else { showToast(data.error?.message||'Scan failed','error'); preview.classList.add('hidden'); }
-    } catch { showToast('Scan failed','error'); preview.classList.add('hidden'); }
+    const data = await uploadFormData('/api/mobile/v1/members/scan', formData);
+    if (data.ok && data.data?.members) { navigate.replace('member-scan-review',{members:JSON.stringify(data.data.members)}); }
+    else { showToast(data.error?.message||'Scan failed','error'); preview.classList.add('hidden'); }
   };
   el.querySelector('#ms-file').addEventListener('change',(e)=>handleFile(e.target.files[0]));
   el.querySelector('#ms-gallery').addEventListener('change',(e)=>handleFile(e.target.files[0]));

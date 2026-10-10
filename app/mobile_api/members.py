@@ -285,6 +285,17 @@ def register_members_routes(bp):
         query = Member.query.filter_by(gym_id=g.gym_id).filter(Member.deleted_at.is_(None))
         if status:
             query = query.filter(Member.status == status)
+        expiring_within_days = request.args.get("expiring_within_days", type=int)
+        if expiring_within_days is not None and expiring_within_days >= 0:
+            gym_tz = g.current_user.gym.timezone or "Asia/Kolkata"
+            today = today_for_gym(gym_tz)
+            soon = today + timedelta(days=expiring_within_days)
+            query = query.filter(
+                Member.status == "active",
+                Member.membership_end.isnot(None),
+                Member.membership_end >= today,
+                Member.membership_end <= soon,
+            )
         if search:
             like = f"%{search}%"
             query = query.filter(or_(Member.full_name.ilike(like), Member.phone.ilike(like)))

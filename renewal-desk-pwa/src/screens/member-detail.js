@@ -46,11 +46,6 @@ export default {
               `}
               ${renderBadge(status)}
               ${daysText ? `<div style="margin-top:var(--sp-sm);font-size:var(--fs-sm);color:${statusColor.text}">${escapeHtml(daysText)}</div>` : ''}
-              <div style="margin-top:var(--sp-md)">
-                <button class="btn btn-outline btn-sm" id="btn-quick-edit" style="display:inline-flex;align-items:center;gap:6px">
-                  ${icon('edit', 14)} Edit Member
-                </button>
-              </div>
             </div>
 
             <!-- Membership Info -->
@@ -175,7 +170,6 @@ export default {
       });
 
       el.querySelector('#btn-edit-member')?.addEventListener('click', openEdit);
-      el.querySelector('#btn-quick-edit')?.addEventListener('click', openEdit);
       el.querySelector('#btn-edit-contact')?.addEventListener('click', openEdit);
 
       el.querySelector('#btn-checkin')?.addEventListener('click', async () => {

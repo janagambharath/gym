@@ -41,10 +41,10 @@ async function load(el) {
       <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integration?.status === 'connected' ? `${integrationName} live` : 'Attendance needs setup'}</span>${icon('chevronRight', 16)}</button>
     </section>
     <section class="rrr-kpis rrr-owner-kpis">
-      <article><span class="rrr-kpi-icon green">${icon('members', 20)}</span><div><strong>${formatInteger(data.members.total)}</strong><span>Total members</span></div><small>${formatInteger(data.members.active || 0)} active</small></article>
-      <article><span class="rrr-kpi-icon blue">${icon('stats', 20)}</span><div><strong>${data.members.attendance_rate}%</strong><span>30-day attendance</span></div><small>${integration?.status === 'connected' ? 'Live signal' : 'Awaiting device'}</small></article>
+      <article id="rrr-kpi-members" class="rrr-kpi-tappable"><span class="rrr-kpi-icon green">${icon('members', 20)}</span><div><strong>${formatInteger(data.members.total)}</strong><span>Total members</span></div><small>${formatInteger(data.members.active || 0)} active</small></article>
+      <article id="rrr-kpi-attendance" class="rrr-kpi-tappable"><span class="rrr-kpi-icon blue">${icon('stats', 20)}</span><div><strong>${data.members.attendance_rate}%</strong><span>30-day attendance</span></div><small>${integration?.status === 'connected' ? 'Live signal' : 'Awaiting device'}</small></article>
       <article id="rrr-kpi-mapping" class="rrr-kpi-tappable"><span class="rrr-kpi-icon amber">${icon('warning', 20)}</span><div><strong>${formatInteger(data.unmapped_count)}</strong><span>Identity reviews</span></div><small>${data.unmapped_count ? 'Map punches now →' : 'All caught up'}</small></article>
-      <article><span class="rrr-kpi-icon violet">${icon('wallet', 20)}</span><div><strong>${formatCurrency(Object.values(data.pillars).reduce((sum, pillar) => sum + Number(pillar.potential_revenue || 0), 0))}</strong><span>Growth pipeline</span></div><small>Potential value</small></article>
+      <article id="rrr-kpi-pipeline" class="rrr-kpi-tappable"><span class="rrr-kpi-icon violet">${icon('wallet', 20)}</span><div><strong>${formatCurrency(Object.values(data.pillars).reduce((sum, pillar) => sum + Number(pillar.potential_revenue || 0), 0))}</strong><span>Growth pipeline</span></div><small>Potential value</small></article>
     </section>
     ${today ? ownerToday(today) : ''}
     ${setupChecklist(data)}
@@ -57,6 +57,9 @@ async function load(el) {
   </main>`;
   el.querySelector('#rrr-integrations')?.addEventListener('click', () => navigate.push('rrr-integrations'));
   el.querySelector('#rrr-kpi-mapping')?.addEventListener('click', () => navigate.push('rrr-mappings'));
+  el.querySelector('#rrr-kpi-members')?.addEventListener('click', () => navigate.switchTab('members'));
+  el.querySelector('#rrr-kpi-attendance')?.addEventListener('click', () => navigate.push('access'));
+  el.querySelector('#rrr-kpi-pipeline')?.addEventListener('click', () => navigate.push('rrr-list', { pillar: 'revenue' }));
   el.querySelector('#rrr-rules')?.addEventListener('click', () => navigate.push('rrr-rules'));
   el.querySelector('#rrr-members')?.addEventListener('click', () => navigate.switchTab('members'));
   el.querySelector('#rrr-inbox')?.addEventListener('click', () => navigate.push('inbox'));

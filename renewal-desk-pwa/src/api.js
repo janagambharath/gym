@@ -275,6 +275,36 @@ export async function uploadPaymentQrImage(file, timeoutMs = 15000) {
   } finally { clearTimeout(timeout); }
 }
 
+/** POST a FormData body (file uploads) with auth + token refresh, no hardcoded host. */
+export async function uploadFormData(path, formData, timeoutMs = 60000) {
+  const doFetch = async (token) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(`${API_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: formData,
+        signal: controller.signal,
+      });
+    } finally { clearTimeout(timeout); }
+  };
+  try {
+    let response = await doFetch(cachedSession?.accessToken);
+    if (response.status === 401 && cachedSession) {
+      const refreshed = await refreshOnce();
+      if (refreshed) response = await doFetch(refreshed.accessToken);
+      else return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+    }
+    const envelope = await response.json().catch(() => ({}));
+    if (!response.ok || !envelope.success) return { ok: false, error: { message: envelope.error?.message || envelope.error || 'Upload failed.' } };
+    return { ok: true, data: envelope.data };
+  } catch (err) {
+    if (err?.name === 'AbortError') return { ok: false, error: { message: 'Upload timed out. Check your connection and retry.' } };
+    return { ok: false, error: { message: 'Could not upload. Check your connection.' } };
+  }
+}
+
 /** Record manual member check-in or check-out */
 export async function checkInMember(memberId, type = 'ENTRY') {
   return apiRequest('/api/mobile/v1/access/checkin', {
