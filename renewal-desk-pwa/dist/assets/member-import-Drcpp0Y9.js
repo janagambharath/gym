@@ -1,0 +1,9 @@
+import{a as n,i as s,b as l,R as m,s as o,n as d}from"./index-B7TN3ch4.js";const p={mount(t){t.innerHTML=`${n({title:"Upload CSV",showBack:!0})}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
+    <div style="border:2px dashed var(--border);border-radius:var(--r-xl);padding:var(--sp-4xl);margin-bottom:var(--sp-xl)">
+      ${s("upload",40,"var(--muted)")}
+      <p style="margin-top:var(--sp-lg);color:var(--text-secondary)">Tap to select a CSV file</p>
+      <input type="file" accept=".csv,.xlsx" id="mi-file" style="position:absolute;opacity:0;width:100%;height:100%;top:0;left:0;cursor:pointer">
+    </div>
+    <div id="mi-preview" class="hidden"></div>
+    <button class="btn btn-primary btn-full hidden" id="mi-submit">${s("upload",18,"white")} Import Members</button>
+  </div></div>`,l(t,{onBack:()=>d.pop()}),t.querySelector("#mi-file").addEventListener("change",async i=>{const e=i.target.files[0];if(!e)return;new FormData().append("file",e);const r=t.querySelector("#mi-preview");r.classList.remove("hidden"),r.innerHTML=`<div class="card card-body" style="text-align:left"><div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-sm)">File: ${e.name}</div><div style="font-size:var(--fs-sm);color:var(--muted)">${(e.size/1024).toFixed(1)} KB</div></div>`,t.querySelector("#mi-submit").classList.remove("hidden")}),t.querySelector("#mi-submit").addEventListener("click",async()=>{const i=t.querySelector("#mi-file").files[0];if(!i)return;const e=t.querySelector("#mi-submit");e.disabled=!0,e.textContent="Importing...";const a=new FormData;a.append("file",i);const r=await m("/api/mobile/v1/members/import",a);r.ok?(o(`${r.data?.imported||0} members imported!`,"success"),d.pop()):o(r.error?.message||"Import failed","error"),e.disabled=!1,e.textContent="Import Members"})}};export{p as default};

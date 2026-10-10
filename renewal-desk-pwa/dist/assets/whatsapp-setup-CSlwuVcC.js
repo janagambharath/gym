@@ -1,0 +1,14 @@
+import{a as v,q as u,b as w,f as d,i as o,g as i,s as c,n as b}from"./index-B7TN3ch4.js";const y={async mount(e){e.innerHTML=`${v({title:"Connect WhatsApp",showBack:!0})}<div class="scroll-view" id="ws-scroll">${u()}</div>`,w(e,{onBack:()=>b.pop()});const l=e.querySelector("#ws-scroll"),p=await d("/api/mobile/v1/whatsapp/connection-status"),a=p.ok?p.data:{},n=a.status==="CONNECTED";l.innerHTML=`<div class="scroll-content">
+    <div style="padding:var(--sp-lg)"><div class="card card-body" style="text-align:center">
+      <div style="width:64px;height:64px;border-radius:var(--r-full);background:${n?"var(--success-surface)":"var(--warning-surface)"};display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-md)">${o("whatsapp",32,n?"var(--success)":"var(--warning)")}</div>
+      <h3 style="margin-bottom:var(--sp-sm)">${n?"WhatsApp Connected":"Connect WhatsApp"}</h3>
+      <p style="font-size:var(--fs-sm);color:var(--text-secondary);margin-bottom:var(--sp-lg)">${i(a.status_description||"Connect your WhatsApp Business number to send automated renewal reminders.")}</p>
+      ${n?`
+      <div style="font-size:var(--fs-sm);color:var(--text-secondary)">Phone: ${i(a.business_phone_number||"—")}</div>
+      <p style="font-size:var(--fs-sm);color:var(--success);margin-top:var(--sp-sm)">${i(a.next_action||"")}</p>`:`<button class="btn btn-whatsapp btn-lg btn-full" id="ws-start">${o("whatsapp",18,"white")} Start Setup</button>
+      <div style="margin-top:var(--sp-lg);text-align:left">
+        <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-sm)">How it works</div>
+        ${["Connect your WhatsApp Business number via Meta","We send renewal reminders automatically","Members reply and you see it in Inbox"].map((t,s)=>`<div style="display:flex;gap:var(--sp-md);margin-bottom:var(--sp-sm);font-size:var(--fs-sm)"><span style="font-weight:var(--fw-bold);color:var(--brand)">${s+1}.</span><span>${t}</span></div>`).join("")}
+      </div>`}
+    </div></div>
+  </div>`,e.querySelector("#ws-start")?.addEventListener("click",async()=>{const t=e.querySelector("#ws-start");t.disabled=!0,t.textContent="Preparing…";const s=await d("/api/mobile/v1/whatsapp/onboarding-config");if(!s.ok){c(s.error?.message||"Setup is not available right now","error"),t.disabled=!1,t.innerHTML=`${o("whatsapp",18,"white")} Start Setup`;return}const r=s.data||{},m=`${window.location.origin}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(r.signup_handshake||"")}&gym_id=${r.gym_id||""}&gym_name=${encodeURIComponent(r.gym_name||"")}&meta_app_id=${encodeURIComponent(r.meta_app_id||"")}`;window.open(m,"_blank"),c("Complete the Meta setup in the new tab, then return here.","success"),t.disabled=!1,t.innerHTML=`${o("whatsapp",18,"white")} Start Setup`})}};export{y as default};

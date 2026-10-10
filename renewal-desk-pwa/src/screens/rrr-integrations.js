@@ -156,7 +156,7 @@ function directPanel(direct, commands) {
       ${copyRow('Path', settings.path || '/iclock')}
       ${copyRow('Mode', settings.server_mode || 'ADMS')}
     </div>
-    <p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch. ${settings.https ? '' : '<b>Note:</b> this terminal talks plain HTTP — keep it on a trusted network or use a VPN.'}</p>
+    <p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch. ${settings.https ? '<b>Important:</b> if your terminal has no HTTPS/SSL option in its menu, it cannot use Direct Cloud — use the eBioServer bridge instead.' : '<b>Note:</b> this terminal talks plain HTTP — keep it on a trusted network or use a VPN.'}</p>
     <section class="rrr-command-console">
       <div><b>Live commissioning</b><span id="rrr-cmd-progress">${latest ? progressText(latest) : 'No commissioning command sent yet.'}</span></div>
       <button class="rrr-secondary-button" data-adms-action="probe_info" ${connected ? '' : 'disabled'}>1. Send safe connection probe</button>
