@@ -3,6 +3,7 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { debounce, uuid, escapeHtml } from '../utils.js';
 export default { async mount(el, params) {
+    const idempotencyKey = uuid(); // one key per form mount, reused across retries
   const preId = params?.memberId; let members = [], selectedMember = null;
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
   const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
@@ -45,7 +46,7 @@ export default { async mount(el, params) {
       const body = { member_id: selectedMember.id, amount: el.querySelector('#rp-amount').value,
         method: el.querySelector('#rp-method').value, plan_id: el.querySelector('#rp-plan').value ? Number(el.querySelector('#rp-plan').value) : null,
         reference: el.querySelector('#rp-ref').value.trim()||null, notes: el.querySelector('#rp-notes').value.trim()||null };
-      const r = await apiRequest('/api/mobile/v1/payments', { method:'POST', body, headers:{'Idempotency-Key':uuid()} });
+      const r = await apiRequest('/api/mobile/v1/payments', { method:'POST', body, headers:{'Idempotency-Key': idempotencyKey} });
       if (r.ok) {
         showToast('Payment recorded!','success');
         const waUrl = r.data?.whatsapp_url || r.data?.receipt?.whatsapp_url;

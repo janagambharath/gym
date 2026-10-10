@@ -6,7 +6,8 @@ in a single sorted list for the owner's inbox tab.
 from __future__ import annotations
 
 from flask import g, jsonify, request
-from sqlalchemy import desc, or_
+from sqlalchemy import desc, func, or_
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import Member, ReminderLog
@@ -37,12 +38,31 @@ def register_inbox_routes(bp):
                     .limit(50)
                     .all()
                 )
-                for c in bot_convos:
-                    last_msg = (
-                        BotMessage.query.filter_by(conversation_id=c.id)
-                        .order_by(BotMessage.created_at.desc())
-                        .first()
+                # Latest message per conversation in one grouped query (was N+1).
+                convo_ids = [c.id for c in bot_convos]
+                last_msg_sub = (
+                    db.session.query(
+                        BotMessage.conversation_id,
+                        func.max(BotMessage.created_at).label("max_at"),
                     )
+                    .filter(BotMessage.conversation_id.in_(convo_ids))
+                    .group_by(BotMessage.conversation_id)
+                    .subquery()
+                )
+                last_msgs = {
+                    m.conversation_id: m
+                    for m in (
+                        db.session.query(BotMessage)
+                        .join(
+                            last_msg_sub,
+                            (BotMessage.conversation_id == last_msg_sub.c.conversation_id)
+                            & (BotMessage.created_at == last_msg_sub.c.max_at),
+                        )
+                        .all()
+                    )
+                }
+                for c in bot_convos:
+                    last_msg = last_msgs.get(c.id)
                     conversations.append({
                         "id": f"bot-{c.id}",
                         "type": "bot",
@@ -62,6 +82,7 @@ def register_inbox_routes(bp):
                 campaign_replies = (
                     CampaignRecipient.query.filter_by(gym_id=g.gym_id)
                     .filter(CampaignRecipient.reply_at.isnot(None))
+                    .options(joinedload(CampaignRecipient.member), joinedload(CampaignRecipient.campaign))
                     .order_by(CampaignRecipient.reply_at.desc())
                     .limit(30)
                     .all()

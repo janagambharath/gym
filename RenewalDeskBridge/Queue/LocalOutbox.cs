@@ -27,7 +27,23 @@ namespace RenewalDeskBridge.Queue
         {
             string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "outbox.db");
             _connectionString = $"Data Source={dbPath};Version=3;Default Timeout=5;";
-            EnsureSchema();
+            EnsureSchemaWithRecovery(dbPath);
+        }
+
+        private void EnsureSchemaWithRecovery(string dbPath)
+        {
+            try
+            {
+                EnsureSchema();
+            }
+            catch (System.Data.SQLite.SQLiteException)
+            {
+                // Power loss mid-write can corrupt the file. Quarantine it and
+                // start fresh rather than refusing to launch (attendance gap).
+                string quarantine = dbPath + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                try { File.Move(dbPath, quarantine); } catch { }
+                EnsureSchema();
+            }
         }
 
         private void EnsureSchema()

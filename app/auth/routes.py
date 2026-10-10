@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import date, timedelta
 from urllib.parse import urljoin, urlparse
@@ -20,6 +21,7 @@ from app.forms import (
 )
 from app.models import Gym, MembershipPlan, NotificationTemplate, QRSettings, User
 from app.models.gym import DEFAULT_TRIAL_DAYS
+from app.mobile_api.token_service import revoke_all_user_tokens
 from app.services.audit_service import audit
 from app.utils.helpers import slugify
 
@@ -117,13 +119,10 @@ def login():
         user.mark_login()
         if getattr(user, "invitation_status", None) in {"pending", "sent"}:
             user.invitation_status = "accepted"
-        founder_emails = {
-            "bharathclaude1@gmail.com",
-            default_admin_email,
-            os.getenv("SUPERADMIN_EMAIL", "").lower().strip(),
-        } - {""}
-        if user.email in founder_emails and user.role != "super_admin":
-            user.role = "super_admin"
+        # Security: never promote roles at login time. Super-admin access is
+        # granted only via the explicit `flask create-admin` bootstrap command.
+        # (A previous version auto-promoted a hardcoded founder email here;
+        # that was a privilege-escalation hole and has been removed.)
 
         audit(action="login", resource_type="user", resource_id=user.id, gym_id=user.gym_id)
         db.session.commit()
@@ -221,6 +220,8 @@ def change_password():
             flash("Current password is incorrect.", "danger")
             return render_template("auth/change_password.html", form=form)
         current_user.set_password(form.new_password.data)
+        # Kick out any stolen/compromised mobile sessions.
+        revoke_all_user_tokens(current_user.id)
         current_user.must_change_password = False
         current_user.is_temporary_password = False
         audit(action="change_password", resource_type="user", resource_id=current_user.id)
@@ -237,6 +238,11 @@ _RESET_SALT = "password-reset"
 _RESET_MAX_AGE = 30 * 60  # 30 minutes
 
 
+def _password_token_part(user) -> str:
+    """Short fingerprint of the current password hash for reset-token binding."""
+    return hashlib.sha256(user.password_hash.encode("utf-8")).hexdigest()[:32]
+
+
 @auth_bp.route("/forgot-password", methods=["GET", "POST"])
 @limiter.limit("5 per minute")
 def forgot_password():
@@ -249,16 +255,19 @@ def forgot_password():
             serializer = URLSafeTimedSerializer(
                 current_app.config["SECRET_KEY"], salt=_RESET_SALT
             )
-            token = serializer.dumps({"user_id": user.id})
-            reset_url = url_for("auth.reset_password", token=token, _external=True)
-            current_app.logger.info(
-                "Password reset link for %s: %s", user.email, reset_url
+            token = serializer.dumps(
+                {"user_id": user.id, "pwh": _password_token_part(user)}
             )
-            # TODO: Send via email or WhatsApp
+            reset_url = url_for("auth.reset_password", token=token, _external=True)
+            # Security: never log the reset URL — it is a bearer credential.
+            # TODO: deliver via email or WhatsApp instead of support handoff.
+            current_app.logger.info(
+                "Password reset requested for user_id=%s", user.id
+            )
         # Always show the same message to prevent email enumeration
         flash(
             "If an account with that email exists, a reset link has been generated. "
-            "Check application logs or contact support.",
+            "Contact support to receive it.",
             "info",
         )
         return redirect(url_for("auth.login"))
@@ -279,13 +288,15 @@ def reset_password(token: str):
         flash("This reset link is invalid or has expired.", "danger")
         return redirect(url_for("auth.forgot_password"))
     user = db.session.get(User, payload.get("user_id"))
-    if not user:
-        flash("Invalid reset link.", "danger")
+    if not user or payload.get("pwh") != _password_token_part(user):
+        # Issued before the last password change, or forged.
+        flash("This reset link is invalid or has expired.", "danger")
         return redirect(url_for("auth.forgot_password"))
     form = ResetPasswordForm()
     if form.validate_on_submit():
         user.set_password(form.new_password.data)
         user.reset_failed_logins()
+        revoke_all_user_tokens(user.id)
         audit(action="password_reset", resource_type="user", resource_id=user.id)
         db.session.commit()
         flash("Password has been reset. Sign in with your new password.", "success")

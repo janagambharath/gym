@@ -18,7 +18,13 @@ from app.models import Gym, Member, MembershipPlan, MobileIdempotencyKey, Paymen
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
-from app.services.payment_service import cancel_payment, delete_payment, reject_payment, verify_payment
+from app.services.payment_service import (
+    cancel_payment,
+    delete_payment,
+    refund_payment,
+    reject_payment,
+    verify_payment,
+)
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
@@ -425,7 +431,13 @@ def register_payments_routes(bp):
                     key=idempotency_key,
                     request_hash=request_hash,
                 )
-                if existing and matches_request:
+                if existing:
+                    if not matches_request:
+                        return error_response(
+                            "IDEMPOTENCY_KEY_REUSED",
+                            "This idempotency key was already used for a different payment request.",
+                            409,
+                        )
                     return jsonify(existing.response_body), existing.status_code
             raise
 
@@ -433,7 +445,8 @@ def register_payments_routes(bp):
             from app.services.push_notification_service import notify_new_payment
             notify_new_payment(g.current_user.gym, payment)
         except Exception:
-            pass
+            # Never swallow: a broken push pipeline must be visible.
+            current_app.logger.exception("Push notification failed for new payment")
 
         return jsonify(response_body), 201
 
@@ -523,10 +536,40 @@ def register_payments_routes(bp):
                 actor_id=g.current_user.id,
             )
             db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            return error_response("CONFLICT", str(exc), 409)
         except Exception as exc:
             db.session.rollback()
             current_app.logger.exception("Failed to delete payment %s: %s", payment_id, exc)
             return error_response("DB_ERROR", "Failed to delete payment.", 500)
 
         return jsonify({"success": True, "data": {"message": "Payment deleted successfully."}})
+
+    @bp.route("/payments/<int:payment_id>/refund", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def refund_payment_endpoint(payment_id: int):
+        payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
+        if payment is None:
+            return error_response("NOT_FOUND", "Payment not found.", 404)
+        try:
+            refund_payment(payment, refunded_by_id=g.current_user.id)
+            audit(
+                action="refund_payment",
+                resource_type="payment_verification",
+                resource_id=payment_id,
+                gym_id=g.gym_id,
+                actor_id=g.current_user.id,
+            )
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            return error_response("CONFLICT", str(exc), 409)
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception("Failed to refund payment %s: %s", payment_id, exc)
+            return error_response("DB_ERROR", "Failed to refund payment.", 500)
+
+        return jsonify({"success": True, "data": {"message": "Payment refunded successfully."}})
 

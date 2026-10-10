@@ -193,9 +193,11 @@ def create_or_get_log(
     )
     db.session.add(log)
     try:
-        db.session.flush()
+        # Savepoint: a duplicate-key race must not roll back the caller's
+        # other pending writes, only this insert.
+        with db.session.begin_nested():
+            db.session.flush()
     except IntegrityError as exc:
-        db.session.rollback()
         log = ReminderLog.query.filter_by(
             gym_id=member.gym_id,
             member_id=member.id,
@@ -471,6 +473,11 @@ def send_reminder(log: ReminderLog, *, force: bool = False) -> ReminderLog:
     log.attempts += 1
     log.message_snapshot = message
     log.provider_message_id = None
+    # Outbox-lite: persist the attempt BEFORE the network call. A crash
+    # between the WhatsApp send and the final commit used to lose both the
+    # attempt counter and the status, causing unbounded resends.
+    log.status = "sending"
+    db.session.commit()
     try:
         result = _send_whatsapp_message(
             whatsapp,

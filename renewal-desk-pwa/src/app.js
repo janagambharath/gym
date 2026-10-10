@@ -54,7 +54,6 @@ function registerScreens() {
   router.register('record-payment', () => import('./screens/record-payment.js'), { auth: true });
   router.register('payment-detail', () => import('./screens/payment-detail.js'), { auth: true });
   router.register('payment-setup', () => import('./screens/payment-setup.js'), { auth: true });
-  router.register('fast-renewal', () => import('./screens/fast-renewal.js'), { auth: true });
   router.register('plans', () => import('./screens/plans.js'), { auth: true });
   router.register('staff', () => import('./screens/staff.js'), { auth: true });
   router.register('reports', () => import('./screens/reports.js'), { auth: true });
@@ -73,7 +72,6 @@ function registerScreens() {
   router.register('campaigns', () => import('./screens/campaigns.js'), { auth: true });
   router.register('campaign-create', () => import('./screens/campaign-create.js'), { auth: true });
   router.register('campaign-detail', () => import('./screens/campaign-detail.js'), { auth: true });
-  router.register('import-members', () => import('./screens/import-members.js'), { auth: true });
   router.register('member-import', () => import('./screens/member-import.js'), { auth: true });
   router.register('member-scan', () => import('./screens/member-scan.js'), { auth: true });
   router.register('member-scan-review', () => import('./screens/member-scan-review.js'), { auth: true });

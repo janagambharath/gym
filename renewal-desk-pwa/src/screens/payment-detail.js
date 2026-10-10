@@ -35,20 +35,26 @@ export default { async mount(el, params) {
       </div>
     </div></div>`;
   bindHeaderEvents(el, { onBack: () => navigate.pop() });
-  el.querySelector('#pd-verify')?.addEventListener('click', async () => {
+  // Disable-while-submitting: a double-tap on mobile must not fire twice.
+  const guard = (btn, fn) => async () => {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try { await fn(); } finally { btn.disabled = false; }
+  };
+  el.querySelector('#pd-verify')?.addEventListener('click', guard(el.querySelector('#pd-verify'), async () => {
     const r = await apiRequest(`/api/mobile/v1/payments/${paymentId}/verify`, { method:'POST' });
     if (r.ok) { showToast('Payment verified!','success'); navigate.pop(); } else showToast(r.error.message,'error');
-  });
-  el.querySelector('#pd-reject')?.addEventListener('click', async () => {
+  }));
+  el.querySelector('#pd-reject')?.addEventListener('click', guard(el.querySelector('#pd-reject'), async () => {
     const yes = await showConfirm({ title:'Reject Payment', message:'This will reject the payment.', confirmText:'Reject', destructive:true });
     if (!yes) return;
     const r = await apiRequest(`/api/mobile/v1/payments/${paymentId}/reject`, { method:'POST' });
     if (r.ok) { showToast('Payment rejected','success'); navigate.pop(); } else showToast(r.error.message,'error');
-  });
-  el.querySelector('#pd-delete')?.addEventListener('click', async () => {
+  }));
+  el.querySelector('#pd-delete')?.addEventListener('click', guard(el.querySelector('#pd-delete'), async () => {
     const yes = await showConfirm({ title:'Delete Payment', message:'This cannot be undone.', confirmText:'Delete', destructive:true });
     if (!yes) return;
     const r = await apiRequest(`/api/mobile/v1/payments/${paymentId}`, { method:'DELETE' });
     if (r.ok) { showToast('Payment deleted','success'); navigate.pop(); } else showToast(r.error.message,'error');
-  });
+  }));
 }};

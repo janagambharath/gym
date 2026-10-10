@@ -280,6 +280,34 @@ namespace eBioServerBridge
             }
         }
 
+        /// <summary>
+        /// Best-effort verification of an employee's block state via
+        /// GetEmployeeDetails. Returns true when the device state matches the
+        /// expectation, false when it contradicts it, null when the vendor
+        /// response format is unrecognized or the query failed.
+        /// </summary>
+        public bool? VerifyBlockState(string employeeCode, bool expectBlocked)
+        {
+            string details = GetEmployeeDetails(employeeCode);
+            if (string.IsNullOrEmpty(details))
+                return null;
+            string lower = details.ToLowerInvariant();
+            bool? blocked = null;
+            if (lower.Contains("<isblocked>true</isblocked>")
+                || lower.Contains("\"isblocked\":true")
+                || lower.Contains("blockuser>true")
+                || lower.Contains(">blocked<"))
+                blocked = true;
+            else if (lower.Contains("<isblocked>false</isblocked>")
+                || lower.Contains("\"isblocked\":false")
+                || lower.Contains("blockuser>false")
+                || lower.Contains(">unblocked<"))
+                blocked = false;
+            if (!blocked.HasValue)
+                return null;
+            return blocked.Value == expectBlocked;
+        }
+
         public CommandResult DeleteEmployee(string employeeCode)
         {
             try
@@ -317,7 +345,7 @@ namespace eBioServerBridge
             if (string.IsNullOrEmpty(response)) return null;
             try
             {
-                var doc = new XmlDocument();
+                var doc = new XmlDocument { XmlResolver = null };
                 doc.LoadXml(response);
                 var nsMgr = new XmlNamespaceManager(doc.NameTable);
                 nsMgr.AddNamespace("soap", "http://schemas.xmlsoap.org/soap/envelope/");
@@ -333,7 +361,7 @@ namespace eBioServerBridge
 
         private void ParseDataSetRows(string response, string resultElementName, RowHandler handler)
         {
-            var doc = new XmlDocument();
+            var doc = new XmlDocument { XmlResolver = null };
             doc.LoadXml(response);
             var nsMgr = new XmlNamespaceManager(doc.NameTable);
             nsMgr.AddNamespace("soap", "http://schemas.xmlsoap.org/soap/envelope/");
@@ -344,7 +372,7 @@ namespace eBioServerBridge
 
             try
             {
-                var innerDoc = new XmlDocument();
+                var innerDoc = new XmlDocument { XmlResolver = null };
                 innerDoc.LoadXml(resultNode.InnerXml);
                 XmlNodeList rows = innerDoc.GetElementsByTagName("Table");
                 if (rows.Count == 0) rows = innerDoc.GetElementsByTagName("Table1");
@@ -412,6 +440,9 @@ namespace eBioServerBridge
             request.ContentType = "text/xml; charset=utf-8";
             request.Headers.Add("SOAPAction", "\"http://tempuri.org/" + soapAction + "\"");
             request.Timeout = 30000;
+            // Without this, a stalled mid-response hangs the single-threaded
+            // bridge loop for the 5-minute HttpWebRequest default.
+            request.ReadWriteTimeout = 30000;
 
             byte[] bodyBytes = Encoding.UTF8.GetBytes(soapBody);
             request.ContentLength = bodyBytes.Length;

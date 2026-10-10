@@ -389,7 +389,7 @@ def acknowledge_command(
 ) -> tuple[bool, str | None]:
     """Apply a bridge ACK.  Returns ``(accepted, error_code)``."""
 
-    if status not in {"acked", "failed"}:
+    if status not in {"acked", "failed", "accepted"}:
         return False, "invalid_status"
 
     if command.status in {"acked", "failed"}:
@@ -404,6 +404,23 @@ def acknowledge_command(
     if command.lease_expires_at is None or _as_utc(command.lease_expires_at) < utcnow():
         return False, "lease_expired"
 
+    if status == "accepted":
+        # The connector's server accepted the command but device delivery is
+        # unconfirmed (e.g. eBioServer queues the push for the terminal's next
+        # poll). Keep the command pending so it is re-leased and retried;
+        # never report it as done. Escalate if the device never confirms.
+        command.lease_token = None
+        command.lease_expires_at = None
+        note = (error_message or "Accepted by server; device delivery unconfirmed.").strip()[:1000]
+        if command.delivery_attempts >= 10:
+            command.acknowledge(
+                "failed",
+                f"Device did not confirm delivery after {command.delivery_attempts} attempts: {note}",
+            )
+        else:
+            command.status = "pending"
+            command.last_error = note
+        return True, None
     command.acknowledge(status, error_message)
     return True, None
 

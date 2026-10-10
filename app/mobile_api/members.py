@@ -274,10 +274,9 @@ def register_members_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def list_members():
-        gym = g.current_user.gym
-        if auto_expire_members_for_gym(gym):
-            db.session.commit()
-
+        # NOTE: membership expiry is owned by the scheduler (reminder job) and
+        # the run-reminders CLI. It must not run here: it is a mutating,
+        # lock-holding write that does not belong in a GET.
         page = request.args.get("page", 1, type=int)
         page_size = min(request.args.get("page_size", 20, type=int), 100)
         status = request.args.get("status", "").strip()
@@ -328,14 +327,9 @@ def register_members_routes(bp):
         data["is_inside"] = (access_state.current_state == "INSIDE") if access_state else False
         data["last_entry_at"] = access_state.last_entry_at.isoformat() if (access_state and access_state.last_entry_at) else None
 
-        from app.mobile_api.member_api import get_recent_member_otp
-        recent_otp_info = get_recent_member_otp(member.id)
-        if recent_otp_info:
-            data["recent_otp"] = recent_otp_info["otp"]
-            data["recent_otp_expires_in"] = recent_otp_info["expires_in_seconds"]
-        else:
-            data["recent_otp"] = None
-            data["recent_otp_expires_in"] = None
+        # Security: never disclose a member's live OTP to staff clients.
+        # Revealing it lets any staff credential impersonate the member and
+        # defeats OTP as an authentication factor.
 
         return jsonify({"success": True, "data": data})
 
@@ -390,6 +384,8 @@ def register_members_routes(bp):
                 status="active" if membership_end >= local_today else "expired",
                 notes=notes_val,
             )
+            # Pin the expected renewal value for reporting.
+            member.price = plan.price if plan else Decimal("0.00")
             db.session.add(member)
             db.session.flush()
 

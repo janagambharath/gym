@@ -50,8 +50,7 @@ gym_bp = Blueprint("gym", __name__, url_prefix="/app")
 @roles_required("gym_owner", "staff")
 def dashboard():
     gym_id = current_user.gym_id
-    if auto_expire_members_for_gym(current_user.gym):
-        db.session.commit()
+    # Membership expiry runs in the scheduler, not in this GET (see above).
     stats = gym_dashboard_stats(gym_id)
     expiring_members = (
         Member.query.filter(

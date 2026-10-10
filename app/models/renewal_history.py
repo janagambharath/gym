@@ -37,6 +37,7 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
         nullable=True,
         index=True,
     )
+    previous_start = db.Column(db.Date, nullable=True)
     previous_end = db.Column(db.Date, nullable=True)
     new_start = db.Column(db.Date, nullable=False)
     new_end = db.Column(db.Date, nullable=False)

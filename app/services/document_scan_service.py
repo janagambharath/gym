@@ -457,7 +457,8 @@ class DocumentScanService:
             if start_date_iso and not expiry_date_iso and matched_plan:
                 from datetime import timedelta
                 s_date = date.fromisoformat(start_date_iso)
-                expiry_date_iso = (s_date + timedelta(days=matched_plan.duration_days)).isoformat()
+                # Inclusive end date: matches verify_payment/renew/bulk_renew (start + days - 1).
+                expiry_date_iso = (s_date + timedelta(days=matched_plan.duration_days - 1)).isoformat()
 
             if start_date_iso and expiry_date_iso:
                 if date.fromisoformat(expiry_date_iso) < date.fromisoformat(start_date_iso):

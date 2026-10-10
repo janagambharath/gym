@@ -22,10 +22,25 @@ namespace RenewalDeskBridge.Device
     /// </summary>
     public class DeviceConnection : IDisposable
     {
-        private readonly CZKEMClass _zk = new CZKEMClass();
+        // All zkemkeeper COM calls run on this dedicated STA thread. The COM
+        // object is created lazily on that thread and never touched anywhere
+        // else: no cross-apartment marshaling, no UI-thread stalls, and event
+        // callbacks arrive on a known thread.
+        private readonly StaDispatcher _sta = new StaDispatcher("zkemkeeper-STA");
+        private CZKEMClass _zk;
         private int _machineNumber = 1;
         private bool _isConnected;
         private bool _attendanceEventsSubscribed;
+
+        // Must only be referenced from inside _sta.Invoke lambdas.
+        private CZKEMClass Zk
+        {
+            get
+            {
+                if (_zk == null) _zk = new CZKEMClass();
+                return _zk;
+            }
+        }
 
         public bool IsConnected => _isConnected;
 
@@ -47,65 +62,87 @@ namespace RenewalDeskBridge.Device
                             bool registerLiveAttendanceEvents = false)
         {
             _machineNumber = machineNumber;
+            int machine = machineNumber;
 
-            if (!string.IsNullOrEmpty(commPassword))
+            return _sta.Invoke(() =>
             {
-                _zk.SetCommPasswordEx(commPassword);
-            }
-
-            _isConnected = _zk.Connect_Net(ip, port);
-
-            if (_isConnected)
-            {
-                if (registerLiveAttendanceEvents)
+                if (!string.IsNullOrEmpty(commPassword))
                 {
-                    if (!_attendanceEventsSubscribed)
-                    {
-                        _zk.OnAttTransactionEx += Zk_OnAttTransactionEx;
-                        _attendanceEventsSubscribed = true;
-                    }
+                    Zk.SetCommPasswordEx(commPassword);
+                }
+
+                _isConnected = Zk.Connect_Net(ip, port);
+
+                if (_isConnected && registerLiveAttendanceEvents && !_attendanceEventsSubscribed)
+                {
+                    Zk.OnAttTransactionEx += Zk_OnAttTransactionEx;
+                    _attendanceEventsSubscribed = true;
 
                     // 65535 registers ALL real-time event types, matching the demo's
                     // own comment: "registering all". This is opt-in because some
                     // older terminal firmware destabilises a .NET host on callbacks.
-                    _zk.RegEvent(_machineNumber, 65535);
+                    Zk.RegEvent(machine, 65535);
                 }
-            }
 
-            return _isConnected;
+                return _isConnected;
+            });
         }
 
         public void Disconnect()
         {
-            if (_attendanceEventsSubscribed)
+            _sta.Invoke(() =>
             {
-                try
+                if (_attendanceEventsSubscribed)
                 {
-                    _zk.OnAttTransactionEx -= Zk_OnAttTransactionEx;
+                    try
+                    {
+                        Zk.OnAttTransactionEx -= Zk_OnAttTransactionEx;
+                    }
+                    catch
+                    {
+                        // Disconnect must continue even if a broken COM connection
+                        // point rejects an event-sink removal.
+                    }
+                    finally
+                    {
+                        _attendanceEventsSubscribed = false;
+                    }
                 }
-                catch
-                {
-                    // Disconnect must continue even if a broken COM connection
-                    // point rejects an event-sink removal.
-                }
-                finally
-                {
-                    _attendanceEventsSubscribed = false;
-                }
-            }
 
-            if (_isConnected)
-            {
-                _zk.Disconnect();
-                _isConnected = false;
-            }
+                if (_isConnected)
+                {
+                    try { Zk.Disconnect(); }
+                    catch { /* teardown must not throw */ }
+                    _isConnected = false;
+                }
+            });
         }
 
         public int GetLastErrorCode()
         {
             int code = 0;
-            _zk.GetLastError(ref code);
+            _sta.Invoke(() => { Zk.GetLastError(ref code); });
             return code;
+        }
+
+        /// <summary>
+        /// Cheap liveness ping (serial-number read). When the terminal reboots,
+        /// the cable flaps, or the PC sleeps, the TCP session dies silently —
+        /// this detects the stale session, marks it dead, and raises
+        /// OnDisconnected so the caller can reconnect with backoff.
+        /// </summary>
+        public bool CheckSessionAlive()
+        {
+            if (!_isConnected) return false;
+            try
+            {
+                string serial;
+                if (TryGetDeviceSerialNumber(out serial)) return true;
+            }
+            catch { }
+            _isConnected = false;
+            try { OnDisconnected?.Invoke(); } catch { }
+            return false;
         }
 
         /// <summary>
@@ -117,7 +154,8 @@ namespace RenewalDeskBridge.Device
         {
             if (!_isConnected) return false;
             int delayTenths = Math.Max(1, delaySeconds) * 10;
-            return _zk.ACUnlock(_machineNumber, delayTenths);
+            int machine = _machineNumber;
+            return _sta.Invoke(() => Zk.ACUnlock(machine, delayTenths));
         }
 
         /// <summary>
@@ -132,12 +170,16 @@ namespace RenewalDeskBridge.Device
         public bool SetUser(string enrollNumber, string name, bool enabled, int privilege = 0, string password = "")
         {
             if (!_isConnected) return false;
-            bool ok = _zk.SSR_SetUserInfo(_machineNumber, enrollNumber, name, password, privilege, enabled);
-            if (ok)
+            int machine = _machineNumber;
+            return _sta.Invoke(() =>
             {
-                ok = _zk.RefreshData(_machineNumber); // commits pending changes - demo calls this after batches
-            }
-            return ok;
+                bool ok = Zk.SSR_SetUserInfo(machine, enrollNumber, name, password, privilege, enabled);
+                if (ok)
+                {
+                    ok = Zk.RefreshData(machine); // commits pending changes - demo calls this after batches
+                }
+                return ok;
+            });
         }
 
         /// <summary>
@@ -149,13 +191,16 @@ namespace RenewalDeskBridge.Device
         public bool SetUserEnabled(string enrollNumber, bool enabled)
         {
             if (!_isConnected) return false;
-
-            bool ok = _zk.SSR_EnableUser(_machineNumber, enrollNumber, enabled);
-            if (ok)
+            int machine = _machineNumber;
+            return _sta.Invoke(() =>
             {
-                ok = _zk.RefreshData(_machineNumber);
-            }
-            return ok;
+                bool ok = Zk.SSR_EnableUser(machine, enrollNumber, enabled);
+                if (ok)
+                {
+                    ok = Zk.RefreshData(machine);
+                }
+                return ok;
+            });
         }
 
         /// <summary>
@@ -167,12 +212,21 @@ namespace RenewalDeskBridge.Device
         {
             enabled = false;
             if (!_isConnected) return false;
-
-            string name;
-            string password;
-            int privilege;
-            return _zk.SSR_GetUserInfo(_machineNumber, enrollNumber, out name, out password,
-                                       out privilege, out enabled);
+            int machine = _machineNumber;
+            bool localEnabled = false;
+            bool ok = _sta.Invoke(() =>
+            {
+                string name;
+                string password;
+                int privilege;
+                bool en;
+                bool result = Zk.SSR_GetUserInfo(machine, enrollNumber, out name, out password,
+                                                 out privilege, out en);
+                localEnabled = en;
+                return result;
+            });
+            enabled = localEnabled;
+            return ok;
         }
 
         /// <summary>
@@ -184,22 +238,28 @@ namespace RenewalDeskBridge.Device
         {
             profile = null;
             if (!_isConnected) return false;
-
-            string name;
-            string password;
-            int privilege;
-            bool enabled;
-            bool ok = _zk.SSR_GetUserInfo(_machineNumber, enrollNumber, out name, out password,
-                                           out privilege, out enabled);
-            if (ok)
+            int machine = _machineNumber;
+            DeviceUserProfile localProfile = null;
+            bool ok = _sta.Invoke(() =>
             {
-                profile = new DeviceUserProfile
+                string name;
+                string password;
+                int privilege;
+                bool enabled;
+                bool result = Zk.SSR_GetUserInfo(machine, enrollNumber, out name, out password,
+                                                  out privilege, out enabled);
+                if (result)
                 {
-                    Name = name ?? string.Empty,
-                    Privilege = privilege,
-                    Enabled = enabled
-                };
-            }
+                    localProfile = new DeviceUserProfile
+                    {
+                        Name = name ?? string.Empty,
+                        Privilege = privilege,
+                        Enabled = enabled
+                    };
+                }
+                return result;
+            });
+            profile = localProfile;
             return ok;
         }
 
@@ -212,9 +272,15 @@ namespace RenewalDeskBridge.Device
         {
             serialNumber = string.Empty;
             if (!_isConnected) return false;
-
-            return _zk.GetSerialNumber(_machineNumber, out serialNumber) &&
-                   !string.IsNullOrWhiteSpace(serialNumber);
+            int machine = _machineNumber;
+            string localSerial = _sta.Invoke(() =>
+            {
+                string s;
+                return Zk.GetSerialNumber(machine, out s) ? s : null;
+            });
+            if (string.IsNullOrWhiteSpace(localSerial)) return false;
+            serialNumber = localSerial;
+            return true;
         }
 
         /// <summary>
@@ -225,8 +291,15 @@ namespace RenewalDeskBridge.Device
         {
             definition = string.Empty;
             if (!_isConnected) return false;
-
-            return _zk.GetTZInfo(_machineNumber, timeZoneId, ref definition);
+            int machine = _machineNumber;
+            string localDefinition = _sta.Invoke(() =>
+            {
+                string d = string.Empty;
+                return Zk.GetTZInfo(machine, timeZoneId, ref d) ? d : null;
+            });
+            if (localDefinition == null) return false;
+            definition = localDefinition;
+            return true;
         }
 
         /// <summary>
@@ -237,9 +310,12 @@ namespace RenewalDeskBridge.Device
         public bool SetTimeZoneDefinition(int timeZoneId, string definition)
         {
             if (!_isConnected) return false;
-
-            bool ok = _zk.SetTZInfo(_machineNumber, timeZoneId, definition);
-            return ok && _zk.RefreshData(_machineNumber);
+            int machine = _machineNumber;
+            return _sta.Invoke(() =>
+            {
+                bool ok = Zk.SetTZInfo(machine, timeZoneId, definition);
+                return ok && Zk.RefreshData(machine);
+            });
         }
 
         /// <summary>
@@ -271,20 +347,26 @@ namespace RenewalDeskBridge.Device
             if (!_isConnected || !TryParseNumericDeviceUserId(enrollNumber, out int userId))
                 return false;
 
+            int machine = _machineNumber;
             try
             {
-                string rawTimeZones = string.Empty;
-                if (!_zk.GetUserTZStr(_machineNumber, userId, ref rawTimeZones))
-                    return false;
-
-                // Keep this as the immediately following COM call. In particular,
-                // do not insert GetLastError, GetUserGroup, or RefreshData here.
-                bool usesGroupTimeZone = _zk.UseGroupTimeZone();
-                state = new UserTimeZoneState
+                UserTimeZoneState localState = _sta.Invoke(() =>
                 {
-                    RawTimeZones = rawTimeZones ?? string.Empty,
-                    UsesGroupTimeZone = usesGroupTimeZone
-                };
+                    string rawTimeZones = string.Empty;
+                    if (!Zk.GetUserTZStr(machine, userId, ref rawTimeZones))
+                        return null;
+
+                    // Keep this as the immediately following COM call. In particular,
+                    // do not insert GetLastError, GetUserGroup, or RefreshData here.
+                    bool usesGroupTimeZone = Zk.UseGroupTimeZone();
+                    return new UserTimeZoneState
+                    {
+                        RawTimeZones = rawTimeZones ?? string.Empty,
+                        UsesGroupTimeZone = usesGroupTimeZone
+                    };
+                });
+                if (localState == null) return false;
+                state = localState;
                 return true;
             }
             catch
@@ -305,15 +387,28 @@ namespace RenewalDeskBridge.Device
             if (!_isConnected || !TryParseNumericDeviceUserId(enrollNumber, out int userId))
                 return false;
 
-            bool ok = _zk.SetUserTZStr(_machineNumber, userId, timeZones);
-            return ok && _zk.RefreshData(_machineNumber);
+            int machine = _machineNumber;
+            return _sta.Invoke(() =>
+            {
+                bool ok = Zk.SetUserTZStr(machine, userId, timeZones);
+                return ok && Zk.RefreshData(machine);
+            });
         }
 
         public bool TryGetAccessControlFunction(out int accessControlFunction)
         {
             accessControlFunction = 0;
             if (!_isConnected) return false;
-            return _zk.GetACFun(ref accessControlFunction);
+            int localValue = 0;
+            bool ok = _sta.Invoke(() =>
+            {
+                int v = 0;
+                bool result = Zk.GetACFun(ref v);
+                localValue = v;
+                return result;
+            });
+            accessControlFunction = localValue;
+            return ok;
         }
 
         /// <summary>
@@ -343,65 +438,72 @@ namespace RenewalDeskBridge.Device
                 return snapshot;
             }
 
+            // The whole read sequence runs on the STA thread as one unit: the
+            // UseGroupTimeZone selector is server state associated with the
+            // immediately preceding GetUserTZStr read.
+            int machine = _machineNumber;
             try
             {
-                string userTimeZones = string.Empty;
-                snapshot.UserTimeZonesRead = _zk.GetUserTZStr(_machineNumber, userId, ref userTimeZones);
-                snapshot.UserTimeZones = userTimeZones ?? string.Empty;
-                if (!snapshot.UserTimeZonesRead)
-                    snapshot.UserTimeZonesErrorCode = GetLastErrorCode();
-                else
+                _sta.Invoke(() =>
                 {
-                    // Keep this as the immediately following COM call. The X990
-                    // server exposes the selector as state associated with that
-                    // read, not as a standalone per-user query.
-                    snapshot.UseGroupTimeZone = _zk.UseGroupTimeZone();
-                    snapshot.UseGroupTimeZoneAvailable = true;
-                }
+                    string userTimeZones = string.Empty;
+                    snapshot.UserTimeZonesRead = Zk.GetUserTZStr(machine, userId, ref userTimeZones);
+                    snapshot.UserTimeZones = userTimeZones ?? string.Empty;
+                    if (!snapshot.UserTimeZonesRead)
+                        snapshot.UserTimeZonesErrorCode = GetLastErrorCode();
+                    else
+                    {
+                        // Keep this as the immediately following COM call. The X990
+                        // server exposes the selector as state associated with that
+                        // read, not as a standalone per-user query.
+                        snapshot.UseGroupTimeZone = Zk.UseGroupTimeZone();
+                        snapshot.UseGroupTimeZoneAvailable = true;
+                    }
 
-                int userGroup = 0;
-                snapshot.UserGroupRead = _zk.GetUserGroup(_machineNumber, userId, ref userGroup);
-                snapshot.UserGroup = userGroup;
-                if (!snapshot.UserGroupRead)
-                    snapshot.UserGroupErrorCode = GetLastErrorCode();
+                    int userGroup = 0;
+                    snapshot.UserGroupRead = Zk.GetUserGroup(machine, userId, ref userGroup);
+                    snapshot.UserGroup = userGroup;
+                    if (!snapshot.UserGroupRead)
+                        snapshot.UserGroupErrorCode = GetLastErrorCode();
 
-                int accessControlFunction = 0;
-                snapshot.AccessControlFunctionRead = _zk.GetACFun(ref accessControlFunction);
-                snapshot.AccessControlFunction = accessControlFunction;
-                if (!snapshot.AccessControlFunctionRead)
-                    snapshot.AccessControlFunctionErrorCode = GetLastErrorCode();
+                    int accessControlFunction = 0;
+                    snapshot.AccessControlFunctionRead = Zk.GetACFun(ref accessControlFunction);
+                    snapshot.AccessControlFunction = accessControlFunction;
+                    if (!snapshot.AccessControlFunctionRead)
+                        snapshot.AccessControlFunctionErrorCode = GetLastErrorCode();
 
-                string unlockGroups = string.Empty;
-                snapshot.UnlockGroupsRead = _zk.GetUnlockGroups(_machineNumber, ref unlockGroups);
-                snapshot.UnlockGroups = unlockGroups ?? string.Empty;
-                if (!snapshot.UnlockGroupsRead)
-                    snapshot.UnlockGroupsErrorCode = GetLastErrorCode();
+                    string unlockGroups = string.Empty;
+                    snapshot.UnlockGroupsRead = Zk.GetUnlockGroups(machine, ref unlockGroups);
+                    snapshot.UnlockGroups = unlockGroups ?? string.Empty;
+                    if (!snapshot.UnlockGroupsRead)
+                        snapshot.UnlockGroupsErrorCode = GetLastErrorCode();
 
-                if (snapshot.UserGroupRead)
-                {
-                    string groupTimeZones = string.Empty;
-                    snapshot.GroupTimeZonesRead = _zk.GetGroupTZStr(_machineNumber, userGroup,
-                                                                      ref groupTimeZones);
-                    snapshot.GroupTimeZones = groupTimeZones ?? string.Empty;
-                    if (!snapshot.GroupTimeZonesRead)
-                        snapshot.GroupTimeZonesErrorCode = GetLastErrorCode();
+                    if (snapshot.UserGroupRead)
+                    {
+                        string groupTimeZones = string.Empty;
+                        snapshot.GroupTimeZonesRead = Zk.GetGroupTZStr(machine, userGroup,
+                                                                          ref groupTimeZones);
+                        snapshot.GroupTimeZones = groupTimeZones ?? string.Empty;
+                        if (!snapshot.GroupTimeZonesRead)
+                            snapshot.GroupTimeZonesErrorCode = GetLastErrorCode();
 
-                    int timeZone1 = 0;
-                    int timeZone2 = 0;
-                    int timeZone3 = 0;
-                    int validHoliday = 0;
-                    int verifyStyle = 0;
-                    snapshot.LegacyGroupTimeZonesRead = _zk.SSR_GetGroupTZ(
-                        _machineNumber, userGroup, ref timeZone1, ref timeZone2,
-                        ref timeZone3, ref validHoliday, ref verifyStyle);
-                    snapshot.LegacyGroupTimeZone1 = timeZone1;
-                    snapshot.LegacyGroupTimeZone2 = timeZone2;
-                    snapshot.LegacyGroupTimeZone3 = timeZone3;
-                    snapshot.LegacyGroupValidHoliday = validHoliday;
-                    snapshot.LegacyGroupVerifyStyle = verifyStyle;
-                    if (!snapshot.LegacyGroupTimeZonesRead)
-                        snapshot.LegacyGroupTimeZonesErrorCode = GetLastErrorCode();
-                }
+                        int timeZone1 = 0;
+                        int timeZone2 = 0;
+                        int timeZone3 = 0;
+                        int validHoliday = 0;
+                        int verifyStyle = 0;
+                        snapshot.LegacyGroupTimeZonesRead = Zk.SSR_GetGroupTZ(
+                            machine, userGroup, ref timeZone1, ref timeZone2,
+                            ref timeZone3, ref validHoliday, ref verifyStyle);
+                        snapshot.LegacyGroupTimeZone1 = timeZone1;
+                        snapshot.LegacyGroupTimeZone2 = timeZone2;
+                        snapshot.LegacyGroupTimeZone3 = timeZone3;
+                        snapshot.LegacyGroupValidHoliday = validHoliday;
+                        snapshot.LegacyGroupVerifyStyle = verifyStyle;
+                        if (!snapshot.LegacyGroupTimeZonesRead)
+                            snapshot.LegacyGroupTimeZonesErrorCode = GetLastErrorCode();
+                    }
+                });
             }
             catch (Exception ex)
             {
@@ -440,9 +542,13 @@ namespace RenewalDeskBridge.Device
             // (section 5.2.4.5, p.90-91) confirms the correct call is SSR_DeleteEnrollData
             // with backup number 12, which means "delete the user: fingerprints, card, and
             // password". Verified against the manual text, not guessed.
-            bool ok = _zk.SSR_DeleteEnrollData(_machineNumber, enrollNumber, 12);
-            if (ok) _zk.RefreshData(_machineNumber);
-            return ok;
+            int machine = _machineNumber;
+            return _sta.Invoke(() =>
+            {
+                bool ok = Zk.SSR_DeleteEnrollData(machine, enrollNumber, 12);
+                if (ok) Zk.RefreshData(machine);
+                return ok;
+            });
         }
 
         /// <summary>
@@ -494,7 +600,8 @@ namespace RenewalDeskBridge.Device
 
         public void Dispose()
         {
-            Disconnect();
+            try { Disconnect(); } catch { }
+            try { _sta.Dispose(); } catch { }
         }
     }
 

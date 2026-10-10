@@ -13,6 +13,7 @@ namespace RenewalDeskBridge.Config
     {
         public string DeviceIp { get; set; } = "";
         public int DevicePort { get; set; } = 4370;
+        [Newtonsoft.Json.JsonIgnore]
         public string DeviceCommPassword { get; set; } = "";
 
         // Machine number is mostly ignored by the SDK when using TCP/IP (any int is fine),
@@ -24,6 +25,7 @@ namespace RenewalDeskBridge.Config
         // ID, not the gym's database ID or a secret.
         public string GymId { get; set; } = "";
         public string ApiBaseUrl { get; set; } = "";
+        [Newtonsoft.Json.JsonIgnore]
         public string ApiKey { get; set; } = "";
 
         public int HeartbeatIntervalSeconds { get; set; } = 60;
@@ -66,13 +68,50 @@ namespace RenewalDeskBridge.Config
             }
 
             string json = File.ReadAllText(ConfigPath);
-            return JsonConvert.DeserializeObject<BridgeConfig>(json) ?? new BridgeConfig();
+            var config = JsonConvert.DeserializeObject<BridgeConfig>(json) ?? new BridgeConfig();
+            MigratePlaintextSecrets(json, config);
+            var secrets = LocalSecretStore.Load();
+            if (!string.IsNullOrEmpty(secrets.ApiKey)) config.ApiKey = secrets.ApiKey;
+            if (!string.IsNullOrEmpty(secrets.DeviceCommPassword)) config.DeviceCommPassword = secrets.DeviceCommPassword;
+            return config;
+        }
+
+        private static void MigratePlaintextSecrets(string json, BridgeConfig config)
+        {
+            // One-time: move secrets out of the plaintext file into DPAPI.
+            try
+            {
+                var raw = JsonConvert.DeserializeObject<System.Collections.Generic.Dictionary<string, object>>(json);
+                string legacyKey = raw != null && raw.TryGetValue("ApiKey", out var k) ? k?.ToString() : null;
+                string legacyComm = raw != null && raw.TryGetValue("DeviceCommPassword", out var c) ? c?.ToString() : null;
+                if (string.IsNullOrEmpty(legacyKey) && string.IsNullOrEmpty(legacyComm)) return;
+                var secrets = LocalSecretStore.Load();
+                if (!string.IsNullOrEmpty(legacyKey) && string.IsNullOrEmpty(secrets.ApiKey))
+                    secrets.ApiKey = legacyKey;
+                if (!string.IsNullOrEmpty(legacyComm) && string.IsNullOrEmpty(secrets.DeviceCommPassword))
+                    secrets.DeviceCommPassword = legacyComm;
+                LocalSecretStore.Save(secrets);
+                // Rewrite the file without the secrets.
+                config.Save();
+            }
+            catch { /* migration is best-effort */ }
         }
 
         public void Save()
         {
+            // ApiKey/DeviceCommPassword are [JsonIgnore]: they never land in
+            // the plaintext file. Use SaveSecrets() for those.
             string json = JsonConvert.SerializeObject(this, Formatting.Indented);
             File.WriteAllText(ConfigPath, json);
+        }
+
+        public void SaveSecrets()
+        {
+            LocalSecretStore.Save(new LocalSecretStore.BridgeSecrets
+            {
+                ApiKey = ApiKey ?? "",
+                DeviceCommPassword = DeviceCommPassword ?? "",
+            });
         }
     }
 }

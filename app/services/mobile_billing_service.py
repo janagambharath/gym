@@ -8,6 +8,7 @@ from datetime import datetime, time, timezone
 from typing import Any
 
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import GooglePlaySubscription, Gym
@@ -288,13 +289,24 @@ def _apply_verified_purchase(
     if subscription is not None and subscription.gym_id != gym.id:
         raise ValueError("This subscription is already linked to another account.")
     if subscription is None:
-        subscription = GooglePlaySubscription(
-            gym_id=gym.id,
-            owner_id=owner_id,
-            product_id=product_id,
-            purchase_token_hash=token_hash,
-        )
-        db.session.add(subscription)
+        # Insert in a savepoint: concurrent retries of the same purchase race
+        # the check above; the loser re-reads the winner's row instead of 500ing.
+        try:
+            with db.session.begin_nested():
+                subscription = GooglePlaySubscription(
+                    gym_id=gym.id,
+                    owner_id=owner_id,
+                    product_id=product_id,
+                    purchase_token_hash=token_hash,
+                )
+                db.session.add(subscription)
+                db.session.flush()
+        except IntegrityError:
+            subscription = GooglePlaySubscription.query.filter_by(
+                purchase_token_hash=token_hash
+            ).first()
+            if subscription is None:
+                raise
 
     status, expires_at, grace_end = _play_state(payload)
     order_id = payload.get("latestOrderId")

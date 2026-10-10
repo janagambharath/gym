@@ -33,23 +33,38 @@ def test_invalid_token_rejected(client, seed_member):
     assert res.json["success"] is False
 
 
-def test_otp_challenge_and_verification_flow(client, seed_member):
-    """Full OTP request -> verify -> access dashboard with JWT token."""
-    member = seed_member
-    phone = member.phone
+def test_otp_challenge_and_verification_flow(client, app, seed_member):
+    """Full OTP request -> verify -> access dashboard with JWT token.
 
-    # 1. Request OTP
-    res = client.post("/api/member/v1/auth/request-otp", json={"phone": phone})
+    Security: the OTP is never echoed in API responses (test_otp is always
+    None). The flow is exercised through the TESTING-only reviewer bypass,
+    whose fixed code is the documented test path.
+    """
+    member = seed_member
+
+    # 1. Request OTP for a regular member: OTP must NOT be echoed.
+    res = client.post("/api/member/v1/auth/request-otp", json={"phone": member.phone})
     assert res.status_code == 200
     data = res.json
     assert data["success"] is True
     assert "challenge" in data
+    assert data.get("test_otp") is None
+
+    # 2. Reviewer bypass (TESTING only) gives a known code for the full flow.
+    app.config["ENABLE_REVIEWER_BYPASS"] = True
+    member.phone = "+919999999999"
+    db.session.commit()
+    phone = member.phone
+
+    res = client.post("/api/member/v1/auth/request-otp", json={"phone": phone})
+    assert res.status_code == 200
+    data = res.json
+    assert data["success"] is True
+    assert data.get("test_otp") is None  # still never echoed
     challenge = data["challenge"]
+    otp = "123456"  # documented reviewer-bypass code
 
-    otp = data.get("test_otp")
-    assert otp is not None
-
-    # 2. Verify OTP with wrong code -> fails
+    # 3. Verify OTP with wrong code -> fails
     res = client.post("/api/member/v1/auth/verify-otp", json={
         "phone": phone,
         "otp": "000000",
@@ -58,7 +73,7 @@ def test_otp_challenge_and_verification_flow(client, seed_member):
     assert res.status_code == 400
     assert res.json["success"] is False
 
-    # 3. Verify OTP with correct code -> returns JWT access token
+    # 4. Verify OTP with correct code -> returns JWT access token
     res = client.post("/api/member/v1/auth/verify-otp", json={
         "phone": phone,
         "otp": otp,

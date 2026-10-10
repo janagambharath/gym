@@ -470,7 +470,7 @@
 }
 
 .btn-sm {
-  min-height: 36px;
+  min-height: 44px;
   padding: var(--sp-sm) var(--sp-lg);
   font-size: var(--fs-sm);
   border-radius: var(--r-md);

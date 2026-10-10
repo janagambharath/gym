@@ -33,13 +33,31 @@ def _serial() -> str:
     return str(request.args.get("SN") or request.values.get("SN") or "").strip()[:120]
 
 
-def _device() -> RRRIntegration | None:
+def _device(path_token: str | None = None) -> RRRIntegration | None:
+    # Token-first: the per-integration path secret is unguessable, so a
+    # token-path request authenticates the integration directly.
+    if path_token:
+        row = RRRIntegration.query.filter_by(
+            connector_type="adms_direct", adms_path_token=path_token
+        ).first()
+        if row is None:
+            return None
+        serial = _serial()
+        if serial and row.device_serial and serial != row.device_serial:
+            return None
+        return row
     serial = _serial()
     if not serial:
         return None
     return RRRIntegration.query.filter_by(
         connector_type="adms_direct", device_serial=serial
     ).first()
+
+
+def _unknown() -> Response:
+    # Deliberately indistinguishable from a healthy empty response: the
+    # previous 404 "Unknown device" let anyone enumerate registered serials.
+    return _plain("OK")
 
 
 def _touch(integration: RRRIntegration) -> None:
@@ -135,11 +153,13 @@ def direct_adms_enabled():
 
 @adms_bp.route("/iclock/cdata", methods=["GET", "POST"])
 @adms_bp.route("/iclock/cdata.aspx", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/cdata", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/cdata.aspx", methods=["GET", "POST"])
 @limiter.limit("180 per minute")
-def cdata():
-    integration = _device()
+def cdata(path_token: str | None = None):
+    integration = _device(path_token)
     if integration is None:
-        return _plain("Unknown device", 404)
+        return _unknown()
     _touch(integration)
     table = str(request.args.get("table") or request.form.get("table") or "").upper()
     if request.method == "POST" and table == "ATTLOG":
@@ -154,11 +174,13 @@ def cdata():
 
 @adms_bp.route("/iclock/registry", methods=["GET", "POST"])
 @adms_bp.route("/iclock/registry.aspx", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/registry", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/registry.aspx", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
-def registry():
-    integration = _device()
+def registry(path_token: str | None = None):
+    integration = _device(path_token)
     if integration is None:
-        return _plain("Unknown device", 404)
+        return _unknown()
     _touch(integration)
     db.session.commit()
     return _plain("OK")
@@ -166,11 +188,13 @@ def registry():
 
 @adms_bp.get("/iclock/getrequest")
 @adms_bp.get("/iclock/getrequest.aspx")
+@adms_bp.get("/iclock/<path_token>/getrequest")
+@adms_bp.get("/iclock/<path_token>/getrequest.aspx")
 @limiter.limit("180 per minute")
-def getrequest():
-    integration = _device()
+def getrequest(path_token: str | None = None):
+    integration = _device(path_token)
     if integration is None:
-        return _plain("Unknown device", 404)
+        return _unknown()
     _touch(integration)
     # Re-send a delivered command until the terminal posts its result.  DATA
     # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from
@@ -195,12 +219,14 @@ def getrequest():
 
 @adms_bp.route("/iclock/devicecmd", methods=["GET", "POST"])
 @adms_bp.route("/iclock/devicecmd.aspx", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/devicecmd", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/devicecmd.aspx", methods=["GET", "POST"])
 @limiter.limit("180 per minute")
-def devicecmd():
+def devicecmd(path_token: str | None = None):
     """Record the terminal's execution result for a queued test command."""
-    integration = _device()
+    integration = _device(path_token)
     if integration is None:
-        return _plain("Unknown device", 404)
+        return _unknown()
     _touch(integration)
     raw_id = str(request.args.get("ID") or request.form.get("ID") or "").strip()
     try:

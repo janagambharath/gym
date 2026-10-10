@@ -33,7 +33,7 @@ class GymDeployment(TimestampMixin, db.Model):
     current_step = db.Column(db.Integer, nullable=False, default=1)  # 1 to 9
     wizard_state_json = db.Column(db.JSON, nullable=True, default=dict)
     checklist_json = db.Column(db.JSON, nullable=True, default=dict)
-    pairing_code = db.Column(db.String(16), nullable=True)
+    pairing_code = db.Column(db.String(64), nullable=True)  # SHA-256 hex of the code
     pairing_code_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
     started_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     completed_at = db.Column(db.DateTime(timezone=True), nullable=True)

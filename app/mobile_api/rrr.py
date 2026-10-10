@@ -1,5 +1,6 @@
 """Owner-facing RRR Growth System API."""
 from __future__ import annotations
+import secrets
 
 from decimal import Decimal
 import re
@@ -225,13 +226,15 @@ def register_rrr_routes(bp):
             db.session.add(row)
         row.device_serial = serial
         row.device_name = name
+        if not row.adms_path_token:
+            row.adms_path_token = secrets.token_urlsafe(32)
         row.status = "not_configured"
         row.commands_enabled = False
         row.commissioning_status = "not_started"
         audit(action="direct_adms_provisioned", resource_type="rrr_integration", resource_id=row.id,
               gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": serial})
         db.session.commit()
-        settings = adms_terminal_settings(request.host_url)
+        settings = adms_terminal_settings(request.host_url, path_token=row.adms_path_token)
         settings["warning"] = (
             "Attendance works immediately. Automatic block/unblock unlocks after "
             "the supervised commissioning test on the integrations screen."

@@ -45,6 +45,9 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     plan_id = db.Column(
         db.Integer, db.ForeignKey("membership_plans.id", ondelete="SET NULL"), nullable=True
     )
+    # Price pinned at signup/renewal. Revenue reports sum this, not the live
+    # plan price, so later plan edits never rewrite history.
+    price = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     full_name = db.Column(db.String(160), nullable=False)
     phone = db.Column(db.String(40), nullable=False)
     email = db.Column(db.String(255), nullable=True)

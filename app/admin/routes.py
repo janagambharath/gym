@@ -45,6 +45,7 @@ from app.models import (
     NotificationTemplate,
     PaymentVerification,
     QRSettings,
+    RRRIntegration,
     ReminderLog,
     RenewalHistory,
     User,
@@ -115,7 +116,7 @@ def _generate_temp_password(length: int = 10) -> str:
 
 
 def _generate_pairing_code() -> str:
-    return f"{random.randint(100000, 999999)}"
+    return f"{secrets.randbelow(900000) + 100000}"
 
 
 def _get_or_create_deployment(gym: Gym) -> GymDeployment:
@@ -1078,9 +1079,11 @@ def onboard_step(gym_id: int, step_num: int):
 
     # Ensure pairing code exists for step 7
     if dep and (not dep.pairing_code or not dep.pairing_code_expires_at or _as_utc(dep.pairing_code_expires_at) < utcnow()):
-        dep.pairing_code = _generate_pairing_code()
-
-        dep.pairing_code_expires_at = utcnow() + timedelta(hours=24)
+        # Stored hashed; the plaintext is rendered once from the session below.
+        raw_code = _generate_pairing_code()
+        dep.pairing_code = RRRIntegration.hash_pairing_code(raw_code)
+        dep.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
+        session[f"bridge_pairing_{gym.id}"] = raw_code
         db.session.commit()
 
     # Auto-reconcile checklist against actual database state
@@ -1534,11 +1537,14 @@ def reset_user_password(gym_id: int, user_id: int):
 def generate_bridge_pairing(gym_id: int):
     gym = Gym.query.get_or_404(gym_id)
     dep = _get_or_create_deployment(gym)
-    dep.pairing_code = _generate_pairing_code()
-    dep.pairing_code_expires_at = utcnow() + timedelta(hours=24)
-    dep.add_timeline_event(f"Generated new biometric pairing code {dep.pairing_code}", actor=current_user.full_name)
+    raw_code = _generate_pairing_code()
+    # Store only the hash; the plaintext code is shown once below and never logged.
+    session[f"bridge_pairing_{gym.id}"] = raw_code
+    dep.pairing_code = RRRIntegration.hash_pairing_code(raw_code)
+    dep.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
+    dep.add_timeline_event("Generated new biometric pairing code", actor=current_user.full_name)
     db.session.commit()
-    flash(f"New Biometric Pairing Code generated: {dep.pairing_code} (Valid for 24 hours)", "success")
+    flash(f"New Biometric Pairing Code generated: {raw_code} (Valid for 10 minutes)", "success")
     return redirect(url_for("admin.gym_detail", gym_id=gym.id, tab="biometric"))
 
 

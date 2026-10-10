@@ -11,7 +11,7 @@ from decimal import Decimal
 from sqlalchemy import func
 
 from app.extensions import db
-from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models import Member, PaymentVerification, RenewalHistory
 from app.models.campaign import Campaign, CampaignRecipient
 from app.services.timezone_service import today_for_gym
 
@@ -30,14 +30,15 @@ def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     soon = today + timedelta(days=7)
     expired_cutoff = today - timedelta(days=30)
 
-    # Expiring within 7 days
+    # Expiring within 7 days. Uses the per-member pinned price (set at
+    # signup/last renewal) so plan price edits don't retroactively reprice
+    # the metric. Members without a pinned price contribute count but 0.
     expiring_risk = (
         db.session.query(
             func.count(Member.id).label("count"),
-            func.coalesce(func.sum(MembershipPlan.price), 0).label("amount"),
+            func.coalesce(func.sum(Member.price), 0).label("amount"),
         )
         .select_from(Member)
-        .outerjoin(MembershipPlan, Member.plan_id == MembershipPlan.id)
         .filter(
             Member.gym_id == gym_id,
             Member.deleted_at.is_(None),
@@ -52,10 +53,9 @@ def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     expired_risk = (
         db.session.query(
             func.count(Member.id).label("count"),
-            func.coalesce(func.sum(MembershipPlan.price), 0).label("amount"),
+            func.coalesce(func.sum(Member.price), 0).label("amount"),
         )
         .select_from(Member)
-        .outerjoin(MembershipPlan, Member.plan_id == MembershipPlan.id)
         .filter(
             Member.gym_id == gym_id,
             Member.deleted_at.is_(None),
@@ -110,6 +110,35 @@ def revenue_recovered(
 
     result = query.one()
 
+    # Split payment-backed vs direct (non-payment) renewals so the owner can
+    # reconcile "revenue recovered" against "collections" (which only sums
+    # verified PaymentVerification rows). Renewals with no backing payment
+    # (direct/bulk renewals) explain the difference.
+    base_filters = [
+        RenewalHistory.gym_id == gym_id,
+        RenewalHistory.is_test.is_(False),
+    ]
+    if period_days is not None:
+        today = today_for_gym(gym_timezone)
+        cutoff_date = today - timedelta(days=period_days)
+        base_filters.append(RenewalHistory.new_start >= cutoff_date)
+    paid = (
+        db.session.query(
+            func.coalesce(func.sum(RenewalHistory.amount), 0).label("amount"),
+            func.count(RenewalHistory.id).label("count"),
+        )
+        .filter(*base_filters, RenewalHistory.payment_verification_id.isnot(None))
+        .one()
+    )
+    direct = (
+        db.session.query(
+            func.coalesce(func.sum(RenewalHistory.amount), 0).label("amount"),
+            func.count(RenewalHistory.id).label("count"),
+        )
+        .filter(*base_filters, RenewalHistory.payment_verification_id.is_(None))
+        .one()
+    )
+
     # Campaign-attributed portion
     campaign_query = (
         db.session.query(
@@ -133,6 +162,10 @@ def revenue_recovered(
     return {
         "total_renewals": int(result.renewal_count or 0),
         "total_amount": str(result.total_amount),
+        "payment_backed_renewals": int(paid.count or 0),
+        "payment_backed_amount": str(paid.amount),
+        "direct_renewals": int(direct.count or 0),
+        "direct_amount": str(direct.amount),
         "campaign_renewals": int(campaign_result.count or 0),
         "campaign_amount": str(campaign_result.amount),
     }
@@ -164,14 +197,3 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         "recovered_breakdown": recovered,
     }
 
-
-def revenue_recovered_breakdown(
-    gym_id: int, gym_timezone: str = "Asia/Kolkata"
-) -> dict:
-    """Return revenue recovered broken down by period: today, week, month, all-time."""
-    return {
-        "today": revenue_recovered(gym_id, gym_timezone, period_days=1),
-        "week": revenue_recovered(gym_id, gym_timezone, period_days=7),
-        "month": revenue_recovered(gym_id, gym_timezone, period_days=30),
-        "all_time": revenue_recovered(gym_id, gym_timezone),
-    }

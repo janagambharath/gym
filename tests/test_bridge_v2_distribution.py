@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 
 import io
 from datetime import datetime, timedelta, timezone
@@ -93,14 +94,14 @@ def _setup_test_gym():
         dep = GymDeployment(
             gym_id=gym.id,
             current_step=7,
-            pairing_code="834921",
+            pairing_code=hashlib.sha256(b"834921").hexdigest(),
             pairing_code_expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
             wizard_state_json={},
             checklist_json={},
         )
         db.session.add(dep)
     else:
-        dep.pairing_code = "834921"
+        dep.pairing_code = hashlib.sha256(b"834921").hexdigest()
         dep.pairing_code_expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
 
     db.session.commit()
@@ -257,7 +258,7 @@ def test_bridge_v2_pairing_flow(client):
 def test_bridge_v2_pairing_expired_code(client):
     """Verify expired pairing codes are rejected."""
     gym, dep = _setup_test_gym()
-    dep.pairing_code = "999888"
+    dep.pairing_code = hashlib.sha256(b"999888").hexdigest()
     dep.pairing_code_expires_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     db.session.commit()
 

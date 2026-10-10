@@ -543,7 +543,10 @@ def pair_bridge():
             gym = db.session.get(Gym, integration.gym_id)
         connector_type = "ebioserver"
     else:
-        dep = GymDeployment.query.filter_by(pairing_code=pairing_code).first()
+        # Pairing codes are stored as SHA-256 hashes; compare hashes only.
+        dep = GymDeployment.query.filter_by(
+            pairing_code=RRRIntegration.hash_pairing_code(pairing_code)
+        ).first()
         if not dep or not dep.pairing_code_expires_at:
             return _json_error(401, "pairing_code_invalid", "Invalid or expired pairing code.")
         expires_at = dep.pairing_code_expires_at

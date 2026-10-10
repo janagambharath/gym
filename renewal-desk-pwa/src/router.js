@@ -40,12 +40,11 @@ class Router {
   /** @param {HTMLElement} container */
   init(container) {
     this.container = container;
-    if (typeof window !== 'undefined') {
-      window.addEventListener('popstate', () => {
-        if (this.stack.length > 1 || (this.currentTab && this.currentTab !== 'dashboard')) {
-          this.back();
-        }
-      });
+    if (typeof window !== 'undefined' && window.history) {
+      // Anchor the base entry so OS back/gesture walks our stack instead of
+      // exiting the app. Every push() adds an entry; popstate pops one level.
+      try { window.history.replaceState({ rdDepth: 0 }, ''); } catch { /* ignore */ }
+      window.addEventListener('popstate', () => { this._popStack(); });
     }
   }
 
@@ -114,6 +113,15 @@ class Router {
     this.container.appendChild(el);
     this.stack.push({ screenId, params, element: el });
 
+    // Keep browser history in step so the OS back button/gesture navigates
+    // the app instead of leaving it.
+    if (typeof window !== 'undefined' && window.history) {
+      try {
+        if (opts.replace) window.history.replaceState({ rdDepth: this.stack.length }, '');
+        else window.history.pushState({ rdDepth: this.stack.length }, '');
+      } catch { /* ignore */ }
+    }
+
     // Mount the screen
     await screen.mount(el, params);
 
@@ -123,8 +131,18 @@ class Router {
     }
   }
 
-  /** Go back one screen */
+  /** Go back one screen (via browser history; popstate performs the pop). */
   async pop() {
+    if (this.stack.length <= 1) return;
+    if (typeof window !== 'undefined' && window.history) {
+      window.history.back();
+      return;
+    }
+    this._popStack();
+  }
+
+  /** Actual internal-stack pop (called by the popstate handler). */
+  _popStack() {
     if (this.stack.length <= 1) return;
 
     const top = this.stack.pop();
@@ -205,6 +223,11 @@ class Router {
     } else {
       await this.push(rootScreenId, params, { animate: false });
     }
+    // Re-anchor browser history: tab switches wholesale-replace the stack,
+    // so stale back entries would pop the wrong screens.
+    if (typeof window !== 'undefined' && window.history) {
+      try { window.history.replaceState({ rdDepth: this.stack.length }, ''); } catch { /* ignore */ }
+    }
   }
 
   /** Clear all stacks and screens */
@@ -215,6 +238,9 @@ class Router {
     this.stack = [];
     this.tabStacks.clear();
     this.currentTab = null;
+    if (typeof window !== 'undefined' && window.history) {
+      try { window.history.replaceState({ rdDepth: 0 }, ''); } catch { /* ignore */ }
+    }
   }
 
   /** Get current top screen */

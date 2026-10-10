@@ -8,7 +8,7 @@ from sqlalchemy import case, func
 
 from app.extensions import db
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Member, MembershipPlan, PaymentVerification, ReminderLog, RenewalHistory
+from app.models import Member, PaymentVerification, ReminderLog, RenewalHistory
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
@@ -107,7 +107,7 @@ def register_reports_routes(bp):
                                 (Member.membership_end >= today)
                                 & (Member.membership_end <= soon)
                                 & (Member.status == "active"),
-                                MembershipPlan.price,
+                                Member.price,
                             ),
                             else_=0,
                         )
@@ -116,7 +116,6 @@ def register_reports_routes(bp):
                 )
             )
             .select_from(Member)
-            .outerjoin(MembershipPlan, Member.plan_id == MembershipPlan.id)
             .filter(Member.gym_id == gym_id, Member.deleted_at.is_(None))
             .scalar() or 0
         )

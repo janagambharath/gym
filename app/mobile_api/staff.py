@@ -10,6 +10,7 @@ from flask import current_app, g, jsonify, request
 from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
+from app.mobile_api.token_service import revoke_all_user_tokens
 from app.models import User
 from app.services.audit_service import audit
 from app.utils.helpers import normalize_phone_e164
@@ -179,11 +180,15 @@ def register_staff_routes(bp):
             return error_response("NOT_FOUND", "Staff member not found.", 404)
 
         data = request.get_json(silent=True) or {}
-        new_password = data.get("password") or _generate_temp_password(10)
-        if len(new_password) < 6:
-            return error_response("VALIDATION_ERROR", "Password must be at least 6 characters.", 400)
+        # Caller-supplied password preferred; otherwise generate a secure one
+        # (the PWA reset flow sends no body). Either way, min 12 chars.
+        new_password = data.get("new_password") or data.get("password") or _generate_temp_password(16)
+        if len(new_password) < 12:
+            return error_response("VALIDATION_ERROR", "Password must be at least 12 characters.", 400)
 
         user.set_password(new_password)
+        # Kick out any sessions on the old password.
+        revoke_all_user_tokens(user.id)
         user.failed_login_count = 0
         user.locked_until = None
         user.must_change_password = False
