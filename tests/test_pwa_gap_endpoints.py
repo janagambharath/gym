@@ -164,3 +164,62 @@ def test_whatsapp_logs_shape(client, seed_gym, seed_member):
     assert entry["phone"] == seed_member.phone
     assert entry["status"] == "sent"
     assert entry["created_at"] is not None
+
+
+def test_manual_member_block_queues_command(client, seed_gym, seed_member):
+    """POST /rrr/members/<id>/access queues a block command when commissioned."""
+    from app.models.rrr import RRRAdmsCommand, RRRIntegration
+
+    gym_id = seed_gym["gym"].id
+    integration = RRRIntegration(
+        gym_id=gym_id,
+        connector_type="adms_direct",
+        display_name="Test Terminal",
+        device_serial="TEST123",
+        status="connected",
+        commands_enabled=True,
+        adms_path_token="test-token-123",
+    )
+    # Simulate a terminal that has checked in.
+    from datetime import datetime, timezone
+
+    integration.last_success_at = datetime.now(timezone.utc)
+    db.session.add(integration)
+    db.session.commit()
+
+    seed_member.device_enroll_number = "101"
+    db.session.commit()
+
+    res = client.post(
+        f"/api/mobile/v1/rrr/members/{seed_member.id}/access",
+        headers=_owner_headers(client, seed_gym),
+        json={"action": "block"},
+    )
+    assert res.status_code == 201, res.get_data(as_text=True)[:300]
+    cmd = RRRAdmsCommand.query.filter_by(integration_id=integration.id).first()
+    assert cmd is not None
+    assert cmd.action == "block"
+    assert cmd.status == "queued"
+    assert "101" in cmd.command_text
+
+
+def test_manual_member_block_rejected_without_commissioning(client, seed_gym, seed_member):
+    """409 when the terminal is not commissioned for commands."""
+    seed_member.device_enroll_number = "101"
+    db.session.commit()
+    res = client.post(
+        f"/api/mobile/v1/rrr/members/{seed_member.id}/access",
+        headers=_owner_headers(client, seed_gym),
+        json={"action": "block"},
+    )
+    assert res.status_code == 409
+    assert res.json["error"]["code"] == "DEVICE_NOT_READY"
+
+
+def test_manual_member_block_rejects_bad_action(client, seed_gym, seed_member):
+    res = client.post(
+        f"/api/mobile/v1/rrr/members/{seed_member.id}/access",
+        headers=_owner_headers(client, seed_gym),
+        json={"action": "explode"},
+    )
+    assert res.status_code == 422

@@ -13,16 +13,16 @@ let appEl = null;
 let screenContainer = null;
 let tabBarEl = null;
 let desktopNavEl = null;
-let activeTab = 'dashboard';
+let activeTab = 'home';
 
 // ─── Tab Configuration ───────────────────────────────────────────────
 
 const TAB_CONFIG = {
-  dashboard: { screen: 'dashboard', label: 'Dashboard' },
-  revenue: { screen: 'rrr-list', label: 'Revenue', params: { pillar: 'revenue' } },
-  retain: { screen: 'rrr-list', label: 'Retain', params: { pillar: 'retain' } },
-  recover: { screen: 'rrr-list', label: 'Recover', params: { pillar: 'recover' } },
+  home: { screen: 'dashboard', label: 'Home' },
   members: { screen: 'members', label: 'Members' },
+  payments: { screen: 'payments', label: 'Payments' },
+  renewals: { screen: 'renewals', label: 'Renewals' },
+  more: { screen: 'settings', label: 'More' },
 };
 
 // ─── Screen Registration ─────────────────────────────────────────────
@@ -43,6 +43,7 @@ function registerScreens() {
   router.register('renewals', () => import('./screens/renewals.js'), { auth: true });
   router.register('payments', () => import('./screens/payments.js'), { auth: true });
   router.register('settings', () => import('./screens/settings.js'), { auth: true });
+  router.register('gym-profile', () => import('./screens/gym-profile.js'), { auth: true });
   router.register('owner-leads', () => import('./screens/owner-leads.js'), { auth: true });
   router.register('owner-finance', () => import('./screens/owner-finance.js'), { auth: true });
 
@@ -62,6 +63,7 @@ function registerScreens() {
   router.register('subscription', () => import('./screens/subscription.js'), { auth: true });
   router.register('access', () => import('./screens/access.js'), { auth: true });
   router.register('whatsapp', () => import('./screens/whatsapp.js'), { auth: true });
+  router.register('whatsapp-setup', () => import('./screens/whatsapp-setup.js'), { auth: true });
   router.register('bot-overview', () => import('./screens/bot-overview.js'), { auth: true });
   router.register('bot-conversations', () => import('./screens/bot-conversations.js'), { auth: true });
   router.register('bot-conversation-detail', () => import('./screens/bot-conversation-detail.js'), { auth: true });
@@ -101,16 +103,14 @@ function renderAppShell() {
 }
 
 const DESKTOP_NAVIGATION = [
-  { label: 'Growth', items: [
-    { tab: 'dashboard', label: 'Overview', icon: 'dashboard' },
-    { tab: 'revenue', label: 'Revenue', icon: 'stats' },
-    { tab: 'retain', label: 'Retain', icon: 'shield' },
-    { tab: 'recover', label: 'Recover', icon: 'renewals' },
-  ]},
-  { label: 'Operations', items: [
+  { label: 'Manage', items: [
+    { tab: 'home', label: 'Home', icon: 'dashboard' },
     { tab: 'members', label: 'Members', icon: 'members' },
-    { screen: 'renewals', label: 'Renewals', icon: 'renewals' },
-    { screen: 'payments', label: 'Payments', icon: 'payments' },
+    { tab: 'renewals', label: 'Renewals', icon: 'renewals' },
+    { tab: 'payments', label: 'Payments', icon: 'payments' },
+  ]},
+  { label: 'Growth', items: [
+    { screen: 'rrr-list', label: 'Opportunities', icon: 'trendUp' },
     { screen: 'owner-finance', label: 'Daily collections', icon: 'wallet' },
     { screen: 'owner-leads', label: 'Leads & trials', icon: 'members' },
     { screen: 'access', label: 'Access control', icon: 'access' },
@@ -187,9 +187,9 @@ function showAuthFlow() {
 
 async function showMainApp() {
   router.clear();
-  activeTab = 'dashboard';
-  showTabBar('dashboard');
-  await router.switchTab('dashboard', 'dashboard');
+  activeTab = 'home';
+  showTabBar('home');
+  await router.switchTab('home', 'dashboard');
 }
 
 export async function handleLogout() {

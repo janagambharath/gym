@@ -10,7 +10,7 @@ export default {
     let members = [], total = 0, page = 1, loading = false, filter = 'all', query = '';
 
     el.innerHTML = `
-      ${renderHeader({ title: 'Members', showBack: true, actions: [{ icon: 'add', label: 'Add' }] })}
+      ${renderHeader({ title: 'Members', showBack: true, actions: [{ icon: 'add', label: 'Add' }, { icon: 'upload', label: 'Import' }] })}
       <div style="padding:var(--sp-sm) var(--sp-lg)">
         <div class="search-bar">
           <span class="search-icon">${icon('search', 18)}</span>
@@ -26,7 +26,7 @@ export default {
       <div class="scroll-view" id="members-list">${renderListSkeleton()}</div>
       <button class="fab" id="fab-add">${icon('add', 24, 'white')}</button>`;
 
-    bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('add-member') }] });
+    bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('add-member') }, { onClick: () => navigate.push('member-import') }] });
     el.querySelector('#fab-add').addEventListener('click', () => navigate.push('add-member'));
 
     // Filter chips

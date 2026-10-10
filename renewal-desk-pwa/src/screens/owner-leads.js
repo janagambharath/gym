@@ -2,7 +2,7 @@ import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml, formatDateTime } from '../utils.js';
 import { icon } from '../icons.js';
-import { showToast } from '../components.js';
+import { showToast, showPrompt } from '../components.js';
 
 const OPEN = new Set(['new', 'contacted', 'interested', 'trial_requested', 'booked']);
 const statusLabel = {
@@ -53,7 +53,7 @@ async function load(el) {
     bindLeadActions(el, leads);
   }
   renderList();
-  el.querySelector('#owner-back')?.addEventListener('click', () => navigate.switchTab('dashboard'));
+  el.querySelector('#owner-back')?.addEventListener('click', () => navigate.switchTab('home'));
   el.querySelector('#lead-add')?.addEventListener('click', () => el.querySelector('#lead-form-wrap')?.classList.remove('is-hidden'));
   el.querySelector('#lead-cancel')?.addEventListener('click', () => el.querySelector('#lead-form-wrap')?.classList.add('is-hidden'));
   el.querySelector('#lead-filter')?.addEventListener('click', event => {
@@ -92,14 +92,20 @@ function bindLeadActions(el, leads) {
     if (action === 'contacted') body = { status: 'contacted' };
     if (action === 'attended') body = { status: 'interested', mark_trial_attended: true };
     if (action === 'book' || action === 'followup') {
-      const value = prompt(action === 'book' ? 'Trial date and time (for example 2026-10-09T18:30):' : 'Next follow-up (for example 2026-10-09T18:30):', action === 'book' ? toLocalInput(new Date(Date.now() + 86400000)) : toLocalInput(new Date(Date.now() + 86400000)));
+      const value = await showPrompt({
+        title: action === 'book' ? 'Book Trial' : 'Follow-up',
+        message: action === 'book' ? 'Trial date and time:' : 'Next follow-up date and time:',
+        placeholder: 'YYYY-MM-DDTHH:MM (e.g. 2026-10-09T18:30)',
+        defaultValue: toLocalInput(new Date(Date.now() + 86400000)),
+        confirmText: 'Save',
+      });
       if (value === null) return;
       const parsed = localInputToIso(value);
       if (!parsed) { showToast('Enter a valid date and time.', 'error'); return; }
       body = action === 'book' ? { status: 'booked', trial_requested: true, trial_scheduled_for: parsed } : { next_follow_up_at: parsed };
     }
     if (action === 'lost') {
-      const reason = prompt('Why was this lead lost? (optional)', '') ;
+      const reason = await showPrompt({ title: 'Mark Lost', message: 'Why was this lead lost? (optional)', placeholder: 'e.g. Joined another gym', defaultValue: '', confirmText: 'Mark Lost' });
       if (reason === null) return;
       body = { status: 'lost', lost_reason: reason };
     }

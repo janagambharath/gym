@@ -57,6 +57,8 @@ export function MemberDetailScreen({
   const [enrollNumberInput, setEnrollNumberInput] = useState('');
   const [enrolling, setEnrolling] = useState(false);
   const [unenrolling, setUnenrolling] = useState(false);
+  const [togglingAccess, setTogglingAccess] = useState(false);
+  const [accessBlocked, setAccessBlocked] = useState(false);
   const [showFreezeModal, setShowFreezeModal] = useState(false);
   const [freezeDaysInput, setFreezeDaysInput] = useState('14');
   const [freezeReasonInput, setFreezeReasonInput] = useState('');
@@ -176,6 +178,27 @@ export function MemberDetailScreen({
       showMessage(res.error.message, 'error');
     }
   }, [member.id, fetchMemberData, onMemberUpdated]);
+
+  const handleToggleAccess = useCallback(async (action: 'block' | 'unblock') => {
+    setTogglingAccess(true);
+    const res = await apiRequest(
+      `/api/mobile/v1/rrr/members/${member.id}/access`,
+      { method: 'POST', body: { action } }
+    );
+    setTogglingAccess(false);
+    if (res.ok) {
+      setAccessBlocked(action === 'block');
+      showMessage(
+        action === 'block'
+          ? 'Block command queued — the terminal will deny this member on its next cloud poll.'
+          : 'Unblock command queued — the terminal will allow this member on its next cloud poll.',
+        'success'
+      );
+      onMemberUpdated?.();
+    } else {
+      showMessage(res.error.message, 'error');
+    }
+  }, [member.id, onMemberUpdated]);
 
   const handleFreeze = useCallback(async () => {
     const days = parseInt(freezeDaysInput, 10);
@@ -411,14 +434,12 @@ export function MemberDetailScreen({
               <Text style={styles.activityTitle}>Renewal History</Text>
               <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
             </View>
-            <Icon name="forward" size={16} color={colors.muted} />
           </View>
           <View style={styles.activityRow}>
             <View>
               <Text style={styles.activityTitle}>Payment History</Text>
               <Text style={styles.activitySub}>{payments.length} payment{payments.length !== 1 ? 's' : ''}</Text>
             </View>
-            <Icon name="forward" size={16} color={colors.muted} />
           </View>
           <View style={styles.activityRow}>
             <View>
@@ -480,6 +501,33 @@ export function MemberDetailScreen({
                     <Text style={[styles.biometricActionBtnText, { color: colors.brand }]}>Change ID</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    style={[styles.biometricActionBtn, { borderColor: accessBlocked ? colors.successDark : colors.warningDark }]}
+                    onPress={() => {
+                      const action = accessBlocked ? 'unblock' : 'block';
+                      Alert.alert(
+                        accessBlocked ? 'Unblock Biometric Access?' : 'Block Biometric Access?',
+                        accessBlocked
+                          ? `${member.full_name} will be able to verify on the terminal again.`
+                          : `${member.full_name} will be denied on the terminal until unblocked. Their fingerprint stays enrolled.`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: accessBlocked ? 'Unblock' : 'Block',
+                            style: accessBlocked ? 'default' : 'destructive',
+                            onPress: () => void handleToggleAccess(action),
+                          },
+                        ]
+                      );
+                    }}
+                    disabled={togglingAccess}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="access" size={14} color={accessBlocked ? colors.successDark : colors.warningDark} />
+                    <Text style={[styles.biometricActionBtnText, { color: accessBlocked ? colors.successDark : colors.warningDark }]}>
+                      {togglingAccess ? 'Working...' : accessBlocked ? 'Unblock Access' : 'Block Access'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={[styles.biometricActionBtn, { borderColor: colors.critical }]}
                     onPress={() => {
                       Alert.alert(
@@ -534,7 +582,7 @@ export function MemberDetailScreen({
           title="Renew Membership"
           icon={<Icon name="renewals" size={18} color={colors.textInverse} />}
           onPress={() => onRenew?.(member)}
-          variant="outline"
+          variant="primary"
         />
 
         {/* Secondary Actions */}

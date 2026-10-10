@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.models import Member, MembershipPlan, PaymentVerification
+from app.models import Gym, Member, MembershipPlan, PaymentVerification, QRSettings
 from app.models.mixins import utcnow
 from app.models.rrr import (
     RRRAttendanceEvent,
@@ -327,6 +327,10 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
         },
         "unmapped_count": RRRAttendanceEvent.query.filter_by(gym_id=gym_id, processing_status="unmapped").count(),
         "opportunities": [_opportunity_payload(x) for x in opportunities[:12]],
+        # Setup-checklist signals for new gyms (PWA dashboard).
+        "plans_count": MembershipPlan.query.filter_by(gym_id=gym_id, is_active=True).count(),
+        "whatsapp_connected": bool((gym := db.session.get(Gym, gym_id)) and gym.whatsapp_enabled and gym.whatsapp_connection_status == "CONNECTED"),
+        "payment_setup_done": bool(QRSettings.query.filter_by(gym_id=gym_id).first()),
     }
 
 

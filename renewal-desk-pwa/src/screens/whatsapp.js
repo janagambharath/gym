@@ -21,8 +21,9 @@ export default { async mount(el) {
       ${s.messages_sent_today != null ? renderInfoRow('Sent Today', String(s.messages_sent_today)) : ''}
     </div></div>
     <div style="padding:0 var(--sp-lg) var(--sp-lg);display:flex;gap:var(--sp-sm)">
+      ${!s.connected ? `<button class="btn btn-whatsapp btn-lg btn-full" id="wa-connect">${icon('whatsapp',18,'white')} Connect WhatsApp</button>` : `
       <button class="btn btn-whatsapp" style="flex:1" id="wa-broadcast">${icon('send',16,'white')} Broadcast</button>
-      <button class="btn btn-outline" style="flex:1" id="wa-campaigns">${icon('megaphone',16)} Campaigns</button>
+      <button class="btn btn-outline" style="flex:1" id="wa-campaigns">${icon('megaphone',16)} Campaigns</button>`}
     </div>
     ${logs.length > 0 ? `${renderSectionHeader('Recent Messages')}
       <div class="card" style="margin:0 var(--sp-lg)">${logs.slice(0,15).map(l=>`
@@ -34,6 +35,7 @@ export default { async mount(el) {
           ${renderBadge(l.status||'sent')}
         </div></div>`).join('')}</div>` : ''}
   </div>`;
+  el.querySelector('#wa-connect')?.addEventListener('click',()=>navigate.push('whatsapp-setup'));
   el.querySelector('#wa-broadcast')?.addEventListener('click',()=>navigate.push('campaign-create'));
   el.querySelector('#wa-campaigns')?.addEventListener('click',()=>navigate.push('campaigns'));
 }};
