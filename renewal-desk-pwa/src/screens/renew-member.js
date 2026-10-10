@@ -20,13 +20,20 @@ export default { async mount(el, params) {
       ${renderFormField({ id: 'rn-method', label: 'Payment Method', value: 'cash', options: [{value:'cash',label:'Cash'},{value:'upi',label:'UPI'},{value:'card',label:'Card'},{value:'online',label:'Online'},{value:'other',label:'Other'}], required: true })}
       ${renderFormField({ id: 'rn-ref', label: 'Reference / Transaction ID', placeholder: 'Optional' })}
       ${renderFormField({ id: 'rn-notes', label: 'Notes', type: 'textarea', placeholder: 'Optional' })}
-      <button type="submit" class="btn btn-primary btn-lg btn-full" id="rn-submit">${icon('renewals', 18, 'white')} Renew & Record Payment</button>
+      <label style="display:flex;align-items:flex-start;gap:var(--sp-sm);font-size:var(--fs-sm);color:var(--text-secondary);cursor:pointer">
+        <input type="checkbox" id="rn-confirm" style="margin-top:3px;width:18px;height:18px;accent-color:var(--brand)">
+        <span>I confirm the plan and amount above are correct and approved for ${escapeHtml(member.full_name)}.</span>
+      </label>
+      <button type="submit" class="btn btn-primary btn-lg btn-full" id="rn-submit" disabled>${icon('renewals', 18, 'white')} Renew & Record Payment</button>
     </form></div></div>`;
   bindHeaderEvents(el, { onBack: () => navigate.pop() });
   // Auto-fill amount on plan change
   el.querySelector('#rn-plan').addEventListener('change', (e) => {
     const plan = plans.find(p => String(p.id) === e.target.value);
     if (plan) el.querySelector('#rn-amount').value = plan.price;
+  });
+  el.querySelector('#rn-confirm').addEventListener('change', (e) => {
+    el.querySelector('#rn-submit').disabled = !e.target.checked;
   });
   el.querySelector('#renew-form').addEventListener('submit', async (e) => {
     e.preventDefault();

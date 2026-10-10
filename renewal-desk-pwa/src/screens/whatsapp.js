@@ -8,20 +8,25 @@ export default { async mount(el) {
   const [statusRes, logRes] = await Promise.all([apiRequest('/api/mobile/v1/whatsapp/status'), apiRequest('/api/mobile/v1/whatsapp/logs?page_size=20')]);
   const scroll = el.querySelector('#wa-scroll');
   const s = statusRes.ok ? statusRes.data : {};
+  const checklist = s.checklist || {};
+  // Backend returns `state` + `checklist`; map to display flags.
+  const isConnected = s.state === 'CONNECTED' || checklist.messaging_ready === true;
+  const remindersOn = checklist.reminders_ready === true;
+  const phone = s.business_phone_number || s.phone_number;
   const logs = logRes.ok ? logRes.data.logs || logRes.data.messages || [] : [];
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-lg)"><div class="card card-body">
       <div style="display:flex;align-items:center;gap:var(--sp-md);margin-bottom:var(--sp-lg)">
         ${icon('whatsapp', 28, 'var(--whatsapp)')}
         <div style="flex:1"><div style="font-weight:var(--fw-bold)">WhatsApp Connection</div></div>
-        ${renderBadge(s.connected ? 'Connected' : 'Disconnected')}
+        ${renderBadge(isConnected ? 'Connected' : 'Disconnected')}
       </div>
-      ${s.phone_number ? renderInfoRow('Phone', s.phone_number) : ''}
-      ${renderInfoRow('Auto Reminders', s.auto_reminders ? 'Enabled' : 'Disabled')}
+      ${phone ? renderInfoRow('Phone', phone) : ''}
+      ${renderInfoRow('Auto Reminders', remindersOn ? 'Enabled' : 'Disabled')}
       ${s.messages_sent_today != null ? renderInfoRow('Sent Today', String(s.messages_sent_today)) : ''}
     </div></div>
     <div style="padding:0 var(--sp-lg) var(--sp-lg);display:flex;gap:var(--sp-sm)">
-      ${!s.connected ? `<button class="btn btn-whatsapp btn-lg btn-full" id="wa-connect">${icon('whatsapp',18,'white')} Connect WhatsApp</button>` : `
+      ${!isConnected ? `<button class="btn btn-whatsapp btn-lg btn-full" id="wa-connect">${icon('whatsapp',18,'white')} Connect WhatsApp</button>` : `
       <button class="btn btn-whatsapp" style="flex:1" id="wa-broadcast">${icon('send',16,'white')} Broadcast</button>
       <button class="btn btn-outline" style="flex:1" id="wa-campaigns">${icon('megaphone',16)} Campaigns</button>`}
     </div>

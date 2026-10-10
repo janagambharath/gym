@@ -10,7 +10,7 @@ export default {
   async mount(el) {
     const session = getCachedSession();
     el.innerHTML = `
-      ${renderHeader({ title: 'Options', showBack: true })}
+      ${renderHeader({ title: 'More', showBack: router.depth > 0 })}
       <div class="scroll-view"><div class="scroll-content">
         <!-- Profile Card -->
         <div class="card" style="margin:var(--sp-lg)">
