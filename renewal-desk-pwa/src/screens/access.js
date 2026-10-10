@@ -197,14 +197,14 @@ export default {
       scroll.querySelectorAll('[data-member-link]').forEach(row => {
         row.addEventListener('click', () => {
           const mid = row.dataset.memberLink;
-          if (mid) navigate.push('member-detail', { id: mid });
+          if (mid) navigate.push('member-detail', { memberId: mid });
         });
       });
 
       scroll.querySelectorAll('[data-event-member-id]').forEach(row => {
         row.addEventListener('click', () => {
           const mid = row.dataset.eventMemberId;
-          if (mid) navigate.push('member-detail', { id: mid });
+          if (mid) navigate.push('member-detail', { memberId: mid });
         });
       });
 
@@ -331,7 +331,7 @@ export default {
         if (router.depth > 1) {
           navigate.pop();
         } else {
-          navigate.switchTab('dashboard');
+          navigate.switchTab('home');
         }
       },
       actions: [

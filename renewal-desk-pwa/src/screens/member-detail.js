@@ -1,7 +1,7 @@
 /* Member Detail Screen */
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderSectionHeader, showToast, showConfirm, renderErrorState } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml, formatDate, formatDateTime, formatCurrency, getMemberDisplayStatus, getMemberStatusColor, getDaysText, getInitials, getAvatarColor } from '../utils.js';
 
@@ -155,6 +155,9 @@ export default {
               <button class="btn btn-whatsapp btn-full" id="btn-send-reminder">
                 ${icon('whatsapp', 18, 'white')} Send WhatsApp Reminder
               </button>
+              <button class="btn btn-outline btn-full" id="btn-toggle-access" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
+                ${icon('lock', 18)} <span id="btn-toggle-access-label">Block Biometric Access</span>
+              </button>
               ${member.status !== 'deleted' ? `
                 <button class="btn btn-danger btn-full btn-sm" id="btn-deactivate" style="margin-top:var(--sp-md)">
                   ${icon('delete', 16, 'white')} Deactivate Member
@@ -196,10 +199,14 @@ export default {
       });
 
       const promptEnroll = async () => {
-        const val = window.prompt(
-          `Enter machine Enroll Number (User ID) for ${member.full_name}:`,
-          member.device_enroll_number || ''
-        );
+        const val = await showPrompt({
+          title: 'Enroll Number',
+          message: `Enter machine Enroll Number (User ID) for ${member.full_name}:`,
+          placeholder: 'e.g. 101',
+          defaultValue: member.device_enroll_number || '',
+          inputType: 'text',
+          confirmText: 'Save',
+        });
         if (val === null) return;
         const trimmed = val.trim();
         if (!trimmed) {
@@ -247,15 +254,54 @@ export default {
       el.querySelector('#btn-renew')?.addEventListener('click', () => navigate.push('renew-member', { member: JSON.stringify(member) }));
       el.querySelector('#btn-record-payment')?.addEventListener('click', () => navigate.push('record-payment', { memberId: String(member.id) }));
 
+      // Block / unblock biometric access (direct-ADMS terminal command)
+      let accessBlocked = false;
+      el.querySelector('#btn-toggle-access')?.addEventListener('click', async () => {
+        const action = accessBlocked ? 'unblock' : 'block';
+        const yes = await showConfirm({
+          title: action === 'block' ? 'Block Biometric Access' : 'Unblock Biometric Access',
+          message: action === 'block'
+            ? `${member.full_name} will not be able to enter with their fingerprint until unblocked.`
+            : `${member.full_name} will be able to enter with their fingerprint again.`,
+          confirmText: action === 'block' ? 'Block Access' : 'Unblock Access',
+          destructive: action === 'block',
+        });
+        if (!yes) return;
+        const btn = el.querySelector('#btn-toggle-access');
+        btn.disabled = true;
+        const res = await apiRequest(`/api/mobile/v1/rrr/members/${member.id}/access`, { method: 'POST', body: { action } });
+        btn.disabled = false;
+        if (res.ok) {
+          accessBlocked = action === 'block';
+          el.querySelector('#btn-toggle-access-label').textContent = accessBlocked ? 'Unblock Biometric Access' : 'Block Biometric Access';
+          showToast(res.data?.command ? `Command queued — the terminal applies it on its next check-in.` : `${action === 'block' ? 'Blocked' : 'Unblocked'}.`, 'success');
+        } else {
+          showToast(res.error?.message || `Could not ${action} access`, 'error');
+        }
+      });
+
       el.querySelector('#btn-freeze')?.addEventListener('click', async () => {
-        const daysStr = window.prompt(`How many days would you like to pause ${member.full_name}'s membership? (e.g. 7, 14, 30)`, '14');
+        const daysStr = await showPrompt({
+          title: 'Pause Membership',
+          message: `How many days would you like to pause ${member.full_name}'s membership?`,
+          placeholder: 'e.g. 7, 14, 30',
+          defaultValue: '14',
+          inputType: 'number',
+          confirmText: 'Continue',
+        });
         if (!daysStr) return;
         const days = parseInt(daysStr, 10);
         if (isNaN(days) || days < 1) {
           showToast('Invalid number of days', 'error');
           return;
         }
-        const reason = window.prompt('Reason for pause (optional, e.g. Travel, Injury):', '') || '';
+        const reason = await showPrompt({
+          title: 'Pause Reason',
+          message: 'Reason for pause (optional):',
+          placeholder: 'e.g. Travel, Injury',
+          defaultValue: '',
+          confirmText: 'Pause Membership',
+        }) || '';
         const res = await apiRequest(`/api/mobile/v1/members/${member.id}/freeze`, {
           method: 'POST',
           body: { days, reason }

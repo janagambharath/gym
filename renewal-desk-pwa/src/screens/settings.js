@@ -27,6 +27,7 @@ export default {
         <!-- Gym Management -->
         <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Gym Management</div>
         <div class="card" style="margin:var(--sp-sm) var(--sp-lg) var(--sp-lg)">
+          ${renderMenuItem({ iconName: 'business', label: 'Gym Profile', desc: 'Name, contact, address', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'gym-profile' })}
           ${renderMenuItem({ iconName: 'plan', label: 'Membership Plans', desc: 'Manage pricing & durations', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'plans' })}
           ${renderMenuItem({ iconName: 'staff', label: 'Staff', desc: 'Manage team members', iconBg: 'var(--info-surface)', iconColor: 'var(--info)', onClick: 'staff' })}
           ${renderMenuItem({ iconName: 'report', label: 'Reports', desc: 'Analytics & summaries', iconBg: 'var(--success-surface)', iconColor: 'var(--success)', onClick: 'reports' })}
@@ -58,17 +59,13 @@ export default {
       </div></div>`;
 
     bindHeaderEvents(el, {
-      onBack: () => router.depth > 1 ? navigate.pop() : navigate.switchTab('dashboard'),
+      onBack: () => router.depth > 1 ? navigate.pop() : navigate.switchTab('home'),
     });
 
     // Menu item clicks
     el.querySelectorAll('[data-action]').forEach(item => {
       item.addEventListener('click', () => {
-        if (item.dataset.action === 'access') {
-          navigate.switchTab('access');
-        } else {
-          navigate.push(item.dataset.action);
-        }
+        navigate.push(item.dataset.action);
       });
     });
 

@@ -14,7 +14,7 @@ from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
 from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
-from app.services.bridge_service import adms_command_text
+from app.services.bridge_service import adms_command_text, queue_manual_adms_member_command
 from app.services.rrr_service import (
     DEFAULT_RULES,
     adms_terminal_settings,
@@ -384,3 +384,32 @@ def register_rrr_routes(bp):
               actor_id=g.user_id, metadata={"external_id": external_id, "events_replayed": resolved})
         db.session.commit()
         return jsonify({"success": True, "data": {"member_id": member.id, "events_resolved": resolved}})
+
+    @bp.post("/rrr/members/<int:member_id>/access")
+    @limiter.limit("30 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def manual_member_access(member_id: int):
+        """Owner-initiated block/unblock of one member's biometric access.
+
+        Queues a ``block``/``unblock`` ADMS command for the member's terminal
+        identity. Gated on supervised commissioning (``commands_enabled``) and
+        on the member having a bound enroll number — same safety bar as the
+        automatic path. The terminal picks the command up on its next poll.
+        """
+        payload = request.get_json(silent=True) or {}
+        action = str(payload.get("action") or "").strip().lower()
+        if action not in {"block", "unblock"}:
+            return error_response("VALIDATION_ERROR", "action must be 'block' or 'unblock'.", 422)
+        member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
+        if member is None or member.deleted_at is not None:
+            return error_response("NOT_FOUND", "Member was not found.", 404)
+        command = queue_manual_adms_member_command(member, action, g.user_id)
+        if command is None:
+            return error_response(
+                "DEVICE_NOT_READY",
+                "Biometric commands are not available: finish device commissioning and bind this member's enroll number first.",
+                409,
+            )
+        db.session.commit()
+        return jsonify({"success": True, "data": {"command": _adms_command_payload(command)}}), 201

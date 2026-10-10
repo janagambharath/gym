@@ -34,7 +34,7 @@ async function load(el) {
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page">
     <header class="rrr-workspace-bar">
       <button class="rrr-gym-switcher" id="rrr-members">${icon('business', 18)}<span><b>${escapeHtml(gymName)}</b><small>Owner workspace</small></span>${icon('chevronDown', 16)}</button>
-      <div class="rrr-header-actions"><button class="rrr-icon-button" id="rrr-inbox" aria-label="Open inbox">${icon('inbox', 19)}</button><button class="rrr-add-button" id="rrr-add-member">${icon('add', 18, 'white')} Add member</button><span class="rrr-owner-avatar">${escapeHtml(ownerName.slice(0, 2).toUpperCase())}</span></div>
+      <div class="rrr-header-actions"><button class="rrr-icon-button" id="rrr-inbox" aria-label="Open inbox">${icon('inbox', 19)}</button><button class="rrr-add-button" id="rrr-add-member">${icon('add', 18, 'white')} Add member</button><button class="rrr-owner-avatar" id="rrr-avatar" aria-label="Open settings">${escapeHtml(ownerName.slice(0, 2).toUpperCase())}</button></div>
     </header>
     <section class="rrr-dashboard-hero">
       <div><span class="rrr-eyebrow">TODAY AT ${escapeHtml(gymName).toUpperCase()}</span><h1>Run the gym. Grow the business.</h1><p>${priorityCount ? `${formatInteger(priorityCount)} member opportunities need your attention.` : 'Everything looks clear. New signals will appear as members check in, pay and renew.'}</p></div>
@@ -47,6 +47,7 @@ async function load(el) {
       <article><span class="rrr-kpi-icon violet">${icon('wallet', 20)}</span><div><strong>${formatCurrency(Object.values(data.pillars).reduce((sum, pillar) => sum + Number(pillar.potential_revenue || 0), 0))}</strong><span>Growth pipeline</span></div><small>Potential value</small></article>
     </section>
     ${today ? ownerToday(today) : ''}
+    ${setupChecklist(data)}
     <section class="rrr-growth-section"><div class="rrr-section-heading"><div><span class="rrr-eyebrow">GROWTH ENGINE</span><h2>Where to focus next</h2></div><button id="rrr-rules">Tune signals ${icon('settings', 15)}</button></div><div class="rrr-pillars">${['revenue', 'retain', 'recover'].map(key => pillar(data, key)).join('')}</div></section>
     <section class="rrr-owner-grid">
       <article class="rrr-panel rrr-impact-panel"><div class="rrr-panel-head"><div><h2>Growth impact</h2><p>Potential value waiting in your member base</p></div><span>Live</span></div><div class="rrr-impact-bars">${['revenue', 'retain', 'recover'].map(key => impactBar(data, key)).join('')}</div></article>
@@ -60,14 +61,16 @@ async function load(el) {
   el.querySelector('#rrr-members')?.addEventListener('click', () => navigate.switchTab('members'));
   el.querySelector('#rrr-inbox')?.addEventListener('click', () => navigate.push('inbox'));
   el.querySelector('#rrr-add-member')?.addEventListener('click', () => navigate.push('add-member'));
-  el.querySelectorAll('[data-pillar]').forEach(button => button.addEventListener('click', () => navigate.switchTab(button.dataset.pillar)));
+  el.querySelector('#rrr-avatar')?.addEventListener('click', () => navigate.push('settings'));
+  el.querySelectorAll('[data-setup]').forEach(button => button.addEventListener('click', () => navigate.push(button.dataset.setup)));
+  el.querySelectorAll('[data-pillar]').forEach(button => button.addEventListener('click', () => navigate.push('rrr-list', { pillar: button.dataset.pillar })));
   el.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => {
     const destinations = { add: 'add-member', payment: 'record-payment', campaign: 'campaign-create', access: 'access' };
     navigate.push(destinations[button.dataset.action]);
   }));
   el.querySelectorAll('[data-owner-route]').forEach(button => button.addEventListener('click', () => {
     const route = button.dataset.ownerRoute;
-    if (route === 'rrr-list') navigate.switchTab(button.dataset.ownerPillar || 'revenue');
+    if (route === 'rrr-list') navigate.push('rrr-list', { pillar: button.dataset.ownerPillar || 'revenue' });
     else if (route) navigate.push(route);
   }));
 }
@@ -88,6 +91,23 @@ function impactBar(data, key) {
 function list(items, key) {
   const m = pillarMeta[key];
   return `<article class="rrr-panel rrr-member-list"><div class="rrr-panel-head"><div><h2>${m.title}</h2><p>${m.eyebrow}</p></div><button data-pillar="${key}">View all</button></div>${items.length ? items.map(item => `<div class="rrr-member-row"><span class="rrr-member-dot ${m.color}"></span><div><b>${escapeHtml(item.member.name)}</b><span>${escapeHtml(item.reason)}</span></div><strong>${formatCurrency(item.potential_revenue)}</strong></div>`).join('') : '<p class="rrr-no-data">No action needed right now.</p>'}</article>`;
+}
+
+function setupChecklist(data) {
+  const steps = [
+    { done: (data.plans_count || 0) > 0, label: 'Add membership plans', desc: 'Pricing & durations', screen: 'plans' },
+    { done: (data.members?.total || 0) > 0, label: 'Add your members', desc: 'Or import from CSV', screen: 'member-import' },
+    { done: !!data.whatsapp_connected, label: 'Connect WhatsApp', desc: 'Automated reminders', screen: 'whatsapp-setup' },
+    { done: !!data.payment_setup_done, label: 'Set up payments', desc: 'UPI ID & QR code', screen: 'payment-setup' },
+    { done: data.integration?.status === 'connected', label: 'Pair biometric device', desc: 'Attendance & access', screen: 'rrr-integrations' },
+  ];
+  const pending = steps.filter(s => !s.done);
+  if (pending.length === 0) return '';
+  return `<section class="rrr-panel" style="margin:0 var(--sp-lg) var(--sp-lg)"><div class="rrr-panel-head"><div><h2>Get set up</h2><p>${pending.length} step${pending.length>1?'s':''} left to launch your gym</p></div></div>
+    ${steps.map(s => `<button class="list-item" data-setup="${s.screen}" style="width:100%;text-align:left;${s.done?'opacity:0.55':''}">
+      <div style="width:28px;height:28px;border-radius:var(--r-full);background:${s.done?'var(--success-surface)':'var(--brand-subtle)'};display:flex;align-items:center;justify-content:center">${icon(s.done?'check':'chevronRight', 16, s.done?'var(--success)':'var(--brand)')}</div>
+      <div class="list-item-content"><div class="list-item-title">${escapeHtml(s.label)}</div><div class="list-item-subtitle">${escapeHtml(s.desc)}</div></div>
+    </button>`).join('')}</section>`;
 }
 
 function ownerToday(today) {

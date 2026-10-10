@@ -206,6 +206,55 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
     return command
 
 
+def queue_manual_adms_member_command(
+    member: Member, action: str, actor_id: int | None
+) -> RRRAdmsCommand | None:
+    """Queue an owner-initiated block/unblock for one member's terminal identity.
+
+    Unlike :func:`queue_adms_membership_command` (which derives the action
+    from membership state), the owner explicitly chooses ``block`` or
+    ``unblock`` here — e.g. blocking a member for misconduct while their
+    membership is still active.  Gated on supervised commissioning exactly
+    like the automatic path.  Returns ``None`` when there is no commissioned
+    direct-ADMS terminal or the member has no terminal identity.
+    Does not commit.
+    """
+    if action not in {"block", "unblock"}:
+        raise ValueError(f"Unknown manual ADMS action: {action!r}")
+    integration = _adms_integration(member.gym_id)
+    if integration is None or not integration.commands_enabled:
+        return None
+    if integration.last_success_at is None:
+        return None
+    try:
+        enroll_number = resolve_adms_enroll_number(member)
+    except ValueError:
+        return None
+    if not enroll_number:
+        return None
+
+    command_text = adms_command_text(action, enroll_number)
+    command = RRRAdmsCommand(
+        gym_id=member.gym_id,
+        integration_id=integration.id,
+        action=action,
+        test_enroll_number=enroll_number,
+        command_text=command_text,
+        requested_by_id=actor_id,
+    )
+    db.session.add(command)
+    db.session.flush()
+    audit(
+        action=f"adms_manual_{action}_queued",
+        resource_type="rrr_adms_command",
+        resource_id=command.id,
+        gym_id=member.gym_id,
+        actor_id=actor_id,
+        metadata={"member_id": member.id, "enroll_number": enroll_number},
+    )
+    return command
+
+
 def queue_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
     """Queue the latest required terminal state, without duplicating work.
 

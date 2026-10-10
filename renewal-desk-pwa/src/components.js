@@ -46,6 +46,34 @@ export function showConfirm({ title, message, confirmText = 'Confirm', cancelTex
   });
 }
 
+// ─── Prompt Modal (styled replacement for window.prompt) ────────────
+
+export function showPrompt({ title, message = '', placeholder = '', defaultValue = '', inputType = 'text', confirmText = 'Confirm', cancelText = 'Cancel' }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay center';
+    overlay.innerHTML = `
+      <div class="confirm-dialog">
+        <div class="confirm-dialog-title">${escapeHtml(title)}</div>
+        ${message ? `<div class="confirm-dialog-message">${escapeHtml(message)}</div>` : ''}
+        <input class="form-input" id="prompt-input" type="${escapeHtml(inputType)}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(defaultValue)}" autocomplete="off" style="margin:var(--sp-md) 0">
+        <div class="confirm-dialog-actions">
+          <button class="btn btn-primary btn-full" id="prompt-ok">${escapeHtml(confirmText)}</button>
+          <button class="btn btn-secondary btn-full" id="prompt-cancel">${escapeHtml(cancelText)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#prompt-input');
+    input.focus();
+    input.select();
+    const done = (val) => { overlay.remove(); resolve(val); };
+    overlay.querySelector('#prompt-ok').onclick = () => done(input.value);
+    overlay.querySelector('#prompt-cancel').onclick = () => done(null);
+    overlay.onclick = (e) => { if (e.target === overlay) done(null); };
+    input.onkeydown = (e) => { if (e.key === 'Enter') done(input.value); };
+  });
+}
+
 // ─── Header ──────────────────────────────────────────────────────────
 
 export function renderHeader({ title, subtitle, showBack, onBack, actions = [] }) {
@@ -88,11 +116,11 @@ export function bindHeaderEvents(el, { onBack, actions = [] } = {}) {
 // ─── Tab Bar ─────────────────────────────────────────────────────────
 
 const tabs = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { id: 'revenue', label: 'Revenue', icon: 'payments' },
-  { id: 'retain', label: 'Retain', icon: 'shield' },
-  { id: 'recover', label: 'Recover', icon: 'renewals' },
+  { id: 'home', label: 'Home', icon: 'dashboard' },
   { id: 'members', label: 'Members', icon: 'members' },
+  { id: 'payments', label: 'Payments', icon: 'payments' },
+  { id: 'renewals', label: 'Renewals', icon: 'renewals' },
+  { id: 'more', label: 'More', icon: 'menu' },
 ];
 
 export function renderTabBar(activeTab) {
