@@ -6,12 +6,12 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Brand — sky blue ─────────────────────────────────────────── */
-  --brand: #3E8FE0;
-  --brand-dark: #2A6CB5;
-  --brand-light: #6AADEB;
-  --brand-subtle: #E2EFFC;
-  --brand-gradient: linear-gradient(135deg, #7FB8EC 0%, #4E9AE3 55%, #2F74C0 100%);
+  /* ── Brand — light sky blue ───────────────────────────────────── */
+  --brand: #5B9BD5;
+  --brand-dark: #3A7BC0;
+  --brand-light: #8FC1EB;
+  --brand-subtle: #E8F2FC;
+  --brand-gradient: linear-gradient(135deg, #A8D0F0 0%, #7FB5E8 55%, #5B9BD5 100%);
   --volt: #D9F24F;
   --volt-dark: #B8D42E;
 

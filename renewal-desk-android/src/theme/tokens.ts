@@ -8,13 +8,13 @@
 
 export const colors = {
   // Brand — gradient blue
-  brand: '#3E8FE0',
-  brandDark: '#2A6CB5',
-  brandLight: '#6AADEB',
-  brandSubtle: '#E2EFFC',
+  brand: '#5B9BD5',
+  brandDark: '#3A7BC0',
+  brandLight: '#8FC1EB',
+  brandSubtle: '#E8F2FC',
   // Gradient stops: #2B7FFF → #1D6FDB → #14489B (135deg)
   // react-native-linear-gradient not installed — use colors.brand as solid fallback
-  brandGradient: ['#7FB8EC', '#4E9AE3', '#2F74C0'] as const,
+  brandGradient: ['#A8D0F0', '#7FB5E8', '#5B9BD5'] as const,
   volt: '#D9F24F',
   voltDark: '#B8D42E',
 
