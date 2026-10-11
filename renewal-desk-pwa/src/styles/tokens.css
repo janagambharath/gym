@@ -6,11 +6,11 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Brand ──────────────────────────────────────────────────────── */
-  --brand: #16130E;
-  --brand-dark: #0C0A07;
-  --brand-light: #2A251C;
-  --brand-subtle: #F1F4DC;
+  /* ── Brand — deep forest green ──────────────────────────────────── */
+  --brand: #0A5C36;
+  --brand-dark: #063A22;
+  --brand-light: #147A4A;
+  --brand-subtle: #E4F2E4;
   --volt: #D9F24F;
   --volt-dark: #B8D42E;
 
@@ -84,8 +84,8 @@
   --gray-900: #16130E;
 
   /* ── Overlay ─────────────────────────────────────────────────────── */
-  --overlay: rgba(22, 19, 14, 0.55);
-  --overlay-light: rgba(22, 19, 14, 0.06);
+  --overlay: rgba(6, 58, 34, 0.55);
+  --overlay-light: rgba(6, 58, 34, 0.06);
 
   /* ── Spacing Scale ───────────────────────────────────────────────── */
   --sp-xxs: 2px;
@@ -136,11 +136,11 @@
   --lh-relaxed: 1.65;
 
   /* ── Shadows (hard offset = hand-crafted, not soft AI blur) ───────── */
-  --shadow-sm: 2px 2px 0 rgba(22,19,14,0.08);
-  --shadow-md: 3px 3px 0 rgba(22,19,14,0.10);
-  --shadow-lg: 4px 4px 0 rgba(22,19,14,0.12);
-  --shadow-xl: 6px 6px 0 rgba(22,19,14,0.14);
-  --shadow-soft: 0 2px 12px rgba(22,19,14,0.07);
+  --shadow-sm: 2px 2px 0 rgba(6,58,34,0.10);
+  --shadow-md: 3px 3px 0 rgba(6,58,34,0.12);
+  --shadow-lg: 4px 4px 0 rgba(6,58,34,0.14);
+  --shadow-xl: 6px 6px 0 rgba(6,58,34,0.16);
+  --shadow-soft: 0 2px 12px rgba(6,58,34,0.08);
 
   /* ── iOS Safe Areas ──────────────────────────────────────────────── */
   --safe-top: env(safe-area-inset-top, 0px);
