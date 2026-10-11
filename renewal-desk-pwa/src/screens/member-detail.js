@@ -108,7 +108,7 @@ export default {
                   ${member.has_biometric ? '<span class="badge badge-success">● Synced</span>' : '<span class="badge badge-muted">Not Enrolled</span>'}
                 </div>
                 ${member.has_biometric ? `
-                  ${renderInfoRow('Machine Enroll ID', `<b style="font-size:var(--fs-lg);color:var(--brand)">#${escapeHtml(member.device_enroll_number || 'Enrolled')}</b>`)}
+                  ${renderInfoRow('Machine Enroll ID', `#${member.device_enroll_number || '—'}`)}
                   <div style="display:flex;gap:var(--sp-sm);margin-top:var(--sp-md)">
                     <button class="btn btn-outline btn-sm btn-full" id="btn-change-enroll" style="display:flex;align-items:center;justify-content:center;gap:6px">
                       ${icon('edit', 14)} Change ID

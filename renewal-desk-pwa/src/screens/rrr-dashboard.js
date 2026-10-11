@@ -67,6 +67,7 @@ async function load(el) {
   el.querySelector('#rrr-avatar')?.addEventListener('click', () => navigate.push('settings'));
   el.querySelectorAll('[data-setup]').forEach(button => button.addEventListener('click', () => navigate.push(button.dataset.setup)));
   el.querySelectorAll('[data-pillar]').forEach(button => button.addEventListener('click', () => navigate.push('rrr-list', { pillar: button.dataset.pillar })));
+  el.querySelectorAll('[data-member-id]').forEach(row => row.addEventListener('click', () => navigate.push('member-detail', { memberId: row.dataset.memberId })));
   el.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => {
     const destinations = { add: 'add-member', payment: 'record-payment', campaign: 'campaign-create', access: 'access' };
     navigate.push(destinations[button.dataset.action]);
@@ -94,7 +95,7 @@ function impactBar(data, key) {
 
 function list(items, key) {
   const m = pillarMeta[key];
-  return `<article class="rrr-panel rrr-member-list"><div class="rrr-panel-head"><div><h2>${m.title}</h2><p>${m.eyebrow}</p></div><button data-pillar="${key}">View all</button></div>${items.length ? items.map(item => `<div class="rrr-member-row"><span class="rrr-member-dot ${m.color}"></span><div><b>${escapeHtml(item.member.name)}</b><span>${escapeHtml(item.reason)}</span></div><strong>${formatCurrency(item.potential_revenue)}</strong></div>`).join('') : '<p class="rrr-no-data">No action needed right now.</p>'}</article>`;
+  return `<article class="rrr-panel rrr-member-list"><div class="rrr-panel-head"><div><h2>${m.title}</h2><p>${m.eyebrow}</p></div><button data-pillar="${key}">View all</button></div>${items.length ? items.map(item => `<div class="rrr-member-row rrr-member-tappable" data-member-id="${item.member.id}"><span class="rrr-member-dot ${m.color}"></span><div><b>${escapeHtml(item.member.name)}</b><span>${escapeHtml(item.reason)}</span></div><strong>${formatCurrency(item.potential_revenue)}</strong></div>`).join('') : '<p class="rrr-no-data">No action needed right now.</p>'}</article>`;
 }
 
 function setupChecklist(data) {

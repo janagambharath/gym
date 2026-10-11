@@ -1489,3 +1489,8 @@ select.form-input {
 .rrr-pillar-bottom{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
 .rrr-pillar-bottom>strong{font-variant-numeric:tabular-nums;white-space:nowrap}
 .rrr-pillar-bottom>span{font-size:13px;color:var(--text-secondary)}
+
+/* ── Tappable member rows in RRR lists ── */
+.rrr-member-tappable{cursor:pointer}
+.rrr-member-tappable:active{background:var(--overlay-light)}
+.rrr-member-tappable b{color:var(--brand)}
