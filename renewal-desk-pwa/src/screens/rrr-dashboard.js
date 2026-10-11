@@ -12,7 +12,7 @@ const pillarMeta = {
 export default { async mount(el) { await load(el); } };
 
 async function load(el) {
-  el.innerHTML = '<div class="rrr-loading">Building your owner workspace…</div>';
+  el.innerHTML = `<main class="rrr-page rrr-dashboard-page"><div class="rrr-dashboard-skeleton"><div class="skeleton" style="height:52px;border-radius:14px;margin-bottom:20px"></div><div class="skeleton skeleton-text" style="width:45%;height:14px;margin-bottom:8px"></div><div class="skeleton skeleton-text" style="width:80%;height:34px;margin-bottom:8px"></div><div class="skeleton skeleton-text short" style="width:60%;margin-bottom:22px"></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">${'<div class="skeleton" style="height:110px;border-radius:16px"></div>'.repeat(4)}</div>${'<div class="skeleton" style="height:190px;border-radius:20px;margin-bottom:14px"></div>'.repeat(3)}</div></main>`;
   const [result, todayResult] = await Promise.all([
     apiRequest('/api/mobile/v1/rrr/dashboard'),
     apiRequest('/api/mobile/v1/owner/today'),
@@ -40,6 +40,8 @@ async function load(el) {
       <div><span class="rrr-eyebrow">TODAY AT ${escapeHtml(gymName).toUpperCase()}</span><h1>Run the gym. Grow the business.</h1><p>${priorityCount ? `${formatInteger(priorityCount)} member opportunities need your attention.` : 'Everything looks clear. New signals will appear as members check in, pay and renew.'}</p></div>
       <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integration?.status === 'connected' ? `${integrationName} live` : 'Attendance needs setup'}</span>${icon('chevronRight', 16)}</button>
     </section>
+    <section class="rrr-growth-section"><div class="rrr-section-heading"><div><span class="rrr-eyebrow">GROWTH ENGINE</span><h2>Where to focus next</h2></div><button id="rrr-rules">Tune signals ${icon('settings', 15)}</button></div><div class="rrr-pillars">${['revenue', 'retain', 'recover'].map(key => pillar(data, key)).join('')}</div></section>
+    <section class="rrr-list-grid">${['revenue', 'retain', 'recover'].map(key => list(data.pillars[key]?.items || [], key)).join('')}</section>
     <section class="rrr-kpis rrr-owner-kpis">
       <article id="rrr-kpi-members" class="rrr-kpi-tappable"><span class="rrr-kpi-icon green">${icon('members', 20)}</span><div><strong>${formatInteger(data.members.total)}</strong><span>Total members</span></div><small>${formatInteger(data.members.active || 0)} active</small></article>
       <article id="rrr-kpi-attendance" class="rrr-kpi-tappable"><span class="rrr-kpi-icon blue">${icon('stats', 20)}</span><div><strong>${data.members.attendance_rate}%</strong><span>30-day attendance</span></div><small>${integration?.status === 'connected' ? 'Live signal' : 'Awaiting device'}</small></article>
@@ -48,12 +50,12 @@ async function load(el) {
     </section>
     ${today ? ownerToday(today) : ''}
     ${setupChecklist(data)}
-    <section class="rrr-growth-section"><div class="rrr-section-heading"><div><span class="rrr-eyebrow">GROWTH ENGINE</span><h2>Where to focus next</h2></div><button id="rrr-rules">Tune signals ${icon('settings', 15)}</button></div><div class="rrr-pillars">${['revenue', 'retain', 'recover'].map(key => pillar(data, key)).join('')}</div></section>
+    ${today ? ownerToday(today) : ''}
+    ${setupChecklist(data)}
     <section class="rrr-owner-grid">
       <article class="rrr-panel rrr-impact-panel"><div class="rrr-panel-head"><div><h2>Growth impact</h2><p>Potential value waiting in your member base</p></div><span>Live</span></div><div class="rrr-impact-bars">${['revenue', 'retain', 'recover'].map(key => impactBar(data, key)).join('')}</div></article>
       <article class="rrr-panel rrr-quick-actions"><div class="rrr-panel-head"><div><h2>Quick actions</h2><p>Keep the front desk moving</p></div></div><button data-action="add">${icon('personAdd', 19)} Add new member ${icon('chevronRight', 17)}</button><button data-action="payment">${icon('cash', 19)} Record a payment ${icon('chevronRight', 17)}</button><button data-action="campaign">${icon('whatsapp', 19)} Start WhatsApp campaign ${icon('chevronRight', 17)}</button><button data-action="access">${icon('access', 19)} Review access control ${icon('chevronRight', 17)}</button></article>
     </section>
-    <section class="rrr-list-grid">${['revenue', 'retain', 'recover'].map(key => list(data.pillars[key]?.items || [], key)).join('')}</section>
   </main>`;
   el.querySelector('#rrr-integrations')?.addEventListener('click', () => navigate.push('rrr-integrations'));
   el.querySelector('#rrr-kpi-mapping')?.addEventListener('click', () => navigate.push('rrr-mappings'));
