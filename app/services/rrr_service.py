@@ -310,10 +310,13 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     ).scalar() or 0
     # Direct ADMS is the preferred no-PC integration. Keep existing eBioServer
     # installations visible as a fallback so those gyms are not disrupted.
+    # direct_bridge (TCP bridge) gyms like Yodha must also show as connected.
     integrations = RRRIntegration.query.filter_by(gym_id=gym_id).all()
     integration = next((row for row in integrations if row.connector_type == "adms_direct" and row.status == "connected"), None)
+    integration = integration or next((row for row in integrations if row.connector_type == "direct_bridge" and row.status == "connected"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "ebioserver" and row.status == "connected"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "adms_direct"), None)
+    integration = integration or next((row for row in integrations if row.connector_type == "direct_bridge"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "ebioserver"), None)
     return {
         "members": {"total": total_members, "active": active_members,

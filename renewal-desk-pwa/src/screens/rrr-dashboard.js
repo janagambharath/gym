@@ -27,7 +27,7 @@ async function load(el) {
   const gymName = session?.tenantName || 'Your Gym';
   const ownerName = session?.userName || 'Owner';
   const integration = data.integration;
-  const integrationName = integration?.type === 'adms_direct' ? 'Direct Cloud' : 'eBioServer';
+  const integrationName = integration?.type === 'adms_direct' ? 'Direct Cloud' : integration?.type === 'direct_bridge' ? 'Bridge' : 'eBioServer';
   const priorityCount = ['revenue', 'retain', 'recover'].reduce((total, key) => total + (data.pillars[key]?.count || 0), 0);
   const today = todayResult.ok ? todayResult.data : null;
 
