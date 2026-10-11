@@ -77,12 +77,15 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
     setRevision((n) => n + 1);
   }, []);
 
-  // Split upcoming into "today" and "next 7 days"
+  // Split upcoming into "today", "next 7 days", and "upcoming (>7 days)"
   const today = upcoming.filter(
     (m) => m.days_until_expiry !== null && m.days_until_expiry <= 0,
   );
   const thisWeek = upcoming.filter(
-    (m) => m.days_until_expiry !== null && m.days_until_expiry > 0,
+    (m) => m.days_until_expiry !== null && m.days_until_expiry > 0 && m.days_until_expiry <= 7,
+  );
+  const upcomingLater = upcoming.filter(
+    (m) => m.days_until_expiry !== null && m.days_until_expiry > 7,
   );
 
   const renderMemberRow = useCallback((item: Member) => {
@@ -176,7 +179,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
     );
   }
 
-  const totalCount = today.length + thisWeek.length + expired.length;
+  const totalCount = today.length + thisWeek.length + upcomingLater.length + expired.length;
 
   if (totalCount === 0) {
     return (
@@ -238,6 +241,22 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
                 </View>
                 <View style={styles.card}>
                   {thisWeek.map(renderMemberRow)}
+                </View>
+              </View>
+            ) : null}
+
+            {/* Upcoming (>7 days) */}
+            {upcomingLater.length > 0 ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={[styles.sectionDot, { backgroundColor: colors.info }]} />
+                  <Text style={styles.sectionTitle}>Upcoming (&gt;7 days)</Text>
+                  <View style={styles.countBadge}>
+                    <Text style={styles.countText}>{upcomingLater.length}</Text>
+                  </View>
+                </View>
+                <View style={styles.card}>
+                  {upcomingLater.map(renderMemberRow)}
                 </View>
               </View>
             ) : null}

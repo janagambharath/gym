@@ -73,6 +73,8 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   }, []);
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+  const [gender, setGender] = useState('');
+  const [startDate, setStartDate] = useState(getGymTodayISO());
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(initialPlans.length > 0 ? initialPlans[0].id : null);
 
   // Customizable Money & Payment Engine
@@ -154,8 +156,10 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     setError(undefined);
 
     const today = getGymTodayISO();
+    const start = /^\d{4}-\d{2}-\d{2}$/.test(startDate.trim()) ? startDate.trim() : today;
     const duration = selectedPlan?.duration_days ?? 30;
-    const endDate = new Date(Date.now() + duration * 86400000).toISOString().split('T')[0];
+    const startObj = new Date(start + 'T00:00:00');
+    const endDate = new Date(startObj.getTime() + duration * 86400000).toISOString().split('T')[0];
 
     const cleanDigits = phone.replace(/\D/g, '');
     const normalizedPhone = phone.trim().startsWith('+')
@@ -169,8 +173,9 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
         phone: normalizedPhone,
         email: email.trim() || undefined,
         address: address.trim() || undefined,
+        gender: gender || undefined,
         plan_id: selectedPlanId,
-        membership_start: today,
+        membership_start: start,
         membership_end: endDate,
         notes: notes.trim() || undefined,
         amount: customAmount.trim() !== '' ? customAmount.trim() : undefined,
@@ -271,6 +276,21 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
                 placeholder="Enter street, area, city (optional)"
                 returnKeyType="next"
               />
+
+              <View>
+                <Text style={styles.fieldLabel}>Gender</Text>
+                <View style={styles.genderRow}>
+                  {['Male', 'Female', 'Other'].map((g) => (
+                    <TouchableOpacity
+                      key={g}
+                      style={[styles.genderChip, gender === g && styles.genderChipSelected]}
+                      onPress={() => setGender(gender === g ? '' : g)}
+                    >
+                      <Text style={[styles.genderChipText, gender === g && styles.genderChipTextSelected]}>{g}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
             </View>
           </View>
 
@@ -505,6 +525,13 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
           {/* Notes */}
           <View style={styles.card}>
             <FormField
+              label="Start Date"
+              value={startDate}
+              onChangeText={setStartDate}
+              placeholder="YYYY-MM-DD"
+              autoCapitalize="none"
+            />
+            <FormField
               label="Notes"
               value={notes}
               onChangeText={setNotes}
@@ -544,6 +571,37 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   dupWarningText: { color: colors.warningDark, fontSize: fontSize.sm },
+  fieldLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    marginBottom: spacing.xs,
+  },
+  genderRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  genderChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.card,
+  },
+  genderChipSelected: {
+    borderColor: colors.brand,
+    backgroundColor: colors.brandSubtle,
+  },
+  genderChipText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+  genderChipTextSelected: {
+    color: colors.brand,
+    fontWeight: fontWeight.semibold,
+  },
   additionalFeePill: {
     alignItems: 'center',
     backgroundColor: colors.brandSubtle,

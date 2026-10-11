@@ -335,6 +335,30 @@ export function MemberDetailScreen({
         {/* Membership Card */}
         <View style={styles.card}>
           <View style={styles.sectionTitleRow}>
+            <View style={[styles.sectionIcon, styles.contactIcon]}>
+              <Icon name="person" size={17} color={colors.brand} />
+            </View>
+            <Text style={styles.sectionTitle}>Contact</Text>
+          </View>
+          <View style={styles.contactGrid}>
+            <View style={styles.contactItem}>
+              <Text style={styles.membershipLabel}>Email</Text>
+              <Text style={styles.membershipValue}>{member.email || '—'}</Text>
+            </View>
+            <View style={[styles.contactItem, styles.membershipItemBorder]}>
+              <Text style={styles.membershipLabel}>Gender</Text>
+              <Text style={styles.membershipValue}>{member.gender || '—'}</Text>
+            </View>
+            <View style={[styles.contactItem, styles.membershipItemBorder]}>
+              <Text style={styles.membershipLabel}>Joined</Text>
+              <Text style={styles.membershipValue}>{formatDate(member.joined_on)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Membership Card */}
+        <View style={styles.card}>
+          <View style={styles.sectionTitleRow}>
             <View style={[styles.sectionIcon, styles.membershipIcon]}>
               <Icon name="star" size={17} color={colors.statusExpiring} />
             </View>
@@ -969,6 +993,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 0,
     marginTop: spacing.md,
+  },
+  contactGrid: {
+    flexDirection: 'row',
+    gap: 0,
+    marginTop: spacing.md,
+  },
+  contactItem: {
+    flex: 1,
+  },
+  contactIcon: {
+    backgroundColor: colors.brandSubtle,
   },
   membershipItem: {
     flex: 1,

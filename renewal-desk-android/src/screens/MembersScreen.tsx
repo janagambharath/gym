@@ -70,18 +70,14 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
     if (statusFilter !== 'all' && statusFilter !== 'expiring') {
       params.set('status', statusFilter);
     }
+    if (statusFilter === 'expiring') {
+      params.set('expiring_within_days', '7');
+    }
 
     void apiRequest<MembersResponse>(`/api/mobile/v1/members?${params.toString()}`).then((result) => {
       if (cancelled) return;
       if (result.ok) {
-        let filtered = result.data.members;
-        // Client-side filter for "expiring" (backend doesn't have this status filter)
-        if (statusFilter === 'expiring') {
-          filtered = filtered.filter(
-            (m) => m.days_until_expiry !== null && m.days_until_expiry >= 0 && m.days_until_expiry <= 7,
-          );
-        }
-        setMembers(filtered);
+        setMembers(result.data.members);
         setTotalPages(result.data.pagination.total_pages);
         setTotalCount(result.data.pagination.total);
         setError(undefined);
