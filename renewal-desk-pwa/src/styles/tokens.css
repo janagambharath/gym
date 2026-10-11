@@ -15,21 +15,21 @@
   --volt: #D9F24F;
   --volt-dark: #B8D42E;
 
-  /* ── Surfaces ───────────────────────────────────────────────────── */
-  --bg: #F7FAFF;
+  /* ── Surfaces — solar cream ─────────────────────────────────────── */
+  --bg: #FAF6EF;
   --card: #FFFFFF;
   --surface: #FFFFFF;
 
-  /* ── Text ────────────────────────────────────────────────────────── */
-  --text: #0F1E33;
-  --text-secondary: #4A5D75;
-  --muted: #8CA0B8;
+  /* ── Text — solar ink ────────────────────────────────────────────── */
+  --text: #141414;
+  --text-secondary: #5C564A;
+  --muted: #A39C8B;
   --text-inverse: #FFFFFF;
 
   /* ── Borders ─────────────────────────────────────────────────────── */
-  --border: #D5E5F5;
-  --border-light: #EAF3FC;
-  --border-focus: #3E8FE0;
+  --border: #E8E0D0;
+  --border-light: #F1EAD9;
+  --border-focus: #5B9BD5;
 
   /* ── Semantic — Success ──────────────────────────────────────────── */
   --success: #2D7A3D;

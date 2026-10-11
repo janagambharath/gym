@@ -19,14 +19,14 @@ export const colors = {
   voltDark: '#B8D42E',
 
   // Surfaces — clean white on soft blue-tinted background
-  background: '#F7FAFF',
+  background: '#FAF6EF',
   card: '#FFFFFF',
   surface: '#FFFFFF',
 
   // Text
-  text: '#0F1E33',
-  textSecondary: '#4A5D75',
-  muted: '#8CA0B8',
+  text: '#141414',
+  textSecondary: '#5C564A',
+  muted: '#A39C8B',
   textInverse: '#FFFFFF',
 
   // Borders
