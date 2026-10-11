@@ -989,16 +989,19 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.section,
   },
   greeting: {
-    paddingTop: spacing.xs,
+    backgroundColor: colors.brand,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    marginBottom: spacing.sm,
   },
   greetingSub: {
-    color: colors.textSecondary,
+    color: 'rgba(255,255,255,0.85)',
     fontSize: fontSize.base,
     lineHeight: 20,
     marginTop: spacing.xs,
   },
   greetingText: {
-    color: colors.text,
+    color: colors.textInverse,
     fontSize: fontSize['4xl'],
     fontWeight: fontWeight.extrabold,
   },
