@@ -8,13 +8,13 @@
 
 export const colors = {
   // Brand — gradient blue
-  brand: '#1D6FDB',
-  brandDark: '#14489B',
-  brandLight: '#3B8BF6',
-  brandSubtle: '#DCEBFE',
+  brand: '#3E8FE0',
+  brandDark: '#2A6CB5',
+  brandLight: '#6AADEB',
+  brandSubtle: '#E2EFFC',
   // Gradient stops: #2B7FFF → #1D6FDB → #14489B (135deg)
   // react-native-linear-gradient not installed — use colors.brand as solid fallback
-  brandGradient: ['#2B7FFF', '#1D6FDB', '#14489B'] as const,
+  brandGradient: ['#7FB8EC', '#4E9AE3', '#2F74C0'] as const,
   volt: '#D9F24F',
   voltDark: '#B8D42E',
 
@@ -30,8 +30,8 @@ export const colors = {
   textInverse: '#FFFFFF',
 
   // Borders
-  border: '#DCE6F2',
-  borderLight: '#EAF1F9',
+  border: '#D5E5F5',
+  borderLight: '#EAF3FC',
   borderFocus: '#1D6FDB',
 
   // Semantic — Success

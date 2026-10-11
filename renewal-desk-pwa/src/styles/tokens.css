@@ -6,12 +6,12 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Brand — gradient blue ──────────────────────────────────────── */
-  --brand: #1D6FDB;
-  --brand-dark: #14489B;
-  --brand-light: #3B8BF6;
-  --brand-subtle: #DCEBFE;
-  --brand-gradient: linear-gradient(135deg, #2B7FFF 0%, #1D6FDB 55%, #14489B 100%);
+  /* ── Brand — sky blue ─────────────────────────────────────────── */
+  --brand: #3E8FE0;
+  --brand-dark: #2A6CB5;
+  --brand-light: #6AADEB;
+  --brand-subtle: #E2EFFC;
+  --brand-gradient: linear-gradient(135deg, #7FB8EC 0%, #4E9AE3 55%, #2F74C0 100%);
   --volt: #D9F24F;
   --volt-dark: #B8D42E;
 
@@ -27,9 +27,9 @@
   --text-inverse: #FFFFFF;
 
   /* ── Borders ─────────────────────────────────────────────────────── */
-  --border: #DCE6F2;
-  --border-light: #EAF1F9;
-  --border-focus: #1D6FDB;
+  --border: #D5E5F5;
+  --border-light: #EAF3FC;
+  --border-focus: #3E8FE0;
 
   /* ── Semantic — Success ──────────────────────────────────────────── */
   --success: #2D7A3D;
