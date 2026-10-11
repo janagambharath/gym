@@ -2,7 +2,8 @@
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
-import { formatCurrency, getGymTodayISO } from '../utils.js';
+import { formatCurrency, getGymTodayISO, escapeHtml } from '../utils.js';
+import { icon } from '../icons.js';
 
 export default {
   async mount(el) {

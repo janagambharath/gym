@@ -29,7 +29,7 @@ export default {
     let searchTimer;
     el.querySelector('#pay-search').addEventListener('input', (e) => {
       clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => { search = e.target.value; page = 1; load(); }, 400);
+      searchTimer = setTimeout(() => { search = e.target.value; page = 1; loadPayments(); }, 400);
     });
 
     el.querySelector('#pay-filters').addEventListener('click', (e) => {

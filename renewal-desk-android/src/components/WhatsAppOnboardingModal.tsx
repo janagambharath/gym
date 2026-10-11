@@ -15,7 +15,7 @@ import { WebView } from 'react-native-webview';
 import * as WebBrowser from 'expo-web-browser';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import { connectWaba, fetchWabaNumbers, getCachedSession, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
+import { connectWaba, fetchWabaNumbers, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 
 interface WhatsAppOnboardingModalProps {
@@ -86,6 +86,7 @@ export function WhatsAppOnboardingModal({
       setLoading(true);
       let metaAppId = '1711816793132513';
       let configId = '1075973911551679';
+      let handshake = '';
 
       try {
         const res = await getWhatsAppOnboardingConfig();
@@ -93,16 +94,20 @@ export function WhatsAppOnboardingModal({
           metaAppId = res.data.meta_app_id;
           configId = res.data.config_id || configId;
         }
+        handshake = res.ok ? res.data.signup_handshake || '' : '';
+        if (!handshake) {
+          Alert.alert('Error', 'Could not prepare secure signup. Please try again.');
+          setLoading(false);
+          return;
+        }
       } catch {
         // Fall back to preconfigured production credentials
       }
 
       const config = getRuntimeConfiguration();
       const baseUrl = config.apiBaseUrl || 'https://gym-production-910c.up.railway.app';
-      const session = getCachedSession();
-      const tokenParam = session?.accessToken ? `&token=${encodeURIComponent(session.accessToken)}` : '';
       const featureParam = method === 'coexistence' ? '&feature_type=whatsapp_business_app_onboarding' : '';
-      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}${featureParam}${tokenParam}&v=${Date.now()}`;
+      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(handshake)}&meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}${featureParam}&v=${Date.now()}`;
       setWebViewUrl(pageUrl);
     } catch {
       Alert.alert('Error', 'Failed to launch Meta Embedded Signup.');

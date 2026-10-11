@@ -11,7 +11,7 @@ import requests
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.mobile_api.token_service import create_handshake_token, decode_handshake_token
-from app.models import Member, QRSettings, ReminderLog
+from app.models import Member, QRSettings, ReminderLog, User
 from app.services.audit_service import audit
 from app.services.error_messages import friendly_error
 from app.services.reminder_service import create_manual_test_log, ensure_default_template, send_reminder

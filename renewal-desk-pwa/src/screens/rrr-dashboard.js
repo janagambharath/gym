@@ -50,8 +50,6 @@ async function load(el) {
     </section>
     ${today ? ownerToday(today) : ''}
     ${setupChecklist(data)}
-    ${today ? ownerToday(today) : ''}
-    ${setupChecklist(data)}
     <section class="rrr-owner-grid">
       <article class="rrr-panel rrr-impact-panel"><div class="rrr-panel-head"><div><h2>Growth impact</h2><p>Potential value waiting in your member base</p></div><span>Live</span></div><div class="rrr-impact-bars">${['revenue', 'retain', 'recover'].map(key => impactBar(data, key)).join('')}</div></article>
       <article class="rrr-panel rrr-quick-actions"><div class="rrr-panel-head"><div><h2>Quick actions</h2><p>Keep the front desk moving</p></div></div><button data-action="add">${icon('personAdd', 19)} Add new member ${icon('chevronRight', 17)}</button><button data-action="payment">${icon('cash', 19)} Record a payment ${icon('chevronRight', 17)}</button><button data-action="campaign">${icon('whatsapp', 19)} Start WhatsApp campaign ${icon('chevronRight', 17)}</button><button data-action="access">${icon('access', 19)} Review access control ${icon('chevronRight', 17)}</button></article>
