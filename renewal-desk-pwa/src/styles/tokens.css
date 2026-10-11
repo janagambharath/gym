@@ -6,29 +6,30 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Brand — deep forest green ──────────────────────────────────── */
-  --brand: #0A5C36;
-  --brand-dark: #063A22;
-  --brand-light: #147A4A;
-  --brand-subtle: #E4F2E4;
+  /* ── Brand — gradient blue ──────────────────────────────────────── */
+  --brand: #1D6FDB;
+  --brand-dark: #14489B;
+  --brand-light: #3B8BF6;
+  --brand-subtle: #DCEBFE;
+  --brand-gradient: linear-gradient(135deg, #2B7FFF 0%, #1D6FDB 55%, #14489B 100%);
   --volt: #D9F24F;
   --volt-dark: #B8D42E;
 
   /* ── Surfaces ───────────────────────────────────────────────────── */
-  --bg: #F5F2EB;
-  --card: #FFFDF8;
-  --surface: #FFFDF8;
+  --bg: #F7FAFF;
+  --card: #FFFFFF;
+  --surface: #FFFFFF;
 
   /* ── Text ────────────────────────────────────────────────────────── */
-  --text: #16130E;
-  --text-secondary: #5C564A;
-  --muted: #A39C8B;
-  --text-inverse: #FFFDF8;
+  --text: #0F1E33;
+  --text-secondary: #4A5D75;
+  --muted: #8CA0B8;
+  --text-inverse: #FFFFFF;
 
   /* ── Borders ─────────────────────────────────────────────────────── */
-  --border: #E3DCCB;
-  --border-light: #EFEADD;
-  --border-focus: #16130E;
+  --border: #DCE6F2;
+  --border-light: #EAF1F9;
+  --border-focus: #1D6FDB;
 
   /* ── Semantic — Success ──────────────────────────────────────────── */
   --success: #2D7A3D;
