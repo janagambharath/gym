@@ -6,7 +6,8 @@ export default { async mount(el, params) {
   const leadId = params?.leadId;
   const res = await apiRequest(`/api/mobile/v1/bot/leads/${leadId}`);
   if (!res.ok) { el.innerHTML = `${renderHeader({title:'Lead',showBack:true})}<div class="empty-state"><div class="empty-state-title">Lead not found</div></div>`; bindHeaderEvents(el,{onBack:()=>navigate.pop()}); return; }
-  const l = res.data;
+  const l = res.data.lead || {};
+  const messages = res.data.messages || [];
   el.innerHTML = `${renderHeader({title:'Lead Detail',showBack:true})}<div class="scroll-view"><div class="scroll-content">
     <div style="padding:var(--sp-xxl);text-align:center;background:var(--card)">
       <h2 style="margin-bottom:var(--sp-sm)">${escapeHtml(l.name||l.phone||'Unknown')}</h2>
@@ -24,12 +25,12 @@ export default { async mount(el, params) {
       <button class="btn btn-primary btn-full" id="ld-convert">${icon('add',18,'white')} Convert to Member</button>
       <button class="btn btn-whatsapp btn-full" id="ld-wa">${icon('whatsapp',18,'white')} Send WhatsApp</button>
     </div>
-    ${l.transcript && l.transcript.length ? `<div style="padding:0 var(--sp-lg) var(--sp-lg)"><div class="card card-body">
+    ${messages.length ? `<div style="padding:0 var(--sp-lg) var(--sp-lg)"><div class="card card-body">
       <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">Conversation</div>
-      <div class="chat-container" style="padding:0">${l.transcript.map(m=>`<div class="chat-bubble ${m.role==='bot'?'bot':'incoming'}">${escapeHtml(m.content||m.text||'')}</div>`).join('')}</div>
+      <div class="chat-container" style="padding:0">${messages.map(m=>`<div class="chat-bubble ${m.sender==='bot'?'bot':'incoming'}">${escapeHtml(m.body||'')}</div>`).join('')}</div>
     </div></div>` : ''}
   </div></div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  el.querySelector('#ld-convert')?.addEventListener('click',()=>navigate.push('add-member'));
+  el.querySelector('#ld-convert')?.addEventListener('click',()=>navigate.push('add-member', { prefill: JSON.stringify({ name: l.name||'', phone: l.phone||'' }) }));
   el.querySelector('#ld-wa')?.addEventListener('click',()=>{ if(l.phone) window.open(`https://wa.me/${l.phone.replace(/\D/g,'')}`,'_blank'); });
 }};

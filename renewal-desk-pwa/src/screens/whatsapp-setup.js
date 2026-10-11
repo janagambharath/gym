@@ -30,7 +30,7 @@ export default { async mount(el) {
     // Hand off to the Meta embedded-signup page with the short-lived handshake token.
     const d = cfg.data || {};
     const base = window.location.origin;
-    const url = `${base}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(d.signup_handshake||'')}&gym_id=${d.gym_id||''}&gym_name=${encodeURIComponent(d.gym_name||'')}&meta_app_id=${encodeURIComponent(d.meta_app_id||'')}`;
+    const url = `${base}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(d.signup_handshake||'')}&config_id=${encodeURIComponent(d.config_id||'')}&meta_app_id=${encodeURIComponent(d.meta_app_id||'')}`;
     window.open(url, '_blank');
     showToast('Complete the Meta setup in the new tab, then return here.','success');
     btn.disabled = false; btn.innerHTML = `${icon('whatsapp',18,'white')} Start Setup`;

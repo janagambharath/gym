@@ -15,9 +15,9 @@ export default { async mount(el, params) {
   if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Not found</div></div>`; return; }
   const msgs = res.data.messages || [];
   scroll.innerHTML = `<div class="chat-container">${msgs.map(m=>`
-    <div class="chat-bubble ${m.role==='bot'?'bot':m.role==='customer'||m.role==='user'?'incoming':'outgoing'}">
-      ${escapeHtml(m.content||m.text||'')}
-      <div class="chat-bubble-time">${formatDateTime(m.timestamp||m.created_at)}</div>
+    <div class="chat-bubble ${m.sender==='bot'?'bot':m.sender==='customer'?'incoming':'outgoing'}">
+      ${escapeHtml(m.body||'')}
+      <div class="chat-bubble-time">${formatDateTime(m.created_at)}</div>
     </div>`).join('')}</div>`;
   scroll.scrollTop = scroll.scrollHeight;
   // Actions
