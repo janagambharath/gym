@@ -285,7 +285,7 @@ def register_campaign_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def list_templates():
-        campaign_type = request.args.get("campaign_type") or request.args.get("type")
+        campaign_type = request.args.get("campaign_type") or request.args.get("type") or request.args.get("purpose")
         templates = get_approved_templates(campaign_type)
         return jsonify({"success": True, "data": {"templates": templates}})
 

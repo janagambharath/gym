@@ -115,8 +115,39 @@ APPROVED_TEMPLATES: dict[str, dict[str, Any]] = {
 
 
 def get_approved_templates(campaign_type: str | None = None) -> list[dict[str, Any]]:
-    """Return approved templates filtered by campaign_type if provided."""
-    templates = list(APPROVED_TEMPLATES.values())
+    """Return templates that are auto-provisioned during WhatsApp signup.
+
+    Single source of truth: STANDARD_TEMPLATES in template_provisioning_service.
+    These are created in the gym's WABA via Meta Graph API during embedded
+    signup, so PWA and Android always show the same set.
+    """
+    from app.services.template_provisioning_service import STANDARD_TEMPLATES
+
+    # Map provisioned template names to campaign types for filtering
+    type_map = {
+        "renewal_reminder": "renewal",
+        "membership_renewal_reminder": "renewal",
+        "expired_member_reactivation_01": "recovery",
+        "gym_special_offer_01": "promotion",
+        "gym_announcement": "announcement",
+        "gym_announcement_01": "announcement",
+        "renewal_desk_test_01": "test",
+        "vynla_otp": "otp",
+    }
+    templates = []
+    for t in STANDARD_TEMPLATES:
+        body = next((c.get("text", "") for c in t.get("components", []) if c.get("type") == "BODY"), "")
+        header = next((c.get("text", "") for c in t.get("components", []) if c.get("type") == "HEADER"), "")
+        templates.append({
+            "id": t["name"],
+            "name": t["name"],
+            "title": header or t["name"].replace("_", " ").title(),
+            "category": t.get("category", ""),
+            "language": t.get("language", "en"),
+            "body": body,
+            "campaign_type": type_map.get(t["name"], "general"),
+            "status": "APPROVED",
+        })
     if campaign_type:
         templates = [t for t in templates if t.get("campaign_type") in (campaign_type, "test")]
     return templates
