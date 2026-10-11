@@ -80,11 +80,31 @@ export function CardSkeleton({ count = 1 }: { count?: number } = {}) {
   );
 }
 
+export function PillarCardSkeleton() {
+  return (
+    <View style={styles.pillarCardSkeleton}>
+      <View style={styles.row}>
+        <SkeletonLine width={40} height={40} />
+        <View style={styles.textBlock}>
+          <SkeletonLine width="45%" height={16} />
+          <SkeletonLine width="65%" height={12} />
+        </View>
+      </View>
+      <SkeletonLine width="30%" height={40} />
+      <SkeletonLine width="40%" height={14} />
+      <SkeletonLine width="50%" height={14} />
+    </View>
+  );
+}
+
 export function DashboardSkeleton() {
   return (
     <View style={styles.dashboardContainer}>
       <SkeletonLine width="50%" height={24} />
       <SkeletonLine width="70%" height={14} />
+      <PillarCardSkeleton />
+      <PillarCardSkeleton />
+      <PillarCardSkeleton />
       <View style={styles.metricsRow}>
         {[1, 2, 3, 4].map((i) => (
           <View key={i} style={styles.metricSkeleton}>
@@ -133,6 +153,15 @@ const styles = StyleSheet.create({
   metricsRow: {
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  pillarCardSkeleton: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    gap: spacing.sm,
+    minHeight: 190,
+    padding: spacing.lg,
   },
   row: {
     alignItems: 'center',

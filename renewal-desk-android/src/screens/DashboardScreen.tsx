@@ -16,13 +16,26 @@ import { OnboardingChecklistCard } from '../components/OnboardingChecklistCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
-import { Icon } from '../theme/icons';
+import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
 import { formatCurrency, formatDate, getDaysText, getMemberDisplayStatus } from '../types';
 
-type DashboardScreenProps = {
-  onLogout: () => void;
+const PILLAR_TONES: Record<'revenue' | 'retain' | 'recover', {
+  label: string;
+  title: string;
+  copy: string;
+  countLabel: string;
+  color: string;
+  surface: string;
+  icon: IconName;
+}> = {
+  revenue: { label: 'REVENUE', title: 'Revenue', copy: 'Grow existing value', countLabel: 'Opportunities', color: colors.success, surface: colors.successSurface, icon: 'trendUp' },
+  retain: { label: 'RETAIN', title: 'Retain', copy: 'Protect recurring revenue', countLabel: 'At-risk members', color: colors.warning, surface: colors.warningSurface, icon: 'shield' },
+  recover: { label: 'RECOVER', title: 'Recover', copy: 'Bring members back', countLabel: 'Inactive / expired', color: colors.critical, surface: colors.criticalSurface, icon: 'renewals' },
+};
+
+type DashboardScreenProps = {  onLogout: () => void;
   onNavigateMembers: () => void;
   onNavigatePayments?: () => void;
   onNavigateRenewals?: () => void;
@@ -191,6 +204,46 @@ export function DashboardScreen({
               </Text>
             </View>
 
+            {/* 🚀 Growth Engine — pillar cards at the top, mirrors the PWA */}
+            <View style={styles.growthSection}>
+              <View style={styles.growthHeading}>
+                <Text style={styles.growthEyebrow}>GROWTH ENGINE</Text>
+                <Text style={styles.growthTitle}>Where to focus next</Text>
+              </View>
+              {(['revenue', 'retain', 'recover'] as const).map((pillar) => {
+                const tone = PILLAR_TONES[pillar];
+                const values = rrrSummary?.pillars?.[pillar];
+                return (
+                  <TouchableOpacity
+                    key={pillar}
+                    style={[styles.pillarCard, { backgroundColor: tone.surface }]}
+                    onPress={onNavigateRrr}
+                    activeOpacity={0.85}
+                    accessibilityLabel={`${tone.title}: ${values?.count ?? 0} ${tone.countLabel}`}
+                  >
+                    <View style={styles.pillarTop}>
+                      <View style={styles.pillarIconWrap}>
+                        <Icon name={tone.icon} size={20} color={tone.color} />
+                      </View>
+                      <View style={styles.pillarHead}>
+                        <Text style={styles.pillarTitle}>{tone.title}</Text>
+                        <Text style={styles.pillarEyebrow}>{tone.copy}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.pillarCount}>{values?.count ?? 0}</Text>
+                    <Text style={styles.pillarCountLabel}>{tone.countLabel}</Text>
+                    <Text style={[styles.pillarPotential, { color: tone.color }]}>
+                      {formatCurrency(values?.potential_revenue ?? '0')} potential
+                    </Text>
+                    <View style={styles.pillarCta}>
+                      <Text style={[styles.pillarCtaText, { color: tone.color }]}>View members</Text>
+                      <Icon name="forward" size={14} color={tone.color} />
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             {/* 🚀 First Action Hero for New Gyms */}
             {data.total_active === 0 ? (
               <View style={styles.firstActionCard}>
@@ -269,11 +322,6 @@ export function DashboardScreen({
                   </Text>
                 </View>
                 <Icon name="forward" size={18} color={colors.brand} />
-              </View>
-              <View style={styles.rrrPillarCounts}>
-                <Text style={styles.rrrPillarText}>Revenue {rrrSummary?.pillars?.revenue?.count ?? '—'}</Text>
-                <Text style={styles.rrrPillarText}>Retain {rrrSummary?.pillars?.retain?.count ?? '—'}</Text>
-                <Text style={styles.rrrPillarText}>Recover {rrrSummary?.pillars?.recover?.count ?? '—'}</Text>
               </View>
             </TouchableOpacity>
 
@@ -954,6 +1002,87 @@ const styles = StyleSheet.create({
     fontSize: fontSize['4xl'],
     fontWeight: fontWeight.extrabold,
   },
+  // ─── Growth Engine pillar cards (mirrors PWA layout) ──────────────
+  growthSection: {
+    gap: spacing.sm,
+  },
+  growthHeading: {
+    marginBottom: spacing.xs,
+  },
+  growthEyebrow: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.extrabold,
+    letterSpacing: 1,
+  },
+  growthTitle: {
+    color: colors.text,
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.extrabold,
+    marginTop: spacing.xxs,
+  },
+  pillarCard: {
+    borderColor: colors.borderLight,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    gap: spacing.xs,
+    padding: spacing.lg,
+    ...shadows.sm,
+  },
+  pillarTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  pillarIconWrap: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    borderRadius: radius.md,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  pillarHead: {
+    flex: 1,
+  },
+  pillarTitle: {
+    color: colors.text,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.extrabold,
+  },
+  pillarEyebrow: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  pillarCount: {
+    color: colors.text,
+    fontSize: fontSize['5xl'],
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.extrabold,
+    marginTop: spacing.xs,
+  },
+  pillarCountLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+  },
+  pillarPotential: {
+    fontSize: fontSize.sm,
+    fontVariant: ['tabular-nums'],
+    fontWeight: fontWeight.bold,
+    marginTop: spacing.xxs,
+  },
+  pillarCta: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xxs,
+    marginTop: spacing.sm,
+  },
+  pillarCtaText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+  },
   gymName: {
     color: colors.textSecondary,
     flexShrink: 1,
@@ -1437,17 +1566,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.xs,
     marginTop: 3,
-  },
-  rrrPillarCounts: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  rrrPillarText: {
-    color: '#087B4A',
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.semibold,
   },
   firstActionHeader: {
     alignItems: 'center',
