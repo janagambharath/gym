@@ -1526,16 +1526,16 @@ function AppRoot() {
         <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
-            tabBarActiveTintColor: colors.brand,
-            tabBarInactiveTintColor: colors.muted,
+            tabBarActiveTintColor: colors.volt,
+            tabBarInactiveTintColor: 'rgba(255,255,255,0.55)',
             tabBarLabelStyle: {
               fontSize: fontSize.xs,
               fontWeight: fontWeight.semibold,
               marginTop: -2,
             },
             tabBarStyle: {
-              backgroundColor: colors.surface,
-              borderTopColor: colors.border,
+              backgroundColor: colors.brand,
+              borderTopColor: colors.brandDark,
               borderTopWidth: 1,
               height: Platform.OS === 'ios' ? 84 : 64 + Math.max(insets.bottom, 0),
               paddingBottom: Platform.OS === 'ios' ? 24 : Math.max(insets.bottom, 8),

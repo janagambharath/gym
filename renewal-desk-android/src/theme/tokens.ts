@@ -1,36 +1,38 @@
 /**
  * Renewal Desk Design System — Design Tokens
  *
- * "IRON & INK" — hand-crafted gym editorial system.
- * Warm paper, ink black, volt accent. No generic SaaS purple.
+ * Gradient blue + white. Clean, modern gym system.
  */
 
 // ─── Color Palette ───────────────────────────────────────────────────
 
 export const colors = {
-  // Brand — deep forest green + volt
-  brand: '#0A5C36',
-  brandDark: '#063A22',
-  brandLight: '#147A4A',
-  brandSubtle: '#E4F2E4',
+  // Brand — gradient blue
+  brand: '#1D6FDB',
+  brandDark: '#14489B',
+  brandLight: '#3B8BF6',
+  brandSubtle: '#DCEBFE',
+  // Gradient stops: #2B7FFF → #1D6FDB → #14489B (135deg)
+  // react-native-linear-gradient not installed — use colors.brand as solid fallback
+  brandGradient: ['#2B7FFF', '#1D6FDB', '#14489B'] as const,
   volt: '#D9F24F',
   voltDark: '#B8D42E',
 
-  // Surfaces — warm paper
-  background: '#F5F2EB',
-  card: '#FFFDF8',
-  surface: '#FFFDF8',
+  // Surfaces — clean white on soft blue-tinted background
+  background: '#F7FAFF',
+  card: '#FFFFFF',
+  surface: '#FFFFFF',
 
   // Text
-  text: '#16130E',
-  textSecondary: '#5C564A',
-  muted: '#A39C8B',
-  textInverse: '#FFFDF8',
+  text: '#0F1E33',
+  textSecondary: '#4A5D75',
+  muted: '#8CA0B8',
+  textInverse: '#FFFFFF',
 
   // Borders
-  border: '#E3DCCB',
-  borderLight: '#EFEADD',
-  borderFocus: '#16130E',
+  border: '#DCE6F2',
+  borderLight: '#EAF1F9',
+  borderFocus: '#1D6FDB',
 
   // Semantic — Success
   success: '#2D7A3D',
@@ -75,10 +77,10 @@ export const colors = {
   whatsapp: '#1FA855',
   whatsappDark: '#147A3E',
 
-  // Neutral shades (warmed)
-  gray50: '#FAF8F3',
-  gray100: '#F1EDE2',
-  gray200: '#E3DCCB',
+  // Neutral shades (cool, blue-tinted)
+  gray50: '#F7FAFF',
+  gray100: '#EFF4FA',
+  gray200: '#DCE6F2',
   gray300: '#CBD5E1',
   gray400: '#94A3B8',
   gray500: '#64748B',

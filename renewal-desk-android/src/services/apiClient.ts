@@ -483,6 +483,7 @@ export async function getWhatsAppConnectionStatus(): Promise<ApiResult<WhatsAppC
 export async function getWhatsAppOnboardingConfig(): Promise<ApiResult<{
   meta_app_id: string;
   config_id: string;
+  signup_handshake: string;
   gym_id: number;
   gym_name: string;
   supported_methods: { id: string; title: string; description: string; recommended: boolean }[];

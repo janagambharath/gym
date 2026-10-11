@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import * as WebBrowser from 'expo-web-browser';
 import { AppHeader } from '../components/AppHeader';
-import { connectWaba, getCachedSession, getWhatsAppOnboardingConfig } from '../services/apiClient';
+import { connectWaba, getWhatsAppOnboardingConfig } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
@@ -64,8 +64,8 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
         return;
       }
 
-      const { meta_app_id, config_id } = res.data;
-      if (!meta_app_id || !config_id) {
+      const { meta_app_id, config_id, signup_handshake } = res.data;
+      if (!meta_app_id || !config_id || !signup_handshake) {
         setState({
           phase: 'error',
           message: 'Meta App ID or Configuration ID is missing. Contact support.',
@@ -77,9 +77,8 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
       // The backend injects the correct META_APP_ID and META_CONFIG_ID into
       // the HTML. The page is served at a public (no-auth) route so the
       // WebView doesn't need to send Bearer tokens for the page load itself.
-      const session = getCachedSession();
-      const tokenParam = session?.accessToken ? `&token=${encodeURIComponent(session.accessToken)}` : '';
-      const pageUrl = `${config.apiBaseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?meta_app_id=${encodeURIComponent(meta_app_id)}&config_id=${encodeURIComponent(config_id)}${tokenParam}`;
+      // Never put the full access token in the URL — use the short-lived handshake.
+      const pageUrl = `${config.apiBaseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(signup_handshake)}&meta_app_id=${encodeURIComponent(meta_app_id)}&config_id=${encodeURIComponent(config_id)}`;
 
       setState({ phase: 'ready', url: pageUrl });
     }
