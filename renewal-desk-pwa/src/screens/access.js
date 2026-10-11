@@ -328,11 +328,7 @@ export default {
     bindHeaderEvents(el, {
       onBack: () => {
         if (refreshTimer) clearInterval(refreshTimer);
-        if (router.depth > 1) {
-          navigate.pop();
-        } else {
-          navigate.switchTab('home');
-        }
+        navigate.pop();
       },
       actions: [
         { icon: 'access', onClick: () => openCheckinModal() },

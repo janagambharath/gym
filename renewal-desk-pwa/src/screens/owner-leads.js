@@ -53,7 +53,7 @@ async function load(el) {
     bindLeadActions(el, leads);
   }
   renderList();
-  el.querySelector('#owner-back')?.addEventListener('click', () => navigate.switchTab('home'));
+  el.querySelector('#owner-back')?.addEventListener('click', () => navigate.pop());
   el.querySelector('#lead-add')?.addEventListener('click', () => el.querySelector('#lead-form-wrap')?.classList.remove('is-hidden'));
   el.querySelector('#lead-cancel')?.addEventListener('click', () => el.querySelector('#lead-form-wrap')?.classList.add('is-hidden'));
   el.querySelector('#lead-filter')?.addEventListener('click', event => {
