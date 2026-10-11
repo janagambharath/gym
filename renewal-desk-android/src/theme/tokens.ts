@@ -8,11 +8,11 @@
 // ─── Color Palette ───────────────────────────────────────────────────
 
 export const colors = {
-  // Brand — ink black + volt
-  brand: '#16130E',
-  brandDark: '#0C0A07',
-  brandLight: '#2A251C',
-  brandSubtle: '#F1F4DC',
+  // Brand — deep forest green + volt
+  brand: '#0A5C36',
+  brandDark: '#063A22',
+  brandLight: '#147A4A',
+  brandSubtle: '#E4F2E4',
   volt: '#D9F24F',
   voltDark: '#B8D42E',
 
