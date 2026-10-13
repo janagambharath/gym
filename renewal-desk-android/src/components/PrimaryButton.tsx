@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'danger' | 'success' | 'whatsapp';
 
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
   },
   textLg: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     textAlign: 'center' as const,
   },
   textMd: {

@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { colors, fontSize, fontWeight, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, spacing, fontFamily} from '../theme/tokens';
 
 type SectionHeaderProps = {
   title: string;
@@ -46,6 +46,6 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

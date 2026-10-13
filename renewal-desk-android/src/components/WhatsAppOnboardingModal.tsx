@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import * as WebBrowser from 'expo-web-browser';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { connectWaba, fetchWabaNumbers, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 
@@ -600,7 +600,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginLeft: spacing.sm,
   },
@@ -635,7 +635,7 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.textSecondary,
     textTransform: 'uppercase',
     marginBottom: spacing.sm,
@@ -684,7 +684,7 @@ const styles = StyleSheet.create({
   },
   methodTitle: {
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   methodDesc: {
@@ -704,7 +704,7 @@ const styles = StyleSheet.create({
   metaLaunchBtnText: {
     color: '#fff',
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginLeft: spacing.sm,
   },
   orDivider: {
@@ -712,7 +712,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: 'center',
     marginVertical: spacing.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   autoFetchBtn: {
     flexDirection: 'row',
@@ -729,7 +729,7 @@ const styles = StyleSheet.create({
   },
   autoFetchBtnText: {
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
   inputLabel: {
@@ -766,7 +766,7 @@ const styles = StyleSheet.create({
   saveBtnText: {
     color: '#fff',
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   btnDisabled: {
     opacity: 0.6,
@@ -811,7 +811,7 @@ const styles = StyleSheet.create({
   },
   webViewTitle: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   webViewCloseBtn: {

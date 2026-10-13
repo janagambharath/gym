@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { ErrorState } from '../components/ErrorState';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { apiRequest } from '../services/apiClient';
 import type {
   AccessEvent,
@@ -748,7 +748,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: colors.text,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     letterSpacing: -0.3,
   },
   headerRight: {
@@ -783,7 +783,7 @@ const styles = StyleSheet.create({
   },
   summaryNumber: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     letterSpacing: -0.5,
   },
   summaryLabel: {
@@ -836,7 +836,7 @@ const styles = StyleSheet.create({
   checkInBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   remoteUnlockNotice: {
     marginHorizontal: spacing.lg,
@@ -882,7 +882,7 @@ const styles = StyleSheet.create({
   retrySyncBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 
   // Device status bar
@@ -1030,7 +1030,7 @@ const styles = StyleSheet.create({
   },
   eventBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     letterSpacing: 0.5,
   },
   eventReason: {
@@ -1121,7 +1121,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   modalSearchBox: {
@@ -1166,7 +1166,7 @@ const styles = StyleSheet.create({
   candidateCheckInBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   modalEmptyText: {
     textAlign: 'center',
