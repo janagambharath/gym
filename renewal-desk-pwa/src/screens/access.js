@@ -85,6 +85,23 @@ export default {
               </div>
             </div>
 
+            ${s.adms_integration_id ? `
+            <!-- Direct Cloud (ADMS) Controls -->
+            <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);display:flex;flex-direction:column;gap:var(--sp-sm)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px">Direct Cloud Terminal</div>
+                <span style="font-size:10px;font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${s.adms_online ? '#dcfce7' : '#fee2e2'};color:${s.adms_online ? '#15803d' : '#b91c1c'}">
+                  ${s.adms_online ? 'ONLINE' : 'OFFLINE'}
+                </span>
+              </div>
+              ${s.adms_device_name ? `<div style="font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.adms_device_name)}</div>` : ''}
+              <div style="display:grid;grid-template-columns:1fr;gap:var(--sp-xs)">
+                <button class="btn btn-secondary btn-sm" id="btn-adms-sync" data-adms-id="${s.adms_integration_id}" style="font-size:var(--fs-xs);padding:6px 10px" ${s.adms_online ? '' : 'disabled'}>📥 Sync Users from Terminal</button>
+              </div>
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">Pulls the terminal's user list + fingerprint templates for backup.</p>
+            </div>
+            ` : ''}
+
             ${s.failed_commands > 0 ? `
               <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.3);display:flex;align-items:center;justify-content:space-between">
                 <div style="font-size:var(--fs-xs);color:#B45309;display:flex;align-items:center;gap:var(--sp-xs)">
@@ -255,10 +272,30 @@ export default {
         });
       }
 
+      // Sync users from Direct Cloud (ADMS) terminal
+      const admsSyncBtn = scroll.querySelector('#btn-adms-sync');
+      if (admsSyncBtn) {
+        admsSyncBtn.addEventListener('click', async () => {
+          const integrationId = admsSyncBtn.dataset.admsId;
+          admsSyncBtn.disabled = true;
+          admsSyncBtn.textContent = 'Syncing...';
+          const res = await apiRequest(`/api/mobile/v1/rrr/integrations/${integrationId}/adms/commands`, {
+            method: 'POST',
+            body: { action: 'sync_users' },
+          });
+          if (res.ok) {
+            showToast('Sync queued. Terminal will upload user list shortly.', 'success');
+          } else {
+            showToast(res.error?.message || 'Sync failed', 'error');
+          }
+          admsSyncBtn.disabled = false;
+          admsSyncBtn.textContent = '📥 Sync Users from Terminal';
+        });
+      }
+
       // Retry Failed Biometric Syncs
       scroll.querySelector('#btn-retry-sync')?.addEventListener('click', async () => {
-        const btn = scroll.querySelector('#btn-retry-sync');
-        if (btn) btn.disabled = true;
+        const btn = scroll.querySelector('#btn-retry-sync');        if (btn) btn.disabled = true;
         const res = await apiRequest('/api/mobile/v1/access/retry-sync', { method: 'POST' });
         if (res.ok) {
           showToast(res.data?.message || 'Commands queued for retry', 'success');

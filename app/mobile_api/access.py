@@ -69,6 +69,20 @@ def register_access_routes(bp):
             summary["failed_commands"] = 0
             summary["heartbeat_age_seconds"] = None
 
+        # Include direct ADMS integration status for the sync button.
+        from app.models.rrr import RRRIntegration
+        adms = RRRIntegration.query.filter_by(
+            gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if adms:
+            summary["adms_integration_id"] = adms.id
+            summary["adms_online"] = adms.status == "connected"
+            summary["adms_device_name"] = adms.device_name or adms.device_serial
+        else:
+            summary["adms_integration_id"] = None
+            summary["adms_online"] = False
+            summary["adms_device_name"] = None
+
         resp = jsonify({"success": True, "data": summary})
         resp.headers["Cache-Control"] = "no-store"
         return resp
