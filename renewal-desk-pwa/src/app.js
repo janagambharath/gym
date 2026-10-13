@@ -51,6 +51,7 @@ function registerScreens() {
 
   // Stack screens
   router.register('member-detail', () => import('./screens/member-detail.js'), { auth: true });
+  router.register('member-attendance', () => import('./screens/member-attendance.js'), { auth: true });
   router.register('add-member', () => import('./screens/add-member.js'), { auth: true });
   router.register('edit-member', () => import('./screens/edit-member.js'), { auth: true });
   router.register('renew-member', () => import('./screens/renew-member.js'), { auth: true });

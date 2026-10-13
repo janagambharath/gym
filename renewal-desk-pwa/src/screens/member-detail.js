@@ -157,6 +157,9 @@ export default {
               <button class="btn btn-outline btn-full" id="btn-toggle-access" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
                 ${icon('lock', 18)} <span id="btn-toggle-access-label">Block Biometric Access</span>
               </button>
+              <button class="btn btn-outline btn-full" id="btn-biometric-records" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
+                ${icon('clock', 18)} Biometric Records
+              </button>
               ${member.status !== 'deleted' ? `
                 <button class="btn btn-danger btn-full btn-sm" id="btn-deactivate" style="margin-top:var(--sp-md)">
                   ${icon('delete', 16, 'white')} Deactivate Member
@@ -276,6 +279,10 @@ export default {
         } else {
           showToast(res.error?.message || `Could not ${action} access`, 'error');
         }
+      });
+
+      el.querySelector('#btn-biometric-records')?.addEventListener('click', () => {
+        navigate.push('member-attendance', { id: member.id });
       });
 
       el.querySelector('#btn-freeze')?.addEventListener('click', async () => {
