@@ -278,11 +278,11 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
 
     # Also count ADMS attendance events (RRRAttendanceEvent) — these are the
     # punches from direct-cloud terminals that don't go through AccessEvent.
+    # Count ALL punches (including unmapped) — the terminal recorded them.
     from app.models.rrr import RRRAttendanceEvent
     adms_entries_today = RRRAttendanceEvent.query.filter(
         RRRAttendanceEvent.gym_id == gym_id,
         RRRAttendanceEvent.punch_time >= day_start_utc,
-        RRRAttendanceEvent.processing_status == "processed",
     ).count()
     entries_today = entries_today + adms_entries_today
 
