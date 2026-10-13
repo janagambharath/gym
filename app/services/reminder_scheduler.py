@@ -203,6 +203,15 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     gym.timezone or "Asia/Kolkata",
                 )
                 app.logger.info("Reminder scan for gym %s: %s", gym.id, result)
+                # RRR retention nudges: we-miss-you, attendance drop, win-back
+                try:
+                    from app.services.retention_service import run_retention_nudges_for_gym
+                    retention_result = run_retention_nudges_for_gym(
+                        gym.id, gym.timezone or "Asia/Kolkata",
+                    )
+                    app.logger.info("Retention nudges for gym %s: %s", gym.id, retention_result)
+                except Exception:
+                    app.logger.exception("Retention nudges failed for gym %s", gym.id)
                 try:
                     from app.services.push_notification_service import notify_expiring_members_daily
                     notify_expiring_members_daily(gym, result.get("sent", 0), expired_count)
