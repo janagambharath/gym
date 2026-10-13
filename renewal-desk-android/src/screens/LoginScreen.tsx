@@ -69,9 +69,9 @@ export function LoginScreen({ onLogin, onNavigateSignup, onNavigateMemberLogin }
                 resizeMode="contain"
               />
             </View>
-            <Text style={styles.brandTitle}>Renewal Desk</Text>
+            <Text style={styles.brandTitle}>RRR</Text>
             <Text style={styles.brandSubtitle}>
-              Your gym management command center
+              Gym Growth System
             </Text>
           </View>
 

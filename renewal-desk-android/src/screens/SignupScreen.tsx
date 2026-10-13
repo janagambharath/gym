@@ -108,8 +108,8 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
           <View style={styles.logoBadge}>
             <Icon name="fitness" size={28} color={colors.brand} />
           </View>
-          <Text style={styles.title}>Renewal Desk</Text>
-          <Text style={styles.subtitle}>Revenue Recovery System for Gyms</Text>
+          <Text style={styles.title}>RRR</Text>
+          <Text style={styles.subtitle}>Gym Growth System</Text>
         </View>
 
         {/* Step Indicator */}

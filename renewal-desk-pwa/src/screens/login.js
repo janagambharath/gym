@@ -16,8 +16,8 @@ export default {
           
           <!-- Branding -->
           <div style="text-align:center;margin-bottom:var(--sp-2xl)">
-            <img src="/icons/logo.png" alt="Renewal Desk" style="width:72px;height:72px;border-radius:var(--r-xxl);margin:0 auto var(--sp-md);display:block;object-fit:contain">
-            <h1 style="font-size:var(--fs-4xl);margin-bottom:var(--sp-xs)">Renewal Desk</h1>
+            <img src="/icons/logo.png" alt="RRR" style="width:72px;height:72px;border-radius:var(--r-xxl);margin:0 auto var(--sp-md);display:block;object-fit:contain">
+            <h1 style="font-size:var(--fs-4xl);margin-bottom:var(--sp-xs)">RRR</h1><p style="color:var(--muted);font-size:var(--fs-sm);margin:0">Gym Growth System</p>
             <p style="color:var(--muted);font-size:var(--fs-sm);margin:0">Your gym management command center</p>
           </div>
 
