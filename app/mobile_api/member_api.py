@@ -38,6 +38,7 @@ from app.models import (
     Gym,
     Member,
     MembershipPlan,
+    OtpAttempt,
     PaymentVerification,
     QRSettings,
     RenewalHistory,
@@ -82,9 +83,16 @@ def _is_reviewer_bypass_enabled() -> bool:
 
 
 def _token_secret() -> str:
+    # SECURITY (2026-10-13): fail closed. The previous hardcoded public
+    # fallback meant any deployment without SECRET_KEY/MOBILE_API_TOKEN_SECRET
+    # signed member tokens with a publicly known key. Production
+    # _validate_config already enforces SECRET_KEY >= 32 chars, so the
+    # RuntimeError below is only reachable in a broken dev/test setup.
     secret = current_app.config.get("MOBILE_API_TOKEN_SECRET", "")
     if not secret:
-        secret = current_app.config.get("SECRET_KEY", "renewal-desk-member-secret-key")
+        secret = current_app.config.get("SECRET_KEY", "")
+    if not secret:
+        raise RuntimeError("No token secret configured for the member API.")
     return secret
 
 
@@ -123,6 +131,56 @@ def _verify_otp_challenge(phone: str, otp: str, challenge: str) -> tuple[int, in
         return member_id, gym_id
     except Exception:
         return None
+
+
+# SECURITY (2026-10-13): server-side OTP guess budget. The 10/min/IP limiter
+# alone doesn't stop distributed guessing across many IPs against the
+# stateless HMAC challenge. Each challenge gets MAX_OTP_ATTEMPTS guesses
+# total, tracked by challenge hash, regardless of source IP.
+MAX_OTP_ATTEMPTS = 10
+
+
+def _otp_attempt_allowed(challenge: str) -> bool:
+    """Record a verify attempt for this challenge. False when the budget is exhausted."""
+    from sqlalchemy.exc import IntegrityError
+
+    challenge_hash = hashlib.sha256(challenge.encode()).hexdigest()
+    try:
+        expires_at_ts = int(challenge.split(".")[2])
+    except (IndexError, ValueError):
+        expires_at_ts = int(time.time()) + 600
+    expires_at = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc)
+
+    row = OtpAttempt.query.filter_by(challenge_hash=challenge_hash).first()
+    if row is None:
+        try:
+            with db.session.begin_nested():
+                db.session.add(
+                    OtpAttempt(
+                        challenge_hash=challenge_hash,
+                        attempts=1,
+                        expires_at=expires_at,
+                    )
+                )
+            return True
+        except IntegrityError:
+            # Lost a race with a concurrent first attempt — re-read.
+            row = OtpAttempt.query.filter_by(challenge_hash=challenge_hash).first()
+            if row is None:
+                return True
+    if row.attempts >= MAX_OTP_ATTEMPTS:
+        return False
+    # Atomic increment — safe under concurrent verifies.
+    OtpAttempt.query.filter_by(challenge_hash=challenge_hash).update(
+        {OtpAttempt.attempts: OtpAttempt.attempts + 1}
+    )
+    return True
+
+
+def cleanup_expired_otp_attempts() -> int:
+    """Delete expired OTP attempt rows. Run periodically alongside other cleanup."""
+    now = datetime.now(timezone.utc)
+    return OtpAttempt.query.filter(OtpAttempt.expires_at < now).delete()
 
 
 def member_token_required(view):
@@ -264,11 +322,22 @@ def request_otp():
                 db.session.add(member)
                 db.session.commit()
     else:
-        member = (
+        # SECURITY (2026-10-13): the phone-suffix lookup is gym-unscoped, so
+        # the same 10-digit suffix can match members in different gyms. Never
+        # silently pick .first() across gyms — the OTP would go to the wrong
+        # person's WhatsApp. Ambiguous matches are rejected explicitly.
+        matches = (
             Member.query.filter(Member.phone.endswith(phone[-10:]))
             .filter(Member.deleted_at.is_(None))
-            .first()
+            .all()
         )
+        gym_ids = {m.gym_id for m in matches}
+        if len(gym_ids) > 1:
+            return jsonify({
+                "success": False,
+                "error": "This number matches accounts at multiple gyms. Please contact your gym for your login code.",
+            }), 409
+        member = matches[0] if matches else None
 
     if not member:
         # Check if phone belongs to gym owner or staff (registered gym phone or business phone)
@@ -432,6 +501,10 @@ def verify_otp():
 
     # Verify challenge (HMAC-based, stateless, multi-worker safe)
     if challenge:
+        # SECURITY (2026-10-13): enforce the server-side guess budget before
+        # verifying — each challenge allows MAX_OTP_ATTEMPTS guesses total.
+        if not _otp_attempt_allowed(challenge):
+            return jsonify({"success": False, "error": "Too many incorrect attempts. Please request a new code."}), 429
         verified = _verify_otp_challenge(phone, otp, challenge)
         if verified:
             member_id, gym_id = verified
