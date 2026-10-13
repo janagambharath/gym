@@ -118,7 +118,11 @@ def _normalize_registration_payload(data: dict) -> tuple[dict, bool]:
         "country": country,
         "currency": data.get("currency") or default_currency,
         "timezone": data.get("timezone") or default_timezone,
-        "terms_accepted": True,
+        # SECURITY (2026-10-13): was hardcoded True, silently bypassing the
+        # terms check in _registration_error. Honor the client's actual
+        # acceptance — legacy clients that send terms_accepted=true keep
+        # working; others get the proper validation error.
+        "terms_accepted": data.get("terms_accepted") is True,
     }, True
 
 
@@ -242,10 +246,18 @@ def register_auth_routes(bp):
         if not id_token:
             return error_response("VALIDATION_ERROR", "Google ID token is required.", 400)
 
-        # Verify token with Google
+        # Verify token with Google.
+        # SECURITY (2026-10-13): POST the token in the request body — the old
+        # GET URL (...?id_token=...) leaked the ID token into proxy/access logs.
         try:
-            verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
-            req = urllib.request.Request(verify_url)
+            verify_url = "https://oauth2.googleapis.com/tokeninfo"
+            body = json_mod.dumps({"id_token": id_token}).encode()
+            req = urllib.request.Request(
+                verify_url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 google_data = json_mod.loads(resp.read().decode())
         except Exception:
@@ -280,6 +292,14 @@ def register_auth_routes(bp):
         # Check if user already exists → login
         existing_user = User.query.filter_by(email=google_email).first()
         if existing_user is not None:
+            # SECURITY (2026-10-13): the Google path previously skipped the
+            # account-lockout check that the password path enforces.
+            if existing_user.is_locked():
+                return error_response(
+                    "ACCOUNT_LOCKED",
+                    "Account is temporarily locked due to too many failed attempts.",
+                    403,
+                )
             if not existing_user.is_active:
                 return error_response("ACCOUNT_DISABLED", "Account is disabled.", 403)
             if existing_user.role not in ("gym_owner", "staff"):
@@ -539,6 +559,18 @@ def register_auth_routes(bp):
     def delete_account():
         user = g.current_user
         gym = user.gym
+
+        # SECURITY (2026-10-13): deleting a gym wipes every member, payment,
+        # and record irreversibly. Require password re-entry — a stolen or
+        # short-lived bearer token alone must not be enough.
+        data = request.get_json(silent=True) or {}
+        password = data.get("password", "")
+        if not password or not user.check_password(password):
+            return error_response(
+                "INVALID_PASSWORD",
+                "Password confirmation is required to delete your account.",
+                403,
+            )
 
         if user.role == "gym_owner" and gym:
             # Revoke all refresh tokens for all users belonging to this gym

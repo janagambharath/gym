@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from datetime import date, timedelta
 from urllib.parse import urljoin, urlparse
@@ -27,6 +28,8 @@ from app.utils.helpers import slugify
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+logger = logging.getLogger(__name__)
 
 _DUMMY_HASH = (
     "scrypt:32768:8:1$GQmmIBLE1bn1DV52"
@@ -62,6 +65,19 @@ def login():
             and submitted_email == default_admin_email
             and form.password.data == default_admin_pass
         ):
+            # SECURITY (2026-10-13): this env-password path bypasses the
+            # account lockout on every login and cannot be rotated without a
+            # redeploy. It is a deliberate break-glass, so every use is
+            # audited and logged at WARNING for alerting.
+            logger.warning(
+                "SECURITY: super-admin env-password bootstrap used for %s",
+                default_admin_email,
+            )
+            audit(
+                action="super_admin_env_bootstrap",
+                resource_type="user",
+                metadata={"email": default_admin_email},
+            )
             bootstrap_user = User.query.filter_by(email=default_admin_email).first()
             if not bootstrap_user:
                 bootstrap_user = User(
