@@ -168,6 +168,11 @@ function directPanel(direct, commands) {
         <button class="rrr-test-block" data-adms-action="block_test" ${connected ? '' : 'disabled'}>2. Test block</button>
         <button class="rrr-test-unblock" data-adms-action="unblock_test" ${connected ? '' : 'disabled'}>3. Test unblock</button>
       </div>
+      <div class="rrr-command-actions" style="margin-top:8px">
+        <button class="rrr-secondary-button" data-adms-action="delete_biodata_test" ${connected ? '' : 'disabled'}>4. Delete fingerprint only (BIODATA)</button>
+        <button class="rrr-secondary-button" data-adms-action="delete_fingertmp_test" ${connected ? '' : 'disabled'}>5. Delete fingerprint only (FINGERTMP)</button>
+      </div>
+      <p class="rrr-muted-copy">Tests 4-5 try to remove just the fingerprint template, keeping the user. If the punch fails but the user still shows in the terminal, we've cracked non-destructive blocking.</p>
       <p id="rrr-command-error" class="rrr-form-error" role="alert"></p>
     </section>
     ${commissionBox('direct', direct, commands)}

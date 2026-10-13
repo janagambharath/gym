@@ -119,6 +119,13 @@ def adms_command_text(
         # DELETE is the only proven block on X2008. Fingerprint templates
         # are backed up during sync_users and restored on unblock.
         return f"DATA DELETE USERINFO PIN={enroll_number}"
+    elif action in {"delete_biodata_test"}:
+        # Try deleting just the fingerprint template, keeping the user.
+        # Based on CMD_DELETE_USERTEMP / CMD_DEL_FPTMP in the TCP protocol.
+        return f"DATA DELETE BIODATA PIN={enroll_number}"
+    elif action in {"delete_fingertmp_test"}:
+        # Alternative template-delete command name.
+        return f"DATA DELETE FINGERTMP PIN={enroll_number}"
     elif action in {"unblock", "unblock_test"}:
         # Recreate the user. Fingerprint restore commands are queued
         # separately by queue_adms_membership_command.
