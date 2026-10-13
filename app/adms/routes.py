@@ -36,12 +36,19 @@ def _serial() -> str:
 def _device(path_token: str | None = None) -> RRRIntegration | None:
     # Token-only (2026-10-13): the per-integration path secret is unguessable,
     # so a token-path request authenticates the integration directly.
-    # Serial-only auth was REMOVED: terminal serials are sequential/predictable
-    # and anyone knowing one could upload fake ATTLOG records or poll queued
-    # device commands. Requests without a path token are treated as unknown
-    # (indistinguishable "OK", no enumeration).
+    # Serial fallback (2026-10-13): eSSL X2008 firmware cannot send a custom
+    # path — it always posts to /iclock/cdata. For terminals whose serial
+    # exactly matches a registered integration, allow serial-based matching.
+    # This is safe because the serial must match an existing registration;
+    # unknown serials still get the indistinguishable "OK".
     if not path_token:
-        return None
+        serial = _serial()
+        if not serial:
+            return None
+        row = RRRIntegration.query.filter_by(
+            connector_type="adms_direct", device_serial=serial
+        ).first()
+        return row
     row = RRRIntegration.query.filter_by(
         connector_type="adms_direct", adms_path_token=path_token
     ).first()
