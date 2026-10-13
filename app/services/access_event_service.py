@@ -330,12 +330,16 @@ def get_access_events(
     elif event_type == "denied":
         query = query.filter_by(event_type="ACCESS_DENIED")
 
-    # Filter by date (default: today)
-    if date_filter == "today" or date_filter is None:
+    # Filter by date (default: last 7 days, not just today)
+    if date_filter == "today":
         day_start_utc = utc_start_of_gym_day(gym_timezone)
         query = query.filter(AccessEvent.event_timestamp >= day_start_utc)
-    elif date_filter == "all":
-        pass  # No date filter
+    elif date_filter == "all" or date_filter is None:
+        # Show last 7 days by default so historical punches are visible
+        from datetime import timedelta
+        from app.models.mixins import utcnow
+        week_ago = utcnow() - timedelta(days=7)
+        query = query.filter(AccessEvent.event_timestamp >= week_ago)
 
     # Search by member name
     if search and search.strip():
@@ -355,13 +359,20 @@ def get_access_events(
     # Also include ADMS attendance events (from direct-cloud terminals).
     # These live in RRRAttendanceEvent, not AccessEvent.
     from app.models.rrr import RRRAttendanceEvent
+    from datetime import timedelta
     adms_query = RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
     
-    # Apply same date filter
-    if date_filter == "today" or date_filter is None:
+    # Apply same date filter — default to last 7 days (not just today)
+    # so historical punches are visible
+    if date_filter == "today":
         day_start_utc = utc_start_of_gym_day(gym_timezone)
         adms_query = adms_query.filter(RRRAttendanceEvent.punch_time >= day_start_utc)
-    # Note: date_filter == "all" means no filter
+    elif date_filter == "all" or date_filter is None:
+        # Show last 7 days by default (not just today)
+        week_ago = utcnow() - timedelta(days=7)
+        adms_query = adms_query.filter(RRRAttendanceEvent.punch_time >= week_ago)
+    # Note: date_filter == "all" means no filter — but we default to 7 days
+    # for performance
     
     # Apply event type filter (ADMS punches are entries)
     if event_type == "exit" or event_type == "denied":
