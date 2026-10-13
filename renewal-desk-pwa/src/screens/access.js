@@ -57,13 +57,32 @@ export default {
                 </div>
               </div>
 
-              <!-- Attendance is always explicit. Physical access commands appear only after device commissioning. -->
-              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border);display:grid;grid-template-columns:1fr;gap:var(--sp-sm)">
+              <!-- Attendance & Remote Physical Gate Control -->
+              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border);display:grid;grid-template-columns:${s.remote_unlock_available ? '1fr 1fr' : '1fr'};gap:var(--sp-sm)">
                 <button class="btn btn-primary" id="btn-open-checkin" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs)">
                   ${icon('access', 16, 'white')} + Check In
                 </button>
+                ${s.remote_unlock_available ? `
+                  <button class="btn" id="btn-remote-unlock" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs);background:#16a34a;color:white;border:none">
+                    🔓 Unlock Gate
+                  </button>
+                ` : ''}
               </div>
-              ${!s.remote_unlock_available ? `<p style="margin:var(--sp-sm) 0 0;font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.remote_unlock_reason || 'Physical remote unlock is not commissioned for this device.')}</p>` : ''}
+              ${!s.remote_unlock_available ? `<p style="margin:var(--sp-sm) 0 0;font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.remote_unlock_reason || 'Bridge PC is offline. Open RenewalDeskConnector on gym PC to enable remote unlock.')}</p>` : ''}
+            </div>
+
+            <!-- Hardware Bridge Controls -->
+            <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);display:flex;flex-direction:column;gap:var(--sp-sm)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px">Hardware Bridge Controls</div>
+                <span style="font-size:10px;font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${s.bridge_online ? '#dcfce7' : '#fee2e2'};color:${s.bridge_online ? '#15803d' : '#b91c1c'}">
+                  ${s.bridge_online ? 'BRIDGE ONLINE' : 'BRIDGE OFFLINE'}
+                </span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-xs)">
+                <button class="btn btn-secondary btn-sm" id="btn-reconcile-all" style="font-size:var(--fs-xs);padding:6px 10px">🔄 Re-sync Members</button>
+                <button class="btn btn-secondary btn-sm" id="btn-bridge-pairing" style="font-size:var(--fs-xs);padding:6px 10px">🔑 Pairing Code</button>
+              </div>
             </div>
 
             ${s.failed_commands > 0 ? `
@@ -178,6 +197,63 @@ export default {
 
       // Open Check In Modal
       scroll.querySelector('#btn-open-checkin')?.addEventListener('click', () => openCheckinModal());
+
+      // Remote Turnstile / Door Unlock
+      const unlockBtn = scroll.querySelector('#btn-remote-unlock');
+      if (unlockBtn) {
+        unlockBtn.addEventListener('click', async () => {
+          unlockBtn.disabled = true;
+          unlockBtn.textContent = 'Unlocking...';
+          const res = await apiRequest('/api/mobile/v1/access/remote-unlock', {
+            method: 'POST',
+            body: { delay_seconds: 5 },
+          });
+          if (res.ok) {
+            showToast('🔓 Turnstile / Door unlocked for 5s!', 'success');
+          } else {
+            showToast(res.error?.message || 'Could not unlock door', 'error');
+          }
+          unlockBtn.disabled = false;
+          unlockBtn.textContent = '🔓 Unlock Gate';
+        });
+      }
+
+      // Re-sync all members to biometric device
+      const recBtn = scroll.querySelector('#btn-reconcile-all');
+      if (recBtn) {
+        recBtn.addEventListener('click', async () => {
+          recBtn.disabled = true;
+          recBtn.textContent = 'Syncing...';
+          const res = await apiRequest('/api/mobile/v1/access/reconcile', { method: 'POST' });
+          if (res.ok) {
+            showToast(res.data?.message || 'Re-sync queued for device', 'success');
+            await loadData();
+          } else {
+            showToast(res.error?.message || 'Re-sync failed', 'error');
+          }
+          recBtn.disabled = false;
+          recBtn.textContent = '🔄 Re-sync Members';
+        });
+      }
+
+      // Generate Bridge Pairing Code
+      const pairBtn = scroll.querySelector('#btn-bridge-pairing');
+      if (pairBtn) {
+        pairBtn.addEventListener('click', async () => {
+          pairBtn.disabled = true;
+          const res = await apiRequest('/api/mobile/v1/settings/bridge/pairing-code', { method: 'POST' });
+          pairBtn.disabled = false;
+          if (res.ok && res.data?.pairing_code) {
+            await showConfirm({
+              title: 'Bridge Pairing Code',
+              message: `Your 6-digit pairing code is:\n\n${res.data.pairing_code}\n\nValid for 10 minutes. Enter this code into RenewalDeskConnector.exe on your gym PC to connect.`,
+              confirmText: 'Done',
+            });
+          } else {
+            showToast(res.error?.message || 'Could not generate pairing code', 'error');
+          }
+        });
+      }
 
       // Retry Failed Biometric Syncs
       scroll.querySelector('#btn-retry-sync')?.addEventListener('click', async () => {
