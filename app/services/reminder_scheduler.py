@@ -186,11 +186,11 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     )
             except Exception:
                 db.session.rollback()
+                app.logger.exception("Auto-expiry failed for gym %s", gym.id)
             finally:
                 # Heartbeat: prove we are alive so the short-TTL lock survives
                 # long runs but expires quickly if this worker dies.
                 _refresh_redis_lock(redis_url, _lock_ttl(app))
-                app.logger.exception("Auto-expiry failed for gym %s", gym.id)
                 continue
 
             if not gym.whatsapp_enabled:
