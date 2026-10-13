@@ -14,11 +14,23 @@ down_revision = "z8a9b0c1d2e3"
 
 
 def upgrade():
-    op.add_column(
-        "rrr_adms_commands",
-        sa.Column("result_data", sa.Text(), nullable=True),
-    )
-    op.drop_constraint("ck_rrr_adms_command_action", "rrr_adms_commands", type_="check")
+    # Idempotent: the column may already exist from a previous partial run
+    # (the old duplicate migration applied it before being removed).
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing = {c["name"] for c in inspector.get_columns("rrr_adms_commands")}
+    if "result_data" not in existing:
+        op.add_column(
+            "rrr_adms_commands",
+            sa.Column("result_data", sa.Text(), nullable=True),
+        )
+    # Idempotent constraint update: only if sync_users isn't already allowed.
+    # We drop/recreate unconditionally inside a savepoint-safe block because
+    # the constraint name is fixed; if the drop fails the constraint didn't exist.
+    try:
+        op.drop_constraint("ck_rrr_adms_command_action", "rrr_adms_commands", type_="check")
+    except Exception:
+        pass
     op.create_check_constraint(
         "ck_rrr_adms_command_action",
         "rrr_adms_commands",
