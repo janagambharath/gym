@@ -1,6 +1,6 @@
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import { PrimaryButton } from './PrimaryButton';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type ConfirmDialogProps = {
   visible: boolean;
@@ -98,6 +98,6 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

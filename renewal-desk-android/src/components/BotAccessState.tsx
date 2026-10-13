@@ -1,7 +1,7 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import type { ApiError } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type BotAccessStateProps = {
   error: ApiError;
@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     textAlign: 'center',
   },
 });

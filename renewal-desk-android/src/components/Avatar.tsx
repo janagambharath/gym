@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, fontWeight } from '../theme/tokens';
+import { colors, fontWeight, fontFamily} from '../theme/tokens';
 
 type AvatarProps = {
   name: string;
@@ -58,6 +58,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   text: {
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

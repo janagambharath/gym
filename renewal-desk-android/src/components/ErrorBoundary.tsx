@@ -1,6 +1,6 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 import { Icon } from '../theme/icons';
 
 interface Props {
@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: colors.textInverse,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   container: {
     alignItems: 'center',
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginBottom: spacing.xs,
     textAlign: 'center',
   },

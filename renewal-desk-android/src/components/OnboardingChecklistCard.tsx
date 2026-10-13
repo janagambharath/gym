@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { OnboardingProgressData, getOnboardingProgress } from '../services/apiClient';
 
 interface OnboardingChecklistCardProps {
@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
   progressBadgeText: {
     color: colors.brandDark,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   stepForwardWrap: {
     marginLeft: spacing.xs,
@@ -220,6 +220,6 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

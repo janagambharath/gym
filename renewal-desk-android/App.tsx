@@ -7,6 +7,17 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFonts } from 'expo-font';
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import {
+  Archivo_700Bold,
+  Archivo_800ExtraBold,
+} from '@expo-google-fonts/archivo';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
@@ -1590,6 +1601,25 @@ function AppRoot() {
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Archivo_700Bold,
+    Archivo_800ExtraBold,
+  });
+
+  if (!fontsLoaded) {
+    return (
+      <SafeAreaProvider>
+        <View style={[styles.splash, { backgroundColor: '#FAF6EF' }]}>
+          <ActivityIndicator size="large" color="#5B9BD5" />
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <ErrorBoundary>

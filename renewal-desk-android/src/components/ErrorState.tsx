@@ -1,5 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type ErrorStateProps = {
   message?: string;
@@ -42,7 +42,7 @@ const styles = StyleSheet.create({
   icon: {
     color: colors.critical,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   iconContainer: {
     alignItems: 'center',

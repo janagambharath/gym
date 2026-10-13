@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
 type MetricCardProps = {
   icon: React.ReactNode;
@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize['3xl'],
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.xxs,
   },
 });

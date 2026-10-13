@@ -1,6 +1,6 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, spacing, fontFamily} from '../theme/tokens';
 
 type AppHeaderProps = {
   title: string;
@@ -71,7 +71,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     textAlign: 'center',
   },
   titleContainer: {
