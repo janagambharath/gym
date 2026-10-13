@@ -281,12 +281,19 @@ class ConnectorLoop:
         else:
             receipt = existing_receipt
 
-        # ACK to the backend
+        # ACK to the backend. For sync_users, the message IS the terminal user
+        # list JSON — ship it as resultData so the backend can suggest
+        # enroll-number matches ("which terminal user is which member?").
+        result_data = None
+        if cmd.command_type == "sync_users" and receipt["status"] == "acked":
+            msg = receipt.get("message") or ""
+            result_data = msg if msg.strip().startswith("{") else None
         acked = self.api.ack_command(
             command_id=cmd.id,
             status=receipt["status"],
             error_message=receipt["message"] if receipt["status"] == "failed" else None,
             lease_token=cmd.lease_token,
+            result_data=result_data,
         )
 
         outcome = "OK" if receipt["status"] == "acked" else "FAILED"

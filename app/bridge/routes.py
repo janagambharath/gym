@@ -406,16 +406,21 @@ def command_ack(command_id: str):
     status = _payload_value(payload, "status", "Status")
     lease_token = _payload_value(payload, "leaseToken", "LeaseToken")
     error_message = _payload_value(payload, "errorMessage", "ErrorMessage")
+    # Optional JSON snapshot from data commands (sync_users terminal user list).
+    result_data = _payload_value(payload, "resultData", "ResultData")
     if not isinstance(status, str) or not isinstance(lease_token, str):
         return _json_error(422, "invalid_ack", "status and leaseToken are required.")
     if error_message is not None and not isinstance(error_message, str):
         return _json_error(422, "invalid_ack", "errorMessage must be text when supplied.")
+    if result_data is not None and not isinstance(result_data, str):
+        return _json_error(422, "invalid_ack", "resultData must be text when supplied.")
 
     accepted, error_code = acknowledge_command(
         command,
         status=status,
         lease_token=lease_token,
         error_message=error_message,
+        result_data=result_data,
     )
     if not accepted:
         return _json_error(409, error_code or "ack_conflict", "Command ACK was not accepted.")

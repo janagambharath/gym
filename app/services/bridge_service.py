@@ -469,6 +469,7 @@ def acknowledge_command(
     status: str,
     lease_token: str,
     error_message: str | None,
+    result_data: str | None = None,
 ) -> tuple[bool, str | None]:
     """Apply a bridge ACK.  Returns ``(accepted, error_code)``."""
 
@@ -504,6 +505,6 @@ def acknowledge_command(
             command.status = "pending"
             command.last_error = note
         return True, None
-    command.acknowledge(status, error_message)
+    command.acknowledge(status, error_message, result_data=result_data)
     return True, None
 

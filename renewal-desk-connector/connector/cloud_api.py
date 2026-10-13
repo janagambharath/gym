@@ -129,13 +129,15 @@ class CloudApiClient:
             return []
 
     def ack_command(self, command_id: str, status: str, error_message: str | None,
-                    lease_token: str) -> bool:
+                    lease_token: str, result_data: str | None = None) -> bool:
         """POST /api/bridge/v1/commands/{id}/ack"""
         payload = {
             "status": status,
             "errorMessage": error_message,
             "leaseToken": lease_token,
         }
+        if result_data:
+            payload["resultData"] = result_data
         return self._post(f"/api/bridge/v1/commands/{command_id}/ack", payload)
 
     def confirm_enrollment(self, member_id: str, enroll_number: str,

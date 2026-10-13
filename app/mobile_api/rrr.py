@@ -503,3 +503,72 @@ def register_rrr_routes(bp):
             )
         db.session.commit()
         return jsonify({"success": True, "data": {"command": _adms_command_payload(command)}}), 201
+
+    # ── Smart enroll matching ──────────────────────────────────────────
+    # Terminal already has users enrolled (names typed on the device)? Don't
+    # type each enroll ID by hand: scan the terminal, get name-matched
+    # suggestions, confirm with one tap per member.
+
+    @bp.post("/rrr/enroll-scan")
+    @limiter.limit("10 per hour")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def enroll_scan():
+        """Queue a sync_users command: the connector snapshots the terminal's
+        user list (enroll number + name) and ships it back on the ack."""
+        from app.models.bridge import BridgeCommand, BridgeInstallation
+
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
+        if not bridge:
+            return error_response("NOT_FOUND", "No paired bridge for this gym. Pair the PC connector first.", 404)
+        cmd = BridgeCommand(
+            bridge_id=bridge.id,
+            gym_id=g.gym_id,
+            command_type="sync_users",
+            enroll_number="SYSTEM",
+        )
+        db.session.add(cmd)
+        db.session.commit()
+        return jsonify({"success": True, "data": {
+            "command_id": cmd.id,
+            "message": "Scan queued. The connector will read the terminal's user list (~10s). Then open match suggestions.",
+        }}), 201
+
+    @bp.get("/rrr/enroll-matches")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def enroll_matches():
+        """Fuzzy-match the terminal user snapshot against unlinked members."""
+        from app.services import enroll_match_service
+
+        result = enroll_match_service.suggest_matches(g.gym_id)
+        return jsonify({"success": True, "data": result})
+
+    @bp.post("/rrr/enroll-matches/confirm")
+    @limiter.limit("60 per hour")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def enroll_match_confirm():
+        """One-tap confirm: link a member to a terminal enroll number."""
+        from app.services import enroll_match_service
+
+        data = request.get_json(silent=True) or {}
+        try:
+            member_id = int(data.get("member_id"))
+        except (TypeError, ValueError):
+            return error_response("VALIDATION_ERROR", "member_id is required.", 422)
+        enroll_number = str(data.get("enroll_number") or "").strip()
+        if not enroll_number:
+            return error_response("VALIDATION_ERROR", "enroll_number is required.", 422)
+        try:
+            member = enroll_match_service.confirm_match(
+                g.gym_id, member_id, enroll_number, g.user_id
+            )
+        except ValueError as exc:
+            return error_response("CONFLICT", str(exc), 409)
+        return jsonify({"success": True, "data": {
+            "member_id": member.id,
+            "member_name": member.full_name,
+            "enroll_number": member.device_enroll_number,
+            "message": f"{member.full_name} linked to terminal user {member.device_enroll_number}.",
+        }})

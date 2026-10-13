@@ -154,6 +154,9 @@ class BridgeCommand(TimestampMixin, db.Model):
     lease_expires_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     acknowledged_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_error = db.Column(db.Text, nullable=True)
+    # JSON snapshot returned by the connector for data commands (sync_users).
+    # Powers the smart enroll-number matching ("which terminal user is which member?").
+    result_data = db.Column(db.Text, nullable=True)
 
     bridge = db.relationship("BridgeInstallation", back_populates="commands")
     member = db.relationship("Member", back_populates="bridge_commands")
@@ -167,10 +170,13 @@ class BridgeCommand(TimestampMixin, db.Model):
         self.delivery_attempts += 1
         self.last_error = None
 
-    def acknowledge(self, status: str, error_message: str | None = None) -> None:
+    def acknowledge(self, status: str, error_message: str | None = None, result_data: str | None = None) -> None:
         self.status = status
         self.acknowledged_at = utcnow()
         self.last_error = (error_message or "").strip()[:1000] or None
+        if result_data:
+            # Cap stored snapshots at ~256KB (a 3k-user terminal is ~150KB JSON).
+            self.result_data = result_data[:262144]
         self.lease_token = None
         self.lease_expires_at = None
 
