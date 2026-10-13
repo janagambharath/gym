@@ -16,7 +16,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member } from '../types';
 import { formatDate, getDaysText, getMemberDisplayStatus } from '../types';
 
@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
   countText: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   daysText: {
     fontSize: fontSize.sm,
@@ -329,7 +329,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: colors.text,
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   memberDetail: {
     color: colors.muted,
@@ -409,7 +409,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     flex: 1,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   skeletonContainer: {
     gap: spacing.md,

@@ -20,7 +20,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiRequest, uploadPaymentQrImage } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
 type PaymentSettingsData = {
   upi_id?: string | null;
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   switchTitle: {
     color: colors.text,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   switchSubtitle: {
     color: colors.textSecondary,
@@ -400,7 +400,7 @@ const styles = StyleSheet.create({
   previewTitle: {
     color: colors.textSecondary,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     letterSpacing: 0.5,
     marginBottom: spacing.sm,
     textTransform: 'uppercase',

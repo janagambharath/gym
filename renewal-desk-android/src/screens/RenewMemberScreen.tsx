@@ -17,7 +17,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Payment, Plan } from '../types';
 import { formatCurrency, formatDate, getCurrencySymbol, getMemberDisplayStatus } from '../types';
 
@@ -589,7 +589,7 @@ const styles = StyleSheet.create({
   memberCardName: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   memberCardPlan: {
     color: colors.muted,
@@ -647,7 +647,7 @@ const styles = StyleSheet.create({
   paymentStatusTitle: {
     color: colors.statusExpiring,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   safeArea: {
     backgroundColor: colors.background,
@@ -694,7 +694,7 @@ const styles = StyleSheet.create({
   successExpiry: {
     color: colors.statusPending,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginBottom: spacing.sm,
     marginTop: spacing.sm,
   },
@@ -718,7 +718,7 @@ const styles = StyleSheet.create({
   successMemberName: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   successMemberPlan: {
     color: colors.muted,
@@ -789,13 +789,13 @@ const styles = StyleSheet.create({
   successTitle: {
     color: colors.text,
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     textAlign: 'center',
   },
   totalLabel: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   totalRow: {
     alignItems: 'center',
@@ -809,7 +809,7 @@ const styles = StyleSheet.create({
   totalValue: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     fontVariant: ['tabular-nums'],
   },
   renewalStatusCard: {
@@ -863,7 +863,7 @@ const styles = StyleSheet.create({
   planChipName: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   planChipNameSelected: {
     color: colors.brand,
@@ -876,7 +876,7 @@ const styles = StyleSheet.create({
   },
   planChipPriceSelected: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   planChipDuration: {
     color: colors.muted,
@@ -904,7 +904,7 @@ const styles = StyleSheet.create({
   catalogPriceValue: {
     color: colors.muted,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     textDecorationLine: 'line-through',
   },
   inputContainer: {
@@ -928,14 +928,14 @@ const styles = StyleSheet.create({
   currencyPrefix: {
     color: colors.brand,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginRight: spacing.xs,
   },
   currencyTextInput: {
     color: colors.text,
     flex: 1,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     paddingVertical: spacing.sm,
   },
   derivedRow: {
@@ -970,7 +970,7 @@ const styles = StyleSheet.create({
   },
   presetChipTextActive: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   derivedLabel: {
     color: colors.textSecondary,
@@ -979,7 +979,7 @@ const styles = StyleSheet.create({
   derivedValue: {
     color: colors.successDark,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   savingsPill: {
     backgroundColor: colors.successSurface,
@@ -992,7 +992,7 @@ const styles = StyleSheet.create({
   savingsPillText: {
     color: colors.successDark,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   noteContainer: {
     marginTop: spacing.md,
@@ -1036,7 +1036,7 @@ const styles = StyleSheet.create({
   },
   routeTabTextActive: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   routeInfoBox: {
     alignItems: 'flex-start',
@@ -1055,7 +1055,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   boldText: {
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   offlineMethodsBox: {
     gap: spacing.sm,

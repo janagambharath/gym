@@ -18,7 +18,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Payment, PaymentsResponse, PaymentDashboardSummary } from '../types';
 import { formatCurrency, formatDate } from '../types';
 
@@ -456,7 +456,7 @@ const styles = StyleSheet.create({
   actionBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   actionRow: {
     flexDirection: 'row',
@@ -466,11 +466,11 @@ const styles = StyleSheet.create({
   amount: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     fontVariant: ['tabular-nums'],
   },
   boldText: {
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   cancelBtn: {
     backgroundColor: colors.surface,
@@ -516,7 +516,7 @@ const styles = StyleSheet.create({
   },
   channelBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   channelChip: {
     backgroundColor: colors.surface,
@@ -537,7 +537,7 @@ const styles = StyleSheet.create({
   },
   channelChipTextSelected: {
     color: colors.textInverse,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   channelFilterRow: {
     flexDirection: 'row',
@@ -553,7 +553,7 @@ const styles = StyleSheet.create({
   countBadgeText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   detailsRow: {
     alignItems: 'center',
@@ -592,7 +592,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: colors.text,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   listContent: {
     gap: spacing.md,
@@ -602,7 +602,7 @@ const styles = StyleSheet.create({
   memberName: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   metaBadgeText: {
     color: colors.muted,
@@ -704,7 +704,7 @@ const styles = StyleSheet.create({
   rejectBtnText: {
     color: colors.critical,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   safeArea: {
     backgroundColor: colors.background,
@@ -719,7 +719,7 @@ const styles = StyleSheet.create({
   savingsPillText: {
     color: '#15803D',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   skeletonContainer: {
     gap: spacing.md,
@@ -756,7 +756,7 @@ const styles = StyleSheet.create({
   summaryLabel: {
     color: 'rgba(255, 255, 255, 0.8)',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     letterSpacing: 0.5,
   },
   summaryRow: {
@@ -771,7 +771,7 @@ const styles = StyleSheet.create({
   summarySmallValue: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: 2,
   },
   summarySubtext: {
@@ -782,7 +782,7 @@ const styles = StyleSheet.create({
   summaryValue: {
     color: colors.textInverse,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     fontVariant: ['tabular-nums'],
     marginTop: 4,
   },
