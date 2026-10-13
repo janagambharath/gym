@@ -121,7 +121,10 @@ def adms_command_text(
         priority = "0"
     else:
         raise ValueError(f"Unknown ADMS command action: {action!r}")
-    return f"DATA UPDATE USERINFO PIN={enroll_number}\tPri={priority}"
+    # Include Name to ensure the X2008 applies the full record update;
+    # partial PIN+Pri updates are ignored on some firmware.
+    name = (member_name or "Test User")[:24]
+    return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri={priority}"
 
 
 def resolve_adms_enroll_number(member: Member) -> str | None:
