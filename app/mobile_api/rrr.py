@@ -798,6 +798,11 @@ def register_rrr_routes(bp):
         """Restore all soft-deleted members for this gym (undo bulk delete)."""
         from app.models.member import Member
         from app.services.audit_service import audit
+        from app.services.reminder_service import today_for_gym
+        from app.models.gym import Gym
+
+        gym = Gym.query.get(g.gym_id)
+        local_today = today_for_gym(gym.timezone or "Asia/Kolkata") if gym else None
 
         members = Member.query.filter(
             Member.gym_id == g.gym_id,
@@ -807,8 +812,11 @@ def register_rrr_routes(bp):
         restored = 0
         for m in members:
             m.deleted_at = None
-            if m.status == "deleted":
-                m.status = "active"  # Will be re-evaluated by scheduler
+            # Set correct status based on membership end date
+            if m.membership_end and local_today and m.membership_end < local_today:
+                m.status = "expired"
+            elif m.status == "deleted":
+                m.status = "active"
             restored += 1
 
         db.session.commit()
