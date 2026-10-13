@@ -280,10 +280,10 @@ def register_rrr_routes(bp):
             return error_response("DEVICE_OFFLINE", "Wait until the terminal is connected before queuing a test.", 409)
         payload = request.get_json(silent=True) or {}
         action = str(payload.get("action") or "").strip().lower()
-        if action not in {"probe_info", "block_test", "unblock_test"}:
-            return error_response("VALIDATION_ERROR", "action must be probe_info, block_test, or unblock_test.", 422)
+        if action not in {"probe_info", "block_test", "unblock_test", "sync_users"}:
+            return error_response("VALIDATION_ERROR", "action must be probe_info, block_test, unblock_test, or sync_users.", 422)
         enroll_number = None
-        if action != "probe_info":
+        if action not in {"probe_info", "sync_users"}:
             enroll_number = str(payload.get("test_enroll_number") or "").strip()
             if not re.fullmatch(r"[1-9][0-9]{0,8}", enroll_number):
                 return error_response("VALIDATION_ERROR", "test_enroll_number must be a 1–9 digit number.", 422)
