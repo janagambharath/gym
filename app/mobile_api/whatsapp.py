@@ -10,7 +10,7 @@ from app.extensions import db, limiter
 import requests
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.mobile_api.token_service import create_handshake_token, decode_handshake_token
+from app.mobile_api.token_service import consume_handshake_token, create_handshake_token
 from app.models import Member, QRSettings, ReminderLog, User
 from app.services.audit_service import audit
 from app.services.error_messages import friendly_error
@@ -50,7 +50,10 @@ def whatsapp_handshake_or_token_required(view):
     def wrapped(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            payload = decode_handshake_token(
+            # Single-use (2026-10-13): consume_handshake_token atomically
+            # records first use — replays return None and fall through to
+            # the standard access-token flow, which rejects them.
+            payload = consume_handshake_token(
                 auth_header[7:], "whatsapp_embedded_signup"
             )
             if payload is not None:
