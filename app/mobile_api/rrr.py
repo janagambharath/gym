@@ -622,3 +622,75 @@ def register_rrr_routes(bp):
             "enroll_number": member.device_enroll_number,
             "message": f"{member.full_name} linked to terminal user {member.device_enroll_number}.",
         }})
+
+    @bp.post("/rrr/enroll-matches/auto-link")
+    @limiter.limit("30 per hour")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def enroll_match_auto_link():
+        """Automatically link high-confidence matches (e.g., spacing differences)."""
+        from app.services import enroll_match_service
+
+        result = enroll_match_service.auto_link_high_confidence(g.gym_id, g.user_id)
+        return jsonify({"success": True, "data": result})
+
+    @bp.get("/rrr/member/<int:member_id>/attendance")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def member_attendance_history(member_id: int):
+        """Per-member punch history from the biometric terminal."""
+        from app.models.member import Member
+        from app.models.rrr import RRRAttendanceEvent
+
+        member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
+        if not member or member.deleted_at:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+
+        # Get pagination params
+        page = max(1, int(request.args.get("page", 1)))
+        per_page = min(100, max(10, int(request.args.get("per_page", 30))))
+
+        query = RRRAttendanceEvent.query.filter_by(
+            gym_id=g.gym_id, member_id=member_id
+        ).order_by(RRRAttendanceEvent.punch_time.desc())
+
+        total = query.count()
+        events = query.offset((page - 1) * per_page).limit(per_page).all()
+
+        # Summary stats
+        from datetime import datetime, timezone
+        from sqlalchemy import func
+        thirty_days_ago = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Use date comparison
+        recent_count = RRRAttendanceEvent.query.filter(
+            RRRAttendanceEvent.gym_id == g.gym_id,
+            RRRAttendanceEvent.member_id == member_id,
+            RRRAttendanceEvent.punch_time >= thirty_days_ago,
+        ).count()
+
+        return jsonify({"success": True, "data": {
+            "member": {
+                "id": member.id,
+                "name": member.full_name,
+                "enroll_number": member.device_enroll_number,
+                "status": member.status,
+            },
+            "events": [{
+                "id": e.id,
+                "punch_time": e.punch_time.isoformat() if e.punch_time else None,
+                "device_serial": e.device_serial,
+                "verify_method": e.verify_method,
+                "direction": e.direction,
+                "source": e.source,
+            } for e in events],
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": (total + per_page - 1) // per_page,
+            },
+            "stats": {
+                "total_punches": total,
+                "last_30_days": recent_count,
+            },
+        }})

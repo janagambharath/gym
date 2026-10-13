@@ -21,16 +21,27 @@ from app.services.audit_service import audit
 # Minimum similarity (0-1) for a suggestion to be shown.
 MATCH_THRESHOLD = 0.55
 
+# Minimum similarity for AUTOMATIC linking (no manual confirmation).
+# "jhon carl" vs "jhoncarl" = 0.94, so this catches spacing differences.
+AUTO_LINK_THRESHOLD = 0.90
+
 
 def _normalize_name(name: str | None) -> str:
-    """Lowercase, collapse whitespace — for fuzzy comparison."""
-    return " ".join((name or "").lower().split())
+    """Lowercase, remove ALL whitespace — for fuzzy comparison.
+    
+    "jhon carl" and "jhoncarl" both become "jhoncarl" for exact matching,
+    while SequenceMatcher still handles typos and partial matches.
+    """
+    return "".join((name or "").lower().split())
 
 
 def _similarity(a: str, b: str) -> float:
     a, b = _normalize_name(a), _normalize_name(b)
     if not a or not b:
         return 0.0
+    # Exact match after normalization (handles spacing differences)
+    if a == b:
+        return 1.0
     return SequenceMatcher(None, a, b).ratio()
 
 
@@ -174,6 +185,53 @@ def suggest_matches(gym_id: int) -> dict:
             "snapshot": {"command_id": snapshot["command_id"],
                          "acknowledged_at": snapshot["acknowledged_at"],
                          "terminal_user_count": len(snapshot["users"])}}
+
+
+def auto_link_high_confidence(gym_id: int, actor_id: int | None = None) -> dict:
+    """Automatically link terminal users to members with very high name similarity.
+    
+    This handles cases like "jhon carl" (app) vs "jhoncarl" (terminal) —
+    after normalization they're identical, so we can safely auto-link.
+    
+    Returns {"linked": [...], "skipped": [...]}.
+    Only links when similarity >= AUTO_LINK_THRESHOLD (0.90).
+    """
+    result = suggest_matches(gym_id)
+    if result.get("error"):
+        return {"linked": [], "skipped": [], "error": result["error"]}
+    
+    linked = []
+    skipped = []
+    
+    for sugg in result["suggestions"]:
+        if sugg["confidence"] >= AUTO_LINK_THRESHOLD * 100:
+            try:
+                member = confirm_match(
+                    gym_id=gym_id,
+                    member_id=sugg["member_id"],
+                    enroll_number=sugg["enroll_number"],
+                    actor_id=actor_id or 0,
+                )
+                linked.append({
+                    "enroll_number": sugg["enroll_number"],
+                    "member_name": sugg["member_name"],
+                    "confidence": sugg["confidence"],
+                })
+            except ValueError as e:
+                skipped.append({
+                    "enroll_number": sugg["enroll_number"],
+                    "reason": str(e),
+                })
+        else:
+            skipped.append({
+                "enroll_number": sugg["enroll_number"],
+                "terminal_name": sugg["terminal_name"],
+                "member_name": sugg["member_name"],
+                "confidence": sugg["confidence"],
+                "reason": "below auto-link threshold, needs manual confirm",
+            })
+    
+    return {"linked": linked, "skipped": skipped}
 
 
 def confirm_match(gym_id: int, member_id: int, enroll_number: str, actor_id: int) -> Member:
