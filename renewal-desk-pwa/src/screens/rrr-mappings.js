@@ -21,6 +21,11 @@ async function load(el) {
     <header class="rrr-header"><button id="rrr-back">← Integrations</button><div class="rrr-brand"><b>RRR</b><span>Biometric mapping review</span></div></header>
     <h1>Unmapped punches</h1>
     <p>Mapping an external biometric ID to the correct member replays all retained punches for that ID.</p>
+    <div style="margin: 12px 0;">
+      <button id="rrr-auto-link" style="background: #10b981; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; cursor: pointer;">✨ Auto-Link High-Confidence Matches</button>
+      <p style="font-size: 13px; color: #666; margin-top: 8px;">Automatically links biometric IDs to members when names match 90%+ (e.g., "jhon carl" = "jhoncarl")</p>
+    </div>
+    <div id="rrr-auto-link-result" style="margin: 12px 0;"></div>
     <label class="rrr-search">Search members<input id="rrr-member-search" type="search" placeholder="Type a name or phone…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     <p id="rrr-search-meta" class="rrr-muted-copy"></p>
     <section class="rrr-panel" id="rrr-groups">${groupsHtml(groups, [])}</section>
@@ -33,6 +38,32 @@ async function load(el) {
     searchTimer = setTimeout(() => refreshMembers(el, groups, searchInput.value.trim()), 300);
   });
   await refreshMembers(el, groups, '');
+  
+  // Auto-link button handler
+  el.querySelector('#rrr-auto-link')?.addEventListener('click', async () => {
+    const btn = el.querySelector('#rrr-auto-link');
+    const resultDiv = el.querySelector('#rrr-auto-link-result');
+    btn.disabled = true;
+    btn.textContent = 'Linking...';
+    resultDiv.innerHTML = '<p>Finding high-confidence matches...</p>';
+    try {
+      const res = await apiRequest('/api/mobile/v1/rrr/enroll-matches/auto-link', { method: 'POST' });
+      if (res.ok) {
+        const linked = res.data.linked || [];
+        resultDiv.innerHTML = `<p style="color: #10b981; font-weight: 600;">✓ Auto-linked ${linked.length} member(s): ${linked.map(l => esc(l.member_name)).join(', ') || 'none'}</p>`;
+        // Reload the page to show updated mappings
+        setTimeout(() => load(el), 1500);
+      } else {
+        resultDiv.innerHTML = `<p style="color: #ef4444;">Failed: ${esc(res.error || 'Unknown error')}</p>`;
+        btn.disabled = false;
+        btn.textContent = '✨ Auto-Link High-Confidence Matches';
+      }
+    } catch (e) {
+      resultDiv.innerHTML = `<p style="color: #ef4444;">Error: ${esc(e.message)}</p>`;
+      btn.disabled = false;
+      btn.textContent = '✨ Auto-Link High-Confidence Matches';
+    }
+  });
 }
 
 function groupById(events) {
