@@ -20,7 +20,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import type { ApiError } from '../services/apiClient';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { BotConfig, BotConfigResponse, BotConfigUpdate, BotFAQ } from '../types';
 
 type BotSetupScreenProps = {
@@ -623,7 +623,7 @@ const styles = StyleSheet.create({
   },
   faqStatusText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   fieldLabel: {
     color: colors.textSecondary,
@@ -704,7 +704,7 @@ const styles = StyleSheet.create({
   statusTitle: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   successNotice: {
     backgroundColor: colors.successSurface,
@@ -753,7 +753,7 @@ const styles = StyleSheet.create({
   templateChipText: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   faqHeaderRow: {
     flexDirection: 'row',
@@ -765,7 +765,7 @@ const styles = StyleSheet.create({
   prebuiltFaqHeading: {
     color: colors.textSecondary,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginBottom: spacing.xs,
   },
 });

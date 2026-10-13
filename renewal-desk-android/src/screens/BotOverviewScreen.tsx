@@ -16,7 +16,7 @@ import { AppHeader } from '../components/AppHeader';
 import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { BotConfig, BotConfigResponse, BotFAQ, BotStats } from '../types';
 
 type BotOverviewScreenProps = {
@@ -484,7 +484,7 @@ const styles = StyleSheet.create({
   attentionTitle: {
     color: colors.warningDark,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   bottomActionCell: {
     flex: 1,
@@ -523,7 +523,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.xl,
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   content: {
     gap: spacing.lg,
@@ -572,7 +572,7 @@ const styles = StyleSheet.create({
   inboxTitle: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   introText: {
     color: colors.textSecondary,
@@ -591,7 +591,7 @@ const styles = StyleSheet.create({
   },
   knowledgeBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: 0.3,
   },
   knowledgeDetail: {
@@ -658,7 +658,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize['2xl'],
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.sm,
   },
   operationCard: {
@@ -700,7 +700,7 @@ const styles = StyleSheet.create({
   operationTitle: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   refreshButton: {
     alignItems: 'center',

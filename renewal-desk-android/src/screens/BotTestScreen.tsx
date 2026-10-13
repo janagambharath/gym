@@ -15,7 +15,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
 type BotTestResponse = {
   input: string;
@@ -246,7 +246,7 @@ const styles = StyleSheet.create({
   metaValue: {
     color: colors.text,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   promptChip: {
     backgroundColor: colors.card,
@@ -291,7 +291,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     flex: 1,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   safeArea: {
     backgroundColor: colors.background,
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   textInput: {
     backgroundColor: colors.surface,
