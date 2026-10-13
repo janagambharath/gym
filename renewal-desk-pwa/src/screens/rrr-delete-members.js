@@ -16,7 +16,7 @@ async function load(el) {
     return;
   }
   
-  const members = (res.data.members || []).filter(m => m.device_enroll_number);
+  const members = (res.data.members || []);
   
   el.innerHTML = `<main class="rrr-page rrr-detail">
     <header class="rrr-header">
@@ -25,8 +25,8 @@ async function load(el) {
     </header>
     
     <div class="rrr-del-hero">
-      <h1>Delete from Terminal</h1>
-      <p>Select members to remove from the biometric terminal. They won't be able to punch until re-added.</p>
+      <h1>Delete Members</h1>
+      <p>Select members to permanently delete from Renewal Desk. This removes them from the app. They'll also be removed from the terminal.</p>
     </div>
     
     <div class="rrr-del-toolbar">
@@ -100,28 +100,25 @@ async function load(el) {
   checkboxes.forEach(cb => cb.addEventListener('change', updateCount));
   
   deleteBtn?.addEventListener('click', async () => {
-    const selected = [...el.querySelectorAll('.rrr-del-check:checked')].map(cb => ({
-      id: cb.value,
-      enroll: cb.dataset.enroll
-    }));
+    const selected = [...el.querySelectorAll('.rrr-del-check:checked')].map(cb => cb.value);
     if (!selected.length) return;
-    if (!confirm(`Delete ${selected.length} member(s) from the terminal? They won't be able to punch.`)) return;
+    if (!confirm(`Permanently delete ${selected.length} member(s) from Renewal Desk? This cannot be undone.`)) return;
     
     deleteBtn.disabled = true;
     deleteBtn.textContent = 'Deleting...';
     const resultEl = el.querySelector('#rrr-del-result');
     
     let success = 0, failed = 0;
-    for (const s of selected) {
+    for (const memberId of selected) {
       try {
-        const res = await apiRequest(`/api/mobile/v1/rrr/members/${s.id}/remove-from-terminal`, { method: 'POST' });
+        const res = await apiRequest(`/api/mobile/v1/members/${memberId}/deactivate`, { method: 'POST' });
         if (res.ok) success++;
         else failed++;
       } catch(e) { failed++; }
     }
     
     resultEl.innerHTML = `<p style="padding:16px;text-align:center;font-weight:600;color:${failed ? '#d97706' : '#16a34a'};">
-      ${failed ? `✓ ${success} deleted, ⚠ ${failed} failed` : `✓ All ${success} queued for deletion`}
+      ${failed ? `✓ ${success} deleted, ⚠ ${failed} failed` : `✓ All ${success} deleted`}
     </p>`;
     setTimeout(() => load(el), 2000);
   });
