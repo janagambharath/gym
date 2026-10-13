@@ -15,7 +15,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Campaign, CampaignsResponse, CampaignType } from '../types';
 import { formatCurrency, formatDateTime, SEGMENT_LABELS } from '../types';
 
@@ -453,7 +453,7 @@ const styles = StyleSheet.create({
   navTitle: {
     flex: 1,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginLeft: spacing.md,
   },
@@ -489,7 +489,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   sectionSubtitle: {
@@ -551,7 +551,7 @@ const styles = StyleSheet.create({
   },
   purposeTagTextRecovery: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.successDark,
   },
   purposeTagPromo: {
@@ -562,7 +562,7 @@ const styles = StyleSheet.create({
   },
   purposeTagTextPromo: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
   purposeTagAds: {
@@ -573,18 +573,18 @@ const styles = StyleSheet.create({
   },
   purposeTagTextAds: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.textSecondary,
   },
   purposeTitle: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginTop: spacing.xs,
   },
   purposeTitleAds: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.textSecondary,
     marginTop: spacing.xs,
   },
@@ -698,7 +698,7 @@ const styles = StyleSheet.create({
   },
   filterTabTextActive: {
     color: colors.text,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   campaignCard: {
     backgroundColor: colors.card,
@@ -755,7 +755,7 @@ const styles = StyleSheet.create({
   },
   campaignName: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginTop: 2,
   },
@@ -781,7 +781,7 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   metricValueHighlight: {
@@ -811,7 +811,7 @@ const styles = StyleSheet.create({
   },
   revenueText: {
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.success,
   },
   revenueTextEmpty: {
