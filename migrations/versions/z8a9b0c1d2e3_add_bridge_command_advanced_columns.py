@@ -1,12 +1,12 @@
 """Add advanced bridge command columns (delay_seconds, valid_from, valid_to) and expand command_type constraint.
 
-Revises: x6y7z8a9b0c1
+Revises: y7z8a9b0c1d2
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "y7z8a9b0c1d2"
-down_revision = "x6y7z8a9b0c1"
+revision = "z8a9b0c1d2e3"
+down_revision = "y7z8a9b0c1d2"
 
 
 def upgrade():
