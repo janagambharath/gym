@@ -17,7 +17,7 @@ import { Avatar } from '../components/Avatar';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type {
   CampaignSegmentType,
   CampaignTemplate,
@@ -850,7 +850,7 @@ const styles = StyleSheet.create({
   navTitle: {
     flex: 1,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginLeft: spacing.md,
   },
@@ -884,7 +884,7 @@ const styles = StyleSheet.create({
   },
   stepCircleText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.muted,
   },
   stepCircleTextActive: {
@@ -897,7 +897,7 @@ const styles = StyleSheet.create({
   },
   stepLabelActive: {
     color: colors.text,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   stepConnector: {
     flex: 1,
@@ -947,11 +947,11 @@ const styles = StyleSheet.create({
   },
   purposeTabTextActiveRecovery: {
     color: colors.successDark,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   purposeTabTextActivePromo: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   sectionBox: {
     backgroundColor: colors.card,
@@ -964,7 +964,7 @@ const styles = StyleSheet.create({
   },
   sectionHeader: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   presetsGrid: {
@@ -1045,7 +1045,7 @@ const styles = StyleSheet.create({
   },
   sourceTabTextActive: {
     color: colors.text,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   segmentsList: {
     gap: spacing.xs,
@@ -1085,7 +1085,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   segmentItemTextActive: {
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
   previewBox: {
@@ -1104,7 +1104,7 @@ const styles = StyleSheet.create({
   },
   previewCountBadge: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
   previewSubtitle: {
@@ -1127,7 +1127,7 @@ const styles = StyleSheet.create({
   },
   previewDaysText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.critical,
   },
   previewMoreText: {
@@ -1208,7 +1208,7 @@ const styles = StyleSheet.create({
   },
   summaryStatValue: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   summaryStatLabel: {
     fontSize: fontSize.xs,
@@ -1222,7 +1222,7 @@ const styles = StyleSheet.create({
   },
   validationErrorsTitle: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.critical,
     marginBottom: 2,
   },
@@ -1261,17 +1261,17 @@ const styles = StyleSheet.create({
   },
   templateBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.successDark,
   },
   templatePurposeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.muted,
   },
   templateTitle: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginTop: 4,
   },
@@ -1342,7 +1342,7 @@ const styles = StyleSheet.create({
   },
   cooldownTitle: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   cooldownDesc: {
@@ -1411,7 +1411,7 @@ const styles = StyleSheet.create({
   },
   reviewSummaryTitle: {
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
     marginBottom: spacing.xs,
   },
@@ -1438,12 +1438,12 @@ const styles = StyleSheet.create({
   },
   summaryTotalLabel: {
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   summaryTotalValue: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
   complianceCard: {
@@ -1492,7 +1492,7 @@ const styles = StyleSheet.create({
   launchButtonText: {
     color: colors.textInverse,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   sendingContainer: {
     flex: 1,
@@ -1503,7 +1503,7 @@ const styles = StyleSheet.create({
   },
   sendingTitle: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   sendingSubtitle: {

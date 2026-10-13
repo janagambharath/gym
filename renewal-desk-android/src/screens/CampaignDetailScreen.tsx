@@ -19,7 +19,7 @@ import { ErrorState } from '../components/ErrorState';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Campaign, CampaignRecipient, CampaignRecipientsResponse } from '../types';
 import { formatCurrency, formatDate, SEGMENT_LABELS } from '../types';
 
@@ -519,7 +519,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   headerCenter: { flex: 1, marginHorizontal: spacing.md },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, color: colors.text },
   headerSubtitle: { fontSize: fontSize.xs, color: colors.muted },
   summarySection: {
     padding: spacing.lg,
@@ -564,13 +564,13 @@ const styles = StyleSheet.create({
   },
   revenueLabel: {
     fontSize: 10,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.successDark,
     letterSpacing: 0.5,
   },
   revenueAmount: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.successDark,
   },
   revenueSubtext: {
@@ -600,13 +600,13 @@ const styles = StyleSheet.create({
   },
   engagementLabel: {
     fontSize: 10,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
     letterSpacing: 0.5,
   },
   engagementAmount: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
   engagementSubtext: {
@@ -647,7 +647,7 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: {
     color: colors.textInverse,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   list: {
     padding: spacing.lg,
@@ -674,7 +674,7 @@ const styles = StyleSheet.create({
   },
   recipientName: {
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   recipientMeta: {
@@ -697,7 +697,7 @@ const styles = StyleSheet.create({
   },
   renewedBannerText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.successDark,
   },
   recipientActionRow: {
@@ -720,7 +720,7 @@ const styles = StyleSheet.create({
   fastRenewalButtonText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   actionIconButton: {
     flexDirection: 'row',
@@ -768,12 +768,12 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   modalMemberName: {
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   modalMemberPhone: {
@@ -832,6 +832,6 @@ const styles = StyleSheet.create({
   modalConfirmText: {
     color: colors.textInverse,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });
