@@ -127,9 +127,9 @@ export default {
           <div style="display:flex;gap:var(--sp-xs);padding:0 var(--sp-lg) var(--sp-md);overflow-x:auto;-webkit-overflow-scrolling:touch">
             ${[
               { id: 'all', label: 'All Events' },
-              { id: 'entry', label: `Entries (${s.entries_today || 0})` },
-              { id: 'exit', label: `Exits (${s.exits_today || 0})` },
-              { id: 'denied', label: `Denied (${s.denied_today || 0})` },
+              { id: 'entry', label: 'Entries' },
+              { id: 'exit', label: 'Exits' },
+              { id: 'denied', label: 'Denied' },
             ].map(t => `
               <button class="btn btn-sm ${currentTab === t.id ? 'btn-primary' : 'btn-secondary'}" data-tab="${t.id}" style="border-radius:var(--r-full);white-space:nowrap;padding:4px 12px;font-size:var(--fs-xs)">
                 ${t.label}
