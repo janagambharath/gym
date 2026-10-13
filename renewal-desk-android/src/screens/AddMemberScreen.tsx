@@ -15,7 +15,7 @@ import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Plan } from '../types';
 import { formatCurrency, getCurrencySymbol, getGymTodayISO } from '../types';
 
@@ -636,7 +636,7 @@ const styles = StyleSheet.create({
   catalogPriceValue: {
     color: colors.muted,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   complementaryPill: {
     alignItems: 'center',
@@ -675,14 +675,14 @@ const styles = StyleSheet.create({
   currencyPrefix: {
     color: colors.brand,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginRight: spacing.xs,
   },
   currencyTextInput: {
     color: colors.text,
     flex: 1,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     paddingVertical: spacing.sm,
   },
   customBadge: {
@@ -765,7 +765,7 @@ const styles = StyleSheet.create({
   },
   methodTextActive: {
     color: colors.textInverse,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   paidMethodContainer: {
     marginTop: spacing.md,
@@ -806,7 +806,7 @@ const styles = StyleSheet.create({
   planChipName: {
     color: colors.text,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   planChipNameSelected: {
     color: colors.brand,
@@ -819,7 +819,7 @@ const styles = StyleSheet.create({
   },
   planChipPriceSelected: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   planChipSelected: {
     backgroundColor: colors.brandSubtle,
@@ -856,7 +856,7 @@ const styles = StyleSheet.create({
   },
   presetChipTextActive: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   pricingLabel: {
     color: colors.textSecondary,
@@ -900,7 +900,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   statusTab: {
     alignItems: 'center',
@@ -925,7 +925,7 @@ const styles = StyleSheet.create({
   },
   statusTabTextActive: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   unpaidNoticeBox: {
     alignItems: 'center',

@@ -21,7 +21,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatDateTime, type BotLead, type BotLeadDetailResponse, type BotLeadUpdate } from '../types';
 
 type BotLeadDetailScreenProps = {
@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
   leadName: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   loadingWrap: {
     padding: spacing.lg,

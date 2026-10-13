@@ -18,7 +18,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatDate, type BotLead, type BotLeadsResponse } from '../types';
 
 type BotLeadsScreenProps = {
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     flex: 1,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginRight: spacing.sm,
   },
   pageButton: {

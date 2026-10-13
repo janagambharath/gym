@@ -20,7 +20,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import type { ApiError } from '../services/apiClient';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import {
   formatDateTime,
   type BotConversation,
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
   composerLabel: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   content: {
     gap: spacing.lg,
@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
   customerName: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   detailLabel: {
     color: colors.muted,
