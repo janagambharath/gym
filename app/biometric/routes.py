@@ -318,3 +318,92 @@ def download_support_package():
         mimetype="application/json",
         headers={"Content-Disposition": f"attachment;filename=biometric_support_{gym_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"},
     )
+
+
+# ── Smart enroll matching (web UI) ──────────────────────────────────────
+# PC-less friendly: works with ADMS snapshots and bridge snapshots alike.
+
+
+@biometric_bp.route("/enroll-match", methods=["GET"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def enroll_match():
+    """Smart matching page: scan terminal users, confirm one-tap matches."""
+    from app.services import enroll_match_service
+
+    gym_id = current_user.gym_id
+    result = enroll_match_service.suggest_matches(gym_id)
+    return render_template(
+        "biometric/enroll_match.html",
+        suggestions=result["suggestions"],
+        unmatched=result["unmatched_terminal"],
+        snapshot=result["snapshot"],
+        no_snapshot=result.get("error") == "no_snapshot",
+    )
+
+
+@biometric_bp.route("/enroll-match/scan", methods=["POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def enroll_match_scan():
+    """Queue a sync_users command (ADMS preferred, bridge fallback)."""
+    from app.models.rrr import RRRAdmsCommand, RRRIntegration
+    from app.services.bridge_service import adms_command_text
+
+    gym_id = current_user.gym_id
+    integration = RRRIntegration.query.filter_by(
+        gym_id=gym_id, connector_type="adms_direct"
+    ).first()
+    if integration is not None:
+        cmd = RRRAdmsCommand(
+            integration_id=integration.id,
+            gym_id=gym_id,
+            action="sync_users",
+            command_text=adms_command_text("sync_users", None),
+            requested_by_id=current_user.id,
+        )
+        db.session.add(cmd)
+        db.session.commit()
+        flash("Scan queued — the terminal will upload its user list on its next poll. Refresh in ~15 seconds.", "success")
+    else:
+        installation, _, _ = _get_bridge_context(gym_id)
+        if not installation or not installation.is_active:
+            flash("No ADMS integration or paired bridge found. Provision ADMS or pair the PC connector first.", "danger")
+        else:
+            cmd = BridgeCommand(
+                bridge_id=installation.id,
+                gym_id=gym_id,
+                command_type="sync_users",
+                enroll_number="SYSTEM",
+            )
+            db.session.add(cmd)
+            db.session.commit()
+            flash("Scan queued — the connector will read the terminal's user list. Refresh in ~15 seconds.", "success")
+    return redirect(url_for("biometric.enroll_match"))
+
+
+@biometric_bp.route("/enroll-match/confirm", methods=["POST"])
+@login_required
+@active_gym_required
+@roles_required("gym_owner", "staff")
+def enroll_match_confirm():
+    """One-tap confirm: link a member to a terminal enroll number."""
+    from app.services import enroll_match_service
+
+    gym_id = current_user.gym_id
+    try:
+        member_id = int(request.form.get("member_id") or 0)
+    except (TypeError, ValueError):
+        member_id = 0
+    enroll_number = (request.form.get("enroll_number") or "").strip()
+    if not member_id or not enroll_number:
+        flash("Missing member or enroll number.", "danger")
+        return redirect(url_for("biometric.enroll_match"))
+    try:
+        member = enroll_match_service.confirm_match(gym_id, member_id, enroll_number, current_user.id)
+        flash(f"{member.full_name} linked to terminal #{member.device_enroll_number}.", "success")
+    except ValueError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("biometric.enroll_match"))

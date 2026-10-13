@@ -3,6 +3,7 @@
 {% block page_title %}Biometric Control Center{% endblock %}
 {% block page_actions %}
 <a class="btn btn-outline-secondary" href="{{ url_for('biometric.download_support_package') }}"><i class="bi bi-download"></i> Support Package</a>
+<a class="btn btn-outline-primary" href="{{ url_for('biometric.enroll_match') }}"><i class="bi bi-person-check"></i> Match Terminal Users</a>
 <a class="btn btn-primary" href="{{ url_for('biometric.settings') }}"><i class="bi bi-gear"></i> Pairing & Config</a>
 {% endblock %}
 {% block content %}

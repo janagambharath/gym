@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Match Terminal Users | RenewalDesk{% endblock %}
+{% block page_title %}Match Terminal Users to Members{% endblock %}
+{% block page_actions %}
+<a class="btn btn-outline-secondary" href="{{ url_for('biometric.index') }}"><i class="bi bi-arrow-left"></i> Bridge Overview</a>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-12">
+        <div class="panel">
+            <div class="panel-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h2>Who is who on the terminal?</h2>
+                    <p class="text-secondary small mb-0">We read the names stored on your biometric terminal and match them against your members. Confirm each with one tap — nothing links without your approval.</p>
+                </div>
+                <form method="post" action="{{ url_for('biometric.enroll_match_scan') }}">
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-repeat"></i> Scan terminal users</button>
+                </form>
+            </div>
+            {% if snapshot %}
+            <p class="text-muted small mt-2 mb-0">
+                Snapshot: {{ snapshot.terminal_user_count }} terminal users ·
+                via {{ 'Direct Cloud (ADMS)' if snapshot.source == 'adms' else 'Bridge' }}
+                {% if snapshot.acknowledged_at %}· {{ snapshot.acknowledged_at }}{% endif %}
+            </p>
+            {% elif no_snapshot %}
+            <div class="alert alert-info mt-3 mb-0">
+                No terminal user list yet — hit <strong>Scan terminal users</strong> above, wait ~15 seconds, then refresh this page.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if suggestions %}
+    <div class="col-12">
+        <div class="panel">
+            <div class="panel-header"><h2>Suggested matches ({{ suggestions|length }})</h2></div>
+            <div class="list-group list-group-flush">
+                {% for s in suggestions %}
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Terminal #{{ s.enroll_number }}</strong>
+                        <span class="text-muted">· {{ s.terminal_name or 'No name on terminal' }}</span>
+                        <div class="mt-1">→ <strong>{{ s.member_name }}</strong>
+                            {% if s.member_phone %}<span class="text-muted small">{{ s.member_phone }}</span>{% endif %}
+                            <span class="badge {% if s.confidence >= 90 %}bg-success{% elif s.confidence >= 70 %}bg-primary{% else %}bg-warning text-dark{% endif %} ms-2">{{ s.confidence }}% match</span>
+                        </div>
+                    </div>
+                    <form method="post" action="{{ url_for('biometric.enroll_match_confirm') }}">
+                        <input type="hidden" name="member_id" value="{{ s.member_id }}">
+                        <input type="hidden" name="enroll_number" value="{{ s.enroll_number }}">
+                        <button type="submit" class="btn btn-success btn-sm">Confirm match</button>
+                    </form>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if unmatched %}
+    <div class="col-12">
+        <div class="panel">
+            <div class="panel-header"><h2>Couldn't match confidently ({{ unmatched|length }})</h2></div>
+            <p class="text-secondary small">Ask staff who these are, then link them from the member profile.</p>
+            <ul class="list-group list-group-flush">
+                {% for u in unmatched %}
+                <li class="list-group-item"><strong>Terminal #{{ u.enroll_number }}</strong> <span class="text-muted">· {{ u.terminal_name or 'No name on terminal' }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if snapshot and not suggestions and not unmatched %}
+    <div class="col-12">
+        <div class="alert alert-success">Everyone on the terminal is already linked. 🎉</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

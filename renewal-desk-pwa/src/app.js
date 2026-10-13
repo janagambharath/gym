@@ -38,6 +38,7 @@ function registerScreens() {
   router.register('rrr-list', () => import('./screens/rrr-list.js'), { auth: true });
   router.register('rrr-integrations', () => import('./screens/rrr-integrations.js'), { auth: true });
   router.register('rrr-mappings', () => import('./screens/rrr-mappings.js'), { auth: true });
+  router.register('rrr-enroll-match', () => import('./screens/rrr-enroll-match.js'), { auth: true });
   router.register('rrr-rules', () => import('./screens/rrr-rules.js'), { auth: true });
   router.register('members', () => import('./screens/members.js'), { auth: true });
   router.register('renewals', () => import('./screens/renewals.js'), { auth: true });

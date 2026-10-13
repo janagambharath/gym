@@ -12,6 +12,8 @@ type Person = { id: number; full_name: string };
 type Integration = { id: number; type: 'adms_direct' | 'ebioserver' | 'direct_bridge'; status: string; device_name?: string; device_serial?: string; records_synced?: number; terminal_settings?: TerminalSettings; commands_enabled?: boolean; commissioning_status?: string; last_success_at?: string | null };
 type TerminalSettings = { server_mode?: string; server_address?: string; server_port?: number; https?: boolean; path?: string; warning?: string };
 type Command = { id: number; action: string; status: string; result_code?: string };
+type EnrollSuggestion = { enroll_number: string; terminal_name: string; member_id: number; member_name: string; member_phone?: string; confidence: number };
+type EnrollMatches = { suggestions: EnrollSuggestion[]; unmatched_terminal: { enroll_number: string; terminal_name: string }[]; snapshot?: { terminal_user_count: number; source: string; acknowledged_at?: string } | null; error?: string };
 type Payload = { opportunities: Opportunity[]; pillars: Record<string, { count: number; potential_revenue: string }>; unmapped_count: number; members?: { total?: number; attendance_rate?: number } };
 type OwnerToday = {
   collections: { total: string; expected_cash: string };
@@ -41,6 +43,8 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [commissioning, setCommissioning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [pickerEvent, setPickerEvent] = useState<Unresolved | null>(null);
+  const [matches, setMatches] = useState<EnrollMatches | null>(null);
+  const [scanning, setScanning] = useState(false);
   const direct = integrations.find((item) => item.type === 'adms_direct');
   const bridge = integrations.find((item) => item.type === 'ebioserver');
   // Port of the PWA's 5-minute liveness check — status alone never goes stale server-side.
@@ -134,6 +138,30 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const markActioned = async (id: number) => { const result = await apiRequest(`/api/mobile/v1/rrr/opportunities/${id}`, { method: 'PATCH', body: { status: 'actioned' } }); if (result.ok) void load(); else Alert.alert('Could not update opportunity', result.error.message); };
   const mapIdentity = async (externalId: string, memberId: number) => { const result = await apiRequest(`/api/mobile/v1/rrr/mappings/${encodeURIComponent(externalId)}`, { method: 'POST', body: { member_id: memberId } }); if (result.ok) void load(); else Alert.alert('Could not map biometric ID', result.error.message); };
   const saveRules = async () => { const result = await apiRequest('/api/mobile/v1/rrr/rules', { method: 'PUT', body: { rules } }); if (result.ok) Alert.alert('Saved', 'RRR signal thresholds updated.'); else Alert.alert('Could not save rules', result.error.message); };
+  const loadMatches = useCallback(async () => {
+    const result = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
+    if (result.ok) setMatches(result.data);
+  }, []);
+  const scanTerminalUsers = async () => {
+    setScanning(true);
+    const result = await apiRequest('/api/mobile/v1/rrr/enroll-scan', { method: 'POST', body: {} });
+    if (!result.ok) { setScanning(false); Alert.alert('Scan failed', result.error.message); return; }
+    // Poll for the snapshot to arrive (terminal responds on its next poll).
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries += 1;
+      const r = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
+      if (r.ok && (r.data.snapshot || (r.data.suggestions || []).length)) {
+        clearInterval(timer); setScanning(false); setMatches(r.data); return;
+      }
+      if (tries >= 20) { clearInterval(timer); setScanning(false); Alert.alert('Still waiting', 'The terminal may be offline. It will respond when it reconnects — pull to refresh then.'); }
+    }, 3000);
+  };
+  const confirmMatch = async (s: EnrollSuggestion) => {
+    const result = await apiRequest('/api/mobile/v1/rrr/enroll-matches/confirm', { method: 'POST', body: { member_id: s.member_id, enroll_number: s.enroll_number } });
+    if (result.ok) { Alert.alert('Linked', `${s.member_name} is now linked to terminal #${s.enroll_number}.`); void loadMatches(); }
+    else Alert.alert('Could not link', result.error.message);
+  };
   const pillars = data?.pillars || {};
   const potential = Object.values(pillars).reduce((sum, item) => sum + Number(item.potential_revenue || 0), 0);
   const latest = commands[0];
@@ -161,6 +189,10 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       <Text style={styles.copy}>I stood at the door and verified block/unblock works on the terminal.</Text>
     </View><Button text={commissioning ? 'Enabling…' : bridge.commands_enabled ? 'Automatic block/unblock is ON' : 'Enable automatic block/unblock'} onPress={() => void commissionBridge()} /></>}</View>
     <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolved.length} punches need a member</Text>{unresolved.length ? unresolved.slice(0, 5).map((event, index) => <View style={styles.deviceRow} key={`${event.biometric_user_id}-${index}`}><View><Text style={styles.rowTitle}>Terminal ID {event.biometric_user_id}</Text><Text style={styles.rowSub}>{new Date(event.punch_time).toLocaleString()}</Text></View><TouchableOpacity onPress={() => setPickerEvent(event)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity></View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}</View>
+    {(direct || bridge) && <View style={styles.card}><Text style={styles.cardEyebrow}>SMART MATCHING</Text><Text style={styles.cardTitle}>Who is who on the terminal?</Text><Text style={styles.copy}>We read the names on your terminal and match them to members. One tap per match — nothing links without your approval.</Text><Button text={scanning ? 'Scanning…' : 'Scan terminal users'} onPress={() => { void loadMatches(); void scanTerminalUsers(); }} secondary />
+      {(matches?.suggestions || []).map((s) => <View style={styles.deviceRow} key={s.enroll_number}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>#{s.enroll_number} {s.terminal_name || 'No name'}</Text><Text style={styles.rowSub}>→ {s.member_name}{s.member_phone ? ` · ${s.member_phone}` : ''} · {s.confidence}%</Text></View><TouchableOpacity onPress={() => void confirmMatch(s)}><Text style={styles.link}>Confirm</Text></TouchableOpacity></View>)}
+      {(matches?.unmatched_terminal || []).length > 0 && <Text style={styles.copy}>{matches?.unmatched_terminal?.length} terminal user(s) couldn't be matched confidently — ask staff and link from the member profile.</Text>}
+      {matches && !(matches.suggestions || []).length && !(matches.unmatched_terminal || []).length && matches.snapshot && <Text style={styles.copy}>Everyone on the terminal is already linked. 🎉</Text>}</View>}
     <MemberPickerModal
       visible={pickerEvent !== null}
       title={pickerEvent ? `Map Terminal ID ${pickerEvent.biometric_user_id}` : 'Map to member'}
