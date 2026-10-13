@@ -789,3 +789,40 @@ def register_rrr_routes(bp):
             "queued": bool(cmd),
             "message": f"Queued removal for {member.full_name or member.id}",
         }})
+
+    @bp.post("/rrr/restore-deleted-members")
+    @limiter.limit("5 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def restore_deleted_members():
+        """Restore all soft-deleted members for this gym (undo bulk delete)."""
+        from app.models.member import Member
+        from app.services.audit_service import audit
+
+        members = Member.query.filter(
+            Member.gym_id == g.gym_id,
+            Member.deleted_at.isnot(None),
+        ).all()
+
+        restored = 0
+        for m in members:
+            m.deleted_at = None
+            if m.status == "deleted":
+                m.status = "active"  # Will be re-evaluated by scheduler
+            restored += 1
+
+        db.session.commit()
+
+        audit(
+            action="bulk_restore_members",
+            resource_type="gym",
+            resource_id=g.gym_id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"restored": restored},
+        )
+
+        return jsonify({"success": True, "data": {
+            "restored": restored,
+            "message": f"Restored {restored} members.",
+        }})
