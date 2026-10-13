@@ -8,7 +8,7 @@ import { formatDateTime, formatInteger, escapeHtml } from '../utils.js';
 
 export default {
   async mount(el) {
-    let currentTab = 'all'; // 'all' | 'inside' | 'entry' | 'exit' | 'denied'
+    let currentTab = 'all'; // 'all' | 'entry' | 'exit' | 'denied'
     let summaryData = null;
     let refreshTimer = null;
 
@@ -18,9 +18,7 @@ export default {
 
       // Parallel fetch summary + current tab feed
       const summaryPromise = apiRequest('/api/mobile/v1/access/summary');
-      const feedPromise = currentTab === 'inside'
-        ? apiRequest('/api/mobile/v1/access/inside?per_page=50')
-        : apiRequest(`/api/mobile/v1/access/events?per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`);
+      const feedPromise = apiRequest(`/api/mobile/v1/access/events?per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`);
 
       const [summaryRes, feedRes] = await Promise.all([summaryPromise, feedPromise]);
       const s = summaryRes.ok ? summaryRes.data : (summaryData || {});
@@ -42,11 +40,7 @@ export default {
                 ${s.device_name ? `<span style="font-size:var(--fs-xs);color:var(--muted)">· ${escapeHtml(s.device_name)}</span>` : ''}
               </div>
               ${lastEventText ? `<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">Last event: ${escapeHtml(lastEventText)}</div>` : '<div style="margin-bottom:var(--sp-md)"></div>'}
-              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-lg)">
-                <div style="cursor:pointer" id="stat-inside">
-                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--status-active)">${formatInteger(s.inside_now || 0)}</div>
-                  <div style="font-size:var(--fs-xs);color:var(--muted)">Inside Now</div>
-                </div>
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-lg)">
                 <div style="cursor:pointer" id="stat-entries">
                   <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${formatInteger(s.entries_today || 0)}</div>
                   <div style="font-size:var(--fs-xs);color:var(--muted)">Entries</div>
@@ -133,7 +127,6 @@ export default {
           <div style="display:flex;gap:var(--sp-xs);padding:0 var(--sp-lg) var(--sp-md);overflow-x:auto;-webkit-overflow-scrolling:touch">
             ${[
               { id: 'all', label: 'All Events' },
-              { id: 'inside', label: `Inside (${s.inside_now || 0})` },
               { id: 'entry', label: `Entries (${s.entries_today || 0})` },
               { id: 'exit', label: `Exits (${s.exits_today || 0})` },
               { id: 'denied', label: `Denied (${s.denied_today || 0})` },
@@ -145,26 +138,7 @@ export default {
           </div>
 
           <!-- List Section -->
-          ${currentTab === 'inside' ? `
-            ${insideMembers.length > 0 ? `
-              <div class="card" style="margin:0 var(--sp-lg)">
-                ${insideMembers.map(m => `
-                  <div class="list-item" style="display:flex;align-items:center;justify-content:space-between;gap:var(--sp-sm)">
-                    <div style="display:flex;align-items:center;gap:var(--sp-sm);cursor:pointer;flex:1;min-width:0" data-member-link="${m.id}">
-                      ${renderAvatar(m.full_name || 'Member', 'md')}
-                      <div class="list-item-content" style="min-width:0">
-                        <div class="list-item-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(m.full_name || 'Member')}</div>
-                        <div class="list-item-subtitle">${m.phone ? escapeHtml(m.phone) + ' · ' : ''}In ${m.entered_at ? formatDateTime(m.entered_at) : 'recently'}</div>
-                      </div>
-                    </div>
-                    <button class="btn btn-outline btn-sm btn-checkout" data-checkout-id="${m.id}" data-checkout-name="${escapeHtml(m.full_name || 'Member')}" style="padding:4px 10px;font-size:var(--fs-xs);border-radius:var(--r-full);flex-shrink:0">
-                      Check Out
-                    </button>
-                  </div>
-                `).join('')}
-              </div>
-            ` : renderEmptyState({ icon: 'access', title: 'No members inside', text: 'Members currently inside the gym will appear here when checked in' })}
-          ` : `
+          ${`
             ${events.length > 0 ? `
               <div class="card" style="margin:0 var(--sp-lg)">
                 ${events.map(l => {
@@ -207,7 +181,6 @@ export default {
       });
 
       // Quick stat clicks
-      scroll.querySelector('#stat-inside')?.addEventListener('click', () => { currentTab = 'inside'; loadData(); });
       scroll.querySelector('#stat-entries')?.addEventListener('click', () => { currentTab = 'entry'; loadData(); });
       scroll.querySelector('#stat-exits')?.addEventListener('click', () => { currentTab = 'exit'; loadData(); });
       scroll.querySelector('#banner-denied')?.addEventListener('click', () => { currentTab = 'denied'; loadData(); });
