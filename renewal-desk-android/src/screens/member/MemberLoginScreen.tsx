@@ -18,7 +18,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, fontSize, fontWeight, radius, spacing } from '../../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../../theme/tokens';
 import { requestOtp, verifyOtp } from '../../services/memberApiClient';
 
 type MemberLoginScreenProps = {
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
   brandTitle: {
     color: colors.text,
     fontSize: fontSize['6xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: -1,
     marginTop: spacing.lg,
   },
@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
   formTitle: {
     color: colors.text,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   formSubtitle: {
     color: colors.muted,
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     fontSize: 32,
     color: colors.text,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     textAlign: 'center',
     letterSpacing: 8,
   },
@@ -330,7 +330,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#fff',
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   buttonDisabled: {
     opacity: 0.5,
@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
   switchLink: {
     color: colors.brand,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   footer: {
     color: colors.muted,

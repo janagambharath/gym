@@ -24,7 +24,7 @@ import { AppHeader } from '../components/AppHeader';
 import { connectWaba, getWhatsAppOnboardingConfig } from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
 type WhatsAppSetupScreenProps = {
   onBack: () => void;
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
   connectingTitle: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginTop: spacing.xxl,
     textAlign: 'center',
   },
@@ -345,7 +345,7 @@ const styles = StyleSheet.create({
   successTitle: {
     color: colors.text,
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.xxl,
     textAlign: 'center',
   },
@@ -371,7 +371,7 @@ const styles = StyleSheet.create({
   successButtonText: {
     color: colors.textInverse,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   errorIconWrap: {
     alignItems: 'center',
@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
   errorTitle: {
     color: colors.text,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginTop: spacing.xxl,
     textAlign: 'center',
   },
@@ -411,7 +411,7 @@ const styles = StyleSheet.create({
   retryButtonText: {
     color: colors.brand,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   backButton: {
     marginTop: spacing.lg,

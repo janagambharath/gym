@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import type {
   MemberAccessEvent,
   MemberAccessSummary,
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   headerSubtitle: {
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
   },
   statusTitle: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   statusBadge: {
@@ -311,7 +311,7 @@ const styles = StyleSheet.create({
   },
   statusBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   statsRow: {
     flexDirection: 'row',
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
   },
   statValue: {
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   statLabel: {
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
   },
   historyTitle: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   eventCard: {
@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   emptySubtitle: {

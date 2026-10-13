@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import type { MemberDashboard } from '../../services/memberApiClient';
 import { fetchMemberDashboard, getMemberSession } from '../../services/memberApiClient';
 import { ErrorState } from '../../components/ErrorState';
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
   },
   greeting: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   gymName: {
@@ -343,7 +343,7 @@ const styles = StyleSheet.create({
   statusIcon: { fontSize: 20 },
   statusLabel: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   statusDetails: { gap: spacing.md },
   detailRow: {
@@ -391,12 +391,12 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   pendingAmount: {
     fontSize: fontSize['5xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.warning,
     textAlign: 'center',
   },
@@ -417,7 +417,7 @@ const styles = StyleSheet.create({
   renewButtonText: {
     color: '#fff',
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   renewButtonSub: {
     color: 'rgba(255,255,255,0.8)',
@@ -465,7 +465,7 @@ const styles = StyleSheet.create({
   },
   renewalAmount: {
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.success,
   },
   gymPhone: {

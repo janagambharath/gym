@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import type { MemberMembership } from '../../services/memberApiClient';
 import { fetchMemberMembership } from '../../services/memberApiClient';
 import { ErrorState } from '../../components/ErrorState';
@@ -263,7 +263,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   gymSubtitle: {
@@ -296,11 +296,11 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   planNameText: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   divider: {
@@ -338,14 +338,14 @@ const styles = StyleSheet.create({
   renewActionText: {
     color: '#fff',
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   historySection: {
     gap: spacing.md,
   },
   sectionTitle: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   emptyHistory: {
@@ -376,12 +376,12 @@ const styles = StyleSheet.create({
   },
   historyPlan: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   historyAmount: {
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.success,
   },
   historyBottom: {

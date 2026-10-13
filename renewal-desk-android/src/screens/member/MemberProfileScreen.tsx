@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import type { MemberProfile } from '../../services/memberApiClient';
 import {
   clearMemberSession,
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   content: {
@@ -324,7 +324,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   avatarRow: {
@@ -344,7 +344,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.brand,
   },
   avatarDetails: {
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
   },
   memberName: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   memberPhone: {
@@ -370,7 +370,7 @@ const styles = StyleSheet.create({
   },
   statusBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.success,
   },
   infoRow: {
@@ -431,7 +431,7 @@ const styles = StyleSheet.create({
   },
   signOutText: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.critical,
   },
   versionText: {
