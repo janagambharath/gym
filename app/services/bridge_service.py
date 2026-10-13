@@ -116,13 +116,14 @@ def adms_command_text(
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
     if action in {"block", "block_test"}:
-        # TZ trick: try decimal encoding for timezone 50.
-        name = (member_name or "Test User")[:24]
-        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tTZ=0000005000000000"
+        # DELETE is the only proven block on X2008. Fingerprint templates
+        # are backed up during sync_users and restored on unblock.
+        return f"DATA DELETE USERINFO PIN={enroll_number}"
     elif action in {"unblock", "unblock_test"}:
-        # Restore default timezone 1.
+        # Recreate the user. Fingerprint restore commands are queued
+        # separately by queue_adms_membership_command.
         name = (member_name or "Test User")[:24]
-        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tTZ=0000000100000000"
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
     else:
         raise ValueError(f"Unknown ADMS command action: {action!r}")
 
@@ -245,7 +246,53 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
         gym_id=member.gym_id,
         metadata={"member_id": member.id, "enroll_number": enroll_number},
     )
+    # On unblock, queue fingerprint restore commands after the user recreation.
+    # The terminal processes commands in ID order, so templates are restored
+    # after the user exists.
+    if action == "unblock":
+        _queue_template_restore_commands(member, integration, enroll_number)
     return command
+
+
+def _queue_template_restore_commands(member: Member, integration, enroll_number: str) -> int:
+    """Queue BIODATA restore commands for backed-up fingerprint templates.
+
+    Returns the number of restore commands queued.
+    """
+    from app.models.rrr import RRRBiometricTemplate
+
+    templates = RRRBiometricTemplate.query.filter_by(
+        gym_id=member.gym_id,
+        integration_id=integration.id,
+        enroll_number=enroll_number,
+    ).all()
+    count = 0
+    for tmpl in templates:
+        # Standard PUSH BIODATA format. Refine after observing actual uploads.
+        restore_text = (
+            f"DATA UPDATE BIODATA PIN={enroll_number}\t"
+            f"FID={tmpl.finger_id}\tTMP={tmpl.template_data}"
+        )
+        cmd = RRRAdmsCommand(
+            gym_id=member.gym_id,
+            integration_id=integration.id,
+            action="restore_template",
+            test_enroll_number=enroll_number,
+            command_text=restore_text,
+            requested_by_id=None,
+        )
+        db.session.add(cmd)
+        count += 1
+    if count:
+        db.session.flush()
+        audit(
+            action="adms_template_restore_queued",
+            resource_type="rrr_adms_command",
+            resource_id=None,
+            gym_id=member.gym_id,
+            metadata={"member_id": member.id, "enroll_number": enroll_number, "templates": count},
+        )
+    return count
 
 
 def queue_manual_adms_member_command(

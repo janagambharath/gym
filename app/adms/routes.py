@@ -145,9 +145,12 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
     The terminal uploads its user list in response to our ``DATA QUERY
     USERINFO`` command.  We attach the parsed list to the most recent
     sync_users command so smart enroll matching can use it.
+    Also captures fingerprint templates for backup/restore.
     """
     import json
     import logging
+
+    from app.models.rrr import RRRBiometricTemplate
 
     log = logging.getLogger(__name__)
     raw_lines = _attlog_lines()
@@ -159,10 +162,54 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
     log.warning("USERINFO_RAW total lines: %d", len(raw_lines))
 
     users = []
+    templates_captured = 0
     for line in raw_lines:
         parsed = _parse_userinfo_line(line)
         if parsed:
             users.append(parsed)
+        # Look for fingerprint template data in the upload.
+        # Format TBD from logs; this is a placeholder for common patterns.
+        upper_line = line.upper()
+        if "TMP=" in upper_line or "FINGERTMP" in upper_line:
+            # Parse template: try to extract PIN, FID, and template data
+            try:
+                fields = {}
+                # Handle both USERINFO-embedded and standalone template lines
+                content = line.strip()
+                if content.upper().startswith("USER "):
+                    content = content[5:]
+                for part in content.split("\t"):
+                    if "=" in part:
+                        k, _, v = part.partition("=")
+                        fields[k.strip().upper()] = v.strip()
+                pin = fields.get("PIN", "")
+                fid = int(fields.get("FID", fields.get("FINGERID", "0")) or "0")
+                tmp = fields.get("TMP", fields.get("TEMPLATE", ""))
+                if pin and tmp:
+                    # Upsert the template
+                    existing = RRRBiometricTemplate.query.filter_by(
+                        gym_id=integration.gym_id,
+                        integration_id=integration.id,
+                        enroll_number=pin,
+                        finger_id=fid,
+                    ).first()
+                    if existing:
+                        existing.template_data = tmp
+                        existing.template_format = "push_tmp"
+                    else:
+                        db.session.add(RRRBiometricTemplate(
+                            gym_id=integration.gym_id,
+                            integration_id=integration.id,
+                            enroll_number=pin,
+                            finger_id=fid,
+                            template_data=tmp,
+                            template_format="push_tmp",
+                        ))
+                    templates_captured += 1
+            except Exception as e:
+                log.warning("Template parse failed for line: %s", str(e)[:100])
+    if templates_captured:
+        log.warning("Captured %d fingerprint templates", templates_captured)
     if not users:
         return 0
     cmd = (

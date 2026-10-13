@@ -104,7 +104,7 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
         CheckConstraint(
             "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock', "
             "'create_user', 'delete_user', 'unlock_door', 'clear_log', 'reboot', 'check', "
-            "'sync_users')",
+            "'sync_users', 'restore_template')",
             name="ck_rrr_adms_command_action",
         ),
         CheckConstraint(
@@ -219,3 +219,26 @@ class RRRAutomationRun(TenantMixin, TimestampMixin, db.Model):
     period_key = db.Column(db.String(32), nullable=False)
     status = db.Column(db.String(32), nullable=False, default="queued")
     provider_message_id = db.Column(db.String(255), nullable=True)
+
+
+class RRRBiometricTemplate(TenantMixin, TimestampMixin, db.Model):
+    """Backed-up fingerprint template from a terminal.
+
+    Captured during sync_users uploads. Used to restore a member's
+    fingerprint after a DELETE-based block, avoiding physical re-enrollment.
+    """
+    __tablename__ = "rrr_biometric_templates"
+    __table_args__ = (
+        UniqueConstraint("gym_id", "integration_id", "enroll_number", "finger_id",
+                         name="uq_biometric_template"),
+        Index("ix_biometric_template_lookup", "gym_id", "integration_id", "enroll_number"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    integration_id = db.Column(
+        db.Integer, db.ForeignKey("rrr_integrations.id", ondelete="CASCADE"), nullable=False
+    )
+    enroll_number = db.Column(db.String(32), nullable=False)
+    finger_id = db.Column(db.Integer, nullable=False, default=0)
+    template_data = db.Column(db.Text, nullable=False)
+    template_format = db.Column(db.String(32), nullable=False, default="unknown")
