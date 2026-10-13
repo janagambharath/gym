@@ -154,9 +154,6 @@ def _adms_integration(gym_id: int) -> RRRIntegration | None:
 
 
 def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRRAdmsCommand | None:
-    # DISABLED (2026-10-13, owner request): no automatic terminal block/unblock.
-    # Terminal is attendance-only.
-    return None
     """Queue an automatic block/unblock for the direct-ADMS terminal.
 
     This is the direct-path twin of :func:`queue_membership_command`.  It is
@@ -302,9 +299,6 @@ def queue_manual_adms_member_command(
 
 
 def queue_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
-    # DISABLED (2026-10-13, owner request): no automatic terminal block/unblock.
-    # Terminal is attendance-only.
-    return None
     """Queue the latest required terminal state, without duplicating work.
 
     This function deliberately does not commit.  Call it in the same database
