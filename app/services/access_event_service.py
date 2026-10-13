@@ -352,12 +352,59 @@ def get_access_events(
     for evt in pagination.items:
         events.append(_serialize_access_event(evt))
 
+    # Also include ADMS attendance events (from direct-cloud terminals).
+    # These live in RRRAttendanceEvent, not AccessEvent.
+    from app.models.rrr import RRRAttendanceEvent
+    adms_query = RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
+    
+    # Apply same date filter
+    if date_filter == "today" or date_filter is None:
+        day_start_utc = utc_start_of_gym_day(gym_timezone)
+        adms_query = adms_query.filter(RRRAttendanceEvent.punch_time >= day_start_utc)
+    # Note: date_filter == "all" means no filter
+    
+    # Apply event type filter (ADMS punches are entries)
+    if event_type == "exit" or event_type == "denied":
+        adms_events = []  # ADMS doesn't track exits/denied separately
+    else:
+        adms_events = adms_query.order_by(
+            RRRAttendanceEvent.punch_time.desc()
+        ).limit(per_page * 2).all()  # Get extra to merge
+    
+    # Apply search filter
+    if search and search.strip():
+        search_lower = search.strip().lower()
+    
+    for evt in adms_events:
+        # Skip if search doesn't match
+        if search and search.strip():
+            member_name = evt.member.full_name if evt.member else ""
+            bio_id = evt.biometric_user_id or ""
+            if search_lower not in member_name.lower() and search_lower not in bio_id.lower():
+                continue
+        
+        events.append({
+            "id": f"adms-{evt.id}",
+            "event_type": "ENTRY",
+            "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
+            "member_id": evt.member_id,
+            "member_name": evt.member.full_name if evt.member else f"User {evt.biometric_user_id}",
+            "device_name": evt.device_serial,
+            "verify_method": evt.verify_method,
+            "source": "adms_direct",
+        })
+    
+    # Re-sort merged events by timestamp (most recent first)
+    events.sort(key=lambda e: e.get("event_timestamp") or "", reverse=True)
+    # Trim to per_page
+    events = events[:per_page]
+
     return {
         "events": events,
         "pagination": {
             "page": pagination.page,
             "per_page": pagination.per_page,
-            "total": pagination.total,
+            "total": pagination.total + len(adms_events),
             "total_pages": pagination.pages,
         },
     }
