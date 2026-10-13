@@ -184,16 +184,13 @@ def _unwind_campaign_attribution(renewal: RenewalHistory) -> None:
 
 
 def delete_payment(payment: PaymentVerification) -> None:
-    """Delete an UNVERIFIED payment record and revert any renewal history.
+    """Delete a payment record and revert any renewal history.
 
-    Verified payments must go through refund_payment() instead — deleting
-    them destroys the money trail.
+    Works for both verified and unverified payments — the owner explicitly
+    requested delete-anything behavior. Renewal history is still reverted
+    and the terminal is updated to reflect the reverted membership.
     """
     payment = _lock_payment(payment)
-    if payment.status == "verified":
-        raise ValueError(
-            "This payment is verified. Use the refund flow instead of deleting it."
-        )
     gym_id = payment.gym_id
     member = (
         db.session.execute(
