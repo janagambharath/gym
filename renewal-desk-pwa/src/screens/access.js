@@ -89,10 +89,11 @@ export default {
                 </span>
               </div>
               ${s.adms_device_name ? `<div style="font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.adms_device_name)}</div>` : ''}
-              <div style="display:grid;grid-template-columns:1fr;gap:var(--sp-xs)">
-                <button class="btn btn-secondary btn-sm" id="btn-adms-sync" data-adms-id="${s.adms_integration_id}" style="font-size:var(--fs-xs);padding:6px 10px" ${s.adms_online ? '' : 'disabled'}>📥 Sync Users from Terminal</button>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-xs)">
+                <button class="btn btn-secondary btn-sm" id="btn-adms-sync" data-adms-id="${s.adms_integration_id}" style="font-size:var(--fs-xs);padding:6px 10px" ${s.adms_online ? '' : 'disabled'}>📥 Sync Users</button>
+                <button class="btn btn-secondary btn-sm" id="btn-delete-members" style="font-size:var(--fs-xs);padding:6px 10px;color:#b91c1c" ${s.adms_online ? '' : 'disabled'}>🗑️ Delete Members</button>
               </div>
-              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">Pulls the terminal's user list + fingerprint templates for backup.</p>
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">Sync pulls the terminal's user list. Delete lets you select members to remove from the terminal.</p>
             </div>
             ` : ''}
 
@@ -265,6 +266,11 @@ export default {
           admsSyncBtn.textContent = '📥 Sync Users from Terminal';
         });
       }
+
+      // Delete Members screen
+      scroll.querySelector('#btn-delete-members')?.addEventListener('click', () => {
+        navigate.push('rrr-delete-members');
+      });
 
       // Retry Failed Biometric Syncs
       scroll.querySelector('#btn-retry-sync')?.addEventListener('click', async () => {

@@ -756,3 +756,36 @@ def register_rrr_routes(bp):
             "total": len(list(all_targets)),
             "message": f"Queued removal for {queued} expired members. Terminal will block them on next poll.",
         }})
+
+    @bp.post("/rrr/members/<int:member_id>/remove-from-terminal")
+    @limiter.limit("60 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def remove_member_from_terminal(member_id):
+        """Queue DELETE command for a single member (removes from terminal only, not from app)."""
+        from app.models.member import Member
+        from app.services.bridge_service import queue_membership_command
+        from app.services.audit_service import audit
+
+        member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
+        if not member:
+            return jsonify({"success": False, "error": "Member not found"}), 404
+        if not member.device_enroll_number:
+            return jsonify({"success": False, "error": "Member has no terminal enroll number"}), 400
+
+        cmd = queue_membership_command(member, force=True)
+        db.session.commit()
+
+        audit(
+            action="remove_member_from_terminal",
+            resource_type="member",
+            resource_id=member.id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"enroll_number": member.device_enroll_number},
+        )
+
+        return jsonify({"success": True, "data": {
+            "queued": bool(cmd),
+            "message": f"Queued removal for {member.full_name or member.id}",
+        }})
