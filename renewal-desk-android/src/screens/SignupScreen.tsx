@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { GoogleAuthButton } from '../components/GoogleAuthButton';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { googleLogin, signup } from '../services/apiClient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   subtitle: {
@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
   stepDotText: {
     color: '#fff',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   stepDotTextInactive: {
     color: colors.textSecondary,
@@ -585,7 +585,7 @@ const styles = StyleSheet.create({
   },
   footerLink: {
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.brand,
   },
 });

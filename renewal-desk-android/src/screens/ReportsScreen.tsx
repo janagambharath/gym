@@ -6,7 +6,7 @@ import { ErrorState } from '../components/ErrorState';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatCurrency } from '../types';
 
 type ReportData = {
@@ -183,5 +183,5 @@ const styles = StyleSheet.create({
   statItem: { flex: 1, minWidth: '40%' as unknown as number },
   statLabel: { color: colors.muted, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  statValue: { color: colors.text, fontSize: fontSize['3xl'], fontVariant: ['tabular-nums'], fontWeight: fontWeight.extrabold, marginTop: spacing.xxs },
+  statValue: { color: colors.text, fontSize: fontSize['3xl'], fontVariant: ['tabular-nums'], fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra, marginTop: spacing.xxs },
 });

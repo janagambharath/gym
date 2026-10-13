@@ -18,7 +18,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { getRuntimeConfiguration } from '../config/runtime';
 import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { GymSettings, PaymentSettings, SettingsResponse } from '../types';
 
 type SettingsScreenProps = {
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
   aboutTitle: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   accountDetails: {
     marginLeft: spacing.lg,
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
   accountName: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   accountRole: {
     color: colors.muted,
@@ -397,7 +397,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: colors.text,
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   infoList: {
     marginTop: spacing.sm,
@@ -417,7 +417,7 @@ const styles = StyleSheet.create({
   editProfileBtnText: {
     color: colors.brand,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   menuIconWrap: {
     alignItems: 'center',
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
   paymentUpiText: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   paymentSubtext: {
     color: colors.textSecondary,
@@ -482,7 +482,7 @@ const styles = StyleSheet.create({
   },
   statusPillText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   whatsappDot: {
     borderRadius: 5,
@@ -521,7 +521,7 @@ const styles = StyleSheet.create({
   deleteAccountBtnText: {
     color: colors.critical,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   privacyRow: {
     flexDirection: 'row',
