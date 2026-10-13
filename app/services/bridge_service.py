@@ -116,15 +116,16 @@ def adms_command_text(
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
     if action in {"block", "block_test"}:
-        priority = "1"
+        # ZKTeco has no "inactive" flag — Pri is privilege level (0=normal,
+        # 1=enroller, 2=admin). The only reliable block is DELETE.
+        return f"DATA DELETE USERINFO PIN={enroll_number}"
     elif action in {"unblock", "unblock_test"}:
-        priority = "0"
+        # Re-create as normal user. Note: fingerprints must be re-enrolled
+        # on the terminal after a delete-block.
+        name = (member_name or "Test User")[:24]
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
     else:
         raise ValueError(f"Unknown ADMS command action: {action!r}")
-    # Include Name to ensure the X2008 applies the full record update;
-    # partial PIN+Pri updates are ignored on some firmware.
-    name = (member_name or "Test User")[:24]
-    return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri={priority}"
 
 
 def resolve_adms_enroll_number(member: Member) -> str | None:
