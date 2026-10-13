@@ -103,7 +103,8 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     __table_args__ = (
         CheckConstraint(
             "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock', "
-            "'create_user', 'delete_user', 'unlock_door', 'clear_log', 'reboot', 'check')",
+            "'create_user', 'delete_user', 'unlock_door', 'clear_log', 'reboot', 'check', "
+            "'sync_users')",
             name="ck_rrr_adms_command_action",
         ),
         CheckConstraint(
@@ -125,6 +126,9 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     acknowledged_at = db.Column(db.DateTime(timezone=True), nullable=True)
     result_code = db.Column(db.String(32), nullable=True)
     result_message = db.Column(db.String(500), nullable=True)
+    # JSON snapshot of the terminal's USERINFO table (sync_users action).
+    # Powers smart enroll matching on the PC-less ADMS path.
+    result_data = db.Column(db.Text, nullable=True)
     requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     integration = db.relationship("RRRIntegration")
 

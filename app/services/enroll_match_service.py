@@ -59,9 +59,52 @@ def get_terminal_snapshot(gym_id: int) -> dict | None:
         return None
     return {
         "command_id": cmd.id,
+        "source": "bridge",
         "acknowledged_at": cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None,
         "users": [
             {"enroll_number": str(u.get("user_id") or u.get("enroll_number") or "").strip(),
+             "name": str(u.get("name") or "").strip()}
+            for u in users
+            if isinstance(u, dict)
+        ],
+    }
+
+
+def get_adms_snapshot(gym_id: int) -> dict | None:
+    """Return the latest ADMS USERINFO snapshot for this gym, or None.
+
+    The terminal uploads its user table in response to our ``DATA QUERY
+    USERINFO`` command; the cdata handler stores it on the sync_users
+    command's result_data.  This is the PC-less path to smart matching.
+    """
+    from app.models.rrr import RRRAdmsCommand, RRRIntegration
+
+    integration = RRRIntegration.query.filter_by(
+        gym_id=gym_id, connector_type="adms_direct"
+    ).first()
+    if not integration:
+        return None
+    cmd = (
+        RRRAdmsCommand.query.filter_by(integration_id=integration.id, action="sync_users")
+        .filter(RRRAdmsCommand.result_data.isnot(None))
+        .order_by(RRRAdmsCommand.id.desc())
+        .first()
+    )
+    if not cmd or not cmd.result_data:
+        return None
+    try:
+        data = json.loads(cmd.result_data)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    users = data.get("users") if isinstance(data, dict) else None
+    if not isinstance(users, list):
+        return None
+    return {
+        "command_id": cmd.id,
+        "source": "adms",
+        "acknowledged_at": cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None,
+        "users": [
+            {"enroll_number": str(u.get("enroll_number") or "").strip(),
              "name": str(u.get("name") or "").strip()}
             for u in users
             if isinstance(u, dict)
@@ -76,7 +119,7 @@ def suggest_matches(gym_id: int) -> dict:
     Each suggestion: {enroll_number, terminal_name, member_id, member_name,
     member_phone, confidence (0-100)}.
     """
-    snapshot = get_terminal_snapshot(gym_id)
+    snapshot = get_terminal_snapshot(gym_id) or get_adms_snapshot(gym_id)
     if not snapshot:
         return {"suggestions": [], "unmatched_terminal": [], "snapshot": None,
                 "error": "no_snapshot",

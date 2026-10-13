@@ -514,13 +514,40 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def enroll_scan():
-        """Queue a sync_users command: the connector snapshots the terminal's
-        user list (enroll number + name) and ships it back on the ack."""
+        """Queue a sync_users command: the terminal's user list (enroll number
+        + name) comes back for smart matching.
+
+        Prefers the PC-less ADMS path (``DATA QUERY USERINFO``) when the gym
+        has a direct-ADMS integration; falls back to the Windows bridge
+        (connector ``sync_users``) otherwise.
+        """
         from app.models.bridge import BridgeCommand, BridgeInstallation
+        from app.models.rrr import RRRAdmsCommand, RRRIntegration
+        from app.services.bridge_service import adms_command_text
+
+        # PC-less ADMS path first.
+        integration = RRRIntegration.query.filter_by(
+            gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is not None:
+            cmd = RRRAdmsCommand(
+                integration_id=integration.id,
+                gym_id=g.gym_id,
+                action="sync_users",
+                command_text=adms_command_text("sync_users", None),
+                requested_by_id=g.user_id,
+            )
+            db.session.add(cmd)
+            db.session.commit()
+            return jsonify({"success": True, "data": {
+                "command_id": cmd.id,
+                "path": "adms",
+                "message": "Scan queued. The terminal will upload its user list on its next poll (~seconds). Then open match suggestions.",
+            }}), 201
 
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
-            return error_response("NOT_FOUND", "No paired bridge for this gym. Pair the PC connector first.", 404)
+            return error_response("NOT_FOUND", "No paired bridge or ADMS integration for this gym. Pair the PC connector or provision ADMS first.", 404)
         cmd = BridgeCommand(
             bridge_id=bridge.id,
             gym_id=g.gym_id,
@@ -531,6 +558,7 @@ def register_rrr_routes(bp):
         db.session.commit()
         return jsonify({"success": True, "data": {
             "command_id": cmd.id,
+            "path": "bridge",
             "message": "Scan queued. The connector will read the terminal's user list (~10s). Then open match suggestions.",
         }}), 201
 

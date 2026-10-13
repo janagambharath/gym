@@ -86,7 +86,12 @@ def adms_command_text(
     * ``clear_log``   — ``CLEAR LOG``
     * ``reboot``      — ``REBOOT``
     * ``check``       — ``CHECK``
+    * ``sync_users``  — ``DATA QUERY USERINFO`` (terminal uploads its user table;
+      the cdata handler stores it as the command's result_data for smart matching)
     """
+
+    if action == "sync_users":
+        return "DATA QUERY USERINFO"
 
     if action == "probe_info":
         return "INFO"

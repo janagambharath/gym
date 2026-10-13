@@ -109,6 +109,59 @@ def _attlog_lines() -> list[str]:
     return [line.strip("\r") for line in raw.splitlines() if line.strip()]
 
 
+def _parse_userinfo_line(line: str) -> dict | None:
+    """Parse one USERINFO line from a terminal table upload.
+
+    Format: ``USER PIN=12345\\tName=Alice Smith\\tPri=0\\tPasswd=\\tCard=0...``
+    Fields are TAB-separated; values (like names) may contain spaces, so we
+    must split on tabs, never on whitespace.
+    Returns {"enroll_number": ..., "name": ...} or None.
+    """
+    line = line.strip()
+    if not line.upper().startswith("USER "):
+        return None
+    fields: dict[str, str] = {}
+    for part in line[5:].split("\t"):
+        part = part.strip()
+        if "=" in part:
+            key, _, value = part.partition("=")
+            fields[key.strip().upper()] = value.strip()
+    pin = fields.get("PIN", "").strip()
+    if not pin:
+        return None
+    return {"enroll_number": pin, "name": fields.get("NAME", "").strip()}
+
+
+def _ingest_userinfo(integration: RRRIntegration) -> int:
+    """Store a USERINFO table upload as the latest sync_users snapshot.
+
+    The terminal uploads its user list in response to our ``DATA QUERY
+    USERINFO`` command.  We attach the parsed list to the most recent
+    sync_users command so smart enroll matching can use it.
+    """
+    import json
+
+    users = []
+    for line in _attlog_lines():
+        parsed = _parse_userinfo_line(line)
+        if parsed:
+            users.append(parsed)
+    if not users:
+        return 0
+    cmd = (
+        RRRAdmsCommand.query.filter_by(integration_id=integration.id, action="sync_users")
+        .order_by(RRRAdmsCommand.id.desc())
+        .first()
+    )
+    if cmd is None:
+        return 0
+    # Cap at ~256KB (a 3k-user terminal is ~150KB JSON).
+    cmd.result_data = json.dumps({"users": users, "count": len(users)})[:262144]
+    cmd.status = "acked"
+    cmd.acknowledged_at = utcnow()
+    return len(users)
+
+
 def _ingest_attlog(integration: RRRIntegration) -> int:
     created = 0
     gym = db.session.get(Gym, integration.gym_id)
@@ -163,6 +216,8 @@ def cdata(path_token: str | None = None):
     table = str(request.args.get("table") or request.form.get("table") or "").upper()
     if request.method == "POST" and table == "ATTLOG":
         _ingest_attlog(integration)
+    elif request.method == "POST" and table in {"USERINFO", "USER"}:
+        _ingest_userinfo(integration)
     db.session.commit()
     # Common ADMS clients expect a plain acknowledgement after a push and an
     # option payload on their initial GET.  Never put secrets in this response.
