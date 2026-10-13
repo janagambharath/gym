@@ -290,6 +290,18 @@ def register_rrr_routes(bp):
             RRRAdmsCommand.status.in_(("queued", "delivered")),
         ).first()
         if existing is not None:
+            # Stuck-command timeout: if a command has been delivered for >5 min
+            # without ack, the terminal likely already executed it but the ack
+            # was lost. Mark it timed out so testing isn't blocked forever.
+            from datetime import timedelta
+            from app.models.mixins import utcnow
+            stuck_cutoff = utcnow() - timedelta(minutes=5)
+            delivered_at = existing.delivered_at or existing.created_at
+            if existing.status == "delivered" and delivered_at and delivered_at < stuck_cutoff:
+                existing.status = "timeout"
+                db.session.commit()
+                existing = None
+        if existing is not None:
             return error_response("COMMAND_PENDING", "Wait for the current terminal command acknowledgement before sending another test.", 409)
         command_text = _direct_adms_command_text(action, enroll_number)
         row = RRRAdmsCommand(
