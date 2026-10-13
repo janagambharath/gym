@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest } from '../services/apiClient';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import { MemberPickerModal, PickerPerson } from '../components/MemberPickerModal';
+import { CardSkeleton, PillarCardSkeleton } from '../components/LoadingSkeleton';
 
 type Opportunity = { id: number; pillar: string; reason: string; potential_revenue: string; member: { name: string } };
 type Device = { id: number; name: string; serial_number: string; status: string; selected: boolean };
@@ -45,6 +46,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [pickerEvent, setPickerEvent] = useState<Unresolved | null>(null);
   const [matches, setMatches] = useState<EnrollMatches | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [loading, setLoading] = useState(true);
   const direct = integrations.find((item) => item.type === 'adms_direct');
   const bridge = integrations.find((item) => item.type === 'ebioserver');
   // Port of the PWA's 5-minute liveness check — status alone never goes stale server-side.
@@ -82,6 +84,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       setOwnerToday(ownerTodayData.data);
     }
     setRefreshing(false);
+    setLoading(false);
   }, []);
   useEffect(() => {
     const initialLoad = setTimeout(() => { void load(); }, 0);
@@ -168,7 +171,8 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl tintColor={colors.brand} refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}>
     <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹ Settings</Text></TouchableOpacity>
-    <View style={styles.hero}><Text style={styles.eyebrow}>RRR GYM GROWTH SYSTEM</Text><Text style={styles.title}>Run the gym. Grow the business.</Text><Text style={styles.subtitle}>Revenue, retention, recovery and attendance—one owner workspace.</Text></View>
+    {loading ? <><View style={styles.hero}><Text style={styles.eyebrow}>RRR GYM GROWTH SYSTEM</Text><Text style={styles.title}>Run the gym. Grow the business.</Text></View><PillarCardSkeleton /><PillarCardSkeleton /><PillarCardSkeleton /><CardSkeleton count={2} /></> : <>
+    <View style={styles.hero}><Text style={styles.eyebrow}>RRR GYM GROWTH SYSTEM</Text><Text style={styles.title}>Run the gym. Grow the business.</Text><Text style={styles.subtitle}>Revenue, retention, recovery and attendance—one owner workspace.</Text></View>}
     <View style={styles.metrics}><Metric value={String(data?.members?.total ?? 0)} label="Members" /><Metric value={`${data?.members?.attendance_rate ?? 0}%`} label="Attendance" /><Metric value={`₹${money(potential)}`} label="Pipeline" /></View>
     {ownerToday && <View style={[styles.card, ownerStyles.todayCard]}><View style={styles.cardHeader}><View><Text style={styles.cardEyebrow}>OWNER TODAY</Text><Text style={styles.cardTitle}>Run this shift with clarity</Text></View><Text style={ownerStyles.todayTotal}>₹{money(Number(ownerToday.collections.total || 0))}</Text></View><Text style={styles.copy}>{ownerToday.follow_up_count} lead follow-up(s) and {ownerToday.trials_today.length} trial visit(s) need attention today.</Text>{ownerToday.actions.slice(0, 4).map((action, index) => <View style={ownerStyles.todayAction} key={`${action.title}-${index}`}><View style={[ownerStyles.actionDot, action.priority === 'high' && ownerStyles.actionDotHigh]} /><View style={ownerStyles.todayActionCopy}><Text style={styles.rowTitle}>{action.title}</Text><Text style={styles.rowSub}>{action.detail}</Text></View><Text style={ownerStyles.actionCount}>{action.count}</Text></View>)}</View>}
     {(['revenue', 'retain', 'recover'] as const).map((pillar) => { const tone = tones[pillar]; const values = pillars[pillar]; return <View key={pillar} style={[styles.focus, { backgroundColor: tone.surface }]}><View style={styles.focusTop}><View><Text style={[styles.focusLabel, { color: tone.color }]}>{tone.label}</Text><Text style={styles.rowSub}>{tone.copy}</Text></View><Text style={[styles.focusCount, { color: tone.color }]}>{values?.count ?? 0}</Text></View><View style={styles.focusBottom}><Text style={styles.copy}>{pillar === 'revenue' ? 'Revenue opportunities' : pillar === 'retain' ? 'Members at risk' : 'Inactive / expired'}</Text><Text style={[styles.focusValue, { color: tone.color }]}>₹{money(Number(values?.potential_revenue || 0))}</Text></View>{(data?.opportunities || []).filter((item) => item.pillar === pillar).slice(0, 2).map((item) => <TouchableOpacity key={item.id} onPress={() => void markActioned(item.id)} style={styles.opportunity}><View><Text style={styles.rowTitle}>{item.member.name}</Text><Text style={styles.rowSub}>{item.reason}</Text></View><Text style={[styles.link, { color: tone.color }]}>Action ›</Text></TouchableOpacity>)}</View>; })}
@@ -205,7 +209,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       }}
     />
     <View style={styles.card}><Text style={styles.cardEyebrow}>GROWTH ENGINE</Text><Text style={styles.cardTitle}>Signal thresholds</Text>{ruleFields.map(([key, label]) => <View style={styles.rule} key={key}><Text style={styles.copy}>{label}</Text><View style={styles.ruleValue}><TextInput keyboardType="number-pad" value={String(rules[key] ?? '')} onChangeText={(value) => setRules((old) => ({ ...old, [key]: Number(value) }))} style={styles.ruleInput} /><Text style={styles.unit}>{key === 'attendance_drop_percent' ? '%' : 'days'}</Text></View></View>)}<Button text="Save thresholds" onPress={() => void saveRules()} /></View>
-  </ScrollView></SafeAreaView>;
+  </>}</ScrollView></SafeAreaView>;
 }
 
 function Metric({ value, label }: { value: string; label: string }) { return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>; }
