@@ -116,13 +116,11 @@ def adms_command_text(
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
     if action in {"block", "block_test"}:
-        # Time-zone trick: set EndDatetime to the past. The terminal rejects
+        # Expiry-date trick: set EndDatetime to the past. Terminal rejects
         # punches but keeps fingerprints enrolled. No re-enrollment needed.
-        # EndDatetime=1 = 1970-01-01 (always expired).
         name = (member_name or "Test User")[:24]
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tEndDatetime=1"
     elif action in {"unblock", "unblock_test"}:
-        # Clear expiry: EndDatetime=0 = no restriction.
         name = (member_name or "Test User")[:24]
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tEndDatetime=0"
     else:
