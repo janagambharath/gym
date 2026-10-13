@@ -10,10 +10,17 @@ down_revision = "y7z8a9b0c1d2"
 
 
 def upgrade():
+    from sqlalchemy import inspect
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    existing = {c["name"] for c in inspector.get_columns("bridge_commands")}
     with op.batch_alter_table("bridge_commands") as batch_op:
-        batch_op.add_column(sa.Column("delay_seconds", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("valid_from", sa.String(10), nullable=True))
-        batch_op.add_column(sa.Column("valid_to", sa.String(10), nullable=True))
+        if "delay_seconds" not in existing:
+            batch_op.add_column(sa.Column("delay_seconds", sa.Integer(), nullable=True))
+        if "valid_from" not in existing:
+            batch_op.add_column(sa.Column("valid_from", sa.String(10), nullable=True))
+        if "valid_to" not in existing:
+            batch_op.add_column(sa.Column("valid_to", sa.String(10), nullable=True))
         try:
             batch_op.drop_constraint("ck_bridge_commands_type", type_="check")
         except Exception:
