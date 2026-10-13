@@ -23,54 +23,11 @@ export default {
         <button class="filter-chip" data-filter="expiring">Expiring</button>
         <button class="filter-chip" data-filter="expired">Expired</button>
       </div>
-      <div id="member-admin-actions" style="display:flex;gap:8px;padding:0 var(--sp-lg) 8px;flex-wrap:wrap"></div>
       <div class="scroll-view" id="members-list">${renderListSkeleton()}</div>
       <button class="fab" id="fab-add">${icon('add', 24, 'white')}</button>`;
 
     bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('add-member') }, { onClick: () => navigate.push('member-import') }] });
     el.querySelector('#fab-add').addEventListener('click', () => navigate.push('add-member'));
-
-    // Admin actions: Restore deleted + Delete expired only
-    const adminEl = el.querySelector('#member-admin-actions');
-    if (adminEl) {
-      adminEl.innerHTML = `
-        <button id="btn-restore-deleted" class="filter-chip" style="border-color:#16a34a;color:#16a34a">♻️ Restore Deleted</button>
-        <button id="btn-delete-expired" class="filter-chip" style="border-color:#dc2626;color:#dc2626">🗑️ Delete Expired Only</button>
-      `;
-      el.querySelector('#btn-restore-deleted')?.addEventListener('click', async () => {
-        if (!confirm('Restore all deleted members?')) return;
-        const btn = el.querySelector('#btn-restore-deleted');
-        btn.disabled = true; btn.textContent = 'Restoring...';
-        try {
-          const res = await apiRequest('/api/mobile/v1/rrr/restore-deleted-members', { method: 'POST' });
-          alert(res.ok ? `✓ ${res.data.message}` : 'Failed: ' + (res.error?.message || 'Unknown'));
-          if (res.ok) { page = 1; members = []; loadMembers(); }
-        } catch(e) { alert('Error: ' + e.message); }
-        btn.disabled = false; btn.textContent = '♻️ Restore Deleted';
-      });
-      el.querySelector('#btn-delete-expired')?.addEventListener('click', async () => {
-        if (!confirm('Delete ONLY expired members from Renewal Desk? Active members will NOT be touched.')) return;
-        const btn = el.querySelector('#btn-delete-expired');
-        btn.disabled = true; btn.textContent = 'Deleting...';
-        try {
-          // Get expired members first
-          const listRes = await apiRequest('/api/mobile/v1/members?status=expired&page=1&page_size=500');
-          const expired = listRes.ok ? (listRes.data.members || []) : [];
-          if (!expired.length) { alert('No expired members found.'); btn.disabled = false; btn.textContent = '🗑️ Delete Expired Only'; return; }
-          if (!confirm(`Found ${expired.length} expired members. Delete them all?`)) { btn.disabled = false; btn.textContent = '🗑️ Delete Expired Only'; return; }
-          let ok = 0, fail = 0;
-          for (const m of expired) {
-            try {
-              const r = await apiRequest(`/api/mobile/v1/members/${m.id}/deactivate`, { method: 'POST' });
-              r.ok ? ok++ : fail++;
-            } catch(e) { fail++; }
-          }
-          alert(`✓ Deleted ${ok}${fail ? `, ${fail} failed` : ''}`);
-          page = 1; members = []; loadMembers();
-        } catch(e) { alert('Error: ' + e.message); }
-        btn.disabled = false; btn.textContent = '🗑️ Delete Expired Only';
-      });
-    }
 
     // Filter chips
     el.querySelector('#member-filters').addEventListener('click', (e) => {
