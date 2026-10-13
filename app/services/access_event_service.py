@@ -276,6 +276,27 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
             device_online = heartbeat_age <= 120 and bridge.is_active
             last_heartbeat = hb.isoformat()
 
+    # Also count ADMS attendance events (RRRAttendanceEvent) — these are the
+    # punches from direct-cloud terminals that don't go through AccessEvent.
+    from app.models.rrr import RRRAttendanceEvent
+    adms_entries_today = RRRAttendanceEvent.query.filter(
+        RRRAttendanceEvent.gym_id == gym_id,
+        RRRAttendanceEvent.punch_time >= day_start_utc,
+        RRRAttendanceEvent.processing_status == "processed",
+    ).count()
+    entries_today = entries_today + adms_entries_today
+
+    # Last event time — check both tables
+    last_adms_event = (
+        RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
+        .order_by(RRRAttendanceEvent.punch_time.desc())
+        .first()
+    )
+    if last_adms_event and last_adms_event.punch_time:
+        adms_time = last_adms_event.punch_time.isoformat()
+        if not last_event_at or adms_time > last_event_at:
+            last_event_at = adms_time
+
     return {
         "inside_now": inside_now,
         "entries_today": entries_today,
