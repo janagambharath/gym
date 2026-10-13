@@ -79,6 +79,21 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     if existing:
         return existing, False
     member = _mapped_member(gym_id, biometric_user_id)
+    
+    # Auto-link: if no direct enroll-number match, try high-confidence name matching
+    # This runs automatically on every unmapped punch — no button needed.
+    if not member:
+        try:
+            from app.services.enroll_match_service import auto_link_high_confidence
+            result = auto_link_high_confidence(gym_id=gym_id)
+            # If this specific ID got linked, fetch the member
+            for linked in result.get("linked", []):
+                if str(linked.get("enroll_number")) == str(biometric_user_id):
+                    member = _mapped_member(gym_id, biometric_user_id)
+                    break
+        except Exception:
+            pass  # Auto-link is best-effort; don't break punch ingestion
+    
     event = RRRAttendanceEvent(
         gym_id=gym_id,
         integration_id=integration_id,
