@@ -83,6 +83,14 @@ def register_access_routes(bp):
             summary["adms_online"] = False
             summary["adms_device_name"] = None
 
+        # The top status card should show live if EITHER the bridge or the
+        # direct ADMS terminal is online. Prefer the ADMS device name when
+        # only ADMS is connected.
+        if summary.get("adms_online") and not summary.get("device_online"):
+            summary["device_online"] = True
+            summary["device_name"] = summary.get("adms_device_name")
+            summary["device_serial"] = adms.device_serial if adms else None
+
         resp = jsonify({"success": True, "data": summary})
         resp.headers["Cache-Control"] = "no-store"
         return resp
