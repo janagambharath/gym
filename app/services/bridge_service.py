@@ -116,12 +116,12 @@ def adms_command_text(
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
     if action in {"block", "block_test"}:
-        # TZ trick: set timezone bitmask to all zeros (no valid hours).
-        # Terminal rejects punches but keeps fingerprints enrolled.
+        # TZ trick: timezone 50 (0x32) = "blocked" zone with no valid hours.
+        # Used at Yodha Fitness. Fingerprints stay enrolled.
         name = (member_name or "Test User")[:24]
-        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tTZ=0000000000000000"
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tTZ=0000003200000000"
     elif action in {"unblock", "unblock_test"}:
-        # Restore default timezone (all hours valid).
+        # Restore default timezone 1.
         name = (member_name or "Test User")[:24]
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tTZ=0000000100000000"
     else:
