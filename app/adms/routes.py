@@ -147,9 +147,19 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
     sync_users command so smart enroll matching can use it.
     """
     import json
+    import logging
+
+    log = logging.getLogger(__name__)
+    raw_lines = _attlog_lines()
+    # TEMPORARY DEBUG: log raw upload format to reverse-engineer fingerprint
+    # template encoding. Remove after backup/restore is implemented.
+    for i, line in enumerate(raw_lines[:5]):
+        # Log first 200 chars of first 5 lines to see format without flooding
+        log.warning("USERINFO_RAW line %d: %s", i, line[:200])
+    log.warning("USERINFO_RAW total lines: %d", len(raw_lines))
 
     users = []
-    for line in _attlog_lines():
+    for line in raw_lines:
         parsed = _parse_userinfo_line(line)
         if parsed:
             users.append(parsed)
