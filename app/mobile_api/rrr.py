@@ -301,7 +301,7 @@ def register_rrr_routes(bp):
                 if delivered_at is not None and delivered_at.tzinfo is None:
                     delivered_at = delivered_at.replace(tzinfo=tz.utc)
                 if existing.status == "delivered" and delivered_at and delivered_at < stuck_cutoff:
-                    existing.status = "timeout"
+                    existing.status = "failed"
                     db.session.commit()
                     existing = None
             except Exception:
