@@ -59,6 +59,13 @@ def token_required(view):
         user = db.session.get(User, payload.get("sub"))
         if user is None:
             return error_response("UNAUTHORIZED", "User not found.", 401)
+        # SECURITY (2026-10-13): member and owner tokens share the same secret
+        # and format, and members.id / users.id both autoincrement from 1, so
+        # numeric collisions are guaranteed. Without a role check, a member's
+        # valid token authenticates as whichever User shares their numeric ID.
+        # Owner endpoints must reject member tokens outright.
+        if payload.get("role") not in ("gym_owner", "staff", "super_admin"):
+            return error_response("FORBIDDEN", "Insufficient role for this endpoint.", 403)
         if not user.is_active:
             return error_response("ACCOUNT_DISABLED", "Account is disabled.", 403)
         if user.gym is None or not user.gym.is_operational():

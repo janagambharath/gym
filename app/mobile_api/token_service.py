@@ -9,9 +9,10 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models.mobile_token import MobileRefreshToken
+from app.models.mobile_token import ConsumedHandshakeToken, MobileRefreshToken
 
 
 # ── Access tokens (HMAC-signed JWT-like) ────────────────────────────────
@@ -117,6 +118,45 @@ def decode_handshake_token(token: str, purpose: str) -> dict | None:
     return payload
 
 
+def consume_handshake_token(token: str, purpose: str) -> dict | None:
+    """Validate a handshake token and atomically mark it as consumed.
+
+    SECURITY (2026-10-13): handshake tokens were previously replayable for
+    their whole 10-minute window — the "accepted once" claim in the module
+    docstring was false. The unique constraint on token_hash makes the
+    check-and-record atomic: a replay hits IntegrityError and returns None.
+    Uses a savepoint so a replay doesn't roll back the caller's transaction.
+    """
+    payload = decode_handshake_token(token, purpose)
+    if not payload:
+        return None
+    try:
+        with db.session.begin_nested():
+            db.session.add(
+                ConsumedHandshakeToken(
+                    token_hash=_hash_token(token),
+                    purpose=purpose,
+                    user_id=payload["sub"],
+                    expires_at=datetime.fromtimestamp(
+                        payload["exp"], tz=timezone.utc
+                    ),
+                )
+            )
+    except IntegrityError:
+        # Already consumed → replay attempt.
+        return None
+    return payload
+
+
+def cleanup_consumed_handshake_tokens() -> int:
+    """Delete expired consumed-handshake records. Run periodically."""
+    now = datetime.now(timezone.utc)
+    deleted = ConsumedHandshakeToken.query.filter(
+        ConsumedHandshakeToken.expires_at < now
+    ).delete()
+    return deleted
+
+
 # ── Refresh tokens (opaque + server-stored hash) ────────────────────────
 
 
@@ -152,7 +192,15 @@ def rotate_refresh_token(raw_token: str) -> tuple[str, MobileRefreshToken] | Non
     If the token was already used (replay), invalidate the entire family.
     """
     token_hash = _hash_token(raw_token)
-    record = MobileRefreshToken.query.filter_by(token_hash=token_hash).first()
+    # SECURITY (2026-10-13): lock the row for update. Without SELECT FOR
+    # UPDATE, two concurrent refresh requests (gthread = 2 workers x 2
+    # threads) can both pass the is_used check below, defeating replay
+    # detection or double-issuing tokens. The lock is held until commit.
+    record = (
+        MobileRefreshToken.query.filter_by(token_hash=token_hash)
+        .with_for_update()
+        .first()
+    )
     if record is None:
         return None
 

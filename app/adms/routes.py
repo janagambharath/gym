@@ -34,24 +34,23 @@ def _serial() -> str:
 
 
 def _device(path_token: str | None = None) -> RRRIntegration | None:
-    # Token-first: the per-integration path secret is unguessable, so a
-    # token-path request authenticates the integration directly.
-    if path_token:
-        row = RRRIntegration.query.filter_by(
-            connector_type="adms_direct", adms_path_token=path_token
-        ).first()
-        if row is None:
-            return None
-        serial = _serial()
-        if serial and row.device_serial and serial != row.device_serial:
-            return None
-        return row
-    serial = _serial()
-    if not serial:
+    # Token-only (2026-10-13): the per-integration path secret is unguessable,
+    # so a token-path request authenticates the integration directly.
+    # Serial-only auth was REMOVED: terminal serials are sequential/predictable
+    # and anyone knowing one could upload fake ATTLOG records or poll queued
+    # device commands. Requests without a path token are treated as unknown
+    # (indistinguishable "OK", no enumeration).
+    if not path_token:
         return None
-    return RRRIntegration.query.filter_by(
-        connector_type="adms_direct", device_serial=serial
+    row = RRRIntegration.query.filter_by(
+        connector_type="adms_direct", adms_path_token=path_token
     ).first()
+    if row is None:
+        return None
+    serial = _serial()
+    if serial and row.device_serial and serial != row.device_serial:
+        return None
+    return row
 
 
 def _unknown() -> Response:
