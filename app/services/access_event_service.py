@@ -358,21 +358,9 @@ def get_access_events(
 
     # Also include ADMS attendance events (from direct-cloud terminals).
     # These live in RRRAttendanceEvent, not AccessEvent.
+    # NO date filter — just show the most recent punches. The user wants to see data.
     from app.models.rrr import RRRAttendanceEvent
-    from datetime import timedelta
     adms_query = RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
-    
-    # Apply same date filter — default to last 7 days (not just today)
-    # so historical punches are visible
-    if date_filter == "today":
-        day_start_utc = utc_start_of_gym_day(gym_timezone)
-        adms_query = adms_query.filter(RRRAttendanceEvent.punch_time >= day_start_utc)
-    elif date_filter == "all" or date_filter is None:
-        # Show last 7 days by default (not just today)
-        week_ago = utcnow() - timedelta(days=7)
-        adms_query = adms_query.filter(RRRAttendanceEvent.punch_time >= week_ago)
-    # Note: date_filter == "all" means no filter — but we default to 7 days
-    # for performance
     
     # Apply event type filter (ADMS punches are entries)
     if event_type == "exit" or event_type == "denied":
