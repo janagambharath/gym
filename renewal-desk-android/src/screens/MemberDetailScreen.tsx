@@ -20,7 +20,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Renewal, Payment } from '../types';
 import { formatCurrency, formatDate, getMemberDisplayStatus, getDaysText } from '../types';
 
@@ -946,7 +946,7 @@ const styles = StyleSheet.create({
   financialValue: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     fontVariant: ['tabular-nums'],
     marginTop: spacing.xs,
   },
@@ -971,7 +971,7 @@ const styles = StyleSheet.create({
   memberName: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   memberPhone: {
     color: colors.textSecondary,
@@ -982,7 +982,7 @@ const styles = StyleSheet.create({
   contactBtn: { flex: 1, borderRadius: radius.md, paddingVertical: spacing.sm, alignItems: 'center' },
   callBtn: { backgroundColor: colors.brandSubtle, borderWidth: 1, borderColor: colors.brand },
   waBtn: { backgroundColor: '#25D366' },
-  contactBtnText: { color: '#fff', fontWeight: fontWeight.bold, fontSize: fontSize.sm },
+  contactBtnText: { color: '#fff', fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, fontSize: fontSize.sm },
   callBtnText: { color: colors.brandDark },
   memberAddress: {
     color: colors.textSecondary,
@@ -1025,7 +1025,7 @@ const styles = StyleSheet.create({
   membershipValue: {
     color: colors.text,
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginTop: spacing.xxs,
   },
   messageBanner: {
@@ -1103,7 +1103,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   sectionTitleRow: {
     alignItems: 'center',
@@ -1163,7 +1163,7 @@ const styles = StyleSheet.create({
   biometricValue: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginTop: 2,
   },
   statusPill: {
@@ -1253,7 +1253,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   modalDesc: {
     color: colors.textSecondary,

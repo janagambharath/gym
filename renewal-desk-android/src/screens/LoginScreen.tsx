@@ -14,7 +14,7 @@ import { FormField } from '../components/FormField';
 import { GoogleAuthButton } from '../components/GoogleAuthButton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { googleLogin, login } from '../services/apiClient';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type LoginScreenProps = {
   onLogin: () => void;
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
   brandTitle: {
     color: colors.text,
     fontSize: fontSize['6xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: -1,
     marginTop: spacing.lg,
   },
@@ -264,7 +264,7 @@ const styles = StyleSheet.create({
   signupLink: {
     color: colors.brand,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   memberLoginBtn: {
     flexDirection: 'row',
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   memberLoginLink: {
     color: colors.brand,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   footer: {
     color: colors.muted,
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
   formTitle: {
     color: colors.text,
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   logoContainer: {
     alignItems: 'center',

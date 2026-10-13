@@ -14,7 +14,7 @@ import { ErrorState } from '../components/ErrorState';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type InboxConversation = {
   id: string;
@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   unreadBadge: {
@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
   unreadBadgeText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   handoverBanner: {
     flexDirection: 'row',

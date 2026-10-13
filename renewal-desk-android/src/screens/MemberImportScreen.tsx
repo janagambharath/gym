@@ -7,7 +7,7 @@ import { AppHeader } from '../components/AppHeader';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest } from '../services/apiClient';
-import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../theme/tokens';
 
 type ImportRow = { row: number; errors: string[]; status: 'VALID' | 'INVALID' | 'DUPLICATE'; values: Record<string, string> };
 type Preview = { rows: ImportRow[]; summary: { total: number; valid: number; invalid: number; duplicates: number }; file_errors: string[] };
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   safeArea: { backgroundColor: colors.background, flex: 1 },
   summary: { flexDirection: 'row', justifyContent: 'space-between' },
   summaryLabel: { color: colors.muted, fontSize: fontSize.xs },
-  summaryValue: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold, textAlign: 'center' },
+  summaryValue: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, textAlign: 'center' },
   text: { color: colors.textSecondary, fontSize: fontSize.base, lineHeight: 22 },
   title: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold },
 });
