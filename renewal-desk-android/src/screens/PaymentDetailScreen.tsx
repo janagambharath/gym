@@ -20,7 +20,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { loadSession } from '../storage/secureSessionStore';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Payment } from '../types';
 import { formatCurrency, formatDate } from '../types';
 
@@ -344,7 +344,7 @@ const styles = StyleSheet.create({
   },
   channelBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.bottomTabSafe },
   deleteButton: {
@@ -394,6 +394,6 @@ const styles = StyleSheet.create({
   whatsAppReceiptBtnText: {
     color: '#FFFFFF',
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

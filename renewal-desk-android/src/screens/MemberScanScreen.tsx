@@ -16,7 +16,7 @@ import { AppHeader } from '../components/AppHeader';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { scanMemberDocuments, type ScanDocumentResult } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
 type SelectedImage = {
   uri: string;
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   subtitle: {
     color: colors.textSecondary,
@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
   uploadTitle: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     textAlign: 'center',
   },
   uploadSub: {
@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
   uploadBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   previewSection: {
     backgroundColor: colors.card,
@@ -382,7 +382,7 @@ const styles = StyleSheet.create({
   addMoreText: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   thumbnailList: {
     gap: spacing.md,
@@ -413,7 +413,7 @@ const styles = StyleSheet.create({
   pageBadgeText: {
     color: '#fff',
     fontSize: 10,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   deleteThumbBtn: {
     alignItems: 'center',
@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
   loadingTitle: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginTop: spacing.sm,
     textAlign: 'center',
   },
@@ -465,7 +465,7 @@ const styles = StyleSheet.create({
   errorTitle: {
     color: colors.critical,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   errorText: {
     color: colors.text,
@@ -487,7 +487,7 @@ const styles = StyleSheet.create({
   errorRetryBtnText: {
     color: '#fff',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   errorAltBtn: {
     backgroundColor: colors.surface,
@@ -520,7 +520,7 @@ const styles = StyleSheet.create({
   tipsTitle: {
     color: colors.text,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   tipRow: {
     flexDirection: 'row',

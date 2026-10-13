@@ -17,7 +17,7 @@ import { SearchBar } from '../components/SearchBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, MembersResponse } from '../types';
 import { formatDate, formatInteger, getDaysText, getMemberDisplayStatus } from '../types';
 
@@ -302,7 +302,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: colors.text,
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   filterButton: {
     alignItems: 'center',
@@ -401,7 +401,7 @@ const styles = StyleSheet.create({
   pageButtonText: {
     color: colors.brand,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   pageInfo: {
     color: colors.textSecondary,

@@ -19,7 +19,7 @@ import {
   type ScannedMember,
 } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatCurrency } from '../types';
 
 type MemberScanReviewScreenProps = {
@@ -627,7 +627,7 @@ const styles = StyleSheet.create({
   summaryTitle: {
     color: colors.text,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   metricsRow: {
     flexDirection: 'row',
@@ -641,7 +641,7 @@ const styles = StyleSheet.create({
   },
   pillValue: {
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   pillLabel: {
     fontSize: 10,
@@ -688,7 +688,7 @@ const styles = StyleSheet.create({
   },
   filterBtnTextActive: {
     color: colors.textInverse,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   emptyState: {
     alignItems: 'center',
@@ -741,7 +741,7 @@ const styles = StyleSheet.create({
   memberName: {
     color: colors.text,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   statusBadge: {
     borderRadius: radius.full,
@@ -750,7 +750,7 @@ const styles = StyleSheet.create({
   },
   statusBadgeText: {
     fontSize: 9,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   memberMeta: {
     color: colors.textSecondary,
@@ -826,7 +826,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   modalForm: {
     gap: spacing.sm,
@@ -877,7 +877,7 @@ const styles = StyleSheet.create({
   },
   planChoiceTextActive: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   modalActions: {
     marginTop: spacing.md,
@@ -902,7 +902,7 @@ const styles = StyleSheet.create({
   successTitle: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   successSub: {
     color: colors.textSecondary,
@@ -922,7 +922,7 @@ const styles = StyleSheet.create({
   roiBannerTitle: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   roiBannerSub: {
     color: colors.text,

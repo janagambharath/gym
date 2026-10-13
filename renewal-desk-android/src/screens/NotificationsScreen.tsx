@@ -15,7 +15,7 @@ import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatShortDate, type AppNotificationItem, type NotificationsResponse } from '../types';
 
 type NotificationsScreenProps = {
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   markAllText: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   notificationCard: {
     alignItems: 'center',
@@ -276,6 +276,6 @@ const styles = StyleSheet.create({
     width: 8,
   },
   unreadTitle: {
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
 });
