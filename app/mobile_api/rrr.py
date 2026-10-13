@@ -695,7 +695,7 @@ def register_rrr_routes(bp):
             },
         }})
 
-    @bp.post("/rrr/bulk-remove-expired")
+    @bp.route("/rrr/bulk-remove-expired", methods=["GET", "POST"])
     @limiter.limit("10 per hour")
     @token_required
     @roles_required("gym_owner")
