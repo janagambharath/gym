@@ -22,7 +22,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatDate as formatGymDate } from '../types';
 
 type StaffMember = {
@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
   },
   credLabel: {
     color: colors.text,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   credRow: {
     color: colors.textSecondary,
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   name: { color: colors.text, fontSize: fontSize.md, fontWeight: fontWeight.semibold },
   meta: { color: colors.muted, fontSize: fontSize.xs, marginTop: spacing.xxs },
@@ -506,7 +506,7 @@ const styles = StyleSheet.create({
   },
   roleOptionTextActive: {
     color: colors.brand,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   roleSelector: {
     flexDirection: 'row',
@@ -541,6 +541,6 @@ const styles = StyleSheet.create({
   whatsappBtnText: {
     color: '#FFFFFF',
     fontSize: fontSize.md,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

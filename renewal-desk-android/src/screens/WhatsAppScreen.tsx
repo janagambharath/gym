@@ -23,7 +23,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { WhatsAppOnboardingModal } from '../components/WhatsAppOnboardingModal';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
 type ReminderLog = {
   id: number;
@@ -755,7 +755,7 @@ const styles = StyleSheet.create({
   },
   setupActionBadgeText: {
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.whatsapp,
     marginRight: 2,
   },
@@ -812,7 +812,7 @@ const styles = StyleSheet.create({
   broadcastSendBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   cardInfo: { flex: 1, gap: 2, marginLeft: spacing.md },
   cardName: { color: colors.text, fontSize: fontSize.base, fontWeight: fontWeight.semibold },
@@ -910,7 +910,7 @@ const styles = StyleSheet.create({
   sectionHeaderTitle: {
     color: colors.text,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginBottom: spacing.xs,
   },
   sendBtn: {
@@ -1000,7 +1000,7 @@ const styles = StyleSheet.create({
   waGreeting: {
     color: '#e9edef',
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginBottom: 2,
   },
   waHeader: {

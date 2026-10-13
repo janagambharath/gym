@@ -26,7 +26,7 @@ import {
 import { AppHeader } from '../components/AppHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import {
   BillingCatalogPlan,
   BillingEntitlement,
@@ -572,7 +572,7 @@ const styles = StyleSheet.create({
   failedBannerTitle: {
     color: colors.critical,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   failedBannerText: {
     color: colors.text,
@@ -593,7 +593,7 @@ const styles = StyleSheet.create({
   retryButtonText: {
     color: '#FFFFFF',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   graceBanner: {
     backgroundColor: '#FEF3C7',
@@ -612,7 +612,7 @@ const styles = StyleSheet.create({
   graceBannerTitle: {
     color: '#92400E',
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   graceBannerText: {
     color: '#78350F',
@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
   graceBannerButtonText: {
     color: '#FFFFFF',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   valuePillarsCard: {
     backgroundColor: colors.brandSubtle,
@@ -652,7 +652,7 @@ const styles = StyleSheet.create({
   valuePillarsTitle: {
     color: colors.brandDark,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   valuePillarsSubtitle: {
     color: colors.textSecondary,
@@ -662,7 +662,7 @@ const styles = StyleSheet.create({
   currentPlanCard: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.lg, ...shadows.sm, borderWidth: 1, borderColor: colors.border },
   currentPlanHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.md },
   currentPlanLabel: { fontSize: fontSize.xs, color: colors.textSecondary, fontWeight: fontWeight.semibold },
-  currentPlanName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text, marginTop: spacing.xs },
+  currentPlanName: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, color: colors.text, marginTop: spacing.xs },
   planDetailsGrid: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.borderLight },
   planDetailItem: { flex: 1 },
   planDetailLabel: { fontSize: fontSize.xs, color: colors.textSecondary },
@@ -692,7 +692,7 @@ const styles = StyleSheet.create({
   restoreButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
   restoreButtonText: { fontSize: fontSize.xs, color: colors.textSecondary, fontWeight: fontWeight.semibold, marginLeft: spacing.xs },
   catalogHeadingRow: { marginBottom: spacing.md },
-  catalogSectionTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text },
+  catalogSectionTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, color: colors.text },
   catalogSectionSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: spacing.xs },
   planCard: { backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border, ...shadows.sm },
   planCardRecommended: { borderColor: colors.brand, borderWidth: 2 },
@@ -701,7 +701,7 @@ const styles = StyleSheet.create({
   recommendedBadgeText: { color: '#fff', fontSize: 10, fontWeight: fontWeight.bold },
   planCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   planTextColumn: { flex: 1, marginRight: spacing.sm },
-  planTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text },
+  planTitle: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, color: colors.text },
   positioningPill: {
     alignSelf: 'flex-start',
     backgroundColor: colors.surface,
@@ -720,7 +720,7 @@ const styles = StyleSheet.create({
   },
   planTagline: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: spacing.xs },
   priceColumn: { alignItems: 'flex-end' },
-  priceAmount: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text, textAlign: 'right' },
+  priceAmount: { fontSize: fontSize.lg, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, color: colors.text, textAlign: 'right' },
   billingFrequency: { fontSize: 10, color: colors.muted, textTransform: 'uppercase', fontWeight: fontWeight.bold },
   featureDivider: { height: 1, backgroundColor: colors.borderLight, marginVertical: spacing.md },
   featureRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.xs },
@@ -763,7 +763,7 @@ const styles = StyleSheet.create({
   disclosureTitle: {
     color: colors.text,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginBottom: spacing.xs,
   },
   disclosureText: {
