@@ -26,6 +26,9 @@ def test_mobile_signup_creates_exact_14_day_trial(client, app):
         "gym_name": "Iron Pulse 7Day",
         "country": "India",
         "currency": "INR",
+        # 2026-10-13: the legacy signup normalizer no longer force-sets
+        # terms_accepted=True — clients must actually send their acceptance.
+        "terms_accepted": True,
     }
     resp = client.post("/api/mobile/v1/auth/signup", json=payload)
     assert resp.status_code == 201

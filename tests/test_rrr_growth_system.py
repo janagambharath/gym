@@ -139,12 +139,16 @@ def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, 
     assert len(settings["path"]) > len("/iclock/")
     assert settings["warning"].startswith("Attendance works immediately.")
 
-    hello = client.get("/iclock/cdata?SN=ELITE-X2008-01&options=all")
+    # 2026-10-13: serial-only ADMS auth was removed — terminals must use the
+    # per-device tokenized path from the provisioned settings.
+    adms_path = settings["path"]  # e.g. /iclock/<secret-path-token>
+
+    hello = client.get(f"{adms_path}/cdata?SN=ELITE-X2008-01&options=all")
     assert hello.status_code == 200
     assert "~SerialNumber=ELITE-X2008-01" in hello.get_data(as_text=True)
 
     uploaded = client.post(
-        "/iclock/cdata?SN=ELITE-X2008-01&table=ATTLOG",
+        f"{adms_path}/cdata?SN=ELITE-X2008-01&table=ATTLOG",
         data="42\t2026-10-08 10:30:00\t0\t1\t0\t0\n",
         content_type="text/plain",
     )
@@ -160,9 +164,31 @@ def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, 
     assert integration.commands_enabled is False
 
     # A cloud terminal must never receive guessed access commands.
-    no_command = client.get("/iclock/getrequest?SN=ELITE-X2008-01")
+    no_command = client.get(f"{adms_path}/getrequest?SN=ELITE-X2008-01")
     assert no_command.status_code == 200
     assert no_command.get_data(as_text=True) == "OK"
+
+
+def test_adms_serial_only_requests_are_inert(client, seed_gym):
+    """Serial-only (non-token) ADMS requests get an indistinguishable OK but
+    process nothing — the 2026-10-13 fix for spoofable serial auth."""
+    provision = client.post(
+        "/api/mobile/v1/rrr/integrations/adms/provision",
+        headers=headers(seed_gym),
+        json={"device_serial": "ELITE-X2008-NOTOK", "device_name": "No Token Terminal"},
+    )
+    assert provision.status_code == 200
+
+    # No path token → indistinguishable OK, no device provisioned.
+    res = client.get("/iclock/cdata?SN=ELITE-X2008-NOTOK&options=all")
+    assert res.status_code == 200
+    assert res.get_data(as_text=True) == "OK"
+    assert (
+        RRRDevice.query.filter_by(
+            gym_id=seed_gym["gym"].id, serial_number="ELITE-X2008-NOTOK"
+        ).first()
+        is None
+    )
 
 
 def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_gym):
@@ -171,7 +197,9 @@ def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_g
         headers=headers(seed_gym), json={"device_serial": "ELITE-X2008-CMD"},
     )
     integration_id = provision.get_json()["data"]["integration"]["id"]
-    assert client.get("/iclock/cdata?SN=ELITE-X2008-CMD").status_code == 200
+    # 2026-10-13: use the tokenized path — serial-only auth was removed.
+    adms_path = provision.get_json()["data"]["terminal_settings"]["path"]
+    assert client.get(f"{adms_path}/cdata?SN=ELITE-X2008-CMD").status_code == 200
 
     queued = client.post(
         f"/api/mobile/v1/rrr/integrations/{integration_id}/adms/commands",
@@ -181,10 +209,10 @@ def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_g
     command_id = queued.get_json()["data"]["command"]["id"]
     assert RRRAdmsCommand.query.get(command_id).status == "queued"
 
-    delivered = client.get("/iclock/getrequest?SN=ELITE-X2008-CMD")
+    delivered = client.get(f"{adms_path}/getrequest?SN=ELITE-X2008-CMD")
     assert delivered.status_code == 200
     assert delivered.get_data(as_text=True) == f"C:{command_id}:DATA UPDATE USERINFO PIN=98765\tPri=1\n"
-    ack = client.post(f"/iclock/devicecmd?SN=ELITE-X2008-CMD&ID={command_id}&Return=0&CMD=DATA")
+    ack = client.post(f"{adms_path}/devicecmd?SN=ELITE-X2008-CMD&ID={command_id}&Return=0&CMD=DATA")
     assert ack.status_code == 200
     saved = db.session.get(RRRAdmsCommand, command_id)
     assert saved.status == "acked"

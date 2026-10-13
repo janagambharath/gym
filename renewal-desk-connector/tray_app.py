@@ -76,9 +76,11 @@ def pair_with_code(pairing_code: str, device_ip: str,
     servers = []
     if server_url and server_url.strip():
         servers.append(server_url.strip().rstrip("/"))
+    # PRODUCTION backend (2026-10-13: the old hardcoded URLs
+    # renewaldesk.up.railway.app / app.renewaldesk.in were wrong and pairing
+    # could never reach production — fixed to the real Railway URL).
     servers.extend([
-        "https://renewaldesk.up.railway.app",
-        "https://app.renewaldesk.in",
+        "https://gym-production-910c.up.railway.app",
         "http://localhost:5000",
     ])
     seen = set()
@@ -144,7 +146,7 @@ def first_run_setup_gui() -> ConnectorConfig | None:
 
     root = tk.Tk()
     root.title("Renewal Desk — Biometric Connector Setup")
-    root.geometry("460x380")
+    root.geometry("460x440")
     root.resizable(False, False)
 
     # Center on screen
@@ -188,6 +190,12 @@ def first_run_setup_gui() -> ConnectorConfig | None:
     ip_entry.insert(0, "192.168.1.201")
     ip_entry.pack(anchor="w", ipady=3)
 
+    # Field 3: Server URL (optional — defaults to production)
+    tk.Label(form_frame, text="Server URL (leave default for production):", font=("Segoe UI", 10, "bold"), fg="#1e293b", bg=bg_color).pack(anchor="w", pady=(10, 2))
+    server_entry = tk.Entry(form_frame, font=("Segoe UI", 9), width=40)
+    server_entry.insert(0, "https://gym-production-910c.up.railway.app")
+    server_entry.pack(anchor="w", ipady=3)
+
     # Status / Info Label
     status_label = tk.Label(form_frame, text="", font=("Segoe UI", 9), fg="#dc2626", bg=bg_color)
     status_label.pack(anchor="w", pady=(12, 0))
@@ -195,6 +203,7 @@ def first_run_setup_gui() -> ConnectorConfig | None:
     def on_pair():
         code = code_entry.get().strip()
         ip = ip_entry.get().strip() or "192.168.1.201"
+        server_url = server_entry.get().strip()
 
         if not code or len(code) < 6:
             status_label.config(text="Please enter a valid 6-digit pairing code.", fg="#dc2626")
@@ -203,7 +212,7 @@ def first_run_setup_gui() -> ConnectorConfig | None:
         status_label.config(text="Connecting to biometric device and pairing with cloud...", fg="#2563eb")
         root.update()
 
-        result = pair_with_code(code, ip)
+        result = pair_with_code(code, ip, server_url=server_url)
         if not result:
             status_label.config(text="Pairing failed. Check code or verify internet connection.", fg="#dc2626")
             return

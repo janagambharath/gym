@@ -50,7 +50,20 @@ def create_app(config_name: str | None = None) -> Flask:
             )
 
     app = Flask(__name__, instance_relative_config=True)
-    selected_config = config_name or os.getenv("FLASK_ENV", "default")
+    selected_config = config_name or os.getenv("FLASK_ENV")
+    if not selected_config:
+        # SECURITY (2026-10-13): fail closed. Previously an unset FLASK_ENV
+        # silently selected DevelopmentConfig (DEBUG=True, non-secure
+        # cookies, no production validation). If the environment looks
+        # deployed (external DATABASE_URL or PORT present, as on
+        # Railway/Heroku-likes), default to production so _validate_config
+        # enforces SECRET_KEY length, real Redis, etc. Local dev (no
+        # DATABASE_URL/PORT) keeps the documented dev default.
+        db_url = os.getenv("DATABASE_URL", "")
+        if (db_url and not db_url.startswith("sqlite:")) or os.getenv("PORT"):
+            selected_config = "production"
+        else:
+            selected_config = "default"
     app.config.from_object(config_by_name[selected_config])
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -675,7 +688,10 @@ def _register_cli(app: Flask) -> None:
             )
 
         db.session.commit()
-        print("Seeded demo tenant owner@example.com / ChangeMe123!")
+        # SECURITY (2026-10-13): never print credentials. The previous version
+        # printed the demo password unconditionally — even in production logs
+        # when a different password had been configured.
+        app.logger.info("Seeded demo tenant (owner@example.com)")
 
     @app.cli.command("run-reminders")
     def run_reminders() -> None:

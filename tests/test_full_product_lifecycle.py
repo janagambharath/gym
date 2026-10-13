@@ -52,7 +52,9 @@ def test_complete_owner_and_member_lifecycle(client):
     db.session.add(plan)
     db.session.commit()
 
-    owner_token = create_access_token(user_id=owner.id, gym_id=gym.id, role="owner")
+    # 2026-10-13: must use the real "gym_owner" role — token_required now
+    # enforces the role claim (previously any string worked).
+    owner_token = create_access_token(user_id=owner.id, gym_id=gym.id, role="gym_owner")
     owner_headers = {"Authorization": f"Bearer {owner_token}"}
 
     # 3. Add member joining today

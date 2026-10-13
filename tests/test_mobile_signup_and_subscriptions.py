@@ -31,6 +31,7 @@ def test_self_service_signup_success(client, app):
     """Test successful owner and gym registration via POST /api/mobile/v1/auth/signup."""
     payload = {
         "full_name": "Rajesh Kumar",
+        "terms_accepted": True,
         "email": "rajesh.fit@example.com",
         "phone": "+919876543210",
         "password": "SecurePassword123!",
@@ -69,6 +70,7 @@ def test_self_service_signup_validation_and_conflicts(client, app):
     # Short password
     resp = client.post("/api/mobile/v1/auth/signup", json={
         "full_name": "Test User",
+        "terms_accepted": True,
         "email": "valid@example.com",
         "phone": "9876543211",
         "password": "123",
@@ -88,6 +90,7 @@ def test_self_service_signup_validation_and_conflicts(client, app):
 
     resp = client.post("/api/mobile/v1/auth/signup", json={
         "full_name": "New Owner",
+        "terms_accepted": True,
         "email": "existing@example.com",
         "phone": "+919888888888",
         "password": "ValidPassword123!",
@@ -399,6 +402,7 @@ def test_delete_account_owner_and_staff(client, app):
     # 1. Sign up owner
     resp = client.post("/api/mobile/v1/auth/signup", json={
         "full_name": "Delete Owner",
+        "terms_accepted": True,
         "email": "delete.owner@example.com",
         "phone": "+919876543288",
         "password": "SecurePassword123!",
@@ -416,8 +420,12 @@ def test_delete_account_owner_and_staff(client, app):
         owner = User.query.filter_by(email="delete.owner@example.com").first()
         owner_id = owner.id
 
-    # 2. Delete account
-    del_resp = client.delete("/api/mobile/v1/auth/account", headers=headers)
+    # 2. Delete account (2026-10-13: password confirmation is now required)
+    del_resp = client.delete(
+        "/api/mobile/v1/auth/account",
+        headers=headers,
+        json={"password": "SecurePassword123!"},
+    )
     assert del_resp.status_code == 200
     assert del_resp.get_json()["success"] is True
 
@@ -444,6 +452,7 @@ def test_empty_dashboard_and_zero_renewal_rate(client, app):
     """Verify empty dashboard return structures and reports renewal_rate is 0.0 when 0 due."""
     resp = client.post("/api/mobile/v1/auth/signup", json={
         "full_name": "Zero Owner",
+        "terms_accepted": True,
         "email": "zero.owner@example.com",
         "phone": "+919876543277",
         "password": "SecurePassword123!",
