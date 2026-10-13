@@ -66,7 +66,9 @@ def register_rrr_routes(bp):
     def rrr_opportunities():
         pillar = (request.args.get("pillar") or "").strip().lower()
         status = (request.args.get("status") or "open").strip().lower()
-        query = RRROpportunity.query.filter_by(gym_id=g.gym_id)
+        query = RRROpportunity.query.filter_by(gym_id=g.gym_id).join(
+            Member, RRROpportunity.member_id == Member.id
+        ).filter(Member.deleted_at.is_(None))
         if pillar in {"revenue", "retain", "recover"}:
             query = query.filter_by(pillar=pillar)
         if status:

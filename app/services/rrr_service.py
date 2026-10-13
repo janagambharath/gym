@@ -298,6 +298,7 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     opportunities = RRROpportunity.query.filter_by(gym_id=gym_id).filter(
         RRROpportunity.status.in_(("open", "actioned"))
     ).join(Member, Member.id == RRROpportunity.member_id
+    ).filter(Member.deleted_at.is_(None)
     ).order_by(RRROpportunity.priority.desc(), Member.membership_end.asc().nullslast(), RRROpportunity.created_at.desc()).all()
     by_pillar: dict[str, list[RRROpportunity]] = defaultdict(list)
     for item in opportunities:
