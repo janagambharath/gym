@@ -120,12 +120,16 @@ def adms_command_text(
         # are backed up during sync_users and restored on unblock.
         return f"DATA DELETE USERINFO PIN={enroll_number}"
     elif action in {"delete_biodata_test"}:
-        # Try deleting just the fingerprint template, keeping the user.
-        # Based on CMD_DELETE_USERTEMP / CMD_DEL_FPTMP in the TCP protocol.
-        return f"DATA DELETE BIODATA PIN={enroll_number}"
-    elif action in {"delete_fingertmp_test"}:
-        # Alternative template-delete command name.
+        # Delete all fingerprint templates for the user, keeping the user record.
+        # X2008 runs ZAM180_TFT (classic ADMS dialect) — uses FINGERTMP table,
+        # not the unified 'biodata' table (which returns -1 on this firmware).
+        #   DATA DELETE FINGERTMP PIN=<pin>
         return f"DATA DELETE FINGERTMP PIN={enroll_number}"
+    elif action in {"delete_fingertmp_test"}:
+        # Per-finger delete (FID-scoped). FID is mandatory in QUERY, may be
+        # required for DELETE too. Try FID=0 first.
+        #   DATA DELETE FINGERTMP PIN=<pin>\tFID=0
+        return f"DATA DELETE FINGERTMP PIN={enroll_number}\tFID=0"
     elif action in {"unblock", "unblock_test"}:
         # Recreate the user. Fingerprint restore commands are queued
         # separately by queue_adms_membership_command.
@@ -275,10 +279,19 @@ def _queue_template_restore_commands(member: Member, integration, enroll_number:
     ).all()
     count = 0
     for tmpl in templates:
-        # Standard PUSH BIODATA format. Refine after observing actual uploads.
+        # Classic ADMS dialect (X2008/ZAM180_TFT) FINGERTMP restore format.
+        # Verified Return=0 by khaledbinamir/biometric_integration.
+        # Critical: Size must be the DECODED byte length, not base64 length.
+        #   DATA UPDATE FINGERTMP\tPIN=<pin>\tFID=<n>\tSize=<decoded_len>\tValid=1\tTMP=<base64>
+        import base64
+        try:
+            decoded_len = len(base64.b64decode(tmpl.template_data))
+        except Exception:
+            decoded_len = 0
         restore_text = (
-            f"DATA UPDATE BIODATA PIN={enroll_number}\t"
-            f"FID={tmpl.finger_id}\tTMP={tmpl.template_data}"
+            f"DATA UPDATE FINGERTMP\tPIN={enroll_number}\t"
+            f"FID={tmpl.finger_id}\tSize={decoded_len}\tValid=1\t"
+            f"TMP={tmpl.template_data}"
         )
         cmd = RRRAdmsCommand(
             gym_id=member.gym_id,
