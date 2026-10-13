@@ -116,14 +116,15 @@ def adms_command_text(
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
     if action in {"block", "block_test"}:
-        # ZKTeco has no "inactive" flag — Pri is privilege level (0=normal,
-        # 1=enroller, 2=admin). The only reliable block is DELETE.
-        return f"DATA DELETE USERINFO PIN={enroll_number}"
-    elif action in {"unblock", "unblock_test"}:
-        # Re-create as normal user. Note: fingerprints must be re-enrolled
-        # on the terminal after a delete-block.
+        # Time-zone trick: set EndDatetime to the past. The terminal rejects
+        # punches but keeps fingerprints enrolled. No re-enrollment needed.
+        # EndDatetime=1 = 1970-01-01 (always expired).
         name = (member_name or "Test User")[:24]
-        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tEndDatetime=1"
+    elif action in {"unblock", "unblock_test"}:
+        # Clear expiry: EndDatetime=0 = no restriction.
+        name = (member_name or "Test User")[:24]
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0\tEndDatetime=0"
     else:
         raise ValueError(f"Unknown ADMS command action: {action!r}")
 
