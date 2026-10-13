@@ -189,6 +189,34 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 app.logger.exception("Auto-expiry failed for gym %s", gym.id)
             
             # Auto-link unmapped biometric IDs (fully automatic, no manual trigger)
+            # First ensure we have a terminal user list (with names) to match against
+            try:
+                from app.services.enroll_match_service import get_adms_snapshot, get_terminal_snapshot
+                from app.models.rrr import RRRIntegration, RRRAdmsCommand
+                from app.models.bridge import BridgeCommand
+                
+                snapshot = get_adms_snapshot(gym.id) or get_terminal_snapshot(gym.id)
+                if not snapshot:
+                    # No user list yet — queue a sync so names get pulled automatically
+                    adms_int = RRRIntegration.query.filter_by(gym_id=gym.id, connector_type="adms_direct").first()
+                    if adms_int:
+                        # Check if there's already a pending sync
+                        pending = RRRAdmsCommand.query.filter_by(
+                            integration_id=adms_int.id, action="sync_users", status="pending"
+                        ).first()
+                        if not pending:
+                            cmd = RRRAdmsCommand(
+                                integration_id=adms_int.id,
+                                action="sync_users",
+                                status="pending",
+                            )
+                            db.session.add(cmd)
+                            db.session.commit()
+                            app.logger.info("Queued auto sync_users for gym %s (for auto-link)", gym.id)
+            except Exception:
+                db.session.rollback()
+                pass
+            
             try:
                 from app.services.enroll_match_service import auto_link_high_confidence
                 link_result = auto_link_high_confidence(gym_id=gym.id)
