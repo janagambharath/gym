@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import type { MemberPlan, MemberPaymentInfo } from '../../services/memberApiClient';
 import {
   claimPayment,
@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
   backBtn: { padding: spacing.xs },
   headerTitle: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   steps: {
@@ -360,7 +360,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepDotActive: { backgroundColor: colors.brand },
-  stepDotText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, color: colors.muted },
+  stepDotText: { fontSize: fontSize.sm, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, color: colors.muted },
   stepDotTextActive: { color: '#fff' },
   stepLabel: { fontSize: fontSize.xs, color: colors.muted, fontWeight: fontWeight.medium },
   stepLabelActive: { color: colors.brand, fontWeight: fontWeight.semibold },
@@ -371,7 +371,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   planCard: {
@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
   },
   planName: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   planBadge: {
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
   planBadgeTextSelected: { color: '#fff' },
   planPrice: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   planPerDay: {
@@ -448,12 +448,12 @@ const styles = StyleSheet.create({
   },
   selectedPlanName: {
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   selectedPlanPrice: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.brand,
   },
   paymentInfoCard: {
@@ -477,7 +477,7 @@ const styles = StyleSheet.create({
   paymentInfoValue: {
     fontSize: fontSize.base,
     color: colors.text,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   qrSection: {
     alignItems: 'center',
@@ -529,7 +529,7 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     color: '#fff',
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   confirmCard: {
     backgroundColor: colors.surface,
@@ -542,7 +542,7 @@ const styles = StyleSheet.create({
   },
   confirmTitle: {
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   confirmSubtitle: {
@@ -612,7 +612,7 @@ const styles = StyleSheet.create({
   submitButtonText: {
     color: '#fff',
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   buttonDisabled: { opacity: 0.5 },
   doneCard: {
@@ -636,7 +636,7 @@ const styles = StyleSheet.create({
   doneIcon: { fontSize: 40 },
   doneTitle: {
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.success,
   },
   doneSubtitle: {
@@ -654,6 +654,6 @@ const styles = StyleSheet.create({
   doneButtonText: {
     color: '#fff',
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });

@@ -146,6 +146,17 @@ export const fontWeight = {
   extrabold: '800' as const,
 };
 
+// ─── Font Families (mirrors PWA: Inter body + Archivo display) ───────────
+
+export const fontFamily = {
+  body: 'Inter_400Regular',
+  bodyMedium: 'Inter_500Medium',
+  bodySemibold: 'Inter_600SemiBold',
+  bodyBold: 'Inter_700Bold',
+  display: 'Archivo_700Bold',
+  displayExtra: 'Archivo_800ExtraBold',
+} as const;
+
 export const lineHeight = {
   tight: 1.2,
   normal: 1.4,
