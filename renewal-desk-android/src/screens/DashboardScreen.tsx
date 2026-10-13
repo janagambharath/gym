@@ -17,7 +17,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
 import { formatCurrency, formatDate, getDaysText, getMemberDisplayStatus } from '../types';
 
@@ -950,7 +950,7 @@ const styles = StyleSheet.create({
   attentionValue: {
     fontSize: fontSize['2xl'],
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   avatarButton: {
     alignItems: 'center',
@@ -972,7 +972,7 @@ const styles = StyleSheet.create({
   brandName: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: -0.2,
   },
   card: {
@@ -1003,7 +1003,7 @@ const styles = StyleSheet.create({
   greetingText: {
     color: colors.textInverse,
     fontSize: fontSize['4xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   // ─── Growth Engine pillar cards (mirrors PWA layout) ──────────────
   growthSection: {
@@ -1015,13 +1015,13 @@ const styles = StyleSheet.create({
   growthEyebrow: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: 1,
   },
   growthTitle: {
     color: colors.text,
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.xxs,
   },
   pillarCard: {
@@ -1051,7 +1051,7 @@ const styles = StyleSheet.create({
   pillarTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   pillarEyebrow: {
     color: colors.textSecondary,
@@ -1062,7 +1062,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize['5xl'],
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.xs,
   },
   pillarCountLabel: {
@@ -1073,7 +1073,7 @@ const styles = StyleSheet.create({
   pillarPotential: {
     fontSize: fontSize.sm,
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     marginTop: spacing.xxs,
   },
   pillarCta: {
@@ -1084,7 +1084,7 @@ const styles = StyleSheet.create({
   },
   pillarCtaText: {
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   gymName: {
     color: colors.textSecondary,
@@ -1140,7 +1140,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize['3xl'],
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.xxs,
   },
   metricsGrid: {
@@ -1172,7 +1172,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.lg,
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   paymentDetail: {
     color: colors.muted,
@@ -1265,7 +1265,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.xl,
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     marginTop: spacing.xxs,
   },
   revenueHeading: {
@@ -1364,7 +1364,7 @@ const styles = StyleSheet.create({
   handoverBadgeText: {
     color: colors.critical,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: 0.3,
   },
   handoverViewAll: {
@@ -1373,7 +1373,7 @@ const styles = StyleSheet.create({
   handoverViewAllText: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   handoverList: {
     gap: spacing.sm,
@@ -1402,7 +1402,7 @@ const styles = StyleSheet.create({
   handoverName: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   handoverPhone: {
     color: colors.muted,
@@ -1426,7 +1426,7 @@ const styles = StyleSheet.create({
   handoverActionText: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   // ─── Leads Card Styles ──────────────────────────────────────────────
   leadsStatsRow: {
@@ -1448,7 +1448,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize['2xl'],
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   leadStatLabel: {
     color: colors.muted,
@@ -1524,7 +1524,7 @@ const styles = StyleSheet.create({
   riskLabel: {
     color: '#991B1B',
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   riskSubtext: {
     color: '#B91C1C',
@@ -1535,7 +1535,7 @@ const styles = StyleSheet.create({
     color: '#991B1B',
     fontSize: fontSize.base,
     fontVariant: ['tabular-nums'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   // ─── First Action Hero Styles ───────────────────────────────────────
   firstActionCard: {
@@ -1563,7 +1563,7 @@ const styles = StyleSheet.create({
   rrrIntegrationTitle: {
     color: colors.text,
     fontSize: fontSize.base,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   rrrIntegrationSub: {
     color: colors.textSecondary,
@@ -1588,13 +1588,13 @@ const styles = StyleSheet.create({
   firstActionBadgeText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: 0.5,
   },
   firstActionTitle: {
     color: colors.text,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   firstActionSub: {
     color: colors.textSecondary,
@@ -1622,7 +1622,7 @@ const styles = StyleSheet.create({
   firstActionPrimaryBtnText: {
     color: colors.textInverse,
     fontSize: fontSize.sm,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   firstActionSecondaryRow: {
     flexDirection: 'row',
@@ -1647,7 +1647,7 @@ const styles = StyleSheet.create({
   firstActionSecondaryBtnText: {
     color: colors.text,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   // ─── Empty Card Styles ──────────────────────────────────────────────
   emptyCardBox: {
@@ -1690,7 +1690,7 @@ const styles = StyleSheet.create({
   upcomingRenewBtnText: {
     color: colors.brand,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   // ─── Live Access Styles ─────────────────────────────────────────────
   accessStatusRow: {
@@ -1732,7 +1732,7 @@ const styles = StyleSheet.create({
   },
   accessStatValue: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   accessStatLabel: {
     color: colors.textSecondary,
@@ -1767,7 +1767,7 @@ const styles = StyleSheet.create({
   revenueHeroBadgeText: {
     color: colors.textInverse,
     fontSize: fontSize.xs,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     letterSpacing: 1,
   },
   revenueHeroRow: {
@@ -1787,7 +1787,7 @@ const styles = StyleSheet.create({
   },
   revenueHeroValue: {
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   revenueHeroDivider: {
     width: 1,
@@ -1868,7 +1868,7 @@ const styles = StyleSheet.create({
   },
   revenueCollectedValue: {
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.success,
   },
 });

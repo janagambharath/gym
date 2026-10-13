@@ -12,7 +12,7 @@ import { Avatar } from '../components/Avatar';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
-import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
+import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatCurrency, formatDate } from '../types';
 
 type FastRenewalScreenProps = {
@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontSize: fontSize['2xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   content: {
@@ -252,7 +252,7 @@ const styles = StyleSheet.create({
   },
   memberName: {
     fontSize: fontSize['3xl'],
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
   },
   paymentDetails: {
@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
   detailValueHighlight: {
     fontSize: fontSize['2xl'],
     color: colors.success,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
   },
   infoCard: {
     backgroundColor: colors.brandSubtle,
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     color: colors.textInverse,
     fontSize: fontSize.xl,
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     letterSpacing: 1,
   },
   // Success state
@@ -337,7 +337,7 @@ const styles = StyleSheet.create({
   },
   successTitle: {
     fontSize: fontSize['5xl'],
-    fontWeight: fontWeight.extrabold,
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.text,
   },
   successSubtitle: {
@@ -368,7 +368,7 @@ const styles = StyleSheet.create({
   resultValue: {
     fontSize: fontSize.lg,
     color: colors.text,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   resultDivider: {
     height: 1,
@@ -401,6 +401,6 @@ const styles = StyleSheet.create({
   doneButtonText: {
     color: colors.textInverse,
     fontSize: fontSize.lg,
-    fontWeight: fontWeight.bold,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 });
