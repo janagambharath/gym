@@ -304,6 +304,96 @@ def register_rrr_routes(bp):
         db.session.commit()
         return jsonify({"success": True, "data": {"command": _adms_command_payload(row)}}), 201
 
+    @bp.post("/rrr/integrations/<int:integration_id>/adms/device-command")
+    @limiter.limit("60 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def queue_advanced_adms_command(integration_id: int):
+        """Queue an advanced device command through the ADMS PUSH channel.
+
+        These commands go through the same /iclock/getrequest pipe the terminal
+        already polls.  No port forwarding or gym-side laptop required.
+
+        Supported actions:
+          - create_user: Create/update a user on the terminal
+          - delete_user: Delete a user from the terminal
+          - unlock_door: Remotely unlock the door relay
+          - clear_log:   Clear attendance logs from the device
+          - reboot:      Reboot the terminal
+          - check:       Request device status check
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        if integration.status != "connected":
+            return error_response("DEVICE_OFFLINE", "The terminal is not connected.", 409)
+        if not integration.commands_enabled:
+            return error_response(
+                "NOT_COMMISSIONED",
+                "Complete supervised commissioning before sending device commands.",
+                403,
+            )
+
+        payload = request.get_json(silent=True) or {}
+        action = str(payload.get("action") or "").strip().lower()
+        allowed = {"create_user", "delete_user", "unlock_door", "clear_log", "reboot", "check"}
+        if action not in allowed:
+            return error_response("VALIDATION_ERROR", f"action must be one of: {', '.join(sorted(allowed))}.", 422)
+
+        enroll_number = None
+        member_name = None
+        delay_seconds = 5
+
+        if action in {"create_user", "delete_user"}:
+            enroll_number = str(payload.get("enroll_number") or payload.get("test_enroll_number") or "").strip()
+            if not re.fullmatch(r"[1-9][0-9]{0,8}", enroll_number):
+                return error_response("VALIDATION_ERROR", "enroll_number must be a 1–9 digit number.", 422)
+        if action == "create_user":
+            member_name = str(payload.get("member_name") or payload.get("name") or "Member").strip()[:24]
+        if action == "unlock_door":
+            raw_delay = payload.get("delay_seconds")
+            if raw_delay is not None:
+                try:
+                    delay_seconds = max(1, min(30, int(raw_delay)))
+                except (TypeError, ValueError):
+                    delay_seconds = 5
+
+        # Don't allow queuing over an in-flight command
+        existing = RRRAdmsCommand.query.filter(
+            RRRAdmsCommand.integration_id == integration.id,
+            RRRAdmsCommand.status.in_(("queued", "delivered")),
+        ).first()
+        if existing is not None:
+            return error_response("COMMAND_PENDING", "A command is already in flight. Wait for acknowledgement.", 409)
+
+        command_text = adms_command_text(
+            action, enroll_number, member_name=member_name, delay_seconds=delay_seconds
+        )
+        row = RRRAdmsCommand(
+            gym_id=g.gym_id, integration_id=integration.id, action=action,
+            test_enroll_number=enroll_number, command_text=command_text,
+            requested_by_id=g.user_id,
+        )
+        db.session.add(row)
+        db.session.flush()
+        audit(
+            action=f"adms_advanced_{action}_queued",
+            resource_type="rrr_adms_command",
+            resource_id=row.id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={
+                "action": action,
+                "enroll_number": enroll_number,
+                "member_name": member_name,
+                "delay_seconds": delay_seconds,
+            },
+        )
+        db.session.commit()
+        return jsonify({"success": True, "data": {"command": _adms_command_payload(row)}}), 201
+
     @bp.post("/rrr/integrations/<int:integration_id>/commission")
     @token_required
     @roles_required("gym_owner")

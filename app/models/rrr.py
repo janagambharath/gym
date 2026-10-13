@@ -102,7 +102,8 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "rrr_adms_commands"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock')",
+            "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock', "
+            "'create_user', 'delete_user', 'unlock_door', 'clear_log', 'reboot', 'check')",
             name="ck_rrr_adms_command_action",
         ),
         CheckConstraint(

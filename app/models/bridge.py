@@ -107,7 +107,9 @@ class BridgeCommand(TimestampMixin, db.Model):
     __tablename__ = "bridge_commands"
     __table_args__ = (
         CheckConstraint(
-            "command_type IN ('enable_user', 'disable_user')",
+            "command_type IN ('enable_user', 'disable_user', 'create_user', "
+            "'delete_user', 'unlock_door', 'set_valid_date', 'sync_users', "
+            "'device_info', 'restart', 'clear_log')",
             name="ck_bridge_commands_type",
         ),
         CheckConstraint(
@@ -142,6 +144,8 @@ class BridgeCommand(TimestampMixin, db.Model):
     enroll_number = db.Column(db.String(32), nullable=False)
     member_name = db.Column(db.String(160), nullable=True)
     delay_seconds = db.Column(db.Integer, nullable=True)
+    valid_from = db.Column(db.String(10), nullable=True)    # YYYY-MM-DD
+    valid_to = db.Column(db.String(10), nullable=True)      # YYYY-MM-DD
     status = db.Column(db.String(16), nullable=False, default="pending", index=True)
     delivery_attempts = db.Column(db.Integer, nullable=False, default=0)
     retry_attempt = db.Column(db.Integer, nullable=False, default=0)

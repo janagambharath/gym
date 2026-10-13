@@ -379,6 +379,8 @@ def pending_commands():
                 "enrollNumber": command.enroll_number,
                 "memberName": command.member_name,
                 "delaySeconds": command.delay_seconds,
+                "validFrom": command.valid_from,
+                "validTo": command.valid_to,
                 "leaseToken": command.lease_token,
             }
             for command in commands
@@ -523,8 +525,6 @@ def pair_bridge():
 
     if not pairing_code or len(pairing_code) < 6:
         return _json_error(422, "invalid_pairing_code", "A 6-digit pairing code is required.")
-    if not device_serial:
-        return _json_error(422, "invalid_device_serial", "Biometric device serial is required.")
 
     # Owner mobile onboarding codes take precedence.  The old admin deployment
     # code remains supported for existing direct-SDK installations.
@@ -533,6 +533,12 @@ def pair_bridge():
         connector_type="ebioserver",
     ).first()
     dep = None
+    if not device_serial:
+        if integration and integration.device_serial:
+            device_serial = integration.device_serial
+        else:
+            device_serial = f"DEV-{pairing_code[:6]}"
+
     if integration:
         expires_at = integration.pairing_code_expires_at
         if not expires_at or (expires_at.replace(tzinfo=timezone.utc) if expires_at.tzinfo is None else expires_at) < utcnow():
@@ -649,6 +655,15 @@ def pair_bridge():
 
     return jsonify({
         "ok": True,
+        "success": True,
+        "data": {
+            "gymId": installation.public_id,
+            "gymName": gym.name,
+            "apiKey": raw_api_key,
+            "deviceSerial": device_serial,
+            "protocolVersion": 2,
+            "pollIntervalSeconds": 5,
+        },
         "gymId": installation.public_id,
         "gymName": gym.name,
         "apiKey": raw_api_key,

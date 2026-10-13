@@ -64,18 +64,52 @@ def _active_installation(gym_id: int) -> BridgeInstallation | None:
 
 # ─── Direct ADMS automatic block/unblock ─────────────────────────────────────
 
-def adms_command_text(action: str, enroll_number: str | None) -> str:
+def adms_command_text(
+    action: str,
+    enroll_number: str | None,
+    *,
+    member_name: str | None = None,
+    delay_seconds: int = 5,
+) -> str:
     """Return the PUSH SDK wire text for a direct-ADMS terminal command.
 
     ``block``/``unblock`` are the automatic membership commands; the ``*_test``
     variants are the owner-driven commissioning commands.  Both spellings share
     the same wire format: Pri=1 is the vendor's inactive-user value and Pri=0
-    is a normal user.  Deletion is never used: commands must preserve the user
-    and its enrolled biometric template.
+    is a normal user.
+
+    Advanced commands added for the no-laptop direct-ADMS path:
+
+    * ``create_user`` — ``DATA UPDATE USERINFO PIN=<id>\tName=<name>``
+    * ``delete_user`` — ``DATA DELETE USERINFO PIN=<id>``
+    * ``unlock_door`` — ``CONTROL DEVICE 1 <delay_tenths>``
+    * ``clear_log``   — ``CLEAR LOG``
+    * ``reboot``      — ``REBOOT``
+    * ``check``       — ``CHECK``
     """
 
     if action == "probe_info":
         return "INFO"
+    if action == "check":
+        return "CHECK"
+    if action == "reboot":
+        return "REBOOT"
+    if action == "clear_log":
+        return "CLEAR LOG"
+
+    if action == "unlock_door":
+        # CONTROL DEVICE <operation> <param>
+        # operation=1 = unlock door, param = delay in tenths of a second
+        delay_tenths = max(10, delay_seconds * 10)  # minimum 1 second
+        return f"CONTROL DEVICE 1 {delay_tenths}"
+
+    if action == "create_user":
+        name = (member_name or "Member")[:24]
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
+
+    if action == "delete_user":
+        return f"DATA DELETE USERINFO PIN={enroll_number}"
+
     if action in {"block", "block_test"}:
         priority = "1"
     elif action in {"unblock", "unblock_test"}:

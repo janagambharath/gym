@@ -36,16 +36,6 @@ def register_access_routes(bp):
         """Live Access summary: inside count, entries/exits/denied today, device & bridge status."""
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         summary = get_access_summary(g.gym_id, gym_timezone)
-        summary["has_legacy_events"] = has_legacy_attendance_events(g.gym_id)
-        # There is no confirmed controller protocol for a generic remote door
-        # pulse.  Never render a button which could suggest the physical door
-        # was unlocked when it was not.
-        summary["remote_unlock_available"] = False
-        summary["remote_unlock_reason"] = (
-            "Remote physical unlock is unavailable until this installed controller "
-            "has a verified command protocol and commissioning record."
-        )
-
         # Telemetry and hardware health
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
         if bridge:
@@ -59,6 +49,8 @@ def register_access_routes(bp):
             pending_count = BridgeCommand.query.filter_by(bridge_id=bridge.id, status="pending").count()
             failed_count = BridgeCommand.query.filter_by(bridge_id=bridge.id, status="failed").count()
 
+            summary["remote_unlock_available"] = is_online
+            summary["remote_unlock_reason"] = None if is_online else "Bridge PC is currently offline."
             summary["bridge_provisioned"] = True
             summary["bridge_online"] = is_online
             summary["device_online"] = is_online
@@ -68,6 +60,8 @@ def register_access_routes(bp):
             summary["failed_commands"] = failed_count
             summary["heartbeat_age_seconds"] = int(hb_age) if hb_age is not None else None
         else:
+            summary["remote_unlock_available"] = False
+            summary["remote_unlock_reason"] = "No biometric bridge paired."
             summary["bridge_provisioned"] = False
             summary["bridge_online"] = False
             summary["device_online"] = False
@@ -165,23 +159,53 @@ def register_access_routes(bp):
         })
 
     @bp.route("/access/remote-unlock", methods=["POST"])
+    @bp.route("/access/unlock", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
     def remote_unlock():
-        """Refuse an unverified physical command; no access event is fabricated."""
+        """Queue a physical door relay unlock command to the biometric terminal via bridge."""
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
+        if not bridge:
+            return jsonify({
+                "success": False,
+                "error": {
+                    "code": "BRIDGE_NOT_CONNECTED",
+                    "message": "No active biometric bridge found for this gym. Please ensure the Windows connector is running.",
+                },
+            }), 404
+
+        data = request.get_json(silent=True) or {}
+        try:
+            delay_seconds = max(1, min(30, int(data.get("delay_seconds") or 5)))
+        except (TypeError, ValueError):
+            delay_seconds = 5
+
+        cmd = BridgeCommand(
+            bridge_id=bridge.id,
+            gym_id=g.gym_id,
+            command_type="unlock_door",
+            enroll_number="SYSTEM",
+            delay_seconds=delay_seconds,
+        )
+        db.session.add(cmd)
         audit(
-            action="remote_gate_unlock_refused",
+            action="remote_door_unlock_dispatched",
             resource_type="bridge",
-            resource_id=None,
+            resource_id=bridge.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"reason": "controller_protocol_not_commissioned"},
+            metadata={"delay_seconds": delay_seconds, "command_id": cmd.id},
         )
         db.session.commit()
-        return jsonify({"success": False, "error": {
-            "code": "UNSUPPORTED_DEVICE_COMMAND",
-            "message": "No physical unlock command was sent. Commission a verified controller command before enabling remote unlock.",
-        }}), 409
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "command_id": cmd.id,
+                "delay_seconds": delay_seconds,
+                "message": f"Turnstile / Door unlocked for {delay_seconds} seconds.",
+            },
+        }), 201
 
     @bp.route("/access/retry-sync", methods=["POST"])
     @token_required

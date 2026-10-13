@@ -550,3 +550,131 @@ def register_settings_routes(bp):
             "queued_count": count,
             "message": f"Re-syncing {count} enrolled member(s) to biometric device.",
         }})
+
+    @bp.route("/settings/bridge/pairing-code", methods=["GET", "POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def bridge_pairing_code():
+        """Generate or retrieve a 6-digit one-time pairing code for the Windows PC connector."""
+        from app.models.rrr import RRRIntegration
+        from app.models.mixins import utcnow
+
+        integration, code = RRRIntegration.issue_pairing_code(g.gym_id)
+        audit(
+            action="bridge_pairing_code_generated",
+            resource_type="bridge",
+            resource_id=integration.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+        )
+        db.session.commit()
+        return jsonify({
+            "success": True,
+            "data": {
+                "pairing_code": code,
+                "expires_at": integration.pairing_code_expires_at.isoformat() if integration.pairing_code_expires_at else None,
+                "message": "Enter this 6-digit code in the Renewal Desk Connector on your gym PC.",
+            },
+        })
+
+    @bp.route("/settings/bridge/commands", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def queue_bridge_device_command():
+        """Queue a direct access command from mobile to the gym PC biometric connector.
+
+        Supported command types:
+          - unlock_door: Remotely open door relay (delay_seconds: 1-30)
+          - enable_user / disable_user: Toggle member access (enroll_number)
+          - create_user: Push member to device (enroll_number, member_name)
+          - delete_user: Remove member from device (enroll_number)
+          - set_valid_date: Set validity start/end (enroll_number, valid_from, valid_to)
+          - sync_users: Fetch all users from terminal
+          - device_info: Read terminal firmware, serial, storage
+          - restart: Reboot terminal
+          - clear_log: Clear attendance punches on terminal
+        """
+        from app.models.bridge import BridgeInstallation, BridgeCommand
+        from app.models.member import Member
+
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
+        if not bridge:
+            return error_response("NOT_FOUND", "No biometric bridge installed for this gym. Please pair the PC connector first.", 404)
+
+        data = request.get_json(silent=True) or {}
+        command_type = str(data.get("command_type") or data.get("action") or "").strip().lower()
+
+        allowed_types = {
+            "enable_user", "disable_user", "create_user", "delete_user",
+            "unlock_door", "set_valid_date", "sync_users", "device_info",
+            "restart", "clear_log",
+        }
+        if command_type not in allowed_types:
+            return error_response(
+                "VALIDATION_ERROR",
+                f"Invalid command_type. Must be one of: {', '.join(sorted(allowed_types))}",
+                422,
+            )
+
+        enroll_number = str(data.get("enroll_number") or data.get("test_enroll_number") or "").strip()
+        member_name = str(data.get("member_name") or data.get("name") or "").strip()[:160] or None
+        member_id = data.get("member_id")
+        delay_seconds = data.get("delay_seconds")
+        valid_from = str(data.get("valid_from") or "").strip() or None
+        valid_to = str(data.get("valid_to") or "").strip() or None
+
+        if command_type in {"enable_user", "disable_user", "create_user", "delete_user", "set_valid_date"}:
+            if not enroll_number:
+                return error_response("VALIDATION_ERROR", "enroll_number is required for this command.", 422)
+
+        if command_type == "unlock_door":
+            try:
+                delay_seconds = max(1, min(30, int(delay_seconds or 5)))
+            except (TypeError, ValueError):
+                delay_seconds = 5
+
+        if member_id and not member_name:
+            member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
+            if member:
+                member_name = member.full_name
+                if not enroll_number and member.device_enroll_number:
+                    enroll_number = member.device_enroll_number
+
+        cmd = BridgeCommand(
+            bridge_id=bridge.id,
+            gym_id=g.gym_id,
+            member_id=member_id if isinstance(member_id, int) else None,
+            command_type=command_type,
+            enroll_number=enroll_number or "SYSTEM",
+            member_name=member_name,
+            delay_seconds=delay_seconds if command_type == "unlock_door" else None,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
+        db.session.add(cmd)
+        audit(
+            action=f"bridge_command_queued_{command_type}",
+            resource_type="bridge_command",
+            resource_id=None,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={
+                "command_type": command_type,
+                "enroll_number": enroll_number,
+                "member_name": member_name,
+            },
+        )
+        db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "command_id": cmd.id,
+                "command_type": cmd.command_type,
+                "enroll_number": cmd.enroll_number,
+                "member_name": cmd.member_name,
+                "status": cmd.status,
+                "message": f"Command '{command_type}' queued. Connector will execute it on the device.",
+            },
+        }), 201
+
