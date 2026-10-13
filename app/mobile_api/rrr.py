@@ -694,3 +694,65 @@ def register_rrr_routes(bp):
                 "last_30_days": recent_count,
             },
         }})
+
+    @bp.post("/rrr/bulk-remove-expired")
+    @limiter.limit("10 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def bulk_remove_expired():
+        """Remove all expired members from the terminal (owner requested).
+        
+        Queues DELETE commands for all expired members with enroll numbers.
+        Owner will re-add them on renewal (auto-unblock handles it).
+        """
+        from app.models.member import Member
+        from app.services.bridge_service import queue_membership_command
+        from app.services.audit_service import audit
+
+        # Find all expired members with terminal enroll numbers
+        expired = Member.query.filter(
+            Member.gym_id == g.gym_id,
+            Member.deleted_at.is_(None),
+            Member.device_enroll_number.isnot(None),
+            Member.status.in_(["expired", "inactive"]),
+        ).all()
+
+        # Also catch active members with past end date (not yet auto-expired)
+        from datetime import date
+        from app.models.mixins import utcnow
+        today = utcnow().date()
+        overdue = Member.query.filter(
+            Member.gym_id == g.gym_id,
+            Member.deleted_at.is_(None),
+            Member.device_enroll_number.isnot(None),
+            Member.status == "active",
+            Member.membership_end < today,
+        ).all()
+
+        all_targets = {m.id: m for m in expired + overdue}.values()
+        
+        queued = 0
+        for member in all_targets:
+            # Ensure status is expired
+            if member.status == "active":
+                member.status = "expired"
+            cmd = queue_membership_command(member, force=True)
+            if cmd:
+                queued += 1
+
+        db.session.commit()
+        
+        audit(
+            action="bulk_remove_expired",
+            resource_type="gym",
+            resource_id=g.gym_id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"members_queued": queued, "total_expired": len(list(all_targets))},
+        )
+
+        return jsonify({"success": True, "data": {
+            "queued": queued,
+            "total": len(list(all_targets)),
+            "message": f"Queued removal for {queued} expired members. Terminal will block them on next poll.",
+        }})
