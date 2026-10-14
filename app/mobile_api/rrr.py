@@ -470,6 +470,56 @@ def register_rrr_routes(bp):
              "source": x.source, "device_serial": x.device_serial} for x in rows
         ]}})
 
+    @bp.post("/rrr/mappings/bulk-resolve")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def bulk_resolve_mappings():
+        """Link multiple biometric IDs to members in one call.
+        
+        Body: {"mappings": [{"external_id": "23", "member_id": 123}, ...]}
+        Returns per-item results; partial success is OK.
+        """
+        payload = request.get_json(silent=True) or {}
+        mappings = payload.get("mappings") or []
+        if not isinstance(mappings, list) or not mappings:
+            return error_response("VALIDATION_ERROR", "mappings list is required.", 422)
+        if len(mappings) > 100:
+            return error_response("VALIDATION_ERROR", "Max 100 mappings per call.", 422)
+        results = []
+        for item in mappings:
+            external_id = str(item.get("external_id") or "").strip()
+            try:
+                member_id = int(item.get("member_id"))
+            except (TypeError, ValueError):
+                results.append({"external_id": external_id, "ok": False, "error": "member_id required"})
+                continue
+            if not external_id:
+                results.append({"external_id": external_id, "ok": False, "error": "external_id required"})
+                continue
+            member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
+            if member is None:
+                results.append({"external_id": external_id, "ok": False, "error": "Member not found"})
+                continue
+            try:
+                event_source = (
+                    RRRAttendanceEvent.query.filter_by(gym_id=g.gym_id, biometric_user_id=external_id)
+                    .order_by(RRRAttendanceEvent.id.desc())
+                    .first()
+                )
+                resolved = remap_unresolved(
+                    g.gym_id, external_id, member, g.user_id,
+                    source=event_source.source if event_source else None,
+                )
+                audit(action="rrr_identity_mapped", resource_type="member", resource_id=member.id, gym_id=g.gym_id,
+                      actor_id=g.user_id, metadata={"external_id": external_id, "events_replayed": resolved, "bulk": True})
+                results.append({"external_id": external_id, "ok": True, "member_id": member.id, "events_resolved": resolved})
+            except Exception as e:
+                db.session.rollback()
+                results.append({"external_id": external_id, "ok": False, "error": str(e)[:100]})
+        db.session.commit()
+        ok_count = sum(1 for r in results if r["ok"])
+        return jsonify({"success": True, "data": {"linked": ok_count, "total": len(results), "results": results}})
+
     @bp.post("/rrr/mappings/<string:external_id>")
     @token_required
     @roles_required("gym_owner", "staff")

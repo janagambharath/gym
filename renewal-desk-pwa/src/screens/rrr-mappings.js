@@ -5,187 +5,273 @@ import { escapeHtml } from '../utils.js';
 export default { async mount(el) { await load(el); } };
 
 const esc = escapeHtml;
-let searchTimer = null;
+
+// Local state
+let groups = [];
+let allMembers = [];
+let selections = new Map(); // biometric_id -> member object
+let openPicker = null; // biometric_id with open picker
 
 async function load(el) {
-  el.innerHTML = '<div class="rrr-loading">Loading unresolved biometric punches…</div>';
-  const unresolved = await apiRequest('/api/mobile/v1/rrr/mappings/unresolved');
+  selections.clear();
+  openPicker = null;
+  el.innerHTML = '<div class="rrr-loading">Loading unmapped punches…</div>';
+  
+  const [unresolved, membersRes] = await Promise.all([
+    apiRequest('/api/mobile/v1/rrr/mappings/unresolved'),
+    apiRequest('/api/mobile/v1/members?page=1&page_size=500'),
+  ]);
+  
   if (!unresolved.ok) {
-    el.innerHTML = `<main class="rrr-page rrr-detail">
-      <h1>Mapping review unavailable</h1>
-      <p>Retry after reconnecting to RRR.</p>
-      <button id="rrr-retry" class="rrr-btn">Retry</button>
-    </main>`;
+    el.innerHTML = `<main class="rrr-page"><h1>Couldn't load</h1><p>Check your connection and retry.</p><button id="rrr-retry" class="rrr-btn">Retry</button></main>`;
     el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el));
     return;
   }
-  const events = unresolved.data.events || [];
-  const groups = groupById(events);
-  const totalPunches = events.length;
   
-  el.innerHTML = `<main class="rrr-page rrr-detail">
-    <header class="rrr-header">
-      <button id="rrr-back" class="rrr-back-btn">← Integrations</button>
-      <div class="rrr-brand"><b>RRR</b><span>Biometric mapping</span></div>
-    </header>
-    
-    <div class="rrr-map-hero">
-      <h1>Unmapped punches</h1>
-      <p class="rrr-map-sub">These punches couldn't be matched to members automatically. Link them below — high-confidence matches (90%+) are auto-linked when punches arrive.</p>
-      ${groups.length ? `
-      <div class="rrr-map-stats">
-        <div class="rrr-stat">
-          <span class="rrr-stat-num">${groups.length}</span>
-          <span class="rrr-stat-label">Unmapped IDs</span>
-        </div>
-        <div class="rrr-stat">
-          <span class="rrr-stat-num">${totalPunches}</span>
-          <span class="rrr-stat-label">Total punches</span>
-        </div>
-      </div>` : ''}
-    </div>
-
-    ${groups.length ? `
-    <label class="rrr-search">
-      <span class="rrr-search-label">Find member to link</span>
-      <input id="rrr-member-search" type="search" placeholder="Type a name or phone…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-    </label>
-    <p id="rrr-search-meta" class="rrr-muted-copy"></p>
-    <section class="rrr-map-list" id="rrr-groups">${groupsHtml(groups, [])}</section>
-    ` : `
-    <div class="rrr-empty-state">
-      <div class="rrr-empty-icon">✓</div>
-      <h2>All punches mapped</h2>
-      <p>Every biometric punch is linked to a member. New unknown IDs will appear here automatically.</p>
-    </div>`}
-    <p id="rrr-map-error" class="rrr-form-error" role="alert"></p>
-  </main>
-  <style>
-    .rrr-map-hero { margin-bottom: 20px; }
-    .rrr-map-hero h1 { font-size: 28px; font-weight: 800; margin: 0 0 8px 0; letter-spacing: -0.5px; }
-    .rrr-map-sub { color: #64748b; font-size: 14px; line-height: 1.5; margin: 0 0 16px 0; }
-    .rrr-map-stats { display: flex; gap: 12px; }
-    .rrr-stat { background: #f1f5f9; border-radius: 12px; padding: 12px 20px; text-align: center; min-width: 100px; }
-    .rrr-stat-num { display: block; font-size: 24px; font-weight: 800; color: #0f172a; }
-    .rrr-stat-label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
-    .rrr-back-btn { background: none; border: none; color: #3b82f6; font-size: 15px; font-weight: 600; cursor: pointer; padding: 8px 0; }
-    .rrr-search-label { display: block; font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 6px; }
-    .rrr-map-list { display: flex; flex-direction: column; gap: 12px; }
-    .rrr-map-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-    .rrr-map-card-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
-    .rrr-bio-id { display: flex; align-items: center; gap: 10px; }
-    .rrr-bio-badge { background: #fef3c7; color: #92400e; font-weight: 800; font-size: 13px; padding: 6px 12px; border-radius: 20px; }
-    .rrr-bio-num { font-size: 20px; font-weight: 800; color: #0f172a; }
-    .rrr-punch-count { background: #eff6ff; color: #1d4ed8; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 20px; white-space: nowrap; }
-    .rrr-map-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-    .rrr-meta-chip { font-size: 12px; color: #64748b; background: #f8fafc; padding: 4px 10px; border-radius: 8px; }
-    .rrr-map-actions { display: flex; gap: 8px; }
-    .rrr-map-select { flex: 1; padding: 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 14px; background: #fff; min-width: 0; }
-    .rrr-map-select:focus { outline: none; border-color: #3b82f6; }
-    .rrr-map-btn { background: #10b981; color: #fff; border: none; padding: 12px 20px; border-radius: 10px; font-weight: 700; font-size: 14px; cursor: pointer; white-space: nowrap; }
-    .rrr-map-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .rrr-map-btn:active { transform: scale(0.98); }
-    .rrr-empty-state { text-align: center; padding: 48px 24px; }
-    .rrr-empty-icon { width: 64px; height: 64px; background: #dcfce7; color: #16a34a; font-size: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-weight: 800; }
-    .rrr-empty-state h2 { font-size: 20px; font-weight: 700; margin: 0 0 8px 0; }
-    .rrr-empty-state p { color: #64748b; font-size: 14px; margin: 0; }
-  </style>`;
-  
-  el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
-  const searchInput = el.querySelector('#rrr-member-search');
-  searchInput?.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => refreshMembers(el, groups, searchInput.value.trim()), 300);
-  });
-  await refreshMembers(el, groups, '');
+  allMembers = membersRes.ok ? (membersRes.data.members || []) : [];
+  groups = groupById(unresolved.data.events || []);
+  render(el);
 }
 
 function groupById(events) {
   const map = new Map();
   for (const e of events) {
     const key = e.biometric_user_id;
-    if (!map.has(key)) map.set(key, { id: key, count: 0, latest: e.punch_time, source: e.source, device: e.device_serial });
+    if (!map.has(key)) map.set(key, { id: key, count: 0, latest: e.punch_time });
     const g = map.get(key);
     g.count += 1;
-    if (e.punch_time > g.latest) { g.latest = e.punch_time; g.source = e.source; g.device = e.device_serial; }
+    if (e.punch_time > g.latest) g.latest = e.punch_time;
   }
-  return [...map.values()].sort((a, b) => b.count - a.count || (b.latest > a.latest ? 1 : -1));
+  return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-function groupsHtml(groups, people) {
-  if (!groups.length) return '';
-  const options = people.map(p => `<option value="${p.id}">${esc(p.full_name)} · ${esc(p.phone || '')}</option>`).join('');
-  return groups.map(g => {
-    const latestDate = new Date(g.latest);
-    const dateStr = latestDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-    const timeStr = latestDate.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
-    return `<article class="rrr-map-card" data-group="${esc(g.id)}">
-      <div class="rrr-map-card-top">
-        <div class="rrr-bio-id">
-          <span class="rrr-bio-badge">BIOMETRIC</span>
-          <span class="rrr-bio-num">ID ${esc(g.id)}</span>
-        </div>
-        <span class="rrr-punch-count">${g.count} punch${g.count === 1 ? '' : 'es'}</span>
+function render(el) {
+  const totalPunches = groups.reduce((s, g) => s + g.count, 0);
+  
+  el.innerHTML = `<main class="rrr-page bulk-map-page">
+    <header class="rrr-header">
+      <button id="bm-back" class="bm-back">‹</button>
+      <div class="bm-title">
+        <h1>Link biometric IDs</h1>
+        <p>${groups.length} IDs · ${totalPunches} punches need a member</p>
       </div>
-      <div class="rrr-map-meta">
-        <span class="rrr-meta-chip">📅 ${dateStr} ${timeStr}</span>
-        ${g.device ? `<span class="rrr-meta-chip">⌁ ${esc(g.device.slice(-6))}</span>` : ''}
+    </header>
+    
+    <div class="bm-hint">
+      <span class="bm-hint-icon">💡</span>
+      <p>Tap an ID, search the member name, tap to assign. Then hit <b>Link all</b> at the bottom.</p>
+    </div>
+    
+    <div class="bm-list" id="bm-list">
+      ${groups.map(cardHtml).join('')}
+    </div>
+    
+    <div class="bm-footer" id="bm-footer" style="display:none">
+      <div class="bm-footer-info"><span id="bm-count">0</span> ready to link</div>
+      <button class="bm-link-all" id="bm-link-all">Link all →</button>
+    </div>
+    
+    <div class="bm-progress" id="bm-progress" style="display:none">
+      <div class="bm-progress-bar"><div class="bm-progress-fill" id="bm-fill"></div></div>
+      <p id="bm-progress-text">Linking…</p>
+    </div>
+  </main>
+  <style>
+    .bulk-map-page { padding-bottom: 110px; }
+    .bm-back { background: #f1f5f9; border: none; width: 36px; height: 36px; border-radius: 50%; font-size: 22px; color: #334155; cursor: pointer; flex-shrink: 0; }
+    .bm-title h1 { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -0.3px; }
+    .bm-title p { font-size: 13px; color: #64748b; margin: 2px 0 0 0; }
+    .bulk-map-page .rrr-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .bm-hint { display: flex; gap: 10px; background: #eff6ff; border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+    .bm-hint-icon { font-size: 18px; flex-shrink: 0; }
+    .bm-hint p { font-size: 13px; color: #1e40af; margin: 0; line-height: 1.5; }
+    .bm-list { display: flex; flex-direction: column; gap: 10px; }
+    .bm-card { background: #fff; border: 2px solid #e2e8f0; border-radius: 16px; padding: 14px 16px; cursor: pointer; transition: border-color 0.15s; }
+    .bm-card:active { transform: scale(0.99); }
+    .bm-card.ready { border-color: #10b981; background: #f0fdf4; }
+    .bm-card-top { display: flex; align-items: center; justify-content: space-between; }
+    .bm-id-wrap { display: flex; align-items: center; gap: 10px; }
+    .bm-id-badge { background: #fef3c7; color: #92400e; font-weight: 800; font-size: 12px; padding: 5px 10px; border-radius: 16px; }
+    .bm-id-num { font-size: 19px; font-weight: 800; }
+    .bm-punches { font-size: 12px; color: #64748b; background: #f1f5f9; padding: 5px 10px; border-radius: 12px; font-weight: 600; }
+    .bm-assigned { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; }
+    .bm-check { width: 22px; height: 22px; background: #10b981; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; flex-shrink: 0; }
+    .bm-member-name { font-weight: 700; color: #065f46; }
+    .bm-change { font-size: 12px; color: #3b82f6; font-weight: 600; margin-left: auto; }
+    .bm-tap-hint { margin-top: 8px; font-size: 13px; color: #94a3b8; }
+    .bm-picker { margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+    .bm-search { width: 100%; padding: 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 15px; box-sizing: border-box; }
+    .bm-search:focus { outline: none; border-color: #3b82f6; }
+    .bm-results { max-height: 220px; overflow-y: auto; margin-top: 8px; border: 1px solid #e2e8f0; border-radius: 10px; }
+    .bm-result { padding: 12px; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 14px; }
+    .bm-result:last-child { border-bottom: none; }
+    .bm-result:active { background: #eff6ff; }
+    .bm-result-name { font-weight: 700; }
+    .bm-result-phone { color: #64748b; font-size: 12px; margin-left: 6px; }
+    .bm-no-results { padding: 16px; text-align: center; color: #94a3b8; font-size: 13px; }
+    .bm-footer { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e2e8f0; padding: 14px 20px calc(14px + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: space-between; box-shadow: 0 -2px 12px rgba(0,0,0,0.06); z-index: 10; }
+    .bm-footer-info { font-size: 14px; font-weight: 700; color: #334155; }
+    .bm-footer-info span { color: #10b981; font-size: 18px; }
+    .bm-link-all { background: #10b981; color: #fff; border: none; padding: 14px 28px; border-radius: 12px; font-weight: 800; font-size: 15px; cursor: pointer; }
+    .bm-link-all:disabled { opacity: 0.5; }
+    .bm-link-all:active { transform: scale(0.97); }
+    .bm-progress { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e2e8f0; padding: 20px; z-index: 11; }
+    .bm-progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
+    .bm-progress-fill { height: 100%; background: #10b981; width: 0%; transition: width 0.3s; border-radius: 4px; }
+    .bm-progress p { text-align: center; font-size: 13px; color: #64748b; margin: 10px 0 0 0; }
+  </style>`;
+
+  el.querySelector('#bm-back')?.addEventListener('click', () => navigate.back());
+  el.querySelector('#bm-link-all')?.addEventListener('click', () => linkAll(el));
+  
+  el.querySelectorAll('.bm-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.bm-picker')) return;
+      togglePicker(el, card.dataset.bid);
+    });
+  });
+  
+  updateFooter(el);
+}
+
+function cardHtml(g) {
+  const sel = selections.get(g.id);
+  const isOpen = openPicker === g.id;
+  const latest = new Date(g.latest);
+  const dateStr = latest.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  
+  return `<div class="bm-card ${sel ? 'ready' : ''}" data-bid="${esc(g.id)}">
+    <div class="bm-card-top">
+      <div class="bm-id-wrap">
+        <span class="bm-id-badge">BIOMETRIC</span>
+        <span class="bm-id-num">ID ${esc(g.id)}</span>
       </div>
-      <div class="rrr-map-actions">
-        <select class="rrr-map-select" data-map-select>
-          <option value="">Choose member…</option>${options}
-        </select>
-        <button class="rrr-map-btn" data-resolve="${encodeURIComponent(g.id)}">Link →</button>
-      </div>
-    </article>`;
-  }).join('');
+      <span class="bm-punches">${g.count} punches · ${dateStr}</span>
+    </div>
+    ${sel ? `
+    <div class="bm-assigned">
+      <span class="bm-check">✓</span>
+      <span class="bm-member-name">${esc(sel.full_name)}</span>
+      <span class="bm-change">change</span>
+    </div>` : `
+    <div class="bm-tap-hint">Tap to assign a member →</div>`}
+    ${isOpen ? pickerHtml(g.id) : ''}
+  </div>`;
 }
 
-async function fetchMembers(query) {
-  const params = new URLSearchParams({ page: '1', page_size: '100' });
-  if (query) params.set('q', query);
-  const r = await apiRequest(`/api/mobile/v1/members?${params.toString()}`);
-  return r.ok ? r.data.members || [] : [];
+function pickerHtml(bid) {
+  return `<div class="bm-picker" data-picker="${esc(bid)}">
+    <input class="bm-search" data-search="${esc(bid)}" type="search" placeholder="Type member name…" autocomplete="off">
+    <div class="bm-results" data-results="${esc(bid)}">${resultsHtml(allMembers.slice(0, 20))}</div>
+  </div>`;
 }
 
-async function refreshMembers(el, groups, query) {
-  const meta = el.querySelector('#rrr-search-meta');
-  const people = await fetchMembers(query);
-  if (meta) meta.textContent = query
-    ? `${people.length} member${people.length === 1 ? '' : 's'} match "${query}"`
-    : (people.length >= 100 ? 'Showing first 100 members — search to narrow down.' : '');
-  const section = el.querySelector('#rrr-groups');
-  if (section) {
-    section.innerHTML = groupsHtml(groups, people);
-    wireResolve(el, groups);
-  }
+function resultsHtml(members) {
+  if (!members.length) return '<div class="bm-no-results">No members found</div>';
+  return members.map(m => `
+    <div class="bm-result" data-pick="${m.id}" data-bid-name="${esc(m.full_name)}">
+      <span class="bm-result-name">${esc(m.full_name)}</span>
+      ${m.phone ? `<span class="bm-result-phone">${esc(m.phone)}</span>` : ''}
+    </div>`).join('');
 }
 
-function wireResolve(el, groups) {
-  el.querySelectorAll('[data-resolve]').forEach(button => {
-    if (button.dataset.wired) return;
-    button.dataset.wired = '1';
-    button.addEventListener('click', async () => {
-      const errorEl = el.querySelector('#rrr-map-error');
-      const card = button.closest('.rrr-map-card');
-      const select = card.querySelector('[data-map-select]');
-      if (!select.value) { errorEl.textContent = 'Choose the matching member first.'; select.focus(); return; }
-      errorEl.textContent = '';
-      button.disabled = true;
-      button.textContent = 'Linking…';
-      const response = await apiRequest(`/api/mobile/v1/rrr/mappings/${button.dataset.resolve}`, {
-        method: 'POST', body: { member_id: Number(select.value) },
-      });
-      if (response.ok) {
-        card.style.transition = 'opacity 0.3s, transform 0.3s';
-        card.style.opacity = '0';
-        card.style.transform = 'translateX(20px)';
-        setTimeout(() => load(el), 300);
-      } else {
-        button.disabled = false;
-        button.textContent = 'Link →';
-        errorEl.textContent = esc(response?.error?.message || 'Mapping failed. Try again.');
+function togglePicker(el, bid) {
+  openPicker = openPicker === bid ? null : bid;
+  refreshCards(el);
+}
+
+function refreshCards(el) {
+  const list = el.querySelector('#bm-list');
+  if (!list) return;
+  list.innerHTML = groups.map(cardHtml).join('');
+  
+  el.querySelectorAll('.bm-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.bm-picker')) return;
+      togglePicker(el, card.dataset.bid);
+    });
+  });
+  
+  el.querySelectorAll('[data-search]').forEach(input => {
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase().trim();
+      const bid = input.dataset.search;
+      const results = el.querySelector(`[data-results="${CSS.escape(bid)}"]`);
+      if (!results) return;
+      const filtered = q
+        ? allMembers.filter(m => m.full_name.toLowerCase().includes(q) || (m.phone || '').includes(q)).slice(0, 20)
+        : allMembers.slice(0, 20);
+      results.innerHTML = resultsHtml(filtered);
+      wirePicks(el);
+    });
+    // Focus and prevent card toggle
+    input.addEventListener('click', e => e.stopPropagation());
+  });
+  
+  wirePicks(el);
+  updateFooter(el);
+}
+
+function wirePicks(el) {
+  el.querySelectorAll('[data-pick]').forEach(row => {
+    if (row.dataset.wired) return;
+    row.dataset.wired = '1';
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const memberId = Number(row.dataset.pick);
+      const member = allMembers.find(m => m.id === memberId);
+      if (!member) return;
+      // Find which card this picker belongs to
+      const picker = row.closest('[data-picker]');
+      const bid = picker?.dataset.picker;
+      if (bid) {
+        selections.set(bid, member);
+        openPicker = null;
+        refreshCards(el);
       }
     });
   });
+}
+
+function updateFooter(el) {
+  const footer = el.querySelector('#bm-footer');
+  const count = el.querySelector('#bm-count');
+  if (!footer || !count) return;
+  const n = selections.size;
+  count.textContent = n;
+  footer.style.display = n > 0 ? 'flex' : 'none';
+}
+
+async function linkAll(el) {
+  const footer = el.querySelector('#bm-footer');
+  const progress = el.querySelector('#bm-progress');
+  const fill = el.querySelector('#bm-fill');
+  const progressText = el.querySelector('#bm-progress-text');
+  const btn = el.querySelector('#bm-link-all');
+  
+  if (footer) footer.style.display = 'none';
+  if (progress) progress.style.display = 'block';
+  if (btn) btn.disabled = true;
+  
+  const mappings = [...selections.entries()].map(([external_id, m]) => ({
+    external_id, member_id: m.id,
+  }));
+  
+  if (progressText) progressText.textContent = `Linking ${mappings.length} IDs…`;
+  
+  const res = await apiRequest('/api/mobile/v1/rrr/mappings/bulk-resolve', {
+    method: 'POST', body: { mappings },
+  });
+  
+  if (fill) fill.style.width = '100%';
+  
+  if (res.ok) {
+    const linked = res.data.linked || 0;
+    if (progressText) progressText.textContent = `✓ Linked ${linked} of ${mappings.length}`;
+    setTimeout(() => load(el), 1200);
+  } else {
+    if (progressText) progressText.textContent = 'Something went wrong. Try again.';
+    if (btn) btn.disabled = false;
+    setTimeout(() => { if (progress) progress.style.display = 'none'; updateFooter(el); }, 2000);
+  }
 }
