@@ -93,11 +93,30 @@ async function load(el) {
     <button class="rrr-link-button" id="rrr-enroll-match">Match terminal users to members →</button>` : ''}
     </section>
     <aside class="rrr-safety-note"><span>ⓘ</span><p><b>Access-control safety:</b> attendance flows as soon as the terminal connects. Automatic door block/unblock for expired members switches on only after the supervised commissioning below — a real punch, a verified test command, and a physical door test you confirm in person.</p></aside>
+    ${direct && isLive(direct) ? `<section class="rrr-danger-zone">
+      <div class="rrr-panel-head"><div><span class="rrr-eyebrow" style="color:#dc2626">DANGER ZONE</span><h2>Fresh start</h2><p>Wipe all terminal users and clean every punch log, then re-enroll members. Their names auto-link on enrollment.</p></div></div>
+      <button class="rrr-danger-button" id="rrr-fresh-start">Wipe terminal + clean logs</button>
+      <p id="rrr-fresh-start-result" class="rrr-muted-copy" role="status"></p>
+    </section>` : ''}
   </main>`;
 
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
   el.querySelector('#rrr-mappings')?.addEventListener('click', () => navigate.push('rrr-mappings'));
   el.querySelector('#rrr-enroll-match')?.addEventListener('click', () => navigate.push('rrr-enroll-match'));
+  el.querySelector('#rrr-fresh-start')?.addEventListener('click', async () => {
+    const resultEl = el.querySelector('#rrr-fresh-start-result');
+    const step1 = confirm('WIPE TERMINAL USERS?\n\nThis will:\n- Delete every user from the terminal\n- Delete all punch logs\n- Unlink all members from biometric IDs\n\nMembers stay in the app. You will re-enroll them on the terminal.');
+    if (!step1) return;
+    const step2 = confirm('FINAL CONFIRM\n\nType of wipe is irreversible on the terminal.\nRe-enroll each member with their EXACT full name as shown in the app for auto-link to work.\n\nProceed?');
+    if (!step2) return;
+    resultEl.textContent = 'Wiping...';
+    const r = await apiRequest('/api/mobile/v1/rrr/fresh-start', { method: 'POST', body: { confirm: true } });
+    if (r.ok) {
+      resultEl.textContent = `Done: ${r.data.queued_deletes} terminal deletes queued, ${r.data.deleted_events} punches cleared, ${r.data.unlinked_members} members unlinked. Now re-enroll members on the terminal with exact names.`;
+    } else {
+      resultEl.textContent = 'Failed: ' + (r.data?.message || r.error || 'unknown error');
+    }
+  });
   wireDirectForm(el);
   wireBridge(el, bridge, devices);
   if (direct) wireDirectPanel(el, direct, commands);

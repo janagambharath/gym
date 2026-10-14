@@ -884,3 +884,108 @@ def register_rrr_routes(bp):
             "restored": restored,
             "message": f"Restored {restored} members.",
         }})
+
+    @bp.post("/rrr/fresh-start")
+    @token_required
+    @roles_required("gym_owner")
+    def fresh_start():
+        """Wipe terminal users and clean all biometric data for a fresh re-enrollment.
+
+        Clears:
+        - All RRRAttendanceEvent punch logs for this gym
+        - All RRRIdentityMapping links for this gym
+        - OPERLOG-derived terminal snapshots
+        - Members' device_enroll_number (unlinks them from terminal IDs)
+
+        Queues DATA DELETE USERINFO for every known terminal ID so the
+        terminal wipes its users. The gym owner should also verify/delete
+        via the terminal menu.
+
+        Members themselves are NOT deleted -- they stay for auto-link matching
+        when re-enrolled (OPERLOG parsing captures PIN + Name).
+
+        Body: {"confirm": true} required.
+        """
+        from app.models.rrr import RRRAdmsCommand, RRRIntegration
+
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return error_response("VALIDATION_ERROR", "confirm: true is required.", 422)
+
+        gym_id = g.gym_id
+
+        # Collect all known terminal IDs (from punches + mappings + members)
+        terminal_ids: set[str] = set()
+        for (bid,) in db.session.query(RRRAttendanceEvent.biometric_user_id).filter_by(gym_id=gym_id).distinct():
+            if bid:
+                terminal_ids.add(str(bid).strip())
+        for (eid,) in db.session.query(RRRIdentityMapping.external_id).filter_by(gym_id=gym_id).distinct():
+            if eid:
+                terminal_ids.add(str(eid).strip())
+        for (den,) in db.session.query(Member.device_enroll_number).filter_by(gym_id=gym_id).distinct():
+            if den:
+                terminal_ids.add(str(den).strip())
+        terminal_ids.discard("99")  # keep test user out of the wipe
+
+        # Queue terminal deletes
+        integration = RRRIntegration.query.filter_by(gym_id=gym_id, connector_type="adms_direct").first()
+        queued_deletes = 0
+        if integration:
+            for tid in sorted(terminal_ids):
+                existing = RRRAdmsCommand.query.filter_by(
+                    integration_id=integration.id, action="delete_user",
+                    test_enroll_number=tid, status="queued",
+                ).first()
+                if not existing:
+                    cmd = RRRAdmsCommand(
+                        gym_id=gym_id,
+                        integration_id=integration.id,
+                        action="delete_user",
+                        test_enroll_number=tid,
+                        command_text=f"DATA DELETE USERINFO PIN={tid}",
+                        status="queued",
+                    )
+                    db.session.add(cmd)
+                    queued_deletes += 1
+
+        # Clear punch logs
+        deleted_events = RRRAttendanceEvent.query.filter_by(gym_id=gym_id).delete(synchronize_session=False)
+        # Clear identity mappings
+        deleted_mappings = RRRIdentityMapping.query.filter_by(gym_id=gym_id).delete(synchronize_session=False)
+        # Clear OPERLOG snapshots
+        deleted_snapshots = 0
+        if integration:
+            deleted_snapshots = RRRAdmsCommand.query.filter_by(
+                integration_id=integration.id, action="operlog_snapshot"
+            ).delete(synchronize_session=False)
+        # Unlink members from terminal IDs (keep members!)
+        unlinked_members = Member.query.filter(
+            Member.gym_id == gym_id, Member.device_enroll_number.isnot(None)
+        ).update({"device_enroll_number": None}, synchronize_session=False)
+
+        db.session.commit()
+
+        audit(
+            action="rrr_fresh_start",
+            resource_type="gym",
+            resource_id=gym_id,
+            gym_id=gym_id,
+            actor_id=g.user_id,
+            metadata={
+                "terminal_ids_wiped": sorted(terminal_ids),
+                "queued_deletes": queued_deletes,
+                "deleted_events": deleted_events,
+                "deleted_mappings": deleted_mappings,
+                "unlinked_members": unlinked_members,
+            },
+        )
+
+        return jsonify({"success": True, "data": {
+            "terminal_ids": sorted(terminal_ids),
+            "queued_deletes": queued_deletes,
+            "deleted_events": deleted_events,
+            "deleted_mappings": deleted_mappings,
+            "unlinked_members": unlinked_members,
+            "message": "Terminal wipe queued. Re-enroll members on the terminal with exact full names for auto-link.",
+        }})
+
