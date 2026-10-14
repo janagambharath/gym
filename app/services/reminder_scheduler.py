@@ -195,27 +195,11 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.models.rrr import RRRIntegration, RRRAdmsCommand
                 from app.models.bridge import BridgeCommand
                 
-                snapshot = get_adms_snapshot(gym.id) or get_terminal_snapshot(gym.id)
-                if not snapshot:
-                    # No user list yet — queue a sync so names get pulled automatically
-                    adms_int = RRRIntegration.query.filter_by(gym_id=gym.id, connector_type="adms_direct").first()
-                    if adms_int:
-                        # Check if there's already a pending sync (queued or delivered)
-                        pending = RRRAdmsCommand.query.filter(
-                            RRRAdmsCommand.integration_id == adms_int.id,
-                            RRRAdmsCommand.action == "sync_users",
-                            RRRAdmsCommand.status.in_(("queued", "delivered"))
-                        ).first()
-                        if not pending:
-                            cmd = RRRAdmsCommand(
-                                integration_id=adms_int.id,
-                                action="sync_users",
-                                command_text="DATA QUERY USERINFO",
-                                status="queued",
-                            )
-                            db.session.add(cmd)
-                            db.session.commit()
-                            app.logger.info("Queued auto sync_users for gym %s (for auto-link)", gym.id)
+                # NOTE (2026-10-14): auto sync_users disabled — proven on Elite Gym
+                # hardware (X2008) that the terminal acks DATA QUERY USERINFO
+                # but never uploads the user table. Queueing it daily just
+                # piles up failed commands. Names are linked manually via
+                # the Unmapped Punches screen instead.
             except Exception:
                 db.session.rollback()
                 pass
