@@ -196,7 +196,7 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
         return None
 
     action = "block" if desired_command_type(member) == "disable_user" else "unblock"
-    command_text = adms_command_text(action, enroll_number)
+    command_text = adms_command_text(action, enroll_number, member_name=member.full_name)
 
     # Lock the latest command for this terminal identity so a concurrent
     # renewal/expiry cannot reorder or duplicate the terminal's final state.
@@ -343,7 +343,7 @@ def queue_manual_adms_member_command(
     if not enroll_number:
         return None
 
-    command_text = adms_command_text(action, enroll_number)
+    command_text = adms_command_text(action, enroll_number, member_name=member.full_name)
     command = RRRAdmsCommand(
         gym_id=member.gym_id,
         integration_id=integration.id,
