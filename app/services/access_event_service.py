@@ -388,6 +388,7 @@ def get_access_events(
             "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
             "member_id": evt.member_id,
             "member_name": evt.member.full_name if evt.member else f"User {evt.biometric_user_id}",
+            "biometric_user_id": evt.biometric_user_id,
             "device_name": evt.device_serial,
             "verify_method": evt.verify_method,
             "source": "adms_direct",

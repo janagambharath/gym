@@ -153,12 +153,12 @@ export default {
                   const badgeText = isDenied ? 'Denied' : (type === 'ATTENDANCE' ? 'Check In' : (isEntry ? 'Entry' : 'Exit'));
 
                   return `
-                    <div class="list-item" style="cursor:pointer" data-event-member-id="${l.member_id || ''}">
+                    <div class="list-item" style="cursor:pointer" data-event-member-id="${l.member_id || ''}" data-bio-id="${(!l.member_id && l.biometric_user_id) ? escapeHtml(l.biometric_user_id) : ''}">
                       <div style="width:34px;height:34px;border-radius:var(--r-full);background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
                         ${icon(iconName, 16, iconColor)}
                       </div>
                       <div class="list-item-content">
-                        <div class="list-item-title">${escapeHtml(l.member_name || 'Unknown')}</div>
+                        <div class="list-item-title">${escapeHtml(l.member_name || 'Unknown')}${(!l.member_id && l.biometric_user_id) ? ' <span style="font-size:11px;color:#3b82f6;font-weight:700">· tap to assign</span>' : ''}</div>
                         <div class="list-item-subtitle">${formatDateTime(l.event_timestamp || l.timestamp || l.created_at)}${l.device_name ? ` · ${escapeHtml(l.device_name)}` : ''}</div>
                       </div>
                       <span class="badge badge-${badgeType}">${badgeText}</span>
@@ -290,7 +290,12 @@ export default {
       scroll.querySelectorAll('[data-event-member-id]').forEach(row => {
         row.addEventListener('click', () => {
           const mid = row.dataset.eventMemberId;
-          if (mid) navigate.push('member-detail', { memberId: mid });
+          const bioId = row.dataset.bioId;
+          if (mid) {
+            navigate.push('member-detail', { memberId: mid });
+          } else if (bioId) {
+            openQuickAssign(bioId);
+          }
         });
       });
 
@@ -434,3 +439,80 @@ export default {
     }, 15000);
   }
 };
+
+// Quick-assign: tap an unmapped "User X" punch → pick member → link instantly.
+async function openQuickAssign(bioId) {
+  const overlay = document.createElement('div');
+  overlay.id = 'quick-assign-overlay';
+  overlay.innerHTML = `
+    <div class="qa-sheet">
+      <div class="qa-handle"></div>
+      <h3>Who is biometric ID ${escapeHtml(bioId)}?</h3>
+      <p class="qa-sub">Pick the member — all their punches get linked.</p>
+      <input id="qa-search" type="search" placeholder="Type member name…" autocomplete="off">
+      <div id="qa-results"><div class="qa-loading">Loading members…</div></div>
+      <button id="qa-close" class="qa-close">Cancel</button>
+    </div>
+    <style>
+      #quick-assign-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; display: flex; align-items: flex-end; animation: qaFade 0.2s; }
+      @keyframes qaFade { from { opacity: 0; } }
+      .qa-sheet { background: #fff; width: 100%; border-radius: 20px 20px 0 0; padding: 12px 20px calc(20px + env(safe-area-inset-bottom)); max-height: 75vh; display: flex; flex-direction: column; animation: qaSlide 0.25s; }
+      @keyframes qaSlide { from { transform: translateY(40px); } }
+      .qa-handle { width: 40px; height: 4px; background: #e2e8f0; border-radius: 2px; margin: 0 auto 12px; }
+      .qa-sheet h3 { margin: 0 0 4px 0; font-size: 18px; font-weight: 800; }
+      .qa-sub { margin: 0 0 12px 0; font-size: 13px; color: #64748b; }
+      #qa-search { width: 100%; padding: 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 15px; box-sizing: border-box; margin-bottom: 8px; }
+      #qa-search:focus { outline: none; border-color: #3b82f6; }
+      #qa-results { overflow-y: auto; flex: 1; min-height: 120px; }
+      .qa-row { padding: 13px 4px; border-bottom: 1px solid #f1f5f9; font-size: 15px; cursor: pointer; }
+      .qa-row:active { background: #eff6ff; }
+      .qa-row b { font-weight: 700; }
+      .qa-row span { color: #64748b; font-size: 13px; margin-left: 6px; }
+      .qa-loading, .qa-empty { padding: 24px; text-align: center; color: #94a3b8; font-size: 14px; }
+      .qa-close { margin-top: 12px; width: 100%; padding: 13px; border: none; background: #f1f5f9; border-radius: 12px; font-weight: 700; font-size: 15px; color: #475569; cursor: pointer; }
+    </style>`;
+  document.body.appendChild(overlay);
+  
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#qa-close').addEventListener('click', close);
+  
+  let members = [];
+  const resultsEl = overlay.querySelector('#qa-results');
+  const searchEl = overlay.querySelector('#qa-search');
+  
+  const renderResults = (q) => {
+    const query = (q || '').toLowerCase().trim();
+    const filtered = query
+      ? members.filter(m => m.full_name.toLowerCase().includes(query) || (m.phone || '').includes(query)).slice(0, 30)
+      : members.slice(0, 30);
+    resultsEl.innerHTML = filtered.length
+      ? filtered.map(m => `<div class="qa-row" data-qa-pick="${m.id}"><b>${escapeHtml(m.full_name)}</b>${m.phone ? `<span>${escapeHtml(m.phone)}</span>` : ''}</div>`).join('')
+      : '<div class="qa-empty">No members found</div>';
+    resultsEl.querySelectorAll('[data-qa-pick]').forEach(row => {
+      row.addEventListener('click', async () => {
+        const memberId = Number(row.dataset.qaPick);
+        row.style.background = '#dcfce7';
+        const res = await apiRequest('/api/mobile/v1/rrr/mappings/bulk-resolve', {
+          method: 'POST', body: { mappings: [{ external_id: bioId, member_id: memberId }] },
+        });
+        if (res.ok && res.data.linked === 1) {
+          showToast(`ID ${bioId} linked ✓`);
+          close();
+          // Refresh the access feed to show the name
+          document.querySelector('[data-tab].active')?.click();
+        } else {
+          showToast('Link failed — try again');
+          row.style.background = '';
+        }
+      });
+    });
+  };
+  
+  searchEl.addEventListener('input', () => renderResults(searchEl.value));
+  
+  const res = await apiRequest('/api/mobile/v1/members?page=1&page_size=500');
+  members = res.ok ? (res.data.members || []) : [];
+  renderResults('');
+  setTimeout(() => searchEl.focus(), 300);
+}
