@@ -119,6 +119,9 @@ function render(el) {
     .bm-progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
     .bm-progress-fill { height: 100%; background: #10b981; width: 0%; transition: width 0.3s; border-radius: 4px; }
     .bm-progress p { text-align: center; font-size: 13px; color: #64748b; margin: 10px 0 0 0; }
+    .bm-save-one { width: 100%; margin-top: 10px; background: #10b981; color: #fff; border: none; padding: 11px; border-radius: 10px; font-weight: 700; font-size: 14px; cursor: pointer; }
+    .bm-save-one:active { transform: scale(0.98); }
+    .bm-save-one:disabled { opacity: 0.5; }
   </style>`;
 
   el.querySelector('#bm-back')?.addEventListener('click', () => navigate.back());
@@ -131,7 +134,35 @@ function render(el) {
     });
   });
   
+  wireSaveButtons(el);
   updateFooter(el);
+}
+
+function wireSaveButtons(el) {
+  el.querySelectorAll('[data-save-one]').forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const bid = btn.dataset.saveOne;
+      const member = selections.get(bid);
+      if (!member) return;
+      btn.disabled = true;
+      btn.textContent = 'Linking…';
+      const res = await apiRequest('/api/mobile/v1/rrr/mappings/bulk-resolve', {
+        method: 'POST', body: { mappings: [{ external_id: bid, member_id: member.id }] },
+      });
+      if (res.ok && res.data.linked === 1) {
+        btn.textContent = '✓ Linked';
+        selections.delete(bid);
+        groups = groups.filter(g => g.id !== bid);
+        setTimeout(() => refreshCards(el), 600);
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Save link';
+      }
+    });
+  });
 }
 
 function cardHtml(g) {
@@ -153,7 +184,8 @@ function cardHtml(g) {
       <span class="bm-check">✓</span>
       <span class="bm-member-name">${esc(sel.full_name)}</span>
       <span class="bm-change">change</span>
-    </div>` : `
+    </div>
+    <button class="bm-save-one" data-save-one="${esc(g.id)}">Save link</button>` : `
     <div class="bm-tap-hint">Tap to assign a member →</div>`}
     ${isOpen ? pickerHtml(g.id) : ''}
   </div>`;
@@ -209,6 +241,7 @@ function refreshCards(el) {
   });
   
   wirePicks(el);
+  wireSaveButtons(el);
   updateFooter(el);
 }
 
