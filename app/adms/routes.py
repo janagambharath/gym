@@ -314,6 +314,21 @@ def getrequest(path_token: str | None = None):
     if integration is None:
         return _unknown()
     _touch(integration)
+    # Timeout stuck delivered commands: if a command was delivered >10 min ago
+    # without ack, the terminal likely missed it. Mark failed so the queue moves on.
+    from datetime import timedelta
+    from app.models.mixins import utcnow
+    stuck_cutoff = utcnow() - timedelta(minutes=10)
+    stuck = RRRAdmsCommand.query.filter(
+        RRRAdmsCommand.integration_id == integration.id,
+        RRRAdmsCommand.status == "delivered",
+        RRRAdmsCommand.delivered_at < stuck_cutoff,
+    ).all()
+    for s in stuck:
+        s.status = "failed"
+        s.result_message = "Timeout: no ack within 10 min"
+    if stuck:
+        db.session.commit()
     # Re-send a delivered command until the terminal posts its result.  DATA
     # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from
     # silently dropping a physical-access request.

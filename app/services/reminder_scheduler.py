@@ -200,15 +200,18 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     # No user list yet — queue a sync so names get pulled automatically
                     adms_int = RRRIntegration.query.filter_by(gym_id=gym.id, connector_type="adms_direct").first()
                     if adms_int:
-                        # Check if there's already a pending sync
-                        pending = RRRAdmsCommand.query.filter_by(
-                            integration_id=adms_int.id, action="sync_users", status="pending"
+                        # Check if there's already a pending sync (queued or delivered)
+                        pending = RRRAdmsCommand.query.filter(
+                            RRRAdmsCommand.integration_id == adms_int.id,
+                            RRRAdmsCommand.action == "sync_users",
+                            RRRAdmsCommand.status.in_(("queued", "delivered"))
                         ).first()
                         if not pending:
                             cmd = RRRAdmsCommand(
                                 integration_id=adms_int.id,
                                 action="sync_users",
-                                status="pending",
+                                command_text="DATA QUERY USERINFO",
+                                status="queued",
                             )
                             db.session.add(cmd)
                             db.session.commit()
