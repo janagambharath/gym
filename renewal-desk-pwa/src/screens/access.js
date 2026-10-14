@@ -51,18 +51,14 @@ export default {
                 </div>
               </div>
 
-              <!-- Attendance & Remote Physical Gate Control -->
-              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border);display:grid;grid-template-columns:${s.remote_unlock_available ? '1fr 1fr' : '1fr'};gap:var(--sp-sm)">
-                <button class="btn btn-primary" id="btn-open-checkin" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs)">
-                  ${icon('access', 16, 'white')} + Check In
+              ${s.remote_unlock_available ? `
+              <!-- Remote Physical Gate Control -->
+              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border);display:grid;grid-template-columns:1fr;gap:var(--sp-sm)">
+                <button class="btn" id="btn-remote-unlock" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs);background:#16a34a;color:white;border:none">
+                  🔓 Unlock Gate
                 </button>
-                ${s.remote_unlock_available ? `
-                  <button class="btn" id="btn-remote-unlock" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs);background:#16a34a;color:white;border:none">
-                    🔓 Unlock Gate
-                  </button>
-                ` : ''}
               </div>
-              ${!s.remote_unlock_available ? `<p style="margin:var(--sp-sm) 0 0;font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.remote_unlock_reason || 'Bridge PC is offline. Open RenewalDeskConnector on gym PC to enable remote unlock.')}</p>` : ''}
+              ` : ''}
             </div>
 
             ${!s.adms_integration_id ? `
