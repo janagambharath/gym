@@ -180,9 +180,6 @@ export default {
       scroll.querySelector('#stat-exits')?.addEventListener('click', () => { currentTab = 'exit'; loadData(); });
       scroll.querySelector('#banner-denied')?.addEventListener('click', () => { currentTab = 'denied'; loadData(); });
 
-      // Open Check In Modal
-      scroll.querySelector('#btn-open-checkin')?.addEventListener('click', () => openCheckinModal());
-
       // Remote Turnstile / Door Unlock
       const unlockBtn = scroll.querySelector('#btn-remote-unlock');
       if (unlockBtn) {
@@ -411,6 +408,12 @@ export default {
         clearInterval(refreshTimer);
       }
     }, 15000);
+    
+    // Expose refresh for quick-assign sheet and other external triggers
+    window.__refreshAccess = () => { if (document.body.contains(el)) loadData(); };
+  },
+  async unmount() {
+    window.__refreshAccess = null;
   }
 };
 
@@ -474,8 +477,7 @@ async function openQuickAssign(bioId) {
           showToast(`ID ${bioId} linked ✓`);
           close();
           // Refresh the access feed to show the name
-          const tabBtn = document.querySelector('.screen [data-tab].btn-primary');
-          if (tabBtn) tabBtn.click();
+          if (window.__refreshAccess) window.__refreshAccess();
         } else {
           showToast('Link failed — try again');
           row.style.background = '';
@@ -489,5 +491,7 @@ async function openQuickAssign(bioId) {
   const res = await apiRequest('/api/mobile/v1/members?page=1&page_size=500');
   members = res.ok ? (res.data.members || []) : [];
   renderResults('');
-  setTimeout(() => searchEl.focus(), 300);
+  // Focus synchronously (no setTimeout) so iOS opens the keyboard —
+  // setTimeout breaks the user-gesture chain.
+  searchEl.focus();
 }

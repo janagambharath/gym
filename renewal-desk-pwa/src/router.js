@@ -178,9 +178,9 @@ class Router {
       }
     } else if (this.currentTab && this.currentTab !== 'dashboard' && this.onSwitchTab) {
       this.onSwitchTab('dashboard');
-    } else if (window.history.length > 1) {
-      window.history.back();
     }
+    // Never fall through to window.history.back() — in the PWA that can
+    // exit the app entirely. At root, back is a no-op.
   }
 
   /** Check if a back action is available */
@@ -241,16 +241,6 @@ class Router {
     if (typeof window !== 'undefined' && window.history) {
       try { window.history.replaceState({ rdDepth: 0 }, ''); } catch { /* ignore */ }
     }
-  }
-
-  /** Get current top screen */
-  get current() {
-    return this.stack[this.stack.length - 1] ?? null;
-  }
-
-  /** Get stack depth */
-  get depth() {
-    return this.stack.length;
   }
 }
 

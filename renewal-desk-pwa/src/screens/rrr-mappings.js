@@ -13,7 +13,7 @@ let selections = new Map(); // biometric_id -> member object
 let openPicker = null; // biometric_id with open picker
 
 async function load(el) {
-  selections.clear();
+  // Don't clear selections on re-mount — user may be mid-task on 26 IDs
   openPicker = null;
   el.innerHTML = '<div class="rrr-loading">Loading unmapped punches…</div>';
   
@@ -30,6 +30,11 @@ async function load(el) {
   
   allMembers = membersRes.ok ? (membersRes.data.members || []) : [];
   groups = groupById(unresolved.data.events || []);
+  // Prune selections for IDs that are no longer unmapped (already linked)
+  const groupIds = new Set(groups.map(g => g.id));
+  for (const bid of selections.keys()) {
+    if (!groupIds.has(bid)) selections.delete(bid);
+  }
   render(el);
 }
 
@@ -300,8 +305,23 @@ async function linkAll(el) {
   
   if (res.ok) {
     const linked = res.data.linked || 0;
-    if (progressText) progressText.textContent = `✓ Linked ${linked} of ${mappings.length}`;
-    setTimeout(() => load(el), 1200);
+    const failed = (res.data.results || []).filter(r => !r.ok);
+    if (failed.length) {
+      if (progressText) progressText.textContent = `✓ Linked ${linked}, ${failed.length} failed: IDs ${failed.map(f => f.external_id).join(', ')}`;
+      // Keep failed selections so user can retry
+      for (const f of failed) {
+        // selections already has them; just ensure they're still there
+      }
+      // Remove successfully linked from selections
+      for (const r of (res.data.results || [])) {
+        if (r.ok) selections.delete(r.external_id);
+      }
+      setTimeout(() => load(el), 2500);
+    } else {
+      if (progressText) progressText.textContent = `✓ Linked ${linked} of ${mappings.length}`;
+      selections.clear();
+      setTimeout(() => load(el), 1200);
+    }
   } else {
     if (progressText) progressText.textContent = 'Something went wrong. Try again.';
     if (btn) btn.disabled = false;
