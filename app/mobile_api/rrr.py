@@ -885,6 +885,32 @@ def register_rrr_routes(bp):
             "message": f"Restored {restored} members.",
         }})
 
+    @bp.delete("/rrr/attendance/unmapped")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def clear_unmapped_punches():
+        """Delete all unmapped punch entries for this gym.
+
+        Removes RRRAttendanceEvent rows with no linked member (member_id IS NULL).
+        Mapped punches and members are untouched. Used to clean the slate
+        before manual re-linking.
+        """
+        deleted = RRRAttendanceEvent.query.filter(
+            RRRAttendanceEvent.gym_id == g.gym_id,
+            RRRAttendanceEvent.member_id.is_(None),
+        ).delete(synchronize_session=False)
+        db.session.commit()
+
+        audit(
+            action="rrr_clear_unmapped_punches",
+            resource_type="gym",
+            resource_id=g.gym_id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"deleted": deleted},
+        )
+        return jsonify({"success": True, "data": {"deleted": deleted}})
+
     @bp.post("/rrr/fresh-start")
     @token_required
     @roles_required("gym_owner")
@@ -988,4 +1014,3 @@ def register_rrr_routes(bp):
             "unlinked_members": unlinked_members,
             "message": "Terminal wipe queued. Re-enroll members on the terminal with exact full names for auto-link.",
         }})
-

@@ -75,6 +75,9 @@ function render(el) {
       <div class="bm-footer-info"><span id="bm-count">0</span> ready to link</div>
       <button class="bm-link-all" id="bm-link-all">Link all →</button>
     </div>
+    <div class="bm-danger-row">
+      <button class="bm-clear-all" id="bm-clear-all">Clear all unmapped entries</button>
+    </div>
     
     <div class="bm-progress" id="bm-progress" style="display:none">
       <div class="bm-progress-bar"><div class="bm-progress-fill" id="bm-fill"></div></div>
@@ -120,6 +123,8 @@ function render(el) {
     .bm-link-all { background: #10b981; color: #fff; border: none; padding: 14px 28px; border-radius: 12px; font-weight: 800; font-size: 15px; cursor: pointer; }
     .bm-link-all:disabled { opacity: 0.5; }
     .bm-link-all:active { transform: scale(0.97); }
+    .bm-danger-row { padding: 16px; text-align: center; }
+    .bm-clear-all { background: none; border: 1px solid #fca5a5; color: #dc2626; padding: 10px 20px; border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer; }
     .bm-progress { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e2e8f0; padding: 20px; z-index: 11; }
     .bm-progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
     .bm-progress-fill { height: 100%; background: #10b981; width: 0%; transition: width 0.3s; border-radius: 4px; }
@@ -131,6 +136,17 @@ function render(el) {
 
   el.querySelector('#bm-back')?.addEventListener('click', () => navigate.back());
   el.querySelector('#bm-link-all')?.addEventListener('click', () => linkAll(el));
+  el.querySelector('#bm-clear-all')?.addEventListener('click', async () => {
+    if (!confirm('Delete ALL unmapped punch entries?\n\nThis cannot be undone. Mapped punches and members are safe.')) return;
+    if (!confirm('Final confirm: clear all unmapped entries?')) return;
+    const r = await apiRequest('/api/mobile/v1/rrr/attendance/unmapped', { method: 'DELETE' });
+    if (r.ok) {
+      alert(`Cleared ${r.data.deleted} unmapped entries.`);
+      load(el);
+    } else {
+      alert('Failed: ' + (r.data?.message || r.error || 'unknown error'));
+    }
+  });
   
   el.querySelectorAll('.bm-card').forEach(card => {
     card.addEventListener('click', (e) => {
