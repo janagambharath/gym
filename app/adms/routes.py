@@ -139,6 +139,77 @@ def _parse_userinfo_line(line: str) -> dict | None:
     return {"enroll_number": pin, "name": fields.get("NAME", "").strip()}
 
 
+def _parse_operlog_enrollment(line: str) -> dict | None:
+    """Parse a user-enrollment record from an OPERLOG upload.
+
+    When a user is enrolled on the terminal, OPERLOG carries the full record:
+    ``PIN=<id>\\tName=<name>\\tPri=0\\tPasswd=\\tCard=\\tGrp=1...``
+    (ZKTeco PUSH SDK "User Registration (OPERLOG)" format.)
+
+    Returns {"enroll_number": ..., "name": ...} or None if the line
+    is not an enrollment record.
+    """
+    line = line.strip()
+    upper = line.upper()
+    # Must have PIN= and NAME= to be an enrollment record
+    if "PIN=" not in upper or "NAME=" not in upper:
+        return None
+    fields: dict[str, str] = {}
+    for part in line.split("\t"):
+        part = part.strip()
+        if "=" in part:
+            key, _, value = part.partition("=")
+            fields[key.strip().upper()] = value.strip()
+    pin = fields.get("PIN", "").strip()
+    name = fields.get("NAME", "").strip()
+    if not pin or not name:
+        return None
+    return {"enroll_number": pin, "name": name}
+
+
+def _ingest_operlog(integration) -> int:
+    """Parse OPERLOG uploads for user enrollment records.
+
+    The X2008 never uploads USERINFO via query, but it DOES push OPERLOG
+    on every enrollment -- and those records include PIN + Name. This gives
+    automatic name capture for all future enrollments with zero terminal
+    interaction.
+
+    For each enrollment found, upserts the terminal name snapshot and
+    triggers high-confidence auto-link against members.
+    Returns the number of enrollment records found.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+    lines = _attlog_lines()
+    found = 0
+    for line in lines:
+        parsed = _parse_operlog_enrollment(line)
+        if not parsed:
+            continue
+        found += 1
+        enroll_number = parsed["enroll_number"]
+        name = parsed["name"]
+        log.info(
+            "OPERLOG enrollment: PIN=%s Name=%s (gym %s)",
+            enroll_number, name, integration.gym_id,
+        )
+        try:
+            from app.services.enroll_match_service import upsert_terminal_snapshot
+            upsert_terminal_snapshot(
+                integration.gym_id, enroll_number, name, source="operlog",
+            )
+        except Exception as e:
+            log.warning("OPERLOG snapshot upsert failed: %s", e)
+    if found:
+        try:
+            from app.services.enroll_match_service import auto_link_high_confidence
+            auto_link_high_confidence(gym_id=integration.gym_id)
+        except Exception as e:
+            log.warning("OPERLOG auto-link failed: %s", e)
+    return found
+
+
 def _ingest_userinfo(integration: RRRIntegration) -> int:
     """Store a USERINFO table upload as the latest sync_users snapshot.
 
@@ -282,6 +353,8 @@ def cdata(path_token: str | None = None):
         _ingest_attlog(integration)
     elif request.method == "POST" and table in {"USERINFO", "USER"}:
         _ingest_userinfo(integration)
+    elif request.method == "POST" and table == "OPERLOG":
+        _ingest_operlog(integration)
     db.session.commit()
     # Common ADMS clients expect a plain acknowledgement after a push and an
     # option payload on their initial GET.  Never put secrets in this response.

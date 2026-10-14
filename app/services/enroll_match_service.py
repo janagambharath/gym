@@ -87,6 +87,10 @@ def get_adms_snapshot(gym_id: int) -> dict | None:
     The terminal uploads its user table in response to our ``DATA QUERY
     USERINFO`` command; the cdata handler stores it on the sync_users
     command's result_data.  This is the PC-less path to smart matching.
+
+    Also merges OPERLOG-derived enrollments (action="operlog_snapshot"):
+    the X2008 pushes PIN + Name via OPERLOG on every enrollment even though
+    it never answers USERINFO queries.
     """
     from app.models.rrr import RRRAdmsCommand, RRRIntegration
 
@@ -101,26 +105,115 @@ def get_adms_snapshot(gym_id: int) -> dict | None:
         .order_by(RRRAdmsCommand.id.desc())
         .first()
     )
-    if not cmd or not cmd.result_data:
-        return None
-    try:
-        data = json.loads(cmd.result_data)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    users = data.get("users") if isinstance(data, dict) else None
-    if not isinstance(users, list):
+    users: list[dict] = []
+    command_id = None
+    acknowledged_at = None
+    if cmd and cmd.result_data:
+        try:
+            data = json.loads(cmd.result_data)
+        except (json.JSONDecodeError, TypeError):
+            data = None
+        raw_users = data.get("users") if isinstance(data, dict) else None
+        if isinstance(raw_users, list):
+            command_id = cmd.id
+            acknowledged_at = cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None
+            users = [
+                {"enroll_number": str(u.get("enroll_number") or "").strip(),
+                 "name": str(u.get("name") or "").strip()}
+                for u in raw_users
+                if isinstance(u, dict)
+            ]
+    # Merge OPERLOG-derived enrollments (X2008's working name channel)
+    operlog_cmd = (
+        RRRAdmsCommand.query.filter_by(integration_id=integration.id, action="operlog_snapshot")
+        .filter(RRRAdmsCommand.result_data.isnot(None))
+        .order_by(RRRAdmsCommand.id.desc())
+        .first()
+    )
+    if operlog_cmd and operlog_cmd.result_data:
+        try:
+            odata = json.loads(operlog_cmd.result_data)
+        except (json.JSONDecodeError, TypeError):
+            odata = None
+        oraw = odata.get("users") if isinstance(odata, dict) else None
+        if isinstance(oraw, list):
+            seen = {u["enroll_number"] for u in users}
+            for u in oraw:
+                if not isinstance(u, dict):
+                    continue
+                en = str(u.get("enroll_number") or "").strip()
+                nm = str(u.get("name") or "").strip()
+                if en and en not in seen:
+                    users.append({"enroll_number": en, "name": nm})
+                    seen.add(en)
+            if command_id is None:
+                command_id = operlog_cmd.id
+    if not users:
         return None
     return {
-        "command_id": cmd.id,
+        "command_id": command_id,
         "source": "adms",
-        "acknowledged_at": cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None,
-        "users": [
-            {"enroll_number": str(u.get("enroll_number") or "").strip(),
-             "name": str(u.get("name") or "").strip()}
-            for u in users
-            if isinstance(u, dict)
-        ],
+        "acknowledged_at": acknowledged_at,
+        "users": users,
     }
+
+
+def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source: str = "operlog") -> None:
+    """Store a terminal user name from an OPERLOG enrollment record.
+
+    The X2008 never uploads USERINFO via query, but OPERLOG pushes contain
+    PIN + Name on every enrollment. This accumulates those into a snapshot
+    that get_adms_snapshot() merges, enabling auto-link for future enrollments.
+
+    Stored on a dedicated RRRAdmsCommand (action="operlog_snapshot") with
+    result_data={"users": [...], "source": "operlog"}. Does not commit.
+    """
+    import json
+    from app.models.rrr import RRRAdmsCommand, RRRIntegration
+
+    integration = RRRIntegration.query.filter_by(
+        gym_id=gym_id, connector_type="adms_direct"
+    ).first()
+    if not integration:
+        return
+    enroll_number = str(enroll_number).strip()
+    name = str(name).strip()
+    if not enroll_number or not name:
+        return
+
+    cmd = RRRAdmsCommand.query.filter_by(
+        integration_id=integration.id, action="operlog_snapshot"
+    ).order_by(RRRAdmsCommand.id.desc()).first()
+
+    users: dict[str, str] = {}
+    if cmd and cmd.result_data:
+        try:
+            data = json.loads(cmd.result_data)
+            for u in data.get("users", []):
+                if isinstance(u, dict) and u.get("enroll_number"):
+                    users[str(u["enroll_number"]).strip()] = str(u.get("name", "")).strip()
+        except (json.JSONDecodeError, TypeError):
+            pass
+    users[enroll_number] = name
+
+    payload = json.dumps({
+        "users": [{"enroll_number": k, "name": v} for k, v in users.items()],
+        "source": "operlog",
+        "count": len(users),
+    })
+    if cmd:
+        cmd.result_data = payload
+    else:
+        cmd = RRRAdmsCommand(
+            gym_id=gym_id,
+            integration_id=integration.id,
+            action="operlog_snapshot",
+            test_enroll_number=enroll_number,
+            command_text="OPERLOG enrollment capture (automatic)",
+            status="acked",
+            result_data=payload,
+        )
+        db.session.add(cmd)
 
 
 def suggest_matches(gym_id: int) -> dict:
