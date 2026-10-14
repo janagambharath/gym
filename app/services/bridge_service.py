@@ -91,7 +91,8 @@ def adms_command_text(
     """
 
     if action == "sync_users":
-        return "DATA QUERY USERINFO"
+        # X2008 (ZAM180_TFT classic) may need explicit PIN=ALL to upload USERINFO
+        return "DATA QUERY USERINFO PIN=ALL"
 
     if action == "probe_info":
         return "INFO"
