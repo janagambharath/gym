@@ -40,6 +40,24 @@ async function load(el) {
       <div><span class="rrr-eyebrow">TODAY AT ${escapeHtml(gymName).toUpperCase()}</span><h1>Run the gym. Grow the business.</h1><p>${priorityCount ? `${formatInteger(priorityCount)} member opportunities need your attention.` : 'Everything looks clear. New signals will appear as members check in, pay and renew.'}</p></div>
       <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integration?.status === 'connected' ? `${integrationName} live` : 'Attendance needs setup'}</span>${icon('chevronRight', 16)}</button>
     </section>
+    ${data.unmapped_count ? `
+    <section id="rrr-link-banner" class="rrr-link-banner">
+      <div class="rrr-link-banner-icon">🔗</div>
+      <div class="rrr-link-banner-text">
+        <strong>${formatInteger(data.unmapped_count)} biometric IDs need linking</strong>
+        <span>Tap to match them with members — one time, then it's automatic.</span>
+      </div>
+      <div class="rrr-link-banner-arrow">→</div>
+    </section>
+    <style>
+      .rrr-link-banner { display: flex; align-items: center; gap: 12px; background: linear-gradient(135deg, #fef3c7, #fde68a); border: 2px solid #f59e0b; border-radius: 16px; padding: 14px 16px; margin: 0 0 16px 0; cursor: pointer; }
+      .rrr-link-banner:active { transform: scale(0.98); }
+      .rrr-link-banner-icon { font-size: 28px; flex-shrink: 0; }
+      .rrr-link-banner-text { flex: 1; }
+      .rrr-link-banner-text strong { display: block; font-size: 15px; color: #92400e; }
+      .rrr-link-banner-text span { font-size: 12px; color: #b45309; }
+      .rrr-link-banner-arrow { font-size: 22px; color: #92400e; font-weight: 800; }
+    </style>` : ''}
     <section class="rrr-growth-section"><div class="rrr-section-heading"><div><span class="rrr-eyebrow">GROWTH ENGINE</span><h2>Where to focus next</h2></div><button id="rrr-rules">Tune signals ${icon('settings', 15)}</button></div><div class="rrr-pillars">${['revenue', 'retain', 'recover'].map(key => pillar(data, key)).join('')}</div></section>
     <section class="rrr-list-grid">${['revenue', 'retain', 'recover'].map(key => list(data.pillars[key]?.items || [], key)).join('')}</section>
     <section class="rrr-kpis rrr-owner-kpis">
@@ -57,6 +75,7 @@ async function load(el) {
   </main>`;
   el.querySelector('#rrr-integrations')?.addEventListener('click', () => navigate.push('rrr-integrations'));
   el.querySelector('#rrr-kpi-mapping')?.addEventListener('click', () => navigate.push('rrr-mappings'));
+  el.querySelector('#rrr-link-banner')?.addEventListener('click', () => navigate.push('rrr-mappings'));
   el.querySelector('#rrr-kpi-members')?.addEventListener('click', () => navigate.switchTab('members'));
   el.querySelector('#rrr-kpi-attendance')?.addEventListener('click', () => navigate.push('access'));
   el.querySelector('#rrr-kpi-pipeline')?.addEventListener('click', () => navigate.push('rrr-list', { pillar: 'revenue' }));
