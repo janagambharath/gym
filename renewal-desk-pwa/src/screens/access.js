@@ -474,7 +474,8 @@ async function openQuickAssign(bioId) {
           showToast(`ID ${bioId} linked ✓`);
           close();
           // Refresh the access feed to show the name
-          document.querySelector('[data-tab].active')?.click();
+          const tabBtn = document.querySelector('.screen [data-tab].btn-primary');
+          if (tabBtn) tabBtn.click();
         } else {
           showToast('Link failed — try again');
           row.style.background = '';
