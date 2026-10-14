@@ -65,7 +65,8 @@ export default {
               ${!s.remote_unlock_available ? `<p style="margin:var(--sp-sm) 0 0;font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.remote_unlock_reason || 'Bridge PC is offline. Open RenewalDeskConnector on gym PC to enable remote unlock.')}</p>` : ''}
             </div>
 
-            <!-- Hardware Bridge Controls -->
+            ${!s.adms_integration_id ? `
+            <!-- Hardware Bridge Controls (only when NOT on Direct Cloud) -->
             <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);display:flex;flex-direction:column;gap:var(--sp-sm)">
               <div style="display:flex;align-items:center;justify-content:space-between">
                 <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px">Hardware Bridge Controls</div>
@@ -78,9 +79,10 @@ export default {
                 <button class="btn btn-secondary btn-sm" id="btn-bridge-pairing" style="font-size:var(--fs-xs);padding:6px 10px">🔑 Pairing Code</button>
               </div>
             </div>
+            ` : ''}
 
             ${s.adms_integration_id ? `
-            <!-- Direct Cloud (ADMS) Controls -->
+            <!-- Direct Cloud (ADMS) Status -->
             <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);display:flex;flex-direction:column;gap:var(--sp-sm)">
               <div style="display:flex;align-items:center;justify-content:space-between">
                 <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px">Direct Cloud Terminal</div>
@@ -89,10 +91,7 @@ export default {
                 </span>
               </div>
               ${s.adms_device_name ? `<div style="font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.adms_device_name)}</div>` : ''}
-              <div style="display:grid;grid-template-columns:1fr;gap:var(--sp-xs)">
-                <button class="btn btn-secondary btn-sm" id="btn-adms-sync" data-adms-id="${s.adms_integration_id}" style="font-size:var(--fs-xs);padding:6px 10px" ${s.adms_online ? '' : 'disabled'}>📥 Sync Users from Terminal</button>
-              </div>
-              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">Pulls the terminal's user list + fingerprint templates for backup.</p>
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">Punches sync automatically. Block/unblock runs on membership changes.</p>
             </div>
             ` : ''}
 
@@ -242,27 +241,6 @@ export default {
           } else {
             showToast(res.error?.message || 'Could not generate pairing code', 'error');
           }
-        });
-      }
-
-      // Sync users from Direct Cloud (ADMS) terminal
-      const admsSyncBtn = scroll.querySelector('#btn-adms-sync');
-      if (admsSyncBtn) {
-        admsSyncBtn.addEventListener('click', async () => {
-          const integrationId = admsSyncBtn.dataset.admsId;
-          admsSyncBtn.disabled = true;
-          admsSyncBtn.textContent = 'Syncing...';
-          const res = await apiRequest(`/api/mobile/v1/rrr/integrations/${integrationId}/adms/commands`, {
-            method: 'POST',
-            body: { action: 'sync_users' },
-          });
-          if (res.ok) {
-            showToast('Sync queued. Terminal will upload user list shortly.', 'success');
-          } else {
-            showToast(res.error?.message || 'Sync failed', 'error');
-          }
-          admsSyncBtn.disabled = false;
-          admsSyncBtn.textContent = '📥 Sync Users from Terminal';
         });
       }
 

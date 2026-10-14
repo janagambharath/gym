@@ -61,7 +61,11 @@ def register_access_routes(bp):
             summary["heartbeat_age_seconds"] = int(hb_age) if hb_age is not None else None
         else:
             summary["remote_unlock_available"] = False
-            summary["remote_unlock_reason"] = "No biometric bridge paired."
+            # Don't show "No biometric bridge paired" when Direct Cloud is active
+            if summary.get("adms_integration_id"):
+                summary["remote_unlock_reason"] = "Remote unlock needs the bridge PC. Direct Cloud terminal is connected for attendance."
+            else:
+                summary["remote_unlock_reason"] = "No biometric bridge paired."
             summary["bridge_provisioned"] = False
             summary["bridge_online"] = False
             summary["device_online"] = False
