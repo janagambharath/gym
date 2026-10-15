@@ -126,6 +126,40 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
 
 def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int | None,
                    source: str | None = None) -> int:
+    """Link a biometric ID to a member, backfilling unmapped punches.
+
+    Raises ValueError on conflict (member already linked to a different ID,
+    or ID already linked to a different member). Queues the membership
+    command so the terminal state matches (expired members get blocked).
+    """
+    from app.services.bridge_service import canonical_enroll_number, queue_membership_command
+
+    external_id = canonical_enroll_number(external_id)
+    # Guard 1: member already linked to a different enroll number
+    if member.device_enroll_number and member.device_enroll_number != external_id:
+        raise ValueError(
+            f"This member already has enroll number {member.device_enroll_number}. "
+            "Remove it first to reassign."
+        )
+    # Guard 2: enroll number already linked to a different member
+    duplicate = (
+        Member.query.filter_by(gym_id=gym_id, device_enroll_number=external_id)
+        .filter(Member.id != member.id, Member.deleted_at.is_(None))
+        .first()
+    )
+    if duplicate is not None:
+        raise ValueError(
+            f"Enroll number {external_id} is already linked to {duplicate.full_name}."
+        )
+    # Guard 3: external_id already mapped to a different member
+    existing_mapping = RRRIdentityMapping.query.filter_by(
+        gym_id=gym_id, external_id=external_id, status="confirmed"
+    ).first()
+    if existing_mapping is not None and existing_mapping.member_id != member.id:
+        raise ValueError(
+            f"Biometric ID {external_id} is already linked to another member."
+        )
+
     mapping = RRRIdentityMapping.query.filter_by(gym_id=gym_id, external_id=external_id).first()
     if mapping is None:
         mapping = RRRIdentityMapping(
@@ -144,6 +178,8 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     for event in events:
         event.member_id = member.id
         event.processing_status = "processed"
+    # Ensure terminal state matches membership (expired → block, active → unblock)
+    queue_membership_command(member)
     return len(events)
 
 

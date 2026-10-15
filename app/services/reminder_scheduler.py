@@ -187,6 +187,55 @@ def _scheduled_reminder_job(app: Flask) -> None:
             except Exception:
                 db.session.rollback()
                 app.logger.exception("Auto-expiry failed for gym %s", gym.id)
+
+            # Reconcile failed blocks: expired members whose block command
+            # never acked (terminal offline, timeout, etc.) get re-queued.
+            # Without this, a single failed block leaves the member with
+            # terminal access indefinitely.
+            try:
+                from app.services.bridge_service import queue_membership_command
+                from app.models import Member
+                from app.models.rrr import RRRAdmsCommand, RRRIntegration
+                from app.services.bridge_service import resolve_adms_enroll_number
+
+                integration = RRRIntegration.query.filter_by(
+                    gym_id=gym.id, connector_type="adms_direct"
+                ).first()
+                if integration and integration.commands_enabled:
+                    expired_linked = (
+                        Member.query.filter(
+                            Member.gym_id == gym.id,
+                            Member.status == "expired",
+                            Member.deleted_at.is_(None),
+                            Member.device_enroll_number.isnot(None),
+                        ).all()
+                    )
+                    requeued = 0
+                    for m in expired_linked:
+                        try:
+                            enroll = resolve_adms_enroll_number(m)
+                        except ValueError:
+                            continue
+                        if not enroll:
+                            continue
+                        acked = RRRAdmsCommand.query.filter_by(
+                            integration_id=integration.id,
+                            action="block",
+                            test_enroll_number=enroll,
+                            status="acked",
+                        ).first()
+                        if not acked:
+                            queue_membership_command(m, force=True)
+                            requeued += 1
+                    if requeued:
+                        db.session.commit()
+                        app.logger.info(
+                            "Re-queued %s failed block commands for gym %s",
+                            requeued, gym.id,
+                        )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Block reconciliation failed for gym %s", gym.id)
             
             # Auto-link unmapped biometric IDs (fully automatic, no manual trigger)
             # First ensure we have a terminal user list (with names) to match against

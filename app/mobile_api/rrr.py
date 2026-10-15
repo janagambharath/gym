@@ -500,6 +500,9 @@ def register_rrr_routes(bp):
             if member is None:
                 results.append({"external_id": external_id, "ok": False, "error": "Member not found"})
                 continue
+            # Per-item savepoint: a failure rolls back only this item,
+            # not the previously succeeded ones.
+            savepoint = db.session.begin_nested()
             try:
                 event_source = (
                     RRRAttendanceEvent.query.filter_by(gym_id=g.gym_id, biometric_user_id=external_id)
@@ -512,9 +515,10 @@ def register_rrr_routes(bp):
                 )
                 audit(action="rrr_identity_mapped", resource_type="member", resource_id=member.id, gym_id=g.gym_id,
                       actor_id=g.user_id, metadata={"external_id": external_id, "events_replayed": resolved, "bulk": True})
+                savepoint.commit()
                 results.append({"external_id": external_id, "ok": True, "member_id": member.id, "events_resolved": resolved})
             except Exception as e:
-                db.session.rollback()
+                savepoint.rollback()
                 results.append({"external_id": external_id, "ok": False, "error": str(e)[:100]})
         db.session.commit()
         ok_count = sum(1 for r in results if r["ok"])

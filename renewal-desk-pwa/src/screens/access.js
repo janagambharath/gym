@@ -2,7 +2,7 @@
 import { apiRequest, checkInMember } from '../api.js';
 import { navigate } from '../app.js';
 import { router } from '../router.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, renderBadge, renderEmptyState, renderAvatar, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderBadge, renderEmptyState, renderAvatar, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js';
 import { formatDateTime, formatInteger, escapeHtml } from '../utils.js';
 
