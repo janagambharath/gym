@@ -198,7 +198,7 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
 
     payload = json.dumps({
         "users": [{"enroll_number": k, "name": v} for k, v in users.items()],
-        "source": "operlog",
+        "source": source,
         "count": len(users),
     })
     if cmd:
@@ -277,10 +277,13 @@ def suggest_matches(gym_id: int) -> dict:
     return {"suggestions": suggestions, "unmatched_terminal": unmatched,
             "snapshot": {"command_id": snapshot["command_id"],
                          "acknowledged_at": snapshot["acknowledged_at"],
-                         "terminal_user_count": len(snapshot["users"])}}
+                         "terminal_user_count": len(snapshot["users"]),
+                         "source": snapshot.get("source", "adms")}}
 
 
-def auto_link_high_confidence(gym_id: int, actor_id: int | None = None) -> dict:
+def auto_link_high_confidence(
+    gym_id: int, actor_id: int | None = None, skip_command_for_active: bool = False
+) -> dict:
     """Automatically link terminal users to members with very high name similarity.
     
     This handles cases like "jhon carl" (app) vs "jhoncarl" (terminal) —
@@ -304,6 +307,7 @@ def auto_link_high_confidence(gym_id: int, actor_id: int | None = None) -> dict:
                     member_id=sugg["member_id"],
                     enroll_number=sugg["enroll_number"],
                     actor_id=actor_id or 0,
+                    skip_command_for_active=skip_command_for_active,
                 )
                 linked.append({
                     "enroll_number": sugg["enroll_number"],
@@ -327,7 +331,14 @@ def auto_link_high_confidence(gym_id: int, actor_id: int | None = None) -> dict:
     return {"linked": linked, "skipped": skipped}
 
 
-def confirm_match(gym_id: int, member_id: int, enroll_number: str, actor_id: int) -> Member:
+def confirm_match(
+    gym_id: int,
+    member_id: int,
+    enroll_number: str,
+    actor_id: int,
+    skip_command: bool = False,
+    skip_command_for_active: bool = False,
+) -> Member:
     """Link a member to a terminal enroll number. Raises ValueError on conflict.
 
     Reuses the same guards as the bridge enrollment confirm: no silent
@@ -354,7 +365,16 @@ def confirm_match(gym_id: int, member_id: int, enroll_number: str, actor_id: int
             f"Enroll number {enroll_number} is already linked to {duplicate.full_name}."
         )
     member.device_enroll_number = enroll_number
-    queue_membership_command(member)  # terminal gets enable/disable for the new link
+    # M4: when the link comes from a fresh OPERLOG enrollment, the terminal
+    # already holds the correct state for active members — skip the redundant
+    # UPDATE (which would also clobber a 90-99% matched name). Always queue
+    # when the desired state differs (expired -> block).
+    _skip = skip_command
+    if not _skip and skip_command_for_active:
+        from app.services.bridge_service import desired_command_type
+        _skip = desired_command_type(member) == "enable_user"
+    if not _skip:
+        queue_membership_command(member)  # terminal gets enable/disable for the new link
     audit(
         action="enroll_match_confirmed",
         resource_type="member",

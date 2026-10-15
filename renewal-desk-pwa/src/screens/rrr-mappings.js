@@ -75,9 +75,9 @@ function render(el) {
       <div class="bm-footer-info"><span id="bm-count">0</span> ready to link</div>
       <button class="bm-link-all" id="bm-link-all">Link all →</button>
     </div>
-    <div class="bm-danger-row">
+    ${groups.length ? `<div class="bm-danger-row">
       <button class="bm-clear-all" id="bm-clear-all">Clear all unmapped entries</button>
-    </div>
+    </div>` : ''}
     
     <div class="bm-progress" id="bm-progress" style="display:none">
       <div class="bm-progress-bar"><div class="bm-progress-fill" id="bm-fill"></div></div>
@@ -324,10 +324,7 @@ async function linkAll(el) {
     const failed = (res.data.results || []).filter(r => !r.ok);
     if (failed.length) {
       if (progressText) progressText.textContent = `✓ Linked ${linked}, ${failed.length} failed: IDs ${failed.map(f => f.external_id).join(', ')}`;
-      // Keep failed selections so user can retry
-      for (const f of failed) {
-        // selections already has them; just ensure they're still there
-      }
+      // Keep failed selections so user can retry (selections already has them)
       // Remove successfully linked from selections
       for (const r of (res.data.results || [])) {
         if (r.ok) selections.delete(r.external_id);

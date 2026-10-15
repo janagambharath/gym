@@ -117,8 +117,10 @@ def adms_command_text(
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
     if action in {"block", "block_test"}:
-        # DELETE is the only proven block on X2008. Fingerprint templates
-        # are backed up during sync_users and restored on unblock.
+        # DELETE is the only proven block on X2008. NOTE: fingerprint
+        # templates are NOT backed up — the X2008 never uploads USERINFO/
+        # templates via query, so unblock recreates the user and the member
+        # must re-scan their finger.
         return f"DATA DELETE USERINFO PIN={enroll_number}"
     elif action in {"delete_biodata_test"}:
         # Delete all fingerprint templates for the user, keeping the user record.
@@ -205,6 +207,10 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
         .where(
             RRRAdmsCommand.integration_id == integration.id,
             RRRAdmsCommand.test_enroll_number == enroll_number,
+            # M1: only membership-state commands participate in dedup.
+            # OPERLOG snapshot rows (action="operlog_snapshot") share the
+            # table and must not shadow the real block/unblock state.
+            RRRAdmsCommand.action.in_(["block", "unblock", "delete_user", "create_user"]),
         )
         .order_by(RRRAdmsCommand.id.desc())
         .limit(1)

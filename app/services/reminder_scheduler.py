@@ -253,20 +253,12 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 db.session.rollback()
                 pass
             
-            try:
-                from app.services.enroll_match_service import auto_link_high_confidence
-                link_result = auto_link_high_confidence(gym_id=gym.id)
-                linked = link_result.get("linked", [])
-                if linked:
-                    db.session.commit()
-                    app.logger.info(
-                        "Auto-linked %s biometric IDs for gym %s",
-                        len(linked),
-                        gym.id,
-                    )
-            except Exception:
-                db.session.rollback()
-                app.logger.exception("Auto-link failed for gym %s", gym.id)
+            # M2: scheduler auto-link REMOVED (2026-10-15). Auto-linking now
+            # happens only from the OPERLOG enrollment trigger (fresh data,
+            # right after the owner enrolls someone). The unsupervised
+            # scheduler sweep risked wrong-person links at 90% similarity,
+            # which could queue a block for the wrong terminal PIN.
+            # Manual linking remains via Unmapped Punches / enroll-match UI.
             finally:
                 # Heartbeat: prove we are alive so the short-TTL lock survives
                 # long runs but expires quickly if this worker dies.

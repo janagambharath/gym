@@ -15,7 +15,7 @@ async function load(el, params) {
 
   el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>';
   
-  const res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=1&page_size=50`);
+  const res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=1&per_page=50`);
   if (!res.ok) {
     el.innerHTML = `<main class="rrr-page rrr-detail">
       <header class="rrr-header"><button id="rrr-back" class="rrr-back-btn">← Member</button></header>
@@ -28,7 +28,7 @@ async function load(el, params) {
 
   const data = res.data;
   const member = data.member || {};
-  const punches = data.punches || [];
+  const punches = data.events || [];
   const stats = data.stats || {};
 
   el.innerHTML = `<main class="rrr-page rrr-detail">
@@ -38,7 +38,7 @@ async function load(el, params) {
     </header>
     
     <div class="rrr-att-hero">
-      <h1>${esc(member.full_name || 'Member')}</h1>
+      <h1>${esc(member.name || 'Member')}</h1>
       <p class="rrr-att-sub">Biometric ID ${esc(member.enroll_number || '—')}</p>
       <div class="rrr-att-stats">
         <div class="rrr-stat">
@@ -64,7 +64,7 @@ async function load(el, params) {
             <div class="rrr-att-date">${dateStr} <span class="rrr-att-time">${timeStr}</span></div>
             <div class="rrr-att-meta">${esc(p.device_serial || '')} · ${esc(p.verify_method || 'Entry')}</div>
           </div>
-          <span class="rrr-att-badge">Entry</span>
+          <span class="rrr-att-badge">${esc(p.direction === "exit" ? "Exit" : "Entry")}</span>
         </div>`;
       }).join('')}
     </div>` : `

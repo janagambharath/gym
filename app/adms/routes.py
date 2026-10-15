@@ -151,8 +151,10 @@ def _parse_operlog_enrollment(line: str) -> dict | None:
     """
     line = line.strip()
     upper = line.upper()
-    # Must have PIN= and NAME= to be an enrollment record
-    if "PIN=" not in upper or "NAME=" not in upper:
+    # Must have PIN=, NAME= and PRI= to be an enrollment record.
+    # M3: the Pri= requirement filters out admin/modify OPERLOG lines that
+    # merely mention a PIN and a name in another context.
+    if "PIN=" not in upper or "NAME=" not in upper or "PRI=" not in upper:
         return None
     fields: dict[str, str] = {}
     for part in line.split("\t"):
@@ -204,7 +206,11 @@ def _ingest_operlog(integration) -> int:
     if found:
         try:
             from app.services.enroll_match_service import auto_link_high_confidence
-            auto_link_high_confidence(gym_id=integration.gym_id)
+            # M4: the terminal just enrolled these users, so for active
+            # members the terminal already holds the correct state — skip
+            # the redundant UPDATE. Only queue when the desired state
+            # differs (e.g. expired member -> block).
+            auto_link_high_confidence(gym_id=integration.gym_id, skip_command_for_active=True)
         except Exception as e:
             log.warning("OPERLOG auto-link failed: %s", e)
     return found
@@ -453,6 +459,17 @@ def devicecmd(path_token: str | None = None):
     command.result_code = result or None
     command.result_message = detail or None
     command.acknowledged_at = utcnow()
-    command.status = "acked" if result == "0" else "failed"
+    # M5: for DELETE-type commands the desired end state is "user not on
+    # terminal". Return=-1/-2 from the X2008 means the user/template was
+    # already absent — treat as achieved, not failed, so the C1 retry
+    # reconciliation doesn't re-queue forever.
+    _delete_actions = {"block", "block_test", "delete_user", "delete_biodata_test", "delete_fingertmp_test"}
+    if result == "0":
+        command.status = "acked"
+    elif command.action in _delete_actions and result in ("-1", "-2"):
+        command.status = "acked"
+        command.result_message = (detail or "") + " [treated as success: already absent]"
+    else:
+        command.status = "failed"
     db.session.commit()
     return _plain("OK")

@@ -9,13 +9,13 @@ class Router {
   constructor() {
     /** @type {Map<string, () => Promise<{default: Screen}>>} */
     this.routes = new Map();
-    /** @type {{ screenId: string, params: Record<string,string>, element: HTMLElement }[]} */
+    /** @type {{ screenId: string, params: Record<string,string>, element: HTMLElement, screen: Screen|null }[]} */
     this.stack = [];
     /** @type {HTMLElement|null} */
     this.container = null;
     /** @type {string|null} */
     this.currentTab = null;
-    /** @type {Map<string, { screenId: string, params: Record<string,string>, element: HTMLElement }[]>} */
+    /** @type {Map<string, { screenId: string, params: Record<string,string>, element: HTMLElement, screen: Screen|null }[]>} */
     this.tabStacks = new Map();
     /** @type {{ type: 'push'|'tab', tabId?: string, screenId?: string }[]} */
     this.history = [];
@@ -107,11 +107,12 @@ class Router {
     // If replacing, remove old top
     if (opts.replace && this.stack.length > 0) {
       const old = this.stack.pop();
+      try { old?.screen?.unmount?.(); } catch { /* ignore */ }
       old?.element?.remove();
     }
 
     this.container.appendChild(el);
-    this.stack.push({ screenId, params, element: el });
+    this.stack.push({ screenId, params, element: el, screen });
 
     // Keep browser history in step so the OS back button/gesture navigates
     // the app instead of leaving it.
@@ -150,6 +151,7 @@ class Router {
     if (prev?.element) {
       prev.element.style.visibility = 'visible';
     }
+    try { top?.screen?.unmount?.(); } catch { /* ignore */ }
 
     if (top) {
       top.element.classList.remove('screen-enter');
@@ -204,6 +206,7 @@ class Router {
 
     // Clear current screens from DOM
     for (const entry of this.stack) {
+      try { entry.screen?.unmount?.(); } catch { /* ignore */ }
       entry.element.remove();
     }
     this.stack = [];
@@ -233,6 +236,7 @@ class Router {
   /** Clear all stacks and screens */
   clear() {
     for (const entry of this.stack) {
+      try { entry.screen?.unmount?.(); } catch { /* ignore */ }
       entry.element.remove();
     }
     this.stack = [];
