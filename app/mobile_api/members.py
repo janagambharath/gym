@@ -278,7 +278,7 @@ def register_members_routes(bp):
         # the run-reminders CLI. It must not run here: it is a mutating,
         # lock-holding write that does not belong in a GET.
         page = request.args.get("page", 1, type=int)
-        page_size = min(request.args.get("page_size", 20, type=int), 100)
+        page_size = min(request.args.get("page_size", 20, type=int), 500)  # M7: linking screens request 500
         status = request.args.get("status", "").strip()
         search = request.args.get("q", "").strip()
 

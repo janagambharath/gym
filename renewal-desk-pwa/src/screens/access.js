@@ -2,12 +2,14 @@
 import { apiRequest, checkInMember } from '../api.js';
 import { navigate } from '../app.js';
 import { router } from '../router.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, renderBadge, renderEmptyState, renderAvatar, showToast, showConfirm } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderAvatar, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js';
 import { formatDateTime, formatInteger, escapeHtml } from '../utils.js';
 
 export default {
   async mount(el) {
+    // M8: drop any orphaned quick-assign sheet (OS-back can strand it on document.body)
+    document.getElementById('quick-assign-overlay')?.remove();
     let currentTab = 'all'; // 'all' | 'entry' | 'exit' | 'denied'
     let summaryData = null;
     let refreshTimer = null;
@@ -318,7 +320,7 @@ export default {
       let debounceTimeout = null;
 
       async function fetchAndRenderMembers(query = '') {
-        const url = `/api/mobile/v1/members?per_page=20${query ? `&search=${encodeURIComponent(query)}` : '&status=active'}`;
+        const url = `/api/mobile/v1/members?page_size=20${query ? `&q=${encodeURIComponent(query)}` : '&status=active'}`;
         const res = await apiRequest(url);
         if (!res.ok) {
           listContainer.innerHTML = `<div style="text-align:center;padding:var(--sp-md);color:var(--critical)">Failed to load members</div>`;
