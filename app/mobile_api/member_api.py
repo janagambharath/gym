@@ -940,22 +940,40 @@ def member_renew_with_plan():
     """
     member = g.current_member
     data = request.get_json(silent=True) or {}
+    
+    # Support custom amount (member enters what they paid)
+    custom_amount = data.get("custom_amount")
     try:
-        plan_id = int(data.get("plan_id"))
+        custom_amount = float(custom_amount) if custom_amount else None
+        if custom_amount is not None and custom_amount <= 0:
+            custom_amount = None
     except (TypeError, ValueError):
+        custom_amount = None
+    
+    plan = None
+    plan_id = data.get("plan_id")
+    if plan_id:
+        try:
+            plan_id = int(plan_id)
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "error": {"code": "VALIDATION_ERROR", "message": "Invalid plan_id."},
+            }), 422
+        plan = MembershipPlan.query.filter_by(
+            id=plan_id, gym_id=member.gym_id, is_active=True
+        ).first()
+        if plan is None:
+            return jsonify({
+                "success": False,
+                "error": {"code": "NOT_FOUND", "message": "That plan is not available."},
+            }), 404
+    
+    if plan is None and custom_amount is None:
         return jsonify({
             "success": False,
-            "error": {"code": "VALIDATION_ERROR", "message": "plan_id is required."},
+            "error": {"code": "VALIDATION_ERROR", "message": "Select a plan or enter an amount."},
         }), 422
-
-    plan = MembershipPlan.query.filter_by(
-        id=plan_id, gym_id=member.gym_id, is_active=True
-    ).first()
-    if plan is None:
-        return jsonify({
-            "success": False,
-            "error": {"code": "NOT_FOUND", "message": "That plan is not available."},
-        }), 404
 
     existing = PaymentVerification.query.filter(
         PaymentVerification.member_id == member.id,
@@ -969,14 +987,17 @@ def member_renew_with_plan():
             "data": {"payment_id": existing.id},
         })
 
+    amount = custom_amount if custom_amount else plan.price
+    plan_name = plan.name if plan else "Custom amount"
+    renewal_days = plan.duration_days if plan else 30
     payment = PaymentVerification(
         gym_id=member.gym_id,
         member_id=member.id,
-        amount=plan.price,
+        amount=amount,
         method="member_request",
-        notes=f"Self-service renewal request from {member.full_name} (plan: {plan.name})",
+        notes=f"Self-service renewal request from {member.full_name} (plan: {plan_name}, amount: {amount})",
         status="pending",
-        renewal_days=plan.duration_days or 30,
+        renewal_days=renewal_days,
     )
     db.session.add(payment)
     audit(
@@ -985,7 +1006,7 @@ def member_renew_with_plan():
         resource_id=payment.id,
         gym_id=member.gym_id,
         actor_id=None,
-        metadata={"member_id": member.id, "plan_id": plan.id},
+        metadata={"member_id": member.id, "plan_id": plan.id if plan else None, "custom_amount": custom_amount},
     )
     db.session.commit()
 
