@@ -291,8 +291,8 @@ def register_members_routes(bp):
             # Active members first — they're the ones who need biometric access
             query = query.order_by(
                 db.case(
-                    (Member.status == "active", 0),
-                    (Member.status == "expiring", 1),
+                    {"active": 0, "expiring": 1},
+                    value=Member.status,
                     else_=2
                 ),
                 Member.name.asc()
