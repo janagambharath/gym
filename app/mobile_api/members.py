@@ -313,9 +313,12 @@ def register_members_routes(bp):
             query = query.filter(or_(Member.full_name.ilike(like), Member.phone.ilike(like)))
 
         total = query.count()
+        members_query = query.options(joinedload(Member.plan))
+        # Don't override the custom not_enrolled ordering (active first)
+        if biometric != "not_enrolled":
+            members_query = members_query.order_by(Member.membership_end.asc())
         members = (
-            query.options(joinedload(Member.plan))
-            .order_by(Member.membership_end.asc())
+            members_query
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
