@@ -178,8 +178,14 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     for event in events:
         event.member_id = member.id
         event.processing_status = "processed"
-    # Ensure terminal state matches membership (expired → block, active → unblock)
-    queue_membership_command(member)
+    # Only queue a terminal command when the desired state differs from what
+    # the terminal already has. For active members the terminal already has
+    # them (they were just enrolled/linked) — queuing a redundant "enable"
+    # floods the bridge with hundreds of unnecessary commands. Expired
+    # members always get their block queued.
+    from app.services.bridge_service import desired_command_type
+    if desired_command_type(member) != "enable_user":
+        queue_membership_command(member)
     return len(events)
 
 
