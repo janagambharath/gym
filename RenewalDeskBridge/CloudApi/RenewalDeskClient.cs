@@ -96,6 +96,12 @@ namespace RenewalDeskBridge.CloudApi
             return await PostAsync("/api/bridge/v1/enrollment/confirm", payload);
         }
 
+        public async Task<bool> ReportEnrollmentAsync(string deviceEnrollNumber, string userName)
+        {
+            var payload = new { deviceEnrollNumber, userName, gymId = _gymId };
+            return await PostAsync("/api/bridge/v1/enrollment", payload);
+        }
+
         private async Task<bool> PostAsync(string path, object payload)
         {
             try

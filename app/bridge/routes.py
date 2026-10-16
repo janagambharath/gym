@@ -354,6 +354,62 @@ def attendance():
     return jsonify({"ok": True, "knownMember": member is not None}), 201
 
 
+@bridge_bp.post("/enrollment")
+@limiter.limit("60 per minute", key_func=_bridge_rate_limit_key)
+def enrollment():
+    """Receive a terminal enrollment event from the bridge for auto-linking.
+
+    The bridge .exe polls the terminal's user list and posts new enrollments
+    here. The server attempts high-confidence auto-linking (90%+ name match),
+    same as the OPERLOG path for Direct Cloud terminals.
+    """
+    payload = _require_json()
+    if payload is None:
+        return _json_error(415, "invalid_json", "Send a JSON request body.")
+    installation, problem = _ensure_bridge_id(payload)
+    if problem:
+        return problem
+    try:
+        enroll_number = canonical_enroll_number(
+            _payload_value(payload, "deviceEnrollNumber", "DeviceEnrollNumber")
+        )
+        user_name = _payload_value(payload, "userName", "UserName")
+        if not isinstance(user_name, str) or not user_name.strip():
+            return _json_error(422, "invalid_enrollment", "userName is required.")
+        user_name = user_name.strip()[:24]
+    except (TypeError, ValueError) as exc:
+        return _json_error(422, "invalid_enrollment", str(exc))
+
+    # Store enrollment snapshot and attempt auto-link
+    try:
+        from app.services.enroll_match_service import (
+            upsert_terminal_snapshot,
+            auto_link_high_confidence,
+        )
+        # Find or create RRRIntegration for this gym (bridge type)
+        integration = RRRIntegration.query.filter_by(
+            gym_id=installation.gym_id, connector_type="direct_bridge"
+        ).first()
+        if integration is None:
+            # Fall back to ebioserver type for legacy bridges
+            integration = RRRIntegration.query.filter_by(
+                gym_id=installation.gym_id, connector_type="ebioserver"
+            ).first()
+        if integration:
+            upsert_terminal_snapshot(
+                integration.id, enroll_number, user_name, source="bridge"
+            )
+            linked = auto_link_high_confidence(
+                installation.gym_id, skip_command_for_active=True
+            )
+            db.session.commit()
+            return jsonify({"ok": True, "auto_linked": linked})
+        return jsonify({"ok": True, "auto_linked": 0, "note": "no integration"})
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(500, "enrollment_failed", str(exc)[:200])
+
+
 @bridge_bp.get("/commands/pending")
 @limiter.limit("120 per minute", key_func=_bridge_rate_limit_key)
 def pending_commands():
