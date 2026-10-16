@@ -377,10 +377,24 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     integration = integration or next((row for row in integrations if row.connector_type == "adms_direct"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "direct_bridge"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "ebioserver"), None)
+    # Legacy Windows bridge (BridgeInstallation) — gyms like Yodha Fitness
+    # use the old TCP bridge without an RRRIntegration row. If they have an
+    # active bridge installation, treat attendance as connected.
+    legacy_bridge = None
+    if integration is None:
+        from app.models import BridgeInstallation
+        legacy_bridge = BridgeInstallation.query.filter_by(
+            gym_id=gym_id, is_active=True
+        ).first()
     return {
         "members": {"total": total_members, "active": active_members,
                     "attendance_rate": round((active_visitors / active_members * 100), 1) if active_members else 0},
-        "integration": integration_payload(integration) if integration else None,
+        "integration": (
+            integration_payload(integration) if integration
+            else ({"type": "legacy_bridge", "status": "connected",
+                   "name": "Bridge"}
+                  if legacy_bridge else None)
+        ),
         "pillars": {
             name: {"count": len(by_pillar[name]),
                    "potential_revenue": str(sum((x.potential_revenue for x in by_pillar[name]), Decimal("0"))),
