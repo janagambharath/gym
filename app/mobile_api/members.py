@@ -289,12 +289,10 @@ def register_members_routes(bp):
         if biometric == "not_enrolled":
             query = query.filter(Member.device_enroll_number.is_(None))
             # Active members first — they're the ones who need biometric access
+            # (False=0 sorts before True=1, so != puts matching status first)
             query = query.order_by(
-                db.case(
-                    {"active": 0, "expiring": 1},
-                    value=Member.status,
-                    else_=2
-                ),
+                (Member.status != "active"),
+                (Member.status != "expiring"),
                 Member.name.asc()
             )
         elif biometric == "enrolled":
