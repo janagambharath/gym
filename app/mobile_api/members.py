@@ -281,10 +281,15 @@ def register_members_routes(bp):
         page_size = min(request.args.get("page_size", 20, type=int), 500)  # M7: linking screens request 500
         status = request.args.get("status", "").strip()
         search = request.args.get("q", "").strip()
+        biometric = request.args.get("biometric", "").strip()
 
         query = Member.query.filter_by(gym_id=g.gym_id).filter(Member.deleted_at.is_(None))
         if status:
             query = query.filter(Member.status == status)
+        if biometric == "not_enrolled":
+            query = query.filter(Member.device_enroll_number.is_(None))
+        elif biometric == "enrolled":
+            query = query.filter(Member.device_enroll_number.isnot(None))
         expiring_within_days = request.args.get("expiring_within_days", type=int)
         if expiring_within_days is not None and expiring_within_days >= 0:
             gym_tz = g.current_user.gym.timezone or "Asia/Kolkata"

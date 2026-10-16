@@ -22,6 +22,7 @@ export default {
         <button class="filter-chip" data-filter="active">Active</button>
         <button class="filter-chip" data-filter="expiring">Expiring</button>
         <button class="filter-chip" data-filter="expired">Expired</button>
+        <button class="filter-chip" data-filter="not_enrolled">Not enrolled</button>
       </div>
       <div class="scroll-view" id="members-list">${renderListSkeleton()}</div>
       <button class="fab" id="fab-add">${icon('add', 24, 'white')}</button>`;
@@ -60,6 +61,7 @@ export default {
       let url = `/api/mobile/v1/members?page=${page}&page_size=20`;
       if (query) url += `&q=${encodeURIComponent(query)}`;
       if (filter === 'expiring') url += `&expiring_within_days=7`;
+      else if (filter === 'not_enrolled') url += `&biometric=not_enrolled`;
       else if (filter !== 'all') url += `&status=${filter}`;
       const res = await apiRequest(url);
       loading = false;
