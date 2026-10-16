@@ -288,6 +288,15 @@ def register_members_routes(bp):
             query = query.filter(Member.status == status)
         if biometric == "not_enrolled":
             query = query.filter(Member.device_enroll_number.is_(None))
+            # Active members first — they're the ones who need biometric access
+            query = query.order_by(
+                db.case(
+                    (Member.status == "active", 0),
+                    (Member.status == "expiring", 1),
+                    else_=2
+                ),
+                Member.name.asc()
+            )
         elif biometric == "enrolled":
             query = query.filter(Member.device_enroll_number.isnot(None))
         expiring_within_days = request.args.get("expiring_within_days", type=int)
