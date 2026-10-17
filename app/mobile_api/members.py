@@ -288,6 +288,29 @@ def register_members_routes(bp):
             query = query.filter(Member.status == status)
         if biometric == "not_enrolled":
             query = query.filter(Member.device_enroll_number.is_(None))
+            # Sort active first in Python (SQL boolean ordering was unreliable)
+            # Fetch all matching, sort by status priority, then paginate manually
+            all_members = (
+                query.options(joinedload(Member.plan))
+                .order_by(Member.membership_end.asc())
+                .all()
+            )
+            status_priority = {"active": 0, "expiring": 1}
+            all_members.sort(key=lambda m: (status_priority.get(m.status, 2), m.full_name or ""))
+            total = len(all_members)
+            start = (page - 1) * page_size
+            members = all_members[start:start + page_size]
+            return jsonify({
+                "success": True,
+                "data": {
+                    "members": [_serialize_member(m) for m in members],
+                    "pagination": {
+                        "page": page,
+                        "page_size": page_size,
+                        "total": total,
+                    },
+                },
+            })
         elif biometric == "enrolled":
             query = query.filter(Member.device_enroll_number.isnot(None))
         expiring_within_days = request.args.get("expiring_within_days", type=int)
