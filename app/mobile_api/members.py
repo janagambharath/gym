@@ -288,13 +288,6 @@ def register_members_routes(bp):
             query = query.filter(Member.status == status)
         if biometric == "not_enrolled":
             query = query.filter(Member.device_enroll_number.is_(None))
-            # Active members first — they're the ones who need biometric access
-            # (False=0 sorts before True=1, so != puts matching status first)
-            query = query.order_by(
-                (Member.status != "active"),
-                (Member.status != "expiring"),
-                Member.name.asc()
-            )
         elif biometric == "enrolled":
             query = query.filter(Member.device_enroll_number.isnot(None))
         expiring_within_days = request.args.get("expiring_within_days", type=int)
@@ -313,12 +306,9 @@ def register_members_routes(bp):
             query = query.filter(or_(Member.full_name.ilike(like), Member.phone.ilike(like)))
 
         total = query.count()
-        members_query = query.options(joinedload(Member.plan))
-        # Don't override the custom not_enrolled ordering (active first)
-        if biometric != "not_enrolled":
-            members_query = members_query.order_by(Member.membership_end.asc())
         members = (
-            members_query
+            query.options(joinedload(Member.plan))
+            .order_by(Member.membership_end.asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
