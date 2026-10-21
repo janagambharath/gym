@@ -236,7 +236,73 @@ def _scheduled_reminder_job(app: Flask) -> None:
             except Exception:
                 db.session.rollback()
                 app.logger.exception("Block reconciliation failed for gym %s", gym.id)
-            
+
+            # Reconcile failed blocks for legacy TCP-bridge (.exe) gyms.
+            # The branch above only covers adms_direct integrations, so a
+            # bridge gym whose disable_user command burned through its
+            # bounded retries stayed unblocked indefinitely (Yodha Fitness,
+            # 2026-10-21: member expired 8 days, block never re-queued).
+            # Same rule as ADMS: expired + linked + no acked block on
+            # record -> re-queue. queue_membership_command dedupes
+            # pending/leased commands, so repeat scans cannot flood.
+            try:
+                from app.models import Member
+                from app.models.bridge import BridgeCommand
+                from app.services.bridge_service import (
+                    _active_installation,
+                    desired_command_type,
+                    queue_membership_command,
+                )
+
+                installation = _active_installation(gym.id)
+                if installation is not None:
+                    expired_linked = (
+                        Member.query.filter(
+                            Member.gym_id == gym.id,
+                            Member.status == "expired",
+                            Member.deleted_at.is_(None),
+                            Member.device_enroll_number.is_not(None),
+                        ).all()
+                    )
+                    changed = False
+                    requeued = 0
+                    for m in expired_linked:
+                        if desired_command_type(m) != "disable_user":
+                            continue
+                        latest = (
+                            BridgeCommand.query.filter_by(
+                                bridge_id=installation.id, member_id=m.id
+                            )
+                            .order_by(
+                                BridgeCommand.created_at.desc(),
+                                BridgeCommand.id.desc(),
+                            )
+                            .first()
+                        )
+                        if (
+                            latest is not None
+                            and latest.status == "acked"
+                            and latest.command_type == "disable_user"
+                        ):
+                            continue
+                        if latest is None or latest.status == "failed":
+                            requeued += 1
+                        queue_membership_command(m, force=True)
+                        changed = True
+                    if changed:
+                        db.session.commit()
+                    if requeued:
+                        app.logger.info(
+                            "Re-queued %s failed bridge block commands for gym %s",
+                            requeued,
+                            gym.id,
+                        )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception(
+                    "Bridge block reconciliation failed for gym %s", gym.id
+                )
+
             # Auto-link unmapped biometric IDs (fully automatic, no manual trigger)
             # First ensure we have a terminal user list (with names) to match against
             try:
