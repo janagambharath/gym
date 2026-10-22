@@ -25,6 +25,8 @@ export default {
           ${renderFormField({ id: 'em-gender', label: 'Gender', value: m.gender || '', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}
           ${renderFormField({ id: 'em-address', label: 'Address', type: 'textarea', value: m.address || '' })}
           ${renderFormField({ id: 'em-plan', label: 'Plan', value: m.plan?.id || '', options: plans.map(p => ({ value: p.id, label: p.name })) })}
+          ${renderFormField({ id: 'em-start', label: 'Start Date', type: 'date', value: m.membership_start || '' })}
+          ${renderFormField({ id: 'em-end', label: 'End Date', type: 'date', value: m.membership_end || '' })}
           ${renderFormField({ id: 'em-notes', label: 'Notes', type: 'textarea', value: m.notes || '' })}
           <button type="submit" class="btn btn-primary btn-lg btn-full" id="em-submit">Save Changes</button>
         </form>
@@ -41,6 +43,15 @@ export default {
       const name = el.querySelector('#em-name').value.trim();
       const phone = el.querySelector('#em-phone').value.trim();
 
+      const startDate = el.querySelector('#em-start').value || null;
+      const endDate = el.querySelector('#em-end').value || null;
+      if (startDate && endDate && endDate < startDate) {
+        showToast('End date cannot be before start date', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+        return;
+      }
+
       const body = {
         full_name: name,
         name: name,
@@ -51,6 +62,8 @@ export default {
         notes: el.querySelector('#em-notes').value.trim() || null,
         address: el.querySelector('#em-address').value.trim() || null,
       };
+      if (startDate) body.membership_start = startDate;
+      if (endDate) body.membership_end = endDate;
 
       const r = await apiRequest(`/api/mobile/v1/members/${memberId}`, { method: 'PATCH', body });
       if (r.ok) {

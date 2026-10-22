@@ -54,6 +54,7 @@ function registerScreens() {
   router.register('member-attendance', () => import('./screens/member-attendance.js'), { auth: true });
   router.register('add-member', () => import('./screens/add-member.js'), { auth: true });
   router.register('edit-member', () => import('./screens/edit-member.js'), { auth: true });
+  router.register('date-repair', () => import('./screens/date-repair.js'), { auth: true });
   router.register('renew-member', () => import('./screens/renew-member.js'), { auth: true });
   router.register('record-payment', () => import('./screens/record-payment.js'), { auth: true });
   router.register('payment-detail', () => import('./screens/payment-detail.js'), { auth: true });

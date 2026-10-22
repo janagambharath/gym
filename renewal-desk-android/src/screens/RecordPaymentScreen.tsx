@@ -148,19 +148,39 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
       }
     };
 
-    if (parsedAmount === 0) {
+    const proceed = async () => {
+      if (parsedAmount === 0) {
+        Alert.alert(
+          'Confirm Complementary Payment',
+          `Are you sure you want to record a ₹0 (complementary) payment for ${selectedMember.full_name}?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Confirm', onPress: () => { void submitPayment(); } },
+          ]
+        );
+        return;
+      }
+
+      await submitPayment();
+    };
+
+    // Guard: a mistyped renewal-days value silently moves the member's
+    // end date by that many days. If it differs from the plan's actual
+    // duration, make the staff member confirm it is deliberate.
+    const planDays = selectedMember.plan?.duration_days;
+    if (planDays && days !== planDays) {
       Alert.alert(
-        'Confirm Complementary Payment',
-        `Are you sure you want to record a ₹0 (complementary) payment for ${selectedMember.full_name}?`,
+        'Check Renewal Days',
+        `You entered ${days} days, but ${selectedMember.plan?.name || 'the selected plan'} is ${planDays} days. The member's end date will move by ${days} days.`,
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Confirm', onPress: () => { void submitPayment(); } },
+          { text: 'Go Back', style: 'cancel' },
+          { text: 'Proceed Anyway', onPress: () => { void proceed(); } },
         ]
       );
       return;
     }
 
-    await submitPayment();
+    await proceed();
   }, [selectedMember, amount, method, reference, notes, renewalDays, onBack, onCreated, saving]);
 
   return (

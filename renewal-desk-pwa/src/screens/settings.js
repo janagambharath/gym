@@ -29,6 +29,7 @@ export default {
         <div class="card" style="margin:var(--sp-sm) var(--sp-lg) var(--sp-lg)">
           ${renderMenuItem({ iconName: 'business', label: 'Gym Profile', desc: 'Name, contact, address', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'gym-profile' })}
           ${renderMenuItem({ iconName: 'plan', label: 'Membership Plans', desc: 'Manage pricing & durations', iconBg: 'var(--brand-subtle)', iconColor: 'var(--brand)', onClick: 'plans' })}
+          ${renderMenuItem({ iconName: 'calendar', label: 'Date Repair', desc: 'Fix member dates that don\'t match payments', iconBg: 'var(--warning-surface)', iconColor: 'var(--warning)', onClick: 'date-repair' })}
           ${renderMenuItem({ iconName: 'staff', label: 'Staff', desc: 'Manage team members', iconBg: 'var(--info-surface)', iconColor: 'var(--info)', onClick: 'staff' })}
           ${renderMenuItem({ iconName: 'report', label: 'Reports', desc: 'Analytics & summaries', iconBg: 'var(--success-surface)', iconColor: 'var(--success)', onClick: 'reports' })}
           ${renderMenuItem({ iconName: 'wallet', label: 'Payment Setup', desc: 'UPI & QR settings', iconBg: 'var(--status-pending-surface)', iconColor: 'var(--status-pending)', onClick: 'payment-setup' })}
