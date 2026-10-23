@@ -12,7 +12,11 @@ from app.models import BridgeInstallation, BridgeCommand, BridgeAttendance, Memb
 from app.models.bridge import generate_bridge_api_key, hash_bridge_api_key
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
-from app.services.bridge_service import queue_membership_command
+from app.services.bridge_service import (
+    bridge_command_must_be_cancelled,
+    cancel_bridge_command,
+    queue_membership_command,
+)
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -168,6 +172,17 @@ def retry_command(command_id: str):
     command = BridgeCommand.query.filter_by(id=command_id, bridge_id=installation.id).first()
     if not command:
         flash("Command not found.", "warning")
+        return redirect(url_for("biometric.commands"))
+
+    if command.status == "failed" and bridge_command_must_be_cancelled(command):
+        # Fail-safe: a disable is retried only for a proven-blockable member
+        # (paused, or expired with a past end date).  Stamp the cancellation.
+        cancel_bridge_command(command)
+        db.session.commit()
+        flash(
+            "Command was not retried: the member is not proven blockable (active members are never blocked).",
+            "warning",
+        )
         return redirect(url_for("biometric.commands"))
 
     command.status = "pending"

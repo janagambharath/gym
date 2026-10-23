@@ -24,7 +24,11 @@ from app.services.access_event_service import (
     _serialize_access_event,
 )
 from app.services.audit_service import audit
-from app.services.bridge_service import queue_gym_reconciliation
+from app.services.bridge_service import (
+    bridge_command_must_be_cancelled,
+    cancel_bridge_command,
+    queue_gym_reconciliation,
+)
 
 
 def register_access_routes(bp):
@@ -249,12 +253,20 @@ def register_access_routes(bp):
             })
 
         failed_cmds = BridgeCommand.query.filter_by(bridge_id=bridge.id, status="failed").all()
+        retried_count = 0
         for cmd in failed_cmds:
+            # Fail-safe: never resurrect a disable unless the member is
+            # proven blockable (paused, or expired with a past end date).
+            # Stamp the cancellation so the skip is auditable.
+            if bridge_command_must_be_cancelled(cmd):
+                cancel_bridge_command(cmd)
+                continue
             cmd.status = "pending"
             cmd.retry_attempt += 1
             cmd.lease_token = None
             cmd.lease_expires_at = None
             cmd.last_error = None
+            retried_count += 1
 
         db.session.commit()
         audit(
@@ -263,14 +275,14 @@ def register_access_routes(bp):
             resource_id=bridge.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"retried_count": len(failed_cmds)},
+            metadata={"retried_count": retried_count},
         )
 
         return jsonify({
             "success": True,
             "data": {
-                "retried_count": len(failed_cmds),
-                "message": f"Queued {len(failed_cmds)} failed command(s) for immediate retry.",
+                "retried_count": retried_count,
+                "message": f"Queued {retried_count} failed command(s) for immediate retry.",
             },
         })
 

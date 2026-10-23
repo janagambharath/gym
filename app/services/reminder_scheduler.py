@@ -197,6 +197,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.models import Member
                 from app.models.rrr import RRRAdmsCommand, RRRIntegration
                 from app.services.bridge_service import resolve_adms_enroll_number
+                from app.services.timezone_service import today_for_gym
 
                 integration = RRRIntegration.query.filter_by(
                     gym_id=gym.id, connector_type="adms_direct"
@@ -206,6 +207,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                         Member.query.filter(
                             Member.gym_id == gym.id,
                             Member.status == "expired",
+                            Member.membership_end < today_for_gym(gym.timezone),
                             Member.deleted_at.is_(None),
                             Member.device_enroll_number.isnot(None),
                         ).all()
@@ -253,6 +255,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     desired_command_type,
                     queue_membership_command,
                 )
+                from app.services.timezone_service import today_for_gym
 
                 installation = _active_installation(gym.id)
                 if installation is not None:
@@ -260,6 +263,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                         Member.query.filter(
                             Member.gym_id == gym.id,
                             Member.status == "expired",
+                            Member.membership_end < today_for_gym(gym.timezone),
                             Member.deleted_at.is_(None),
                             Member.device_enroll_number.is_not(None),
                         ).all()

@@ -73,7 +73,11 @@ from app.services.bridge_release_service import (
     upgrade_gym_bridge,
     upload_bridge_release,
 )
-from app.services.bridge_service import queue_membership_command
+from app.services.bridge_service import (
+    bridge_command_must_be_cancelled,
+    cancel_bridge_command,
+    queue_membership_command,
+)
 
 from app.services.payment_service import delete_payment, verify_payment
 
@@ -1591,6 +1595,12 @@ def retry_failed_commands(gym_id: int):
     failed_cmds = BridgeCommand.query.filter_by(gym_id=gym_id, status="failed").all()
     count = 0
     for cmd in failed_cmds:
+        # Fail-safe: never resurrect a disable unless the member is proven
+        # blockable (paused, or expired with a past end date).  Stamp the
+        # cancellation so the skip is auditable.
+        if bridge_command_must_be_cancelled(cmd):
+            cancel_bridge_command(cmd)
+            continue
         cmd.status = "pending"
         cmd.delivery_attempts = 0
         cmd.not_before = utcnow()

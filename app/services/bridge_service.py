@@ -13,9 +13,18 @@ from app.models import BridgeCommand, BridgeInstallation, Member
 from app.models import RRRAdmsCommand, RRRIdentityMapping, RRRIntegration
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
+from app.services.timezone_service import today_for_gym
 
 
 _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
+
+BRIDGE_DISABLE_COMMAND_TYPES = frozenset({"disable_user", "delete_user"})
+ADMS_DISABLE_ACTIONS = frozenset({"block", "delete_user"})
+STALE_DISABLE_MARKER = "CANCELLED_STALE_STATE"
+STALE_DISABLE_ERROR = (
+    "CANCELLED_STALE_STATE: member is not proven blockable (fail-safe rule: "
+    "active members are never blocked); disable command was not served."
+)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -56,6 +65,108 @@ def desired_command_type(member: Member) -> str:
         if member.status == "active" and not member.deleted_at and member.membership_end >= local_today
         else "disable_user"
     )
+
+
+def member_is_proven_blockable(member: Member | None) -> bool:
+    """The ONLY state in which a disable may reach a terminal (fail-safe).
+
+    Bharath's hard invariant (2026-10-23): "Whatever u do, active members
+    should not be blocked."  A member is proven blockable only when the row
+    exists, is not deleted, and either:
+
+    * ``status == "paused"`` — a deliberate freeze, blockable on any dates; or
+    * ``membership_end`` is set, strictly before gym-local today, and
+      ``status != "active"`` — a genuinely expired membership.
+
+    Every other state fails safe (NOT blockable): status ``active`` on any
+    date, end date today or in the future, a NULL end date, a deleted row,
+    or a missing member.  The incident population — stored status ``expired``
+    with a future end date — is not blockable under this rule.
+    """
+
+    if member is None or member.deleted_at is not None:
+        return False
+    if member.status == "paused":
+        return True
+    if member.membership_end is None or member.status == "active":
+        return False
+    gym_timezone = member.gym.timezone if member.gym else "Asia/Kolkata"
+    return member.membership_end < today_for_gym(gym_timezone)
+
+
+def disable_must_be_cancelled(member: Member | None) -> bool:
+    """Serve/queue/retry guard: cancel unless the member is proven blockable."""
+
+    return not member_is_proven_blockable(member)
+
+
+def bridge_command_must_be_cancelled(command: BridgeCommand) -> bool:
+    """Whether a bridge command is a disable for a non-blockable member."""
+
+    if command.command_type not in BRIDGE_DISABLE_COMMAND_TYPES:
+        return False
+    member = None
+    if command.member_id is not None:
+        member = command.member or db.session.get(Member, command.member_id)
+    if member is None and command.enroll_number:
+        # Manual commands may carry only an enroll number; resolve it so the
+        # command is judged on the member's real state.  Unresolvable stays
+        # unproven and is cancelled below (fail-safe).
+        member = Member.query.filter_by(
+            gym_id=command.gym_id, device_enroll_number=command.enroll_number
+        ).first()
+    return disable_must_be_cancelled(member)
+
+
+def cancel_bridge_command(command: BridgeCommand) -> None:
+    """Terminal-state a stale bridge disable without a schema migration.
+
+    Both command tables constrain ``status`` by database CHECK constraints,
+    so this hotfix uses the existing ``failed`` terminal state plus an
+    unmistakable marker.  ``failed`` is never leased or served again; the
+    state-aware retry paths check the same guard before any resurrection.
+    """
+
+    command.status = "failed"
+    command.last_error = STALE_DISABLE_ERROR
+    command.lease_token = None
+    command.lease_expires_at = None
+    command.acknowledged_at = utcnow()
+
+
+def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None:
+    """Resolve an ADMS command's terminal identity back to a member row."""
+
+    if not enroll_number:
+        return None
+    try:
+        canonical = canonical_enroll_number(enroll_number)
+    except ValueError:
+        return None
+
+    mapping = (
+        RRRIdentityMapping.query.filter_by(
+            gym_id=gym_id, external_id=canonical, status="confirmed"
+        )
+        .order_by(RRRIdentityMapping.id.desc())
+        .first()
+    )
+    if mapping is not None and mapping.member_id is not None:
+        member = db.session.get(Member, mapping.member_id)
+        if member is not None and member.gym_id == gym_id:
+            return member
+    return Member.query.filter_by(
+        gym_id=gym_id, device_enroll_number=canonical
+    ).first()
+
+
+def cancel_adms_command(command: RRRAdmsCommand) -> None:
+    """Terminal-state a stale ADMS disable (see :func:`cancel_bridge_command`)."""
+
+    command.status = "failed"
+    command.result_code = STALE_DISABLE_MARKER
+    command.result_message = STALE_DISABLE_ERROR
+    command.acknowledged_at = utcnow()
 
 
 def _active_installation(gym_id: int) -> BridgeInstallation | None:
@@ -502,9 +613,18 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
         .with_for_update()
         .all()
     )
+    leased: list[BridgeCommand] = []
     for command in ready:
+        # Final guard at the point of no return (fail-safe): hand a disable
+        # to the bridge only for a proven-blockable member — paused, or
+        # expired with a past end date.  Everything else (active on any
+        # date, future/NULL end, missing member) is cancelled here.
+        if bridge_command_must_be_cancelled(command):
+            cancel_bridge_command(command)
+            continue
         command.lease(secrets.token_urlsafe(32), now + timedelta(seconds=lease_seconds))
-    return ready
+        leased.append(command)
+    return leased
 
 
 def schedule_retry_after_failed_command(command: BridgeCommand) -> BridgeCommand | None:
@@ -521,6 +641,13 @@ def schedule_retry_after_failed_command(command: BridgeCommand) -> BridgeCommand
         return None
     member = db.session.get(Member, command.member_id)
     if member is None or not member.device_enroll_number:
+        return None
+    if (
+        command.command_type in BRIDGE_DISABLE_COMMAND_TYPES
+        and disable_must_be_cancelled(member)
+    ):
+        # Fail-safe: never schedule a retry disable for a member who is not
+        # proven blockable, even if the plain desired-state check agrees.
         return None
     if (
         desired_command_type(member) != command.command_type

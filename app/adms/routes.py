@@ -411,16 +411,40 @@ def getrequest(path_token: str | None = None):
     # Re-send a delivered command until the terminal posts its result.  DATA
     # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from
     # silently dropping a physical-access request.
-    command = RRRAdmsCommand.query.filter_by(
+    from app.services.bridge_service import (
+        ADMS_DISABLE_ACTIONS,
+        cancel_adms_command,
+        disable_must_be_cancelled,
+        resolve_adms_member,
+    )
+
+    delivered = RRRAdmsCommand.query.filter_by(
         integration_id=integration.id, status="delivered"
-    ).order_by(RRRAdmsCommand.id.asc()).first()
+    ).order_by(RRRAdmsCommand.id.asc()).all()
+    queued = RRRAdmsCommand.query.filter_by(
+        integration_id=integration.id, status="queued"
+    ).order_by(RRRAdmsCommand.id.asc()).all()
+
+    command = None
+    for candidate in [*delivered, *queued]:
+        # Final guard at the point of no return (fail-safe): a block/delete
+        # is served only when the resolved member is proven blockable —
+        # paused, or expired with a past end date.  Active members, future
+        # or NULL end dates, and unresolvable identities all cancel the
+        # command; serving continues with the next command.  Enable-type
+        # commands always serve unchanged.
+        if candidate.action in ADMS_DISABLE_ACTIONS:
+            member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
+            if disable_must_be_cancelled(member):
+                cancel_adms_command(candidate)
+                continue
+        command = candidate
+        break
+
     if command is None:
-        command = RRRAdmsCommand.query.filter_by(
-            integration_id=integration.id, status="queued"
-        ).order_by(RRRAdmsCommand.id.asc()).first()
-        if command is None:
-            db.session.commit()
-            return _plain("OK")
+        db.session.commit()
+        return _plain("OK")
+    if command.status == "queued":
         command.status = "delivered"
         command.delivered_at = utcnow()
     db.session.commit()
