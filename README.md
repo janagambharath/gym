@@ -163,4 +163,4 @@ template when configured.
 ## Tenant safety
 
 Tenant-facing routes use `current_user.gym_id` and tenant repositories for object lookup. Super admin routes live under `/admin` and require the `super_admin` role. Suspended gyms are blocked from tenant dashboards.
-<!-- deploy trigger 2026-10-23: force Railway to pick up main after the platform outage -->
+
