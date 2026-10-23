@@ -122,8 +122,11 @@ def register_payments_routes(bp):
         channel = request.args.get("channel", "").strip()
         method = request.args.get("method", "").strip()
         query_str = request.args.get("q", "").strip()
+        member_id = request.args.get("member_id", type=int)
 
         query = PaymentVerification.query.filter_by(gym_id=g.gym_id)
+        if member_id:
+            query = query.filter_by(member_id=member_id)
         if status and status != "all":
             query = query.filter_by(status=status)
         if channel and channel != "all":

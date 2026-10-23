@@ -142,6 +142,9 @@ export default {
               <button class="btn btn-outline btn-full" id="btn-record-payment">
                 ${icon('wallet', 18)} Record Payment
               </button>
+              <button class="btn btn-outline btn-full" id="btn-renewal-history">
+                ${icon('time', 18)} Renewal History
+              </button>
               ${member.status === 'paused' ? `
                 <button class="btn btn-full" id="btn-unfreeze" style="font-weight:var(--fw-semibold);background:var(--success);color:white;display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
                   ${icon('check', 18, 'white')} Resume Membership (Unpause)
@@ -254,6 +257,7 @@ export default {
 
       el.querySelector('#btn-renew')?.addEventListener('click', () => navigate.push('renew-member', { member: JSON.stringify(member) }));
       el.querySelector('#btn-record-payment')?.addEventListener('click', () => navigate.push('record-payment', { memberId: String(member.id) }));
+      el.querySelector('#btn-renewal-history')?.addEventListener('click', () => navigate.push('member-history', { memberId: String(member.id) }));
 
       // Block / unblock biometric access (direct-ADMS terminal command)
       let accessBlocked = false;
