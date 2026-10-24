@@ -192,22 +192,18 @@ def _ingest_operlog(integration) -> int:
         found += 1
         enroll_number = parsed["enroll_number"]
         name = parsed["name"]
+        log.info(
+            "OPERLOG enrollment: PIN=%s Name=%s (gym %s)",
+            enroll_number, name, integration.gym_id,
+        )
         try:
             from app.services.enroll_match_service import upsert_terminal_snapshot
             upsert_terminal_snapshot(
                 integration.gym_id, enroll_number, name, source="operlog",
             )
         except Exception as e:
-            log.warning(
-                "OPERLOG snapshot upsert failed (integration_id=%s, error_type=%s)",
-                integration.id, type(e).__name__,
-            )
+            log.warning("OPERLOG snapshot upsert failed: %s", e)
     if found:
-        # Enrollment uploads can contain names and PINs; log only aggregate counts.
-        log.info(
-            "ADMS OPERLOG enrollment records processed (integration_id=%s, count=%s)",
-            integration.id, found,
-        )
         try:
             from app.services.enroll_match_service import auto_link_high_confidence
             # M4: the terminal just enrolled these users, so for active
@@ -235,12 +231,12 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
 
     log = logging.getLogger(__name__)
     raw_lines = _attlog_lines()
-    # Do not log uploaded lines: USERINFO may contain member PII or biometric
-    # templates. Keep diagnostics to counts and internal IDs only.
-    log.info(
-        "ADMS USERINFO upload received (integration_id=%s, line_count=%s)",
-        integration.id, len(raw_lines),
-    )
+    # TEMPORARY DEBUG: log raw upload format to reverse-engineer fingerprint
+    # template encoding. Remove after backup/restore is implemented.
+    for i, line in enumerate(raw_lines[:5]):
+        # Log first 200 chars of first 5 lines to see format without flooding
+        log.warning("USERINFO_RAW line %d: %s", i, line[:200])
+    log.warning("USERINFO_RAW total lines: %d", len(raw_lines))
 
     users = []
     templates_captured = 0
@@ -288,10 +284,7 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
                         ))
                     templates_captured += 1
             except Exception as e:
-                log.warning(
-                    "Template parse failed (integration_id=%s, error_type=%s)",
-                    integration.id, type(e).__name__,
-                )
+                log.warning("Template parse failed for line: %s", str(e)[:100])
     if templates_captured:
         log.warning("Captured %d fingerprint templates", templates_captured)
     if not users:
@@ -428,9 +421,13 @@ def getrequest(path_token: str | None = None):
     # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from
     # silently dropping a physical-access request.
     from app.services.bridge_service import (
-        ADMS_DISABLE_ACTIONS,
+        ADMS_ENABLE_ACTIONS,
+        STALE_ENABLE_ERROR,
+        STALE_ENABLE_MARKER,
+        adms_command_is_delete,
         cancel_adms_command,
         disable_must_be_cancelled,
+        enable_must_be_cancelled,
         resolve_adms_member,
     )
 
@@ -447,12 +444,25 @@ def getrequest(path_token: str | None = None):
         # is served only when the resolved member is proven blockable —
         # paused, or expired with a past end date.  Active members, future
         # or NULL end dates, and unresolvable identities all cancel the
-        # command; serving continues with the next command.  Enable-type
-        # commands always serve unchanged.
-        if candidate.action in ADMS_DISABLE_ACTIONS:
+        # command; serving continues with the next command.  This covers
+        # block_test and the template-delete tests too (C2): their wire
+        # text is a DELETE, caught by action name AND by wire text.
+        if adms_command_is_delete(candidate):
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if disable_must_be_cancelled(member):
                 cancel_adms_command(candidate)
+                continue
+        # Mirror guard for enables (H8): an unblock/create/restore is
+        # served only when the resolved member is proven enableable —
+        # active with an end date today or in the future.  A stale enable
+        # for a paused/expired/unresolvable member cancels instead of
+        # re-opening the door; serving continues with the next command.
+        if candidate.action in ADMS_ENABLE_ACTIONS:
+            member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
+            if enable_must_be_cancelled(member):
+                cancel_adms_command(
+                    candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
+                )
                 continue
         command = candidate
         break

@@ -596,6 +596,8 @@ def register_settings_routes(bp):
         """
         from app.models.bridge import BridgeInstallation, BridgeCommand
         from app.models.member import Member
+        from app.models.rrr import RRRIdentityMapping
+        from app.services.bridge_service import canonical_enroll_number
 
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
         if not bridge:
@@ -623,9 +625,9 @@ def register_settings_routes(bp):
         valid_from = str(data.get("valid_from") or "").strip() or None
         valid_to = str(data.get("valid_to") or "").strip() or None
 
-        if command_type in {"enable_user", "disable_user", "create_user", "delete_user", "set_valid_date"}:
-            if not enroll_number:
-                return error_response("VALIDATION_ERROR", "enroll_number is required for this command.", 422)
+        member_types = {"enable_user", "disable_user", "create_user", "delete_user", "set_valid_date"}
+        if command_type in member_types and not enroll_number and member_id is None:
+            return error_response("VALIDATION_ERROR", "enroll_number is required for this command.", 422)
 
         if command_type == "unlock_door":
             try:
@@ -633,17 +635,89 @@ def register_settings_routes(bp):
             except (TypeError, ValueError):
                 delay_seconds = 5
 
-        if member_id and not member_name:
-            member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
-            if member:
-                member_name = member.full_name
-                if not enroll_number and member.device_enroll_number:
-                    enroll_number = member.device_enroll_number
+        # H6 safe subset (queue-time validation ONLY: existence + gym
+        # scope).  Deliberately NO queue-time blockable check here: the
+        # serve/lease-time guard remains the decider for disables, so the
+        # documented manual-misconduct-block flow (queue now, guard
+        # decides at serve time) is unchanged.  What this stops is a
+        # queued command silently carrying a member_id/enroll number that
+        # belongs to nobody, or to another gym's member.
+        def _resolve_gym_member(canonical_enroll: str):
+            member = Member.query.filter_by(
+                gym_id=g.gym_id, device_enroll_number=canonical_enroll
+            ).first()
+            if member is not None:
+                return member
+            mapping = RRRIdentityMapping.query.filter_by(
+                gym_id=g.gym_id, external_id=canonical_enroll, status="confirmed"
+            ).first()
+            if mapping is not None and mapping.member_id is not None:
+                member = db.session.get(Member, mapping.member_id)
+                if member is not None and member.gym_id == g.gym_id:
+                    return member
+            return None
+
+        validated_member = None
+        if member_id is not None:
+            if not isinstance(member_id, int):
+                return error_response("VALIDATION_ERROR", "member_id must be an integer.", 422)
+            validated_member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
+            if validated_member is None or validated_member.deleted_at is not None:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "member_id does not refer to an existing member of this gym.",
+                    422,
+                )
+
+        # member_id-only calls fill their enroll number from the member
+        # (the pre-fix behaviour), then go through the same resolution.
+        if not enroll_number and validated_member is not None and validated_member.device_enroll_number:
+            enroll_number = validated_member.device_enroll_number
+
+        resolved_member = None
+        if enroll_number:
+            try:
+                enroll_number = canonical_enroll_number(enroll_number)
+            except ValueError:
+                return error_response("VALIDATION_ERROR", "enroll_number must contain only digits.", 422)
+            resolved_member = _resolve_gym_member(enroll_number)
+            if resolved_member is None:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "enroll_number does not refer to an existing member of this gym.",
+                    422,
+                )
+            if resolved_member.deleted_at is not None:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "enroll_number does not refer to an existing member of this gym.",
+                    422,
+                )
+            if validated_member is not None and validated_member.id != resolved_member.id:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "member_id and enroll_number refer to different members.",
+                    422,
+                )
+        elif command_type in member_types:
+            # Enroll was already required above; this branch is unreachable
+            # in practice, kept so a missing enroll can never slip through.
+            return error_response("VALIDATION_ERROR", "enroll_number is required for this command.", 422)
+
+        effective_member = validated_member or resolved_member
+        if effective_member is not None:
+            if not member_name:
+                member_name = effective_member.full_name
+            if not enroll_number and effective_member.device_enroll_number:
+                enroll_number = effective_member.device_enroll_number
+            member_id = effective_member.id
+        else:
+            member_id = None
 
         cmd = BridgeCommand(
             bridge_id=bridge.id,
             gym_id=g.gym_id,
-            member_id=member_id if isinstance(member_id, int) else None,
+            member_id=member_id,
             command_type=command_type,
             enroll_number=enroll_number or "SYSTEM",
             member_name=member_name,

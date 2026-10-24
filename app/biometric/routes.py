@@ -13,7 +13,10 @@ from app.models.bridge import generate_bridge_api_key, hash_bridge_api_key
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.bridge_service import (
+    STALE_ENABLE_ERROR,
+    STALE_ENABLE_MARKER,
     bridge_command_must_be_cancelled,
+    bridge_enable_must_be_cancelled,
     cancel_bridge_command,
     queue_membership_command,
 )
@@ -174,15 +177,30 @@ def retry_command(command_id: str):
         flash("Command not found.", "warning")
         return redirect(url_for("biometric.commands"))
 
-    if command.status == "failed" and bridge_command_must_be_cancelled(command):
+    if command.status == "failed" and (
+        bridge_command_must_be_cancelled(command)
+        or bridge_enable_must_be_cancelled(command)
+    ):
         # Fail-safe: a disable is retried only for a proven-blockable member
-        # (paused, or expired with a past end date).  Stamp the cancellation.
-        cancel_bridge_command(command)
+        # (paused, or expired with a past end date), and an enable only for
+        # a proven-enableable member (active, end today or later).  Stamp
+        # the cancellation.
+        if bridge_enable_must_be_cancelled(command):
+            cancel_bridge_command(
+                command, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
+            )
+            message = (
+                "Command was not retried: the member is not proven enableable "
+                "(only a currently active member may be enabled)."
+            )
+        else:
+            cancel_bridge_command(command)
+            message = (
+                "Command was not retried: the member is not proven blockable "
+                "(active members are never blocked)."
+            )
         db.session.commit()
-        flash(
-            "Command was not retried: the member is not proven blockable (active members are never blocked).",
-            "warning",
-        )
+        flash(message, "warning")
         return redirect(url_for("biometric.commands"))
 
     command.status = "pending"

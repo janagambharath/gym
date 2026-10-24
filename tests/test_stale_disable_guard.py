@@ -382,3 +382,273 @@ def test_retry_sync_does_not_resurrect_stale_disables(client, seed_gym, seed_mem
     assert db.session.get(BridgeCommand, active_past_command.id).status == "failed"
     assert db.session.get(BridgeCommand, null_end_command.id).status == "failed"
     assert db.session.get(BridgeCommand, expired_command.id).status == "pending"
+
+
+# ── Guard-extension batch (2026-10-24): C2 / H8 / M2 / H6 ─────────────
+
+def _adms_command(integration, action, enroll, text):
+    command = RRRAdmsCommand(
+        gym_id=integration.gym_id,
+        integration_id=integration.id,
+        action=action,
+        test_enroll_number=enroll,
+        command_text=text,
+        status="queued",
+    )
+    db.session.add(command)
+    db.session.commit()
+    return command
+
+
+def test_adms_getrequest_cancels_test_deletes_for_active_member(client, seed_gym):
+    """C2: block_test / template-delete tests cancel exactly like block."""
+    integration = _adms_integration(
+        seed_gym["gym"].id, serial="C2-X2008", token="c2-token"
+    )
+    gym_id, plan_id = seed_gym["gym"].id, seed_gym["plan"].id
+    today = date.today()
+    active = _member(
+        gym_id, plan_id, name="Active Test Delete", phone="+919100000101",
+        enroll="101", status="active", end=today + timedelta(days=30),
+    )
+    paused = _member(
+        gym_id, plan_id, name="Paused Test Delete", phone="+919100000102",
+        enroll="102", status="paused", end=today + timedelta(days=30),
+    )
+    test_cmds = [
+        _adms_command(integration, "block_test", "101", "DATA DELETE USERINFO PIN=101"),
+        _adms_command(integration, "delete_biodata_test", "101", "DATA DELETE FINGERTMP PIN=101"),
+        _adms_command(integration, "delete_fingertmp_test", "101", "DATA DELETE FINGERTMP PIN=101\tFID=0"),
+    ]
+    legit = _adms_command(integration, "block", "102", "DATA DELETE USERINFO PIN=102")
+
+    response = client.get("/iclock/c2-token/getrequest?SN=C2-X2008")
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == f"C:{legit.id}:DATA DELETE USERINFO PIN=102\n"
+    for cmd in test_cmds:
+        saved = db.session.get(RRRAdmsCommand, cmd.id)
+        assert saved.status == "failed"
+        assert saved.result_code == STALE_DISABLE_MARKER
+
+
+def test_adms_getrequest_wire_text_delete_fallback(client, seed_gym):
+    """C2 defence-in-depth: a DELETE wire under any action name cancels."""
+    integration = _adms_integration(
+        seed_gym["gym"].id, serial="C2W-X2008", token="c2w-token"
+    )
+    today = date.today()
+    _member(
+        seed_gym["gym"].id, seed_gym["plan"].id, name="Active Wire Fallback",
+        phone="+919100000103", enroll="103", status="active",
+        end=today + timedelta(days=30),
+    )
+    sneaky = _adms_command(integration, "probe_info", "103", "DATA DELETE USERINFO PIN=103")
+    response = client.get("/iclock/c2w-token/getrequest?SN=C2W-X2008")
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == "OK"
+    saved = db.session.get(RRRAdmsCommand, sneaky.id)
+    assert saved.status == "failed"
+    assert saved.result_code == STALE_DISABLE_MARKER
+
+
+def test_adms_getrequest_cancels_stale_enable_but_serves_active(client, seed_gym):
+    """H8: unblock/create for an expired member cancels; active serves."""
+    from app.services.bridge_service import STALE_ENABLE_MARKER
+
+    integration = _adms_integration(
+        seed_gym["gym"].id, serial="H8-X2008", token="h8-token"
+    )
+    gym_id, plan_id = seed_gym["gym"].id, seed_gym["plan"].id
+    today = date.today()
+    expired = _member(
+        gym_id, plan_id, name="Expired Enable", phone="+919100000104",
+        enroll="104", status="expired", end=today - timedelta(days=1),
+    )
+    active = _member(
+        gym_id, plan_id, name="Active Enable", phone="+919100000105",
+        enroll="105", status="active", end=today + timedelta(days=30),
+    )
+    stale_unblock = _adms_command(
+        integration, "unblock", "104", "DATA UPDATE USERINFO PIN=104\tName=Expired Enable\tPri=0")
+    stale_create = _adms_command(
+        integration, "create_user", "104", "DATA UPDATE USERINFO PIN=104\tName=Expired Enable\tPri=0")
+    legit_unblock = _adms_command(
+        integration, "unblock", "105", "DATA UPDATE USERINFO PIN=105\tName=Active Enable\tPri=0")
+
+    response = client.get("/iclock/h8-token/getrequest?SN=H8-X2008")
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == (
+        f"C:{legit_unblock.id}:DATA UPDATE USERINFO PIN=105\tName=Active Enable\tPri=0\n"
+    )
+    for cmd in (stale_unblock, stale_create):
+        saved = db.session.get(RRRAdmsCommand, cmd.id)
+        assert saved.status == "failed"
+        assert saved.result_code == STALE_ENABLE_MARKER
+
+
+def test_bridge_lease_cancels_stale_enable_but_serves_active(seed_gym):
+    """H8 on the bridge path: enable/create/set_valid_date need an active member."""
+    from app.services.bridge_service import STALE_ENABLE_MARKER
+
+    installation = _installation(seed_gym["gym"].id, "H8-BRIDGE-01")
+    gym_id, plan_id = seed_gym["gym"].id, seed_gym["plan"].id
+    today = date.today()
+    expired = _member(
+        gym_id, plan_id, name="Expired Bridge Enable", phone="+919100000106",
+        enroll="106", status="expired", end=today - timedelta(days=1),
+    )
+    active = _member(
+        gym_id, plan_id, name="Active Bridge Enable", phone="+919100000107",
+        enroll="107", status="active", end=today + timedelta(days=30),
+    )
+
+    def _cmd(member, command_type):
+        command = BridgeCommand(
+            bridge_id=installation.id, gym_id=gym_id, member_id=member.id,
+            command_type=command_type, enroll_number=member.device_enroll_number,
+            member_name=member.full_name, status="pending",
+        )
+        db.session.add(command)
+        db.session.commit()
+        return command
+
+    stale_enable = _cmd(expired, "enable_user")
+    stale_create = _cmd(expired, "create_user")
+    legit_enable = _cmd(active, "enable_user")
+
+    leased = lease_pending_commands(installation)
+    db.session.commit()
+    assert [c.id for c in leased] == [legit_enable.id]
+    for cmd in (stale_enable, stale_create):
+        saved = db.session.get(BridgeCommand, cmd.id)
+        assert saved.status == "failed"
+        assert saved.last_error.startswith(STALE_ENABLE_MARKER)
+
+
+def test_retry_sync_does_not_resurrect_stale_enable(client, seed_gym):
+    """H8 at a retry endpoint: a failed stale enable stays failed."""
+    from app.services.bridge_service import STALE_ENABLE_MARKER
+
+    installation = _installation(seed_gym["gym"].id, "H8-RETRY-BRIDGE-01")
+    gym_id, plan_id = seed_gym["gym"].id, seed_gym["plan"].id
+    today = date.today()
+    expired = _member(
+        gym_id, plan_id, name="Expired Retry Enable", phone="+919100000108",
+        enroll="108", status="expired", end=today - timedelta(days=1),
+    )
+    active = _member(
+        gym_id, plan_id, name="Active Retry Enable", phone="+919100000109",
+        enroll="109", status="active", end=today + timedelta(days=30),
+    )
+
+    def _failed(member):
+        command = BridgeCommand(
+            bridge_id=installation.id, gym_id=gym_id, member_id=member.id,
+            command_type="enable_user", enroll_number=member.device_enroll_number,
+            member_name=member.full_name, status="failed", last_error="terminal offline",
+        )
+        db.session.add(command)
+        db.session.commit()
+        return command
+
+    stale = _failed(expired)
+    legit = _failed(active)
+    owner = seed_gym["owner"]
+    headers = {
+        "Authorization": f"Bearer {create_access_token(owner.id, seed_gym['gym'].id, owner.role)}"
+    }
+    response = client.post("/api/mobile/v1/access/retry-sync", headers=headers)
+    assert response.status_code == 200
+    assert response.get_json()["data"]["retried_count"] == 1
+    saved_stale = db.session.get(BridgeCommand, stale.id)
+    assert saved_stale.status == "failed"
+    assert saved_stale.last_error.startswith(STALE_ENABLE_MARKER)
+    assert db.session.get(BridgeCommand, legit.id).status == "pending"
+
+
+def test_cross_gym_member_reference_never_resolves(seed_gym):
+    """M2: a member_id/mapping belonging to another gym is unresolvable here."""
+    from app.models.rrr import RRRIdentityMapping
+    from app.services.bridge_service import (
+        bridge_command_must_be_cancelled,
+        resolve_adms_member,
+    )
+    from app.services.rrr_service import _mapped_member
+
+    gym_id, plan_id = seed_gym["gym"].id, seed_gym["plan"].id
+    other_gym = Gym(name="Other Gym M2", slug="other-gym-m2")
+    db.session.add(other_gym)
+    db.session.commit()
+    other_member = _member(
+        other_gym.id, None, name="Other Gym Member", phone="+919100000110",
+        enroll="110", status="active", end=date.today() + timedelta(days=30),
+    )
+    # A mapping row scoped to THIS gym but pointing at the other gym's member.
+    mapping = RRRIdentityMapping(
+        gym_id=gym_id, external_id="110", member_id=other_member.id, status="confirmed"
+    )
+    db.session.add(mapping)
+    db.session.commit()
+
+    assert resolve_adms_member(gym_id, "110") is None
+    assert _mapped_member(gym_id, "110") is None
+
+    installation = _installation(gym_id, "M2-BRIDGE-01")
+    cross_cmd = BridgeCommand(
+        bridge_id=installation.id, gym_id=gym_id, member_id=other_member.id,
+        command_type="disable_user", enroll_number="110",
+        member_name=other_member.full_name, status="pending",
+    )
+    db.session.add(cross_cmd)
+    db.session.commit()
+    # Cross-gym reference is unproven -> the disable must be cancelled.
+    assert bridge_command_must_be_cancelled(cross_cmd) is True
+
+
+def test_settings_bridge_command_validates_member_scope(client, seed_gym):
+    """H6: queue-time existence + gym scope only — no blockable check."""
+    installation = _installation(seed_gym["gym"].id, "H6-BRIDGE-01")
+    gym_id, plan_id = seed_gym["gym"].id, seed_gym["plan"].id
+    today = date.today()
+    active = _member(
+        gym_id, plan_id, name="Active Settings Member", phone="+919100000111",
+        enroll="111", status="active", end=today + timedelta(days=30),
+    )
+    other_gym = Gym(name="Other Gym H6", slug="other-gym-h6")
+    db.session.add(other_gym)
+    db.session.commit()
+    other_member = _member(
+        other_gym.id, None, name="Other Gym H6 Member", phone="+919100000112",
+        enroll="112", status="active", end=today + timedelta(days=30),
+    )
+    owner = seed_gym["owner"]
+    headers = {
+        "Authorization": f"Bearer {create_access_token(owner.id, gym_id, owner.role)}"
+    }
+    url = "/api/mobile/v1/settings/bridge/commands"
+
+    # Unknown enroll -> 422, nothing queued.
+    response = client.post(url, headers=headers, json={
+        "command_type": "disable_user", "enroll_number": "999"})
+    assert response.status_code == 422
+    # Other gym's member_id -> 422.
+    response = client.post(url, headers=headers, json={
+        "command_type": "disable_user", "member_id": other_member.id})
+    assert response.status_code == 422
+    # member_id/enroll mismatch -> 422.
+    response = client.post(url, headers=headers, json={
+        "command_type": "disable_user", "member_id": active.id, "enroll_number": "112"})
+    assert response.status_code == 422
+    # Valid own-gym member queues — including a disable for an ACTIVE
+    # member: queue-time validation is existence/scope only, the
+    # serve-time guard remains the decider (it will cancel at lease).
+    response = client.post(url, headers=headers, json={
+        "command_type": "disable_user", "enroll_number": "111"})
+    assert response.status_code == 201
+    assert response.get_json()["data"]["enroll_number"] == "111"
+    assert response.get_json()["data"]["member_name"] == "Active Settings Member"
+    # member_id-only call fills the enroll number from the member.
+    response = client.post(url, headers=headers, json={
+        "command_type": "enable_user", "member_id": active.id})
+    assert response.status_code == 201
+    assert response.get_json()["data"]["enroll_number"] == "111"

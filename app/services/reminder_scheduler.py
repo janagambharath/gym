@@ -196,7 +196,10 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.services.bridge_service import queue_membership_command
                 from app.models import Member
                 from app.models.rrr import RRRAdmsCommand, RRRIntegration
-                from app.services.bridge_service import resolve_adms_enroll_number
+                from app.services.bridge_service import (
+                    member_is_proven_blockable,
+                    resolve_adms_enroll_number,
+                )
                 from app.services.timezone_service import today_for_gym
 
                 integration = RRRIntegration.query.filter_by(
@@ -214,6 +217,12 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     )
                     requeued = 0
                     for m in expired_linked:
+                        # Explicit fail-safe guard (C2/H8 batch): the
+                        # expired+past filter above already implies
+                        # proven-blockable, but never requeue on the
+                        # filter alone — re-check the guard predicate.
+                        if not member_is_proven_blockable(m):
+                            continue
                         try:
                             enroll = resolve_adms_enroll_number(m)
                         except ValueError:
@@ -253,6 +262,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.services.bridge_service import (
                     _active_installation,
                     desired_command_type,
+                    member_is_proven_blockable,
                     queue_membership_command,
                 )
                 from app.services.timezone_service import today_for_gym
@@ -272,6 +282,12 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     requeued = 0
                     for m in expired_linked:
                         if desired_command_type(m) != "disable_user":
+                            continue
+                        # Explicit fail-safe guard: do not even queue a
+                        # disable the lease guard would cancel (e.g. an
+                        # active member with a past end date, which the
+                        # desired-state check alone would disable).
+                        if not member_is_proven_blockable(m):
                             continue
                         latest = (
                             BridgeCommand.query.filter_by(

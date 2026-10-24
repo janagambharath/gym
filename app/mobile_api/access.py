@@ -25,7 +25,10 @@ from app.services.access_event_service import (
 )
 from app.services.audit_service import audit
 from app.services.bridge_service import (
+    STALE_ENABLE_ERROR,
+    STALE_ENABLE_MARKER,
     bridge_command_must_be_cancelled,
+    bridge_enable_must_be_cancelled,
     cancel_bridge_command,
     queue_gym_reconciliation,
 )
@@ -260,6 +263,10 @@ def register_access_routes(bp):
             # Stamp the cancellation so the skip is auditable.
             if bridge_command_must_be_cancelled(cmd):
                 cancel_bridge_command(cmd)
+                continue
+            # H8 mirror: never resurrect a stale enable either.
+            if bridge_enable_must_be_cancelled(cmd):
+                cancel_bridge_command(cmd, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR)
                 continue
             cmd.status = "pending"
             cmd.retry_attempt += 1

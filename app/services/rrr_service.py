@@ -61,11 +61,17 @@ def _dedupe_key(source: str, device_serial: str | None, external_event_id: str |
 
 
 def _mapped_member(gym_id: int, biometric_user_id: str) -> Member | None:
+    # M2: the mapping row is gym-scoped, but the member it points at must
+    # be verified too — a cross-gym member reference must never be returned
+    # for this gym.  On mismatch, fall through to the gym-scoped enroll
+    # query (which can only return a member of this gym) or None.
     mapping = RRRIdentityMapping.query.filter_by(
         gym_id=gym_id, external_id=biometric_user_id, status="confirmed"
     ).first()
     if mapping and mapping.member_id:
-        return mapping.member
+        member = mapping.member
+        if member is not None and member.gym_id == gym_id:
+            return member
     return Member.query.filter_by(gym_id=gym_id, device_enroll_number=biometric_user_id).first()
 
 

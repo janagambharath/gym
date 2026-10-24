@@ -19,12 +19,61 @@ from app.services.timezone_service import today_for_gym
 _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
 
 BRIDGE_DISABLE_COMMAND_TYPES = frozenset({"disable_user", "delete_user"})
-ADMS_DISABLE_ACTIONS = frozenset({"block", "delete_user"})
+# Every ADMS action whose wire text is a DELETE (see adms_command_text and
+# the raw probe templates in app/mobile_api/adms_probe.py).  The 2026-10-23
+# hotfix covered only {"block", "delete_user"}; block_test produces the
+# identical "DATA DELETE USERINFO" bytes and the template-delete tests
+# produce "DATA DELETE FINGERTMP", so omitting them let a test path delete
+# any terminal user, including an active member (investigation C2).
+# The probe_* names are not in the command-table action CHECK today, so
+# they cannot be queued on a CHECK-enforced DB — they are listed here so
+# they are guarded the moment that CHECK is ever widened, and getrequest
+# additionally guards on the wire text itself (adms_command_is_delete).
+ADMS_DISABLE_ACTIONS = frozenset({
+    "block",
+    "block_test",
+    "delete_user",
+    "delete_biodata_test",
+    "delete_fingertmp_test",
+    "probe_del_tmp_bare",
+    "probe_del_tmp_fid0",
+    "probe_del_tmp_fid1",
+    "probe_del_bio_bare",
+    "probe_del_bio_type1",
+    "probe_del_auth",
+})
+# Enable-type actions/commands: serving one opens (or re-opens) the door.
+# They get the mirror-image serve-time revalidation (H8): only a member
+# who is currently active with an end date today or in the future may be
+# enabled.  Bridge set_valid_date is included because setting a validity
+# window is door-opening state, not a neutral read.
+ADMS_ENABLE_ACTIONS = frozenset({"unblock", "unblock_test", "create_user", "restore_template"})
+BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
 STALE_DISABLE_MARKER = "CANCELLED_STALE_STATE"
 STALE_DISABLE_ERROR = (
     "CANCELLED_STALE_STATE: member is not proven blockable (fail-safe rule: "
     "active members are never blocked); disable command was not served."
 )
+STALE_ENABLE_MARKER = "CANCELLED_STALE_ENABLE"
+STALE_ENABLE_ERROR = (
+    "CANCELLED_STALE_ENABLE: member is not proven enableable (fail-safe rule: "
+    "only a currently active member with an end date today or in the future "
+    "may be enabled); enable command was not served."
+)
+
+
+def adms_command_is_delete(command: RRRAdmsCommand) -> bool:
+    """True when an ADMS command would delete terminal state.
+
+    Action-name check first; wire-text check second, so a DELETE produced
+    by any builder (including a future action name not yet in
+    ADMS_DISABLE_ACTIONS) is still caught at the point of no return.
+    """
+
+    if command.action in ADMS_DISABLE_ACTIONS:
+        return True
+    text = (command.command_text or "").strip().upper()
+    return text.startswith("DATA DELETE")
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -100,14 +149,45 @@ def disable_must_be_cancelled(member: Member | None) -> bool:
     return not member_is_proven_blockable(member)
 
 
-def bridge_command_must_be_cancelled(command: BridgeCommand) -> bool:
-    """Whether a bridge command is a disable for a non-blockable member."""
+def member_is_proven_enableable(member: Member | None) -> bool:
+    """The ONLY state in which an enable may reach a terminal (fail-safe,
+    H8 mirror of :func:`member_is_proven_blockable`).
 
-    if command.command_type not in BRIDGE_DISABLE_COMMAND_TYPES:
+    The member row must exist, not be deleted, have ``status == "active"``,
+    and have ``membership_end`` set and on/after gym-local today.  Paused,
+    expired, deleted, missing, and NULL-end members are all NOT enableable:
+    a stale enable must never re-open the door after membership changed.
+    """
+
+    if member is None or member.deleted_at is not None:
         return False
+    if member.status != "active" or member.membership_end is None:
+        return False
+    gym_timezone = member.gym.timezone if member.gym else "Asia/Kolkata"
+    return member.membership_end >= today_for_gym(gym_timezone)
+
+
+def enable_must_be_cancelled(member: Member | None) -> bool:
+    """Serve/lease/retry guard: cancel an enable unless proven enableable."""
+
+    return not member_is_proven_enableable(member)
+
+
+def resolve_bridge_command_member(command: BridgeCommand) -> Member | None:
+    """Resolve a bridge command to its member, gym-checked (M2).
+
+    A ``member_id`` pointing at a member of a DIFFERENT gym is treated as
+    unresolvable (returns None), never as that other gym's member: the
+    command's gym is the authority, and a cross-gym reference must fail
+    safe under both the disable and the enable guard.  The enroll-number
+    fallback is gym-scoped by construction.
+    """
+
     member = None
     if command.member_id is not None:
         member = command.member or db.session.get(Member, command.member_id)
+        if member is not None and member.gym_id != command.gym_id:
+            return None
     if member is None and command.enroll_number:
         # Manual commands may carry only an enroll number; resolve it so the
         # command is judged on the member's real state.  Unresolvable stays
@@ -115,27 +195,55 @@ def bridge_command_must_be_cancelled(command: BridgeCommand) -> bool:
         member = Member.query.filter_by(
             gym_id=command.gym_id, device_enroll_number=command.enroll_number
         ).first()
-    return disable_must_be_cancelled(member)
+    return member
 
 
-def cancel_bridge_command(command: BridgeCommand) -> None:
-    """Terminal-state a stale bridge disable without a schema migration.
+def bridge_command_must_be_cancelled(command: BridgeCommand) -> bool:
+    """Whether a bridge command is a disable for a non-blockable member."""
+
+    if command.command_type not in BRIDGE_DISABLE_COMMAND_TYPES:
+        return False
+    return disable_must_be_cancelled(resolve_bridge_command_member(command))
+
+
+def bridge_enable_must_be_cancelled(command: BridgeCommand) -> bool:
+    """Whether a bridge command is an enable for a non-enableable member."""
+
+    if command.command_type not in BRIDGE_ENABLE_COMMAND_TYPES:
+        return False
+    return enable_must_be_cancelled(resolve_bridge_command_member(command))
+
+
+def cancel_bridge_command(
+    command: BridgeCommand,
+    *,
+    marker: str = STALE_DISABLE_MARKER,
+    error: str = STALE_DISABLE_ERROR,
+) -> None:
+    """Terminal-state a stale bridge disable/enable without a schema migration.
 
     Both command tables constrain ``status`` by database CHECK constraints,
     so this hotfix uses the existing ``failed`` terminal state plus an
     unmistakable marker.  ``failed`` is never leased or served again; the
     state-aware retry paths check the same guard before any resurrection.
+    Pass the STALE_ENABLE_* pair when cancelling an enable.
     """
 
     command.status = "failed"
-    command.last_error = STALE_DISABLE_ERROR
+    command.last_error = error
     command.lease_token = None
     command.lease_expires_at = None
     command.acknowledged_at = utcnow()
 
 
 def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None:
-    """Resolve an ADMS command's terminal identity back to a member row."""
+    """Resolve an ADMS command's terminal identity back to a member row.
+
+    Gym-checked on both branches (M2): a confirmed mapping whose member
+    belongs to a different gym is NEVER returned — resolution falls through
+    to the gym-scoped ``device_enroll_number`` query, so a cross-gym
+    mapping can only ever resolve to a member of this gym, or to None.
+    """
 
     if not enroll_number:
         return None
@@ -160,12 +268,20 @@ def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None
     ).first()
 
 
-def cancel_adms_command(command: RRRAdmsCommand) -> None:
-    """Terminal-state a stale ADMS disable (see :func:`cancel_bridge_command`)."""
+def cancel_adms_command(
+    command: RRRAdmsCommand,
+    *,
+    marker: str = STALE_DISABLE_MARKER,
+    error: str = STALE_DISABLE_ERROR,
+) -> None:
+    """Terminal-state a stale ADMS disable/enable (see :func:`cancel_bridge_command`).
+
+    Pass the STALE_ENABLE_* pair when cancelling an enable.
+    """
 
     command.status = "failed"
-    command.result_code = STALE_DISABLE_MARKER
-    command.result_message = STALE_DISABLE_ERROR
+    command.result_code = marker
+    command.result_message = error
     command.acknowledged_at = utcnow()
 
 
@@ -622,6 +738,15 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
         if bridge_command_must_be_cancelled(command):
             cancel_bridge_command(command)
             continue
+        # Mirror guard for enables (H8): hand an enable to the bridge only
+        # for a proven-enableable member — active with an end date today
+        # or in the future.  A stale enable for a paused/expired member
+        # must never re-open the door.
+        if bridge_enable_must_be_cancelled(command):
+            cancel_bridge_command(
+                command, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
+            )
+            continue
         command.lease(secrets.token_urlsafe(32), now + timedelta(seconds=lease_seconds))
         leased.append(command)
     return leased
@@ -642,12 +767,22 @@ def schedule_retry_after_failed_command(command: BridgeCommand) -> BridgeCommand
     member = db.session.get(Member, command.member_id)
     if member is None or not member.device_enroll_number:
         return None
+    if member.gym_id != command.gym_id:
+        # M2: a cross-gym member reference must never authorise a retry.
+        return None
     if (
         command.command_type in BRIDGE_DISABLE_COMMAND_TYPES
         and disable_must_be_cancelled(member)
     ):
         # Fail-safe: never schedule a retry disable for a member who is not
         # proven blockable, even if the plain desired-state check agrees.
+        return None
+    if (
+        command.command_type in BRIDGE_ENABLE_COMMAND_TYPES
+        and enable_must_be_cancelled(member)
+    ):
+        # H8 mirror: never schedule a retry enable for a member who is not
+        # proven enableable.
         return None
     if (
         desired_command_type(member) != command.command_type
