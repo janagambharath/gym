@@ -104,7 +104,8 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
         CheckConstraint(
             "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock', "
             "'create_user', 'delete_user', 'unlock_door', 'clear_log', 'reboot', 'check', "
-            "'sync_users', 'restore_template', 'delete_biodata_test', 'delete_fingertmp_test')",
+            "'sync_users', 'restore_template', 'delete_biodata_test', 'delete_fingertmp_test', "
+            "'operlog_snapshot')",
             name="ck_rrr_adms_command_action",
         ),
         CheckConstraint(
