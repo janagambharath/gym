@@ -17,6 +17,15 @@ def test_adms_command_text_sync_users():
     assert adms_command_text("sync_users", None) == "DATA QUERY USERINFO PIN=ALL"
 
 
+def test_parse_userinfo_line_accepts_space_delimited_x2008_record():
+    from app.adms.routes import _parse_operlog_enrollment
+
+    parsed = _parse_operlog_enrollment(
+        "PIN=42 Name=Ramesh Kumar Pri=0 Passwd= Card=0 Grp=1 TZ=0"
+    )
+    assert parsed == {"enroll_number": "42", "name": "Ramesh Kumar"}
+
+
 def test_parse_userinfo_line():
     parsed = _parse_userinfo_line("USER PIN=42\tName=Ramesh Kumar\tPri=0\tPasswd=\tCard=0\tGrp=1")
     assert parsed == {"enroll_number": "42", "name": "Ramesh Kumar"}
@@ -134,4 +143,4 @@ def test_enroll_scan_prefers_adms(client, app, seed_gym):
     with app.app_context():
         cmd = RRRAdmsCommand.query.filter_by(gym_id=gym.id, action="sync_users").first()
         assert cmd is not None
-        assert cmd.command_text == "DATA QUERY USERINFO"
+        assert cmd.command_text == "DATA QUERY USERINFO PIN=ALL"
