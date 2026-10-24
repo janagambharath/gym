@@ -96,7 +96,7 @@ def test_operlog_enrollment_persists_without_logging_member_data(client, app, se
         token = integration.adms_path_token
 
     body = (
-        "USER PIN=73\tName=Private Fixture Member\tPri=0\tPasswd=\tCard=0\tGrp=1\n"
+        "PIN=73\tName=Private Fixture Member\tPri=0\tPasswd=\tCard=0\tGrp=1\n"
     )
     with caplog.at_level("INFO"):
         response = client.post(
