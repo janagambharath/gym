@@ -167,9 +167,27 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
 
     Stored on a dedicated RRRAdmsCommand (action="operlog_snapshot") with
     result_data={"users": [...], "source": "operlog"}. Does not commit.
+
+    Rollback safety: the row is flushed inside a SAVEPOINT
+    (``db.session.begin_nested()``), so a flush failure — e.g. a CHECK
+    violation on a database whose ``operlog_snapshot`` migration has not
+    run yet — rolls back only the snapshot, never the caller's transaction.
+    The failed row is expunged (new row) or expired (existing row) so a
+    later flush cannot retry the same bad write, the failure is logged,
+    and the caller can still commit the rest of its work (the cdata
+    handler's other ingest results). Previously the failure surfaced only
+    at the caller's final commit, poisoning the whole cdata POST with a
+    PendingRollbackError. This function never raises for a snapshot
+    failure; callers that need the snapshot must re-read it.
     """
     import json
+    import logging
+
+    from sqlalchemy.exc import IntegrityError
+
     from app.models.rrr import RRRAdmsCommand, RRRIntegration
+
+    log = logging.getLogger(__name__)
 
     integration = RRRIntegration.query.filter_by(
         gym_id=gym_id, connector_type="adms_direct"
@@ -201,6 +219,7 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
         "source": source,
         "count": len(users),
     })
+    is_new = cmd is None
     if cmd:
         cmd.result_data = payload
     else:
@@ -214,6 +233,27 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
             result_data=payload,
         )
         db.session.add(cmd)
+    # Flush here, inside a SAVEPOINT, rather than leaving the failure for
+    # the caller's commit. This function always runs after a query above,
+    # so a transaction is already active and begin_nested() is a true
+    # SAVEPOINT (not an outer commit).
+    try:
+        with db.session.begin_nested():
+            db.session.flush()
+    except IntegrityError as exc:
+        # Rollback of the SAVEPOINT has already happened on exit from the
+        # block. Drop the failed write from the session so the caller's
+        # later flush/commit cannot resurrect it.
+        if is_new:
+            db.session.expunge(cmd)
+        else:
+            db.session.expire(cmd)
+        log.warning(
+            "OPERLOG snapshot flush failed (skipping snapshot for "
+            "gym %s, enroll %s): %s",
+            gym_id, enroll_number, exc,
+        )
+        return
 
 
 def suggest_matches(gym_id: int) -> dict:

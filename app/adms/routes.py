@@ -198,6 +198,10 @@ def _ingest_operlog(integration) -> int:
         )
         try:
             from app.services.enroll_match_service import upsert_terminal_snapshot
+            # upsert_terminal_snapshot flushes inside its own SAVEPOINT:
+            # a snapshot failure is contained there and never reaches the
+            # db.session.commit() at the end of cdata(). This except is a
+            # second layer only (e.g. an unexpected non-DB error).
             upsert_terminal_snapshot(
                 integration.gym_id, enroll_number, name, source="operlog",
             )

@@ -98,6 +98,14 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     commands queued by ``queue_adms_membership_command`` once the owner
     finishes supervised commissioning.  It is deliberately not an arbitrary
     raw-command console.
+
+    ``operlog_snapshot`` rows are NOT servable commands: they are created
+    with ``status='acked'`` and hold the accumulated OPERLOG enrollment
+    snapshot in ``result_data`` (see ``upsert_terminal_snapshot``).
+    ``getrequest`` only serves ``queued``/``delivered`` rows, so a snapshot
+    row can never be served to a terminal or pass through the fail-safe
+    disable guard — it is inert storage that reuses this table's
+    integration/result_data shape rather than a second snapshot store.
     """
     __tablename__ = "rrr_adms_commands"
     __table_args__ = (
