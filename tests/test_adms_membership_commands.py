@@ -54,6 +54,7 @@ def test_expiry_queues_adms_block(seed_gym, seed_member):
     cmd = RRRAdmsCommand.query.filter_by(integration_id=integration.id).one()
     assert cmd.action == "block"
     assert cmd.test_enroll_number == "42"
+    # A10: block is DELETE on current code, not the stale Pri=1 update.
     assert cmd.command_text == "DATA DELETE USERINFO PIN=42"
     assert cmd.status == "queued"
     assert db.session.get(type(seed_member), seed_member.id).status == "expired"
@@ -103,7 +104,8 @@ def test_renewal_queues_unblock_and_dedupes(seed_gym, seed_member):
     cmds = RRRAdmsCommand.query.filter_by(integration_id=integration.id).all()
     assert len(cmds) == 1
     assert cmds[0].action == "unblock"
-    assert cmds[0].command_text == f"DATA UPDATE USERINFO PIN=42\tName={seed_member.full_name[:24]}\tPri=0"
+    # A10: unblock recreates the user WITH its name on current code.
+    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tPri=0"
 
     # Terminal acknowledged the unblock; a later edit re-sends nothing.
     cmds[0].status = "acked"

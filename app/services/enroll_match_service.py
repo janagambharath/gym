@@ -5,7 +5,13 @@ device), staff shouldn't have to type each enroll ID by hand. The connector's
 `sync_users` command snapshots the terminal user list; this service fuzzy-matches
 those names against unlinked members and returns one-tap suggestions.
 
-Nothing is linked automatically — staff confirms each match.
+Auto-linking (M5, tightened 2026-10-24): only a NORMALIZED-EXACT match
+(confidence 100 — identical after lowercasing and whitespace removal, e.g.
+"jhon carl" vs "jhoncarl") links automatically. High-but-inexact matches
+(90–99%) are suggestions for owner confirmation only; trusting device-typed
+names at 90% with no confirmation risks linking the wrong member on a
+common-name collision. Every auto-link is audit-logged with its
+confidence (see ``confirm_match``).
 """
 from __future__ import annotations
 
@@ -22,7 +28,10 @@ from app.services.audit_service import audit
 MATCH_THRESHOLD = 0.55
 
 # Minimum similarity for AUTOMATIC linking (no manual confirmation).
-# "jhon carl" vs "jhoncarl" = 0.94, so this catches spacing differences.
+# Kept at 0.90 as the *suggestion* bar for reporting, but auto-linking
+# itself now requires a normalized-exact match (confidence 100) — see
+# auto_link_high_confidence. A 0.90 device-typed name is not proof of
+# identity (M5).
 AUTO_LINK_THRESHOLD = 0.90
 
 
@@ -308,6 +317,9 @@ def suggest_matches(gym_id: int) -> dict:
                 "member_name": best.full_name,
                 "member_phone": best.phone,
                 "confidence": round(best_score * 100),
+                # Review-UI flag (M5): only exact normalized matches are
+                # auto-linkable; anything lower needs an owner tap.
+                "auto_linkable": round(best_score * 100) >= 100,
             })
         else:
             unmatched.append({"enroll_number": enroll, "terminal_name": tname,
@@ -324,23 +336,28 @@ def suggest_matches(gym_id: int) -> dict:
 def auto_link_high_confidence(
     gym_id: int, actor_id: int | None = None, skip_command_for_active: bool = False
 ) -> dict:
-    """Automatically link terminal users to members with very high name similarity.
-    
-    This handles cases like "jhon carl" (app) vs "jhoncarl" (terminal) —
-    after normalization they're identical, so we can safely auto-link.
-    
+    """Automatically link terminal users to members — exact matches only.
+
+    M5 safe subset: a suggestion auto-links ONLY when its confidence is
+    100 (normalized-exact: identical after lowercasing and whitespace
+    removal, e.g. "jhon carl" vs "jhoncarl"). Anything lower — including
+    the old 90–99% band — is returned in ``skipped`` with a reason, for
+    owner confirmation in the review UI. What remains a product decision
+    (documented in ADMS_REST_FIXES notes): whether any inexact band
+    should ever auto-link again, and whether links first seen via a
+    serial-only session need an extra confirmation step.
+
     Returns {"linked": [...], "skipped": [...]}.
-    Only links when similarity >= AUTO_LINK_THRESHOLD (0.90).
     """
     result = suggest_matches(gym_id)
     if result.get("error"):
         return {"linked": [], "skipped": [], "error": result["error"]}
-    
+
     linked = []
     skipped = []
-    
+
     for sugg in result["suggestions"]:
-        if sugg["confidence"] >= AUTO_LINK_THRESHOLD * 100:
+        if sugg["confidence"] >= 100:
             try:
                 member = confirm_match(
                     gym_id=gym_id,
@@ -348,6 +365,8 @@ def auto_link_high_confidence(
                     enroll_number=sugg["enroll_number"],
                     actor_id=actor_id or 0,
                     skip_command_for_active=skip_command_for_active,
+                    auto_linked=True,
+                    confidence=sugg["confidence"],
                 )
                 linked.append({
                     "enroll_number": sugg["enroll_number"],
@@ -365,9 +384,9 @@ def auto_link_high_confidence(
                 "terminal_name": sugg["terminal_name"],
                 "member_name": sugg["member_name"],
                 "confidence": sugg["confidence"],
-                "reason": "below auto-link threshold, needs manual confirm",
+                "reason": "not an exact normalized match, needs owner confirmation",
             })
-    
+
     return {"linked": linked, "skipped": skipped}
 
 
@@ -378,6 +397,8 @@ def confirm_match(
     actor_id: int,
     skip_command: bool = False,
     skip_command_for_active: bool = False,
+    auto_linked: bool = False,
+    confidence: int | None = None,
 ) -> Member:
     """Link a member to a terminal enroll number. Raises ValueError on conflict.
 
@@ -421,7 +442,8 @@ def confirm_match(
         resource_id=member.id,
         gym_id=gym_id,
         actor_id=actor_id,
-        metadata={"enroll_number": enroll_number},
+        metadata={"enroll_number": enroll_number, "auto_linked": auto_linked,
+                  **({"confidence": confidence} if confidence is not None else {})},
     )
     db.session.commit()
     return member

@@ -91,10 +91,16 @@ The proxy correctly forwards to Railway. Both return identical responses.
 
 **Wire format** (`app/services/bridge_service.py:67-85`):
 ```
-Block:   DATA UPDATE USERINFO PIN=<enroll>\tPri=1
-Unblock: DATA UPDATE USERINFO PIN=<enroll>\tPri=0
+Block:   DATA DELETE USERINFO PIN=<enroll>
+Unblock: DATA UPDATE USERINFO PIN=<enroll>\tName=<name>\tPri=0
 ```
-Pri=1 is the vendor's inactive-user value. Deletion is never used (preserves biometric templates).
+CORRECTED 2026-10-24 (A10): the Pri=1 block above was stale. Current code
+(`app/services/bridge_service.py`) blocks with DELETE — the only proven
+block on the X2008 — which is destructive: the user record and its
+fingerprint templates are gone until the member physically re-enrolls
+(templates are not backed up, because the X2008 never uploads USERINFO
+via query). Unblock recreates the user with its name. Do not follow the
+old Pri=1 description.
 
 **Manual block/unblock:**
 - Backend: `POST /api/mobile/v1/rrr/members/<id>/access` (`app/mobile_api/rrr.py:388`)

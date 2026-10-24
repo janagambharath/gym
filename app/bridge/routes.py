@@ -144,6 +144,20 @@ def authenticate_bridge():
     g.bridge_installation = installation
 
 
+@bridge_bp.before_request
+def enforce_bridge_payload_limit():
+    """M12: reject oversized bridge JSON bodies before parsing.
+
+    Matches the 256 KB ADMS body cap. ``content_length`` is None for
+    chunked bodies, which remain bounded only by the framework — noted
+    as a residual, not a guarantee.
+    """
+    from app.services.bridge_service import BRIDGE_MAX_JSON_BYTES
+
+    if request.content_length is not None and request.content_length > BRIDGE_MAX_JSON_BYTES:
+        return _json_error(413, "payload_too_large", "Bridge JSON body exceeds 256 KB.")
+
+
 @bridge_bp.errorhandler(404)
 def bridge_not_found(_error):
     return _json_error(404, "not_found", "Bridge resource was not found.")
@@ -190,8 +204,22 @@ def heartbeat():
                         continue
                     device = RRRDevice.query.filter_by(gym_id=installation.gym_id, serial_number=serial).first()
                     if device is None:
-                        device = RRRDevice(gym_id=installation.gym_id, integration_id=integration.id,
-                                           serial_number=serial, device_name="eSSL device")
+                        # L4 (corrected 2026-10-24): a heartbeat MAY record
+                        # a reported serial as an inert discovery row —
+                        # this table's designed purpose is bridge-reported
+                        # inventory, and the owner-selection flow depends
+                        # on it — but the row confers NO trust: it is
+                        # unselected, and only an owner selection (an
+                        # owner-gated endpoint) sets
+                        # integration.device_serial. Never auto-select,
+                        # never commission from here.
+                        device = RRRDevice(
+                            gym_id=installation.gym_id,
+                            integration_id=integration.id,
+                            serial_number=serial,
+                            device_name="eSSL device",
+                            is_selected=False,
+                        )
                         db.session.add(device)
                     device.integration_id = integration.id
                     device.device_name = str(_payload_value(item, "deviceName", "DeviceName", "name") or "eSSL device")[:160]
@@ -442,6 +470,22 @@ def pending_commands():
     if not hmac.compare_digest(sent_id, installation.public_id):
         return _json_error(403, "bridge_id_mismatch", "gymId does not match this bridge.")
     commands = lease_pending_commands(installation)
+    # M11: audit the lease (the serve) itself, not just the owner's queue
+    # action, so execution is traceable to a bridge session.
+    from app.services.audit_service import audit as _audit
+
+    for command in commands:
+        _audit(
+            action="bridge_command_leased",
+            resource_type="bridge_command",
+            resource_id=command.id,
+            gym_id=installation.gym_id,
+            metadata={
+                "command_type": command.command_type,
+                "enroll_number": command.enroll_number,
+                "member_id": command.member_id,
+            },
+        )
     db.session.commit()
     return jsonify(
         [
@@ -496,6 +540,16 @@ def command_ack(command_id: str):
     )
     if not accepted:
         return _json_error(409, error_code or "ack_conflict", "Command ACK was not accepted.")
+    # M11: audit every bridge ack with its outcome.
+    from app.services.audit_service import audit as _audit
+
+    _audit(
+        action="bridge_command_acked",
+        resource_type="bridge_command",
+        resource_id=command.id,
+        gym_id=installation.gym_id,
+        metadata={"command_type": command.command_type, "status": status},
+    )
     retry = schedule_retry_after_failed_command(command) if status == "failed" else None
     db.session.commit()
     return jsonify({"ok": True, "retryScheduled": retry is not None})

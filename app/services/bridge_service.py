@@ -49,6 +49,43 @@ ADMS_DISABLE_ACTIONS = frozenset({
 # window is door-opening state, not a neutral read.
 ADMS_ENABLE_ACTIONS = frozenset({"unblock", "unblock_test", "create_user", "restore_template"})
 BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
+# Actions whose wire effect is a terminal DELETE (destructive: the user
+# record — and, on X2008, its fingerprint templates — are gone until the
+# member physically re-enrolls). Used for destructive-action labelling.
+ADMS_DESTRUCTIVE_ACTIONS = frozenset(
+    {"block", "delete_user", "block_test", "delete_biodata_test", "delete_fingertmp_test"}
+)
+ADMS_BLOCK_DESTRUCTIVE_NOTE = (
+    "ADMS block deletes the user from the terminal — fingerprint "
+    "re-enrollment is required on unblock (templates are not backed up "
+    "on X2008)."
+)
+# Single stuck-command timeout shared by the ADMS getrequest reaper and the
+# owner test-command endpoint (L5, aligned 2026-10-24). A delivered command
+# is failed after this long without an ack; the same value bounds getrequest
+# re-sends (L6) — a delivered command is re-served only inside this window.
+ADMS_DELIVERED_TIMEOUT_MINUTES = 10
+# Distinct devicecmd outcome for DELETE commands the terminal reports as
+# already absent (Return -1/-2). Status stays "acked" (the desired end
+# state — user not on terminal — is achieved) but the outcome is no longer
+# silently recorded as a plain success (H4).
+ADMS_ACKED_ABSENT_RESULT_CODE = "ACKED_ABSENT"
+# Bridge JSON ingestion cap (M12), matching the 256 KB ADMS body cap.
+BRIDGE_MAX_JSON_BYTES = 262144
+
+
+def sanitize_terminal_name(name: object, max_len: int = 24) -> str:
+    """Strip control characters from a name interpolated into command text.
+
+    Member names are free text; a tab would inject an extra tab-separated
+    field into the PUSH command and a newline would break the
+    ``C:<id>:<text>`` getrequest envelope (M6). Control chars (including
+    tab/CR/LF) are removed, the result is stripped and truncated. Returns
+    "" when nothing survives — callers fall back to a safe default name.
+    """
+
+    cleaned = "".join(ch for ch in str(name or "") if ord(ch) >= 32 and ord(ch) != 127)
+    return cleaned.strip()[:max_len]
 STALE_DISABLE_MARKER = "CANCELLED_STALE_STATE"
 STALE_DISABLE_ERROR = (
     "CANCELLED_STALE_STATE: member is not proven blockable (fail-safe rule: "
@@ -337,7 +374,7 @@ def adms_command_text(
         return f"CONTROL DEVICE 1 {delay_tenths}"
 
     if action == "create_user":
-        name = (member_name or "Member")[:24]
+        name = sanitize_terminal_name(member_name) or "Member"
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
 
     if action == "delete_user":
@@ -363,7 +400,7 @@ def adms_command_text(
     elif action in {"unblock", "unblock_test"}:
         # Recreate the user. Fingerprint restore commands are queued
         # separately by queue_adms_membership_command.
-        name = (member_name or "Test User")[:24]
+        name = sanitize_terminal_name(member_name) or "Test User"
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
     else:
         raise ValueError(f"Unknown ADMS command action: {action!r}")
@@ -460,7 +497,9 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                 resource_type="rrr_adms_command",
                 resource_id=latest.id,
                 gym_id=member.gym_id,
-                metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True},
+                metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True,
+                          **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                             if action == "block" else {})},
             )
             return latest
         if latest.status == "delivered":
@@ -489,7 +528,9 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
         resource_type="rrr_adms_command",
         resource_id=command.id,
         gym_id=member.gym_id,
-        metadata={"member_id": member.id, "enroll_number": enroll_number},
+        metadata={"member_id": member.id, "enroll_number": enroll_number,
+                  **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                     if action == "block" else {})},
     )
     # On unblock, queue fingerprint restore commands after the user recreation.
     # The terminal processes commands in ID order, so templates are restored
@@ -517,15 +558,32 @@ def _queue_template_restore_commands(member: Member, integration, enroll_number:
         # Verified Return=0 by khaledbinamir/biometric_integration.
         # Critical: Size must be the DECODED byte length, not base64 length.
         #   DATA UPDATE FINGERTMP\tPIN=<pin>\tFID=<n>\tSize=<decoded_len>\tValid=1\tTMP=<base64>
+        # H2: templates are stored encrypted; decrypt here (the only read
+        # site) so the terminal receives the plaintext TMP it requires. A
+        # row that cannot be decrypted (key rotation without re-encryption)
+        # is skipped, never shipped as ciphertext.
         import base64
+        import logging
+
         try:
-            decoded_len = len(base64.b64decode(tmpl.template_data))
+            from app.services.template_crypto import decrypt_template
+
+            template_plaintext = decrypt_template(tmpl.template_data)
+        except ValueError:
+            logging.getLogger(__name__).warning(
+                "Skipping undecryptable fingerprint template for enroll %s "
+                "(key rotation without re-encryption?)",
+                enroll_number,
+            )
+            continue
+        try:
+            decoded_len = len(base64.b64decode(template_plaintext))
         except Exception:
             decoded_len = 0
         restore_text = (
             f"DATA UPDATE FINGERTMP\tPIN={enroll_number}\t"
             f"FID={tmpl.finger_id}\tSize={decoded_len}\tValid=1\t"
-            f"TMP={tmpl.template_data}"
+            f"TMP={template_plaintext}"
         )
         cmd = RRRAdmsCommand(
             gym_id=member.gym_id,
@@ -593,7 +651,9 @@ def queue_manual_adms_member_command(
         resource_id=command.id,
         gym_id=member.gym_id,
         actor_id=actor_id,
-        metadata={"member_id": member.id, "enroll_number": enroll_number},
+        metadata={"member_id": member.id, "enroll_number": enroll_number,
+                  **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                     if action == "block" else {})},
     )
     return command
 

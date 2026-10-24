@@ -12,7 +12,7 @@ import secrets
 from datetime import timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint, text
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin, utcnow
@@ -79,6 +79,24 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "rrr_integrations"
     __table_args__ = (
         UniqueConstraint("gym_id", "connector_type", name="uq_rrr_integration_type"),
+        # M7: an ADMS serial identifies one physical terminal. The provision
+        # endpoint already rejects cross-gym duplicates in app logic, but
+        # only a constraint stops rows created by migrations or direct DB
+        # edits from colliding — and _device() then picking .first()
+        # arbitrarily. Partial (adms_direct + non-null serial only) so other
+        # connector types sharing this table are unaffected.
+        Index(
+            "uq_rrr_integration_adms_serial",
+            "connector_type",
+            "device_serial",
+            unique=True,
+            postgresql_where=text(
+                "connector_type = 'adms_direct' AND device_serial IS NOT NULL"
+            ),
+            sqlite_where=text(
+                "connector_type = 'adms_direct' AND device_serial IS NOT NULL"
+            ),
+        ),
         CheckConstraint(
             "connector_type IN ('ebioserver', 'direct_bridge', 'adms_direct', 'csv')",
             name="ck_rrr_integration_type",

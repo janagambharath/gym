@@ -15,7 +15,12 @@ from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
 from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
-from app.services.bridge_service import adms_command_text, queue_manual_adms_member_command
+from app.services.bridge_service import (
+    ADMS_BLOCK_DESTRUCTIVE_NOTE,
+    ADMS_DELIVERED_TIMEOUT_MINUTES,
+    adms_command_text,
+    queue_manual_adms_member_command,
+)
 from app.services.rrr_service import (
     DEFAULT_RULES,
     adms_terminal_settings,
@@ -395,13 +400,17 @@ def register_rrr_routes(bp):
             RRRAdmsCommand.status.in_(("queued", "delivered")),
         ).first()
         if existing is not None:
-            # Stuck-command timeout: if a command has been delivered for >5 min
-            # without ack, the terminal likely already executed it but the ack
-            # was lost. Mark it timed out so testing isn't blocked forever.
+            # Stuck-command timeout (L5, aligned with the getrequest
+            # reaper): if a command has been delivered for longer than
+            # ADMS_DELIVERED_TIMEOUT_MINUTES without ack, the terminal
+            # likely already executed it but the ack was lost. Mark it
+            # timed out so testing isn't blocked forever. Previously 5
+            # min here vs 10 min in getrequest — a command could be
+            # failed by this endpoint while the terminal still held it.
             try:
                 from datetime import timedelta, timezone as tz
                 from app.models.mixins import utcnow
-                stuck_cutoff = utcnow() - timedelta(minutes=5)
+                stuck_cutoff = utcnow() - timedelta(minutes=ADMS_DELIVERED_TIMEOUT_MINUTES)
                 delivered_at = existing.delivered_at or existing.created_at
                 if delivered_at is not None and delivered_at.tzinfo is None:
                     delivered_at = delivered_at.replace(tzinfo=tz.utc)
@@ -466,6 +475,16 @@ def register_rrr_routes(bp):
         allowed = {"create_user", "delete_user", "unlock_door", "clear_log", "reboot", "check"}
         if action not in allowed:
             return error_response("VALIDATION_ERROR", f"action must be one of: {', '.join(sorted(allowed))}.", 422)
+        # H5: destructive/door commands need an explicit confirmation flag
+        # — one owner click must not clear logs, reboot, or unlock a door.
+        if action in {"unlock_door", "clear_log", "reboot"} and not (
+            payload.get("confirm") is True or payload.get("confirmed") is True
+        ):
+            return error_response(
+                "CONFIRMATION_REQUIRED",
+                f"action '{action}' requires an explicit confirmation: send confirm=true.",
+                422,
+            )
 
         enroll_number = None
         member_name = None
@@ -514,10 +533,16 @@ def register_rrr_routes(bp):
                 "enroll_number": enroll_number,
                 "member_name": member_name,
                 "delay_seconds": delay_seconds,
+                **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                   if action == "delete_user" else {}),
             },
         )
         db.session.commit()
-        return jsonify({"success": True, "data": {"command": _adms_command_payload(row)}}), 201
+        # H3: label the ADMS delete as destructive in the owner response.
+        payload_out = {"command": _adms_command_payload(row)}
+        if action == "delete_user":
+            payload_out["warning"] = ADMS_BLOCK_DESTRUCTIVE_NOTE
+        return jsonify({"success": True, "data": payload_out}), 201
 
     @bp.post("/rrr/integrations/<int:integration_id>/commission")
     @token_required
@@ -697,7 +722,11 @@ def register_rrr_routes(bp):
                 409,
             )
         db.session.commit()
-        return jsonify({"success": True, "data": {"command": _adms_command_payload(command)}}), 201
+        # H3: an ADMS block is a terminal DELETE, not a reversible disable.
+        data_out = {"command": _adms_command_payload(command)}
+        if action == "block":
+            data_out["warning"] = ADMS_BLOCK_DESTRUCTIVE_NOTE
+        return jsonify({"success": True, "data": data_out}), 201
 
     # ── Smart enroll matching ──────────────────────────────────────────
     # Terminal already has users enrolled (names typed on the device)? Don't
@@ -720,11 +749,21 @@ def register_rrr_routes(bp):
         from app.models.rrr import RRRAdmsCommand, RRRIntegration
         from app.services.bridge_service import adms_command_text
 
-        # PC-less ADMS path first.
+        # PC-less ADMS path first — gated on supervised commissioning
+        # (M12), like every other ADMS command path. An uncommissioned
+        # terminal must not be scanned: its user table is untrusted input
+        # until the owner has proven the PUSH path with a mapped punch
+        # and an acked test command.
         integration = RRRIntegration.query.filter_by(
             gym_id=g.gym_id, connector_type="adms_direct"
         ).first()
         if integration is not None:
+            if not integration.commands_enabled or integration.status != "connected":
+                return error_response(
+                    "NOT_COMMISSIONED",
+                    "Complete supervised commissioning before scanning terminal users.",
+                    403,
+                )
             cmd = RRRAdmsCommand(
                 integration_id=integration.id,
                 gym_id=g.gym_id,
@@ -884,9 +923,20 @@ def register_rrr_routes(bp):
         Queues DELETE commands for all expired members with enroll numbers.
         Owner will re-add them on renewal (auto-unblock handles it).
         """
+        from app.models.gym import Gym
         from app.models.member import Member
-        from app.services.bridge_service import queue_membership_command
+        from app.services.bridge_service import (
+            member_is_proven_blockable,
+            queue_membership_command,
+        )
         from app.services.audit_service import audit
+        from app.services.timezone_service import today_for_gym
+
+        # M8: "today" is gym-local, not UTC — the UTC date lags IST by
+        # 5:30, and the day boundary is exactly where the fail-safe
+        # guard's blockability decision lives.
+        gym = db.session.get(Gym, g.gym_id)
+        today = today_for_gym(gym.timezone if gym else "Asia/Kolkata")
 
         # Find all expired members with terminal enroll numbers
         expired = Member.query.filter(
@@ -897,9 +947,6 @@ def register_rrr_routes(bp):
         ).all()
 
         # Also catch active members with past end date (not yet auto-expired)
-        from datetime import date
-        from app.models.mixins import utcnow
-        today = utcnow().date()
         overdue = Member.query.filter(
             Member.gym_id == g.gym_id,
             Member.deleted_at.is_(None),
@@ -908,32 +955,48 @@ def register_rrr_routes(bp):
             Member.membership_end < today,
         ).all()
 
-        all_targets = {m.id: m for m in expired + overdue}.values()
-        
+        all_targets = list({m.id: m for m in expired + overdue}.values())
+
+        # M8: never mutate member status as a side effect of a device
+        # command. Queueing derives the desired state from the UNMUTATED
+        # member row, and only members the fail-safe guard would actually
+        # serve (proven blockable) are queued. Everyone else — notably
+        # active members with a past end date, whose status transition
+        # belongs to the expiry flow, not to this endpoint — is reported
+        # as skipped, not silently queued for a serve-time cancel.
         queued = 0
+        skipped = 0
         for member in all_targets:
-            # Ensure status is expired
-            if member.status == "active":
-                member.status = "expired"
+            if not member_is_proven_blockable(member):
+                skipped += 1
+                continue
             cmd = queue_membership_command(member, force=True)
             if cmd:
                 queued += 1
 
         db.session.commit()
-        
+
         audit(
             action="bulk_remove_expired",
             resource_type="gym",
             resource_id=g.gym_id,
             gym_id=g.gym_id,
             actor_id=g.user_id,
-            metadata={"members_queued": queued, "total_expired": len(list(all_targets))},
+            metadata={"members_queued": queued, "total_expired": len(all_targets),
+                      "skipped_not_blockable": skipped},
         )
 
         return jsonify({"success": True, "data": {
             "queued": queued,
-            "total": len(list(all_targets)),
-            "message": f"Queued removal for {queued} expired members. Terminal will block them on next poll.",
+            "total": len(all_targets),
+            "skipped_not_blockable": skipped,
+            "message": (
+                f"Queued removal for {queued} expired members. Terminal will block them on next poll."
+                + (f" {skipped} members were skipped: they are not proven blockable "
+                   "(e.g. still active) — expire them through the membership flow first."
+                   if skipped else "")
+                + " " + ADMS_BLOCK_DESTRUCTIVE_NOTE
+            ),
         }})
 
     @bp.post("/rrr/members/<int:member_id>/remove-from-terminal")
@@ -951,6 +1014,16 @@ def register_rrr_routes(bp):
             return jsonify({"success": False, "error": "Member not found"}), 404
         if not member.device_enroll_number:
             return jsonify({"success": False, "error": "Member has no terminal enroll number"}), 400
+        # M8: refuse active members outright instead of queueing a
+        # command that does the opposite of this endpoint's name (an
+        # enable, via desired-state derivation) or one the serve-time
+        # guard will cancel — with a success message either way.
+        if member.status == "active":
+            return jsonify({"success": False, "error": (
+                "Member is still active. Removal from the terminal is only "
+                "available for expired, inactive, or paused members; expire "
+                "the membership first."
+            )}), 400
 
         cmd = queue_membership_command(member, force=True)
         db.session.commit()
@@ -961,12 +1034,13 @@ def register_rrr_routes(bp):
             resource_id=member.id,
             gym_id=g.gym_id,
             actor_id=g.user_id,
-            metadata={"enroll_number": member.device_enroll_number},
+            metadata={"enroll_number": member.device_enroll_number,
+                      "destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE},
         )
 
         return jsonify({"success": True, "data": {
             "queued": bool(cmd),
-            "message": f"Queued removal for {member.full_name or member.id}",
+            "message": f"Queued removal for {member.full_name or member.id}. {ADMS_BLOCK_DESTRUCTIVE_NOTE}",
         }})
 
     @bp.post("/rrr/restore-deleted-members")

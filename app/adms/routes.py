@@ -116,10 +116,23 @@ def _resolve_device(path_token: str | None = None) -> tuple[RRRIntegration | Non
     serial = _serial()
     if not serial:
         return None, None
-    row = RRRIntegration.query.filter_by(
+    # M7: fail closed on duplicate serials instead of picking .first()
+    # arbitrarily — a duplicate means the serial no longer identifies
+    # one gym's terminal, so no session is established.
+    rows = RRRIntegration.query.filter_by(
         connector_type="adms_direct", device_serial=serial
-    ).first()
-    if row is None or not row.allow_serial_fallback:
+    ).all()
+    if len(rows) != 1:
+        if len(rows) > 1:
+            log.warning(
+                "Refusing serial-only ADMS session: %d integrations share "
+                "serial %s",
+                len(rows),
+                serial,
+            )
+        return None, None
+    row = rows[0]
+    if not row.allow_serial_fallback:
         # New integrations (flag off) and unknown serials alike: no
         # session, no side effects, indistinguishable OK.
         return None, None
@@ -300,9 +313,10 @@ def _ingest_operlog(integration) -> int:
         found += 1
         enroll_number = parsed["enroll_number"]
         name = parsed["name"]
+        # M3: log the enroll number only — never the device-typed name.
         log.info(
-            "OPERLOG enrollment: PIN=%s Name=%s (gym %s)",
-            enroll_number, name, integration.gym_id,
+            "OPERLOG enrollment: PIN=%s (gym %s)",
+            enroll_number, integration.gym_id,
         )
         try:
             from app.services.enroll_match_service import upsert_terminal_snapshot
@@ -335,35 +349,37 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
     USERINFO`` command.  We attach the parsed list to the most recent
     sync_users command so smart enroll matching can use it.
     Also captures fingerprint templates for backup/restore.
+
+    M4 guards: an upload is applied ONLY when a sync_users command for
+    this integration is outstanding (``queued``/``delivered``) — a stray
+    upload neither acks anything nor overwrites the sync snapshot — and
+    templates are captured ONLY for enroll numbers that resolve to a
+    member of this gym, so a stray upload cannot plant templates for
+    arbitrary enroll numbers. M3: raw USERINFO lines are never logged.
+    H2: captured templates are encrypted at rest on write.
     """
     import json
     import logging
 
     from app.models.rrr import RRRBiometricTemplate
+    from app.services.bridge_service import resolve_adms_member
+    from app.services.template_crypto import encrypt_template
 
     log = logging.getLogger(__name__)
     raw_lines = _attlog_lines()
-    # TEMPORARY DEBUG: log raw upload format to reverse-engineer fingerprint
-    # template encoding. Remove after backup/restore is implemented.
-    for i, line in enumerate(raw_lines[:5]):
-        # Log first 200 chars of first 5 lines to see format without flooding
-        log.warning("USERINFO_RAW line %d: %s", i, line[:200])
-    log.warning("USERINFO_RAW total lines: %d", len(raw_lines))
+    log.warning("USERINFO upload: %d lines (gym %s)", len(raw_lines), integration.gym_id)
 
     users = []
-    templates_captured = 0
+    template_candidates = []
     for line in raw_lines:
         parsed = _parse_userinfo_line(line)
         if parsed:
             users.append(parsed)
         # Look for fingerprint template data in the upload.
-        # Format TBD from logs; this is a placeholder for common patterns.
         upper_line = line.upper()
         if "TMP=" in upper_line or "FINGERTMP" in upper_line:
-            # Parse template: try to extract PIN, FID, and template data
             try:
                 fields = {}
-                # Handle both USERINFO-embedded and standalone template lines
                 content = line.strip()
                 if content.upper().startswith("USER "):
                     content = content[5:]
@@ -375,41 +391,68 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
                 fid = int(fields.get("FID", fields.get("FINGERID", "0")) or "0")
                 tmp = fields.get("TMP", fields.get("TEMPLATE", ""))
                 if pin and tmp:
-                    # Upsert the template
-                    existing = RRRBiometricTemplate.query.filter_by(
-                        gym_id=integration.gym_id,
-                        integration_id=integration.id,
-                        enroll_number=pin,
-                        finger_id=fid,
-                    ).first()
-                    if existing:
-                        existing.template_data = tmp
-                        existing.template_format = "push_tmp"
-                    else:
-                        db.session.add(RRRBiometricTemplate(
-                            gym_id=integration.gym_id,
-                            integration_id=integration.id,
-                            enroll_number=pin,
-                            finger_id=fid,
-                            template_data=tmp,
-                            template_format="push_tmp",
-                        ))
-                    templates_captured += 1
+                    template_candidates.append((pin, fid, tmp))
             except Exception as e:
                 log.warning("Template parse failed for line: %s", str(e)[:100])
-    if templates_captured:
-        log.warning("Captured %d fingerprint templates", templates_captured)
-    if not users:
+    if not users and not template_candidates:
         return 0
+    # M4: only an outstanding scan may be answered by this upload.
     cmd = (
         RRRAdmsCommand.query.filter_by(integration_id=integration.id, action="sync_users")
+        .filter(RRRAdmsCommand.status.in_(("queued", "delivered")))
         .order_by(RRRAdmsCommand.id.desc())
         .first()
     )
     if cmd is None:
+        log.warning(
+            "Ignoring stray USERINFO upload (gym %s): no outstanding "
+            "sync_users command; snapshot and templates left untouched.",
+            integration.gym_id,
+        )
         return 0
-    # Cap at ~256KB (a 3k-user terminal is ~150KB JSON).
-    cmd.result_data = json.dumps({"users": users, "count": len(users)})[:262144]
+    templates_captured = 0
+    for pin, fid, tmp in template_candidates:
+        # M4: plant-guard — the enroll number must resolve to this gym's
+        # member (mapping or device enroll number) before its template is
+        # stored; unresolvable enroll numbers are skipped, not upserted.
+        if resolve_adms_member(integration.gym_id, pin) is None:
+            continue
+        existing = RRRBiometricTemplate.query.filter_by(
+            gym_id=integration.gym_id,
+            integration_id=integration.id,
+            enroll_number=pin,
+            finger_id=fid,
+        ).first()
+        encrypted = encrypt_template(tmp)
+        if existing:
+            existing.template_data = encrypted
+            existing.template_format = "push_tmp"
+        else:
+            db.session.add(RRRBiometricTemplate(
+                gym_id=integration.gym_id,
+                integration_id=integration.id,
+                enroll_number=pin,
+                finger_id=fid,
+                template_data=encrypted,
+                template_format="push_tmp",
+            ))
+        templates_captured += 1
+    if templates_captured:
+        log.warning("Captured %d fingerprint templates", templates_captured)
+    if not users:
+        return 0
+    # M4: reject, don't truncate, an oversized snapshot — truncation could
+    # produce invalid JSON that readers silently drop.
+    payload = json.dumps({"users": users, "count": len(users)})
+    if len(payload) > 262144:
+        log.warning(
+            "Rejecting oversized USERINFO snapshot (%d bytes, gym %s): "
+            "sync command left unacked.",
+            len(payload),
+            integration.gym_id,
+        )
+        return 0
+    cmd.result_data = payload
     cmd.status = "acked"
     cmd.acknowledged_at = utcnow()
     return len(users)
@@ -530,11 +573,18 @@ def getrequest(path_token: str | None = None):
     # commands while serial fallback is on for that integration, but
     # it never clears error state).
     _touch(integration, method=method, full=(method in ("token", "token_prev")))
-    # Timeout stuck delivered commands: if a command was delivered >10 min ago
-    # without ack, the terminal likely missed it. Mark failed so the queue moves on.
+    # Timeout stuck delivered commands: if a command was delivered without
+    # ack for longer than ADMS_DELIVERED_TIMEOUT_MINUTES, the terminal
+    # likely missed it. Mark failed so the queue moves on. This same
+    # timeout bounds getrequest re-sends (L6): a delivered command is
+    # re-served only inside this window, so a slow/offline terminal cannot
+    # hold the queue head-of-line forever, and a failed row is never
+    # re-served. The owner test endpoint shares this constant (L5).
     from datetime import timedelta
     from app.models.mixins import utcnow
-    stuck_cutoff = utcnow() - timedelta(minutes=10)
+    from app.services.bridge_service import ADMS_DELIVERED_TIMEOUT_MINUTES
+
+    stuck_cutoff = utcnow() - timedelta(minutes=ADMS_DELIVERED_TIMEOUT_MINUTES)
     stuck = RRRAdmsCommand.query.filter(
         RRRAdmsCommand.integration_id == integration.id,
         RRRAdmsCommand.status == "delivered",
@@ -601,6 +651,25 @@ def getrequest(path_token: str | None = None):
     if command.status == "queued":
         command.status = "delivered"
         command.delivered_at = utcnow()
+    # M11: audit the serve itself (not just the owner's queue action), so
+    # the record shows which terminal session received a command and when.
+    # Session type matters: a token-path serve is authenticated by the
+    # per-integration secret; a serial-only serve is not (see C1).
+    from app.services.audit_service import audit
+    from app.services.bridge_service import ADMS_DESTRUCTIVE_ACTIONS
+
+    audit(
+        action="adms_command_served",
+        resource_type="rrr_adms_command",
+        resource_id=command.id,
+        gym_id=integration.gym_id,
+        metadata={
+            "action": command.action,
+            "enroll_number": command.test_enroll_number,
+            "session": "token" if path_token else "serial",
+            **({"destructive": True} if command.action in ADMS_DESTRUCTIVE_ACTIONS else {}),
+        },
+    )
     db.session.commit()
     # PUSH SDK command IDs must be simple positive integers. The database ID
     # is monotonic and is retained as the audit correlation ID.
@@ -635,20 +704,49 @@ def devicecmd(path_token: str | None = None):
     detail = str(
         request.args.get("Content") or request.form.get("Content") or request.args.get("CMD") or request.form.get("CMD") or ""
     ).strip()[:500]
-    command.result_code = result or None
-    command.result_message = detail or None
     command.acknowledged_at = utcnow()
     # M5: for DELETE-type commands the desired end state is "user not on
     # terminal". Return=-1/-2 from the X2008 means the user/template was
     # already absent — treat as achieved, not failed, so the C1 retry
     # reconciliation doesn't re-queue forever.
+    # H4: that case is recorded as a DISTINCT outcome, not a plain success:
+    # status stays "acked" (the end state is achieved, and reconciliation
+    # keys on status), but result_code is ACKED_ABSENT instead of the raw
+    # "-1"/"-2", so an acked-absent delete is distinguishable from a
+    # delete the terminal actually executed. No new status value is
+    # introduced, so no CHECK migration is needed for this.
+    from app.services.audit_service import audit
+    from app.services.bridge_service import (
+        ADMS_ACKED_ABSENT_RESULT_CODE,
+        ADMS_DESTRUCTIVE_ACTIONS,
+    )
+
     _delete_actions = {"block", "block_test", "delete_user", "delete_biodata_test", "delete_fingertmp_test"}
     if result == "0":
         command.status = "acked"
+        command.result_code = result
+        command.result_message = detail or None
     elif command.action in _delete_actions and result in ("-1", "-2"):
         command.status = "acked"
+        command.result_code = ADMS_ACKED_ABSENT_RESULT_CODE
         command.result_message = (detail or "") + " [treated as success: already absent]"
     else:
         command.status = "failed"
+        command.result_code = result or None
+        command.result_message = detail or None
+    # M11: audit every ack with its session type and outcome.
+    audit(
+        action="adms_command_acked",
+        resource_type="rrr_adms_command",
+        resource_id=command.id,
+        gym_id=integration.gym_id,
+        metadata={
+            "action": command.action,
+            "enroll_number": command.test_enroll_number,
+            "session": "token" if path_token else "serial",
+            "result_code": command.result_code,
+            **({"destructive": True} if command.action in ADMS_DESTRUCTIVE_ACTIONS else {}),
+        },
+    )
     db.session.commit()
     return _plain("OK")

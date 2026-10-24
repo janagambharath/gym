@@ -389,6 +389,11 @@ def enroll_match_scan():
     integration = RRRIntegration.query.filter_by(
         gym_id=gym_id, connector_type="adms_direct"
     ).first()
+    if integration is not None and (not integration.commands_enabled or integration.status != "connected"):
+        # M12: same commissioning gate as the mobile enroll-scan path —
+        # do not queue a scan against an uncommissioned terminal.
+        flash("Complete supervised commissioning before scanning terminal users.", "danger")
+        return redirect(url_for("biometric.enroll_match"))
     if integration is not None:
         cmd = RRRAdmsCommand(
             integration_id=integration.id,

@@ -39,6 +39,10 @@ def _normalize_db_url(raw: str | None) -> str:
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
+    # Dedicated key for stored fingerprint-template encryption (H2). When
+    # empty, template_crypto derives from SECRET_KEY; set a dedicated value
+    # in production so rotating SECRET_KEY does not orphan stored templates.
+    TEMPLATE_ENCRYPTION_KEY = os.getenv("TEMPLATE_ENCRYPTION_KEY", "")
     SQLALCHEMY_DATABASE_URI = _normalize_db_url(os.getenv("DATABASE_URL"))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 

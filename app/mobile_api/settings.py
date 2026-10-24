@@ -599,9 +599,12 @@ def register_settings_routes(bp):
         from app.models.rrr import RRRIdentityMapping
         from app.services.bridge_service import canonical_enroll_number
 
-        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id).first()
+        # L2: queue only against an ACTIVE bridge — an inactive/revoked
+        # bridge can never lease the command, so queueing against it was
+        # a misleading success plus dead queue rows.
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
-            return error_response("NOT_FOUND", "No biometric bridge installed for this gym. Please pair the PC connector first.", 404)
+            return error_response("NOT_FOUND", "No active biometric bridge installed for this gym. Please pair the PC connector first.", 404)
 
         data = request.get_json(silent=True) or {}
         command_type = str(data.get("command_type") or data.get("action") or "").strip().lower()
@@ -617,9 +620,24 @@ def register_settings_routes(bp):
                 f"Invalid command_type. Must be one of: {', '.join(sorted(allowed_types))}",
                 422,
             )
+        # H5: destructive/door commands need an explicit confirmation flag.
+        if command_type in {"unlock_door", "restart", "clear_log"} and not (
+            data.get("confirm") is True or data.get("confirmed") is True
+        ):
+            return error_response(
+                "CONFIRMATION_REQUIRED",
+                f"command_type '{command_type}' requires an explicit confirmation: send confirm=true.",
+                422,
+            )
 
         enroll_number = str(data.get("enroll_number") or data.get("test_enroll_number") or "").strip()
-        member_name = str(data.get("member_name") or data.get("name") or "").strip()[:160] or None
+        # M6: strip control characters (tabs/newlines) from names before
+        # they reach any command path; truncation alone is not sanitising.
+        from app.services.bridge_service import sanitize_terminal_name
+
+        member_name = sanitize_terminal_name(
+            str(data.get("member_name") or data.get("name") or ""), 160
+        ) or None
         member_id = data.get("member_id")
         delay_seconds = data.get("delay_seconds")
         valid_from = str(data.get("valid_from") or "").strip() or None

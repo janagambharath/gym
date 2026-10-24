@@ -194,9 +194,19 @@ def register_access_routes(bp):
     @bp.route("/access/remote-unlock", methods=["POST"])
     @bp.route("/access/unlock", methods=["POST"])
     @token_required
-    @roles_required("gym_owner", "staff")
+    @roles_required("gym_owner")
     def remote_unlock():
-        """Queue a physical door relay unlock command to the biometric terminal via bridge."""
+        """Queue a physical door relay unlock command to the biometric terminal via bridge.
+
+        H5: owner-only — staff could previously unlock the door remotely
+        with no member, no reason, and no door-identity check. Callers may
+        pass an optional ``reason`` string; it is recorded in the audit
+        entry. No confirm flag is required here (unlike the ADMS advanced
+        and bridge-settings endpoints) because the PWA unlock button
+        posts only ``delay_seconds``; the owner-role restriction is the
+        server-side control, and a PWA confirm dialog is a separate
+        client follow-up.
+        """
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
             return jsonify({
@@ -212,6 +222,7 @@ def register_access_routes(bp):
             delay_seconds = max(1, min(30, int(data.get("delay_seconds") or 5)))
         except (TypeError, ValueError):
             delay_seconds = 5
+        reason = str(data.get("reason") or "").strip()[:500] or None
 
         cmd = BridgeCommand(
             bridge_id=bridge.id,
@@ -227,7 +238,8 @@ def register_access_routes(bp):
             resource_id=bridge.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"delay_seconds": delay_seconds, "command_id": cmd.id},
+            metadata={"delay_seconds": delay_seconds, "command_id": cmd.id,
+                      **({"reason": reason} if reason else {})},
         )
         db.session.commit()
 
