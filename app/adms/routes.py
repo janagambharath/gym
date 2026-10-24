@@ -116,23 +116,31 @@ def _attlog_lines() -> list[str]:
     return [line.strip("\r") for line in raw.splitlines() if line.strip()]
 
 
-def _parse_userinfo_line(line: str) -> dict | None:
-    """Parse one USERINFO line from a terminal table upload.
+def _parse_adms_fields(line: str) -> dict[str, str]:
+    """Parse known ADMS fields separated by tabs or spaces, preserving names."""
+    import re
 
-    Format: ``USER PIN=12345\\tName=Alice Smith\\tPri=0\\tPasswd=\\tCard=0...``
-    Fields are TAB-separated; values (like names) may contain spaces, so we
-    must split on tabs, never on whitespace.
-    Returns {"enroll_number": ..., "name": ...} or None.
-    """
-    line = line.strip()
-    if not line.upper().startswith("USER "):
-        return None
+    field_re = re.compile(
+        r"(?:^|[\\t ]+)(PIN|NAME|PRI|PASSWD|CARD|GRP|TZ|VERIFY|FID|FINGERID|SIZE|VALID|TMP|TEMPLATE)\\s*=",
+        re.IGNORECASE,
+    )
+    matches = list(field_re.finditer(line.strip()))
     fields: dict[str, str] = {}
-    for part in line[5:].split("\t"):
-        part = part.strip()
-        if "=" in part:
-            key, _, value = part.partition("=")
-            fields[key.strip().upper()] = value.strip()
+    for index, match in enumerate(matches):
+        value_start = match.end()
+        value_end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+        fields[match.group(1).upper()] = line[value_start:value_end].strip(" \\t")
+    return fields
+
+
+def _parse_userinfo_line(line: str) -> dict | None:
+    """Parse a USERINFO/USER row while preserving spaces in the user's name."""
+    line = line.strip()
+    if line.upper().startswith("USER "):
+        line = line[5:]
+    elif not line.upper().startswith("PIN="):
+        return None
+    fields = _parse_adms_fields(line)
     pin = fields.get("PIN", "").strip()
     if not pin:
         return None
@@ -140,28 +148,12 @@ def _parse_userinfo_line(line: str) -> dict | None:
 
 
 def _parse_operlog_enrollment(line: str) -> dict | None:
-    """Parse a user-enrollment record from an OPERLOG upload.
-
-    When a user is enrolled on the terminal, OPERLOG carries the full record:
-    ``PIN=<id>\\tName=<name>\\tPri=0\\tPasswd=\\tCard=\\tGrp=1...``
-    (ZKTeco PUSH SDK "User Registration (OPERLOG)" format.)
-
-    Returns {"enroll_number": ..., "name": ...} or None if the line
-    is not an enrollment record.
-    """
+    """Parse a user enrollment record from OPERLOG (tab or space-delimited)."""
     line = line.strip()
     upper = line.upper()
-    # Must have PIN=, NAME= and PRI= to be an enrollment record.
-    # M3: the Pri= requirement filters out admin/modify OPERLOG lines that
-    # merely mention a PIN and a name in another context.
-    if "PIN=" not in upper or "NAME=" not in upper or "PRI=" not in upper:
+    if not all(field in upper for field in ("PIN=", "NAME=", "PRI=")):
         return None
-    fields: dict[str, str] = {}
-    for part in line.split("\t"):
-        part = part.strip()
-        if "=" in part:
-            key, _, value = part.partition("=")
-            fields[key.strip().upper()] = value.strip()
+    fields = _parse_adms_fields(line)
     pin = fields.get("PIN", "").strip()
     name = fields.get("NAME", "").strip()
     if not pin or not name:
@@ -372,16 +364,49 @@ def cdata(path_token: str | None = None):
     # Common ADMS clients expect a plain acknowledgement after a push and an
     # option payload on their initial GET.  Never put secrets in this response.
     if request.method == "GET":
-        # TransFlag (Format II, tab-separated): explicitly allow the terminal
-        # to auto-upload attendance + operation-log + user enroll/change
-        # records. The X2008 never sent OPERLOG enrollments without this;
-        # worst case the terminal ignores the line (safe no-op).
-        return _plain(
-            "~SerialNumber={0}\n~DeviceName=RRR\n"
-            "~TransFlag=TransData\tAttLog\tOpLog\tEnrollUser\tChgUser\n".format(
-                integration.device_serial
-            )
-        )
+        # ZAM180_TFT/X2008 PUSH handshake: respond with the plain-text
+        # GET OPTION FROM block, not a tilde-prefixed status payload.
+        gym = db.session.get(Gym, integration.gym_id)
+        timezone_name = getattr(gym, "timezone", None) or "Asia/Kolkata"
+        try:
+            from zoneinfo import ZoneInfo
+            offset = datetime.now(ZoneInfo(timezone_name)).utcoffset()
+            timezone_hours = f"{offset.total_seconds() / 3600:g}" if offset else "5.5"
+        except Exception:
+            timezone_hours = "5.5"
+
+        options = [
+            f"GET OPTION FROM: {integration.device_serial or _serial()}",
+            "ATTLOGStamp=None",
+            "OPERLOGStamp=9999",
+            "ATTPHOTOStamp=None",
+            "ErrorDelay=30",
+            "Delay=10",
+            "TransTimes=00:00;14:05",
+            "TransInterval=1",
+            "TransFlag=TransData AttLog OpLog EnrollUser",
+            f"TimeZone={timezone_hours}",
+            "Realtime=1",
+            "Encrypt=None",
+            "ServerVer=2.2.14",
+            "TableNameStamp=None",
+        ]
+        return _plain("\\n".join(options) + "\\n")
+    return _plain("OK")
+
+
+@adms_bp.route("/iclock/ping", methods=["GET", "POST"])
+@adms_bp.route("/iclock/ping.aspx", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/ping", methods=["GET", "POST"])
+@adms_bp.route("/iclock/<path_token>/ping.aspx", methods=["GET", "POST"])
+@limiter.limit("180 per minute")
+def ping(path_token: str | None = None):
+    """Compatibility heartbeat endpoint used by some PUSH firmware variants."""
+    integration = _device(path_token)
+    if integration is None:
+        return _unknown()
+    _touch(integration)
+    db.session.commit()
     return _plain("OK")
 
 
@@ -480,7 +505,11 @@ def devicecmd(path_token: str | None = None):
     if integration is None:
         return _unknown()
     _touch(integration)
-    raw_id = str(request.args.get("ID") or request.form.get("ID") or "").strip()
+    # PUSH firmware varies between ID and CmdID in command acknowledgements.
+    raw_id = str(
+        request.args.get("ID") or request.args.get("CmdID") or
+        request.form.get("ID") or request.form.get("CmdID") or ""
+    ).strip()
     try:
         command_id = int(raw_id)
     except (TypeError, ValueError):
