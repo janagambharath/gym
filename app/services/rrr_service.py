@@ -78,8 +78,14 @@ def _mapped_member(gym_id: int, biometric_user_id: str) -> Member | None:
 def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, punch_time,
                          external_event_id: str | None = None, device_serial: str | None = None,
                          direction: str | None = None, verify_method: str | None = None,
-                         integration_id: int | None = None, raw_payload: str = "") -> tuple[RRRAttendanceEvent, bool]:
-    """Store a source-neutral attendance event once and retain unmapped events."""
+                         integration_id: int | None = None, raw_payload: str = "",
+                         auth_method: str | None = None) -> tuple[RRRAttendanceEvent, bool]:
+    """Store a source-neutral attendance event once and retain unmapped events.
+
+    ``auth_method`` records how the push was authenticated ("token",
+    "token_prev", "serial", or None for non-ADMS sources). The
+    commissioning gate reads it: see H1 in the ADMS auth hardening.
+    """
     key = _dedupe_key(source, device_serial, external_event_id, biometric_user_id, punch_time, raw_payload)
     existing = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
     if existing:
@@ -114,6 +120,7 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
         dedupe_key=key,
         raw_payload_hash=hashlib.sha256(raw_payload.encode("utf-8")).hexdigest() if raw_payload else None,
         processing_status="processed" if member else "unmapped",
+        auth_method=auth_method,
     )
     # Insert in a savepoint: two concurrent ingestions of the same punch
     # both pass the check above; the loser hits the unique constraint and
@@ -441,7 +448,9 @@ def adms_terminal_settings(host_url: str | None = None, path_token: str | None =
         "server_port": port,
         "https": configured_base.scheme == "https",
         # The per-integration path token makes the ADMS URL unguessable;
-        # without it the terminal falls back to serial-only auth.
+        # without it the terminal falls back to serial-only auth, which
+        # is gated by the integration's allow_serial_fallback flag
+        # (off for new integrations).
         "path": f"/iclock/{path_token}" if path_token else "/iclock",
     }
 
@@ -456,8 +465,29 @@ def integration_payload(row: RRRIntegration) -> dict:
         "commands_enabled": row.commands_enabled,
     }
     if row.connector_type == "adms_direct":
-        # Backfill the token for integrations provisioned before it existed.
-        if not row.adms_path_token:
-            row.adms_path_token = secrets.token_urlsafe(32)
-        payload["terminal_settings"] = adms_terminal_settings(path_token=row.adms_path_token)
+        # NEVER issue or backfill a token here: a payload read must not
+        # mint a credential nobody sees. Tokens are issued only by
+        # provision (fresh) and rotate (owner action), and returned once.
+        # Hash-only rows therefore report token_present=True with no
+        # retrievable path; the owner rotates to re-provision.
+        payload["allow_serial_fallback"] = bool(row.allow_serial_fallback)
+        payload["adms_token_version"] = row.adms_token_version
+        payload["adms_token_grace_until"] = (
+            row.adms_token_grace_until.isoformat() if row.adms_token_grace_until else None
+        )
+        if row.adms_path_token:
+            # Legacy plaintext row (pre-hardening): still displayable.
+            payload["terminal_settings"] = adms_terminal_settings(path_token=row.adms_path_token)
+        elif row.adms_token_hash:
+            payload["terminal_settings"] = {
+                "server_mode": "ADMS",
+                "path": None,
+                "token_present": True,
+                "token_note": (
+                    "Token is stored as a hash and cannot be shown again. "
+                    "Rotate the token to re-provision this terminal."
+                ),
+            }
+        else:
+            payload["terminal_settings"] = adms_terminal_settings(path_token=None)
     return payload

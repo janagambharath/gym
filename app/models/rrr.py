@@ -7,14 +7,72 @@ recommendation and connector outcome traceable to those real records.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
-from datetime import timedelta
+from datetime import timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin, utcnow
+
+
+def hash_adms_token(token: str) -> str:
+    """SHA-256 of a high-entropy ADMS path token.
+
+    The token itself (~192 bits from ``token_urlsafe(32)``) carries the
+    entropy; the hash only removes the plaintext from the database so a
+    DB read cannot be replayed as a device credential.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def new_adms_token() -> tuple[str, str]:
+    """Return ``(plaintext_token, token_hash)`` for a fresh ADMS token.
+
+    The plaintext is shown to the owner exactly once (provision/rotate
+    response) and must never be stored.
+    """
+    token = secrets.token_urlsafe(32)
+    return token, hash_adms_token(token)
+
+
+def generate_pairing_salt() -> str:
+    return secrets.token_hex(16)
+
+
+def hash_pairing_code_salted(code: str, salt: str) -> str:
+    return hashlib.sha256(f"{salt}:{code}".encode("utf-8")).hexdigest()
+
+
+def verify_pairing_code(code: str, stored_hash: str | None, salt: str | None) -> bool:
+    """Verify a pairing code against a salted (new) or legacy (old) hash.
+
+    Legacy rows have ``salt is None`` and ``stored_hash`` is the bare
+    SHA-256 of the code; they keep verifying during the transition so
+    already-issued codes are not invalidated by this change.
+    """
+    if not stored_hash or not code:
+        return False
+    if salt:
+        candidate = hash_pairing_code_salted(code, salt)
+    else:
+        candidate = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(candidate, stored_hash)
+
+
+def _as_utc(value):
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def issue_salted_pairing_code() -> tuple[str, str, str]:
+    """Return ``(code, salt, hash)`` for a new 6-digit pairing code."""
+    code = "".join(str(secrets.randbelow(10)) for _ in range(6))
+    salt = generate_pairing_salt()
+    return code, salt, hash_pairing_code_salted(code, salt)
 
 
 class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
@@ -39,9 +97,27 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
     device_serial = db.Column(db.String(120), nullable=True, index=True)
     # Per-integration secret embedded in the ADMS path (/iclock/<token>/...).
     # Serial-only auth is enumerable; the token makes the path unguessable.
+    # ADMS AUTH HARDENING (batch #3): new tokens are stored ONLY as a
+    # SHA-256 hash (``adms_token_hash``); ``adms_path_token`` survives
+    # solely as the legacy plaintext column for rows provisioned before
+    # this change, and is cleared (with the hash backfilled) the first
+    # time such a device authenticates, or by the hardening migration.
+    # Never write a fresh token into ``adms_path_token``.
     adms_path_token = db.Column(db.String(64), nullable=True, unique=True)
+    adms_token_hash = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    adms_token_hash_prev = db.Column(db.String(64), nullable=True)
+    adms_token_grace_until = db.Column(db.DateTime(timezone=True), nullable=True)
+    adms_token_version = db.Column(db.Integer, nullable=False, default=1)
+    # Serial-fallback gate (C1): when False (the default for NEW
+    # integrations), a bare-serial request is indistinguishable-OK and
+    # changes nothing. When True (legacy existing integrations, backfilled
+    # by the hardening migration), serial requests keep working but are
+    # warning-logged and never clear error state (M10). The owner flips
+    # this off once the terminal is re-provisioned onto the token path.
+    allow_serial_fallback = db.Column(db.Boolean, nullable=False, default=False)
     device_name = db.Column(db.String(160), nullable=True)
     pairing_code_hash = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    pairing_code_salt = db.Column(db.String(32), nullable=True)
     pairing_code_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_success_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_error = db.Column(db.String(500), nullable=True)
@@ -62,8 +138,11 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
                 display_name="eSSL eBioServer",
             )
             db.session.add(integration)
-        code = "".join(str(secrets.randbelow(10)) for _ in range(6))
-        integration.pairing_code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        # Salted from here on (M9): legacy unsalted codes keep verifying
+        # via verify_pairing_code() until they expire or are burned.
+        code, salt, digest = issue_salted_pairing_code()
+        integration.pairing_code_hash = digest
+        integration.pairing_code_salt = salt
         integration.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
         integration.status = "pairing"
         integration.last_error = None
@@ -71,7 +150,70 @@ class RRRIntegration(TenantMixin, TimestampMixin, db.Model):
 
     @staticmethod
     def hash_pairing_code(code: str) -> str:
+        """Legacy unsalted pairing-code hash — kept for verifying old codes
+        and for callers that still compare against stored legacy hashes.
+        New codes must use :func:`issue_salted_pairing_code`."""
         return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+    def verify_pairing_code(self, code: str) -> bool:
+        return verify_pairing_code(code, self.pairing_code_hash, self.pairing_code_salt)
+
+    def issue_adms_token(self) -> str:
+        """Issue a fresh ADMS path token, storing only its hash.
+
+        Returns the plaintext token (shown to the owner exactly once).
+        Any previous token is revoked immediately — use
+        :meth:`rotate_adms_token` when the old token needs a grace window.
+        A first-ever token is version 1; re-issuing over an existing
+        token bumps the version.
+        """
+        had_token = bool(self.adms_token_hash or self.adms_path_token)
+        token, digest = new_adms_token()
+        self.adms_token_hash = digest
+        self.adms_token_hash_prev = None
+        self.adms_token_grace_until = None
+        self.adms_path_token = None
+        self.adms_token_version = (self.adms_token_version or 0) + 1 if had_token else 1
+        return token
+
+    def rotate_adms_token(self, grace_days: int = 7) -> str:
+        """Rotate the ADMS path token (H7), keeping the old token valid
+        during a grace window so a terminal can be re-provisioned without
+        a flag day. ``grace_days=0`` revokes the old token immediately.
+        Returns the new plaintext token (shown to the owner exactly once).
+        """
+        current = self.adms_token_hash
+        if current is None and self.adms_path_token:
+            current = hash_adms_token(self.adms_path_token)
+        token, digest = new_adms_token()
+        if current and grace_days and grace_days > 0:
+            self.adms_token_hash_prev = current
+            self.adms_token_grace_until = utcnow() + timedelta(days=grace_days)
+        else:
+            self.adms_token_hash_prev = None
+            self.adms_token_grace_until = None
+        self.adms_token_hash = digest
+        self.adms_path_token = None
+        self.adms_token_version = (self.adms_token_version or 0) + 1
+        return token
+
+    def adms_token_matches(self, token: str) -> str | None:
+        """Return ``"token"`` / ``"token_prev"`` if ``token`` is the current
+        or in-grace previous token, else ``None``. Never accepts a token
+        whose grace window has expired."""
+        if not token:
+            return None
+        digest = hash_adms_token(token)
+        if self.adms_token_hash and hmac.compare_digest(self.adms_token_hash, digest):
+            return "token"
+        if (
+            self.adms_token_hash_prev
+            and self.adms_token_grace_until is not None
+            and utcnow() <= _as_utc(self.adms_token_grace_until)
+            and hmac.compare_digest(self.adms_token_hash_prev, digest)
+        ):
+            return "token_prev"
+        return None
 
 
 class RRRDevice(TenantMixin, TimestampMixin, db.Model):
@@ -180,6 +322,12 @@ class RRRAttendanceEvent(TenantMixin, TimestampMixin, db.Model):
     dedupe_key = db.Column(db.String(64), nullable=False)
     processing_status = db.Column(db.String(32), nullable=False, default="processed")
     raw_payload_hash = db.Column(db.String(64), nullable=True)
+    # Provenance for the commissioning gate (H1): "token" / "token_prev"
+    # for a token-authenticated ADMS push, "serial" for a legacy
+    # serial-fallback push, None for non-ADMS sources and for punches
+    # recorded before this column existed. Only token-proven punches
+    # satisfy commissioning for integrations with serial fallback off.
+    auth_method = db.Column(db.String(16), nullable=True)
     member = db.relationship("Member")
     integration = db.relationship("RRRIntegration")
 

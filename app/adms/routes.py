@@ -9,16 +9,22 @@ automatic access control is not enabled by this receiver.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import logging
 from datetime import datetime, timezone
 from urllib.parse import unquote_plus
 
-from flask import Blueprint, Response, current_app, request
+from flask import Blueprint, Response, current_app, g, request
+from sqlalchemy import or_
 
 from app.extensions import db, limiter
 from app.models.gym import Gym
 from app.models.mixins import utcnow
-from app.models.rrr import RRRAdmsCommand, RRRDevice, RRRIntegration
+from app.models.rrr import RRRAdmsCommand, RRRDevice, RRRIntegration, hash_adms_token
 from app.services.rrr_service import normalize_attendance
+
+log = logging.getLogger(__name__)
 
 
 adms_bp = Blueprint("adms", __name__)
@@ -33,31 +39,104 @@ def _serial() -> str:
     return str(request.args.get("SN") or request.values.get("SN") or "").strip()[:120]
 
 
-def _device(path_token: str | None = None) -> RRRIntegration | None:
-    # Token-only (2026-10-13): the per-integration path secret is unguessable,
-    # so a token-path request authenticates the integration directly.
-    # Serial fallback (2026-10-13): eSSL X2008 firmware cannot send a custom
-    # path — it always posts to /iclock/cdata. For terminals whose serial
-    # exactly matches a registered integration, allow serial-based matching.
-    # This is safe because the serial must match an existing registration;
-    # unknown serials still get the indistinguishable "OK".
-    if not path_token:
+def _adms_rate_limit_key() -> str:
+    """Per-device limiter key (L3), hashed so the raw token/serial never
+    lands in limiter storage keys.
+
+    Stacked UNDER the existing per-IP limit on every endpoint: the
+    per-device bucket stops one bad device exhausting another device's
+    budget, and the per-IP bucket still bounds an attacker spraying many
+    serials from one address. LIMITATION: the key is derived from the
+    unauthenticated token/serial string (authentication happens in the
+    view, after limiting), so an attacker who knows a real serial shares
+    that device's bucket — per-device keying cannot stop a targeted
+    serial DoS; token auth + serial-fallback-off is the defence there.
+    With the default memory:// limiter storage, buckets are per-process;
+    set REDIS_URL in production so limits are shared across workers.
+    """
+    try:
+        view_args = request.view_args or {}
+        token = view_args.get("path_token")
+        if token:
+            return "adms-token:" + hashlib.sha256(str(token).encode()).hexdigest()[:16]
         serial = _serial()
-        if not serial:
-            return None
-        row = RRRIntegration.query.filter_by(
-            connector_type="adms_direct", device_serial=serial
+        if serial:
+            return "adms-serial:" + hashlib.sha256(serial.encode()).hexdigest()[:16]
+    except Exception:
+        pass
+    return "adms-unknown:" + str(request.remote_addr)
+
+
+def _resolve_device(path_token: str | None = None) -> tuple[RRRIntegration | None, str | None]:
+    """Resolve an ADMS session to ``(integration, auth_method)``.
+
+    ``auth_method`` is "token" (current token), "token_prev" (previous
+    token inside its rotation grace window), or "serial" (legacy
+    serial-fallback, only when the integration's explicit
+    ``allow_serial_fallback`` flag is on). Anything else returns
+    ``(None, None)`` and the caller answers indistinguishable "OK".
+
+    Backward compatibility (batch #3 gate): integrations that existed
+    before this change are backfilled with ``allow_serial_fallback=True``
+    and with their plaintext token hashed, so their terminals keep
+    working unchanged — via the token path (hash lookup) or via serial
+    — until the owner re-commissions them. NEW integrations default to
+    ``allow_serial_fallback=False``: a bare-serial request changes
+    nothing at all (no ingest, no commands, no acks, no online touch).
+    """
+    if path_token:
+        digest = hash_adms_token(path_token)
+        row = RRRIntegration.query.filter(
+            RRRIntegration.connector_type == "adms_direct",
+            or_(
+                RRRIntegration.adms_token_hash == digest,
+                RRRIntegration.adms_token_hash_prev == digest,
+                RRRIntegration.adms_path_token == path_token,
+            ),
         ).first()
-        return row
-    row = RRRIntegration.query.filter_by(
-        connector_type="adms_direct", adms_path_token=path_token
-    ).first()
-    if row is None:
-        return None
+        if row is None:
+            return None, None
+        serial = _serial()
+        if serial and row.device_serial and serial != row.device_serial:
+            return None, None
+        method = row.adms_token_matches(path_token)
+        if method is not None:
+            g.adms_auth_method = method
+            return row, method
+        # Legacy plaintext token (pre-hardening row whose hash was not
+        # backfilled): authenticate once, then migrate to hash-only in
+        # the same transaction the endpoint commits.
+        if row.adms_path_token and hmac.compare_digest(row.adms_path_token, path_token):
+            row.adms_token_hash = digest
+            row.adms_path_token = None
+            row.adms_token_version = max(1, row.adms_token_version or 0)
+            g.adms_auth_method = "token"
+            return row, "token"
+        return None, None
     serial = _serial()
-    if serial and row.device_serial and serial != row.device_serial:
-        return None
-    return row
+    if not serial:
+        return None, None
+    row = RRRIntegration.query.filter_by(
+        connector_type="adms_direct", device_serial=serial
+    ).first()
+    if row is None or not row.allow_serial_fallback:
+        # New integrations (flag off) and unknown serials alike: no
+        # session, no side effects, indistinguishable OK.
+        return None, None
+    log.warning(
+        "ADMS serial-fallback session used: gym=%s integration=%s "
+        "(legacy device; re-provision onto the token path and turn "
+        "serial fallback off)",
+        row.gym_id, row.id,
+    )
+    g.adms_auth_method = "serial"
+    return row, "serial"
+
+
+def _device(path_token: str | None = None) -> RRRIntegration | None:
+    """Back-compat shim: integration only (auth method is on ``g``)."""
+    integration, _method = _resolve_device(path_token)
+    return integration
 
 
 def _unknown() -> Response:
@@ -66,10 +145,24 @@ def _unknown() -> Response:
     return _plain("OK")
 
 
-def _touch(integration: RRRIntegration) -> None:
-    integration.status = "connected"
-    integration.last_success_at = utcnow()
-    integration.last_error = None
+def _touch(integration: RRRIntegration, *, method: str | None = None, full: bool = False) -> None:
+    """Record a device sighting, tiered by authentication (M10).
+
+    * Token-authenticated (current or in-grace previous) + a real
+      exchange (``full=True``): the device is online, the integration is
+      "connected", ``last_success_at`` advances and ``last_error`` is
+      cleared. A bare ``registry`` ping is NOT a real exchange, so it
+      only updates ``last_seen_at`` — a ping must never clear an error
+      state or mask an offline terminal.
+    * Legacy serial-fallback: "seen" only — ``last_seen_at`` advances,
+      and a meaningful data push (cdata POST with a known table) may
+      move the integration to "connected" so the legacy commissioning
+      flow still works, but ``last_error`` is NEVER cleared by a
+      serial session. An unauthenticated hit never reaches here at all.
+    * ``full=False`` (ping / unknown-table push): device ``last_seen_at``
+      only, no status or error change, for either auth method.
+    """
+    method = method or getattr(g, "adms_auth_method", None)
     device = RRRDevice.query.filter_by(
         gym_id=integration.gym_id, serial_number=integration.device_serial
     ).first()
@@ -84,9 +177,24 @@ def _touch(integration: RRRIntegration) -> None:
         db.session.add(device)
     device.integration_id = integration.id
     device.device_name = integration.device_name or device.device_name
-    device.status = "online"
     device.last_seen_at = utcnow()
-    device.is_selected = True
+    if not full:
+        return
+    if method in ("token", "token_prev"):
+        integration.status = "connected"
+        integration.last_success_at = utcnow()
+        integration.last_error = None
+        device.status = "online"
+        device.is_selected = True
+    elif method == "serial":
+        # Legacy grace: a real data push proves the terminal is alive,
+        # but a serial session is not token-valid, so it must not clear
+        # error state (M10) — an impersonator must not be able to mask
+        # a genuinely erroring terminal.
+        integration.status = "connected"
+        integration.last_success_at = utcnow()
+        device.status = "online"
+        device.is_selected = True
 
 
 def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
@@ -333,6 +441,7 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
             direction=direction or None,
             verify_method=verify or None,
             raw_payload=line,
+            auth_method=getattr(g, "adms_auth_method", None),
         )
         if was_created:
             created += 1
@@ -353,12 +462,19 @@ def direct_adms_enabled():
 @adms_bp.route("/iclock/<path_token>/cdata", methods=["GET", "POST"])
 @adms_bp.route("/iclock/<path_token>/cdata.aspx", methods=["GET", "POST"])
 @limiter.limit("180 per minute")
+@limiter.limit("180 per minute", key_func=_adms_rate_limit_key)
 def cdata(path_token: str | None = None):
-    integration = _device(path_token)
+    integration, method = _resolve_device(path_token)
     if integration is None:
         return _unknown()
-    _touch(integration)
     table = str(request.args.get("table") or request.form.get("table") or "").upper()
+    # A real exchange (init GET, or a POST with a known table) earns a
+    # full touch; anything else is seen-only (see _touch / M10).
+    known_table = request.method == "POST" and table in {"ATTLOG", "USERINFO", "USER", "OPERLOG"}
+    full = request.method == "GET" or known_table
+    if method == "serial" and request.method == "GET":
+        full = False
+    _touch(integration, method=method, full=full)
     if request.method == "POST" and table == "ATTLOG":
         _ingest_attlog(integration)
     elif request.method == "POST" and table in {"USERINFO", "USER"}:
@@ -387,11 +503,14 @@ def cdata(path_token: str | None = None):
 @adms_bp.route("/iclock/<path_token>/registry", methods=["GET", "POST"])
 @adms_bp.route("/iclock/<path_token>/registry.aspx", methods=["GET", "POST"])
 @limiter.limit("60 per minute")
+@limiter.limit("60 per minute", key_func=_adms_rate_limit_key)
 def registry(path_token: str | None = None):
-    integration = _device(path_token)
+    integration, method = _resolve_device(path_token)
     if integration is None:
         return _unknown()
-    _touch(integration)
+    # A registry ping is never a real exchange (M10): seen-only touch,
+    # even for a token-authenticated device.
+    _touch(integration, method=method, full=False)
     db.session.commit()
     return _plain("OK")
 
@@ -401,11 +520,16 @@ def registry(path_token: str | None = None):
 @adms_bp.get("/iclock/<path_token>/getrequest")
 @adms_bp.get("/iclock/<path_token>/getrequest.aspx")
 @limiter.limit("180 per minute")
+@limiter.limit("180 per minute", key_func=_adms_rate_limit_key)
 def getrequest(path_token: str | None = None):
-    integration = _device(path_token)
+    integration, method = _resolve_device(path_token)
     if integration is None:
         return _unknown()
-    _touch(integration)
+    # Polling by a token-authenticated device is a real exchange; a
+    # legacy serial poll is seen-only (it still receives queued
+    # commands while serial fallback is on for that integration, but
+    # it never clears error state).
+    _touch(integration, method=method, full=(method in ("token", "token_prev")))
     # Timeout stuck delivered commands: if a command was delivered >10 min ago
     # without ack, the terminal likely missed it. Mark failed so the queue moves on.
     from datetime import timedelta
@@ -488,12 +612,13 @@ def getrequest(path_token: str | None = None):
 @adms_bp.route("/iclock/<path_token>/devicecmd", methods=["GET", "POST"])
 @adms_bp.route("/iclock/<path_token>/devicecmd.aspx", methods=["GET", "POST"])
 @limiter.limit("180 per minute")
+@limiter.limit("180 per minute", key_func=_adms_rate_limit_key)
 def devicecmd(path_token: str | None = None):
     """Record the terminal's execution result for a queued test command."""
-    integration = _device(path_token)
+    integration, method = _resolve_device(path_token)
     if integration is None:
         return _unknown()
-    _touch(integration)
+    _touch(integration, method=method, full=(method in ("token", "token_prev")))
     raw_id = str(request.args.get("ID") or request.form.get("ID") or "").strip()
     try:
         command_id = int(raw_id)

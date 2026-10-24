@@ -24,6 +24,8 @@ from app.models.bridge import (
     generate_bridge_api_key,
     generate_bridge_public_id,
     hash_bridge_api_key,
+    new_bridge_api_key_hash,
+    verify_bridge_api_key,
 )
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
@@ -102,14 +104,29 @@ def authenticate_bridge():
     raw_key = request.headers.get("X-Api-Key", "").strip()
     if not raw_key:
         return _json_error(401, "unauthorized", "Missing bridge API key.")
+    device_serial = request.headers.get("X-Device-Serial", "").strip()
 
-    key_hash = hash_bridge_api_key(raw_key)
-    installation = BridgeInstallation.query.filter_by(api_key_hash=key_hash).first()
-    if (
-        installation is None
-        or not hmac.compare_digest(installation.api_key_hash, key_hash)
-        or not installation.is_active
-    ):
+    # L1 (salted keys): a salted hash cannot be looked up by hash, so
+    # the hot path resolves by the unique device serial first (the
+    # bridge sends it on every call) and verifies the key against that
+    # installation's salt (or legacy unsalted hash). Only when the
+    # serial lookup fails do we scan installations by key — that path
+    # preserves the old 401-vs-403 distinction (unknown key -> 401,
+    # known key but wrong/missing serial -> 403 below) and runs only
+    # on authentication failures, never on the happy path.
+    installation = None
+    if device_serial:
+        candidate = BridgeInstallation.query.filter_by(device_serial=device_serial).first()
+        if candidate is not None and verify_bridge_api_key(
+            raw_key, candidate.api_key_hash, candidate.api_key_salt
+        ):
+            installation = candidate
+    if installation is None:
+        for candidate in BridgeInstallation.query.all():
+            if verify_bridge_api_key(raw_key, candidate.api_key_hash, candidate.api_key_salt):
+                installation = candidate
+                break
+    if installation is None or not installation.is_active:
         return _json_error(401, "unauthorized", "Invalid bridge API key.")
     protocol_version = request.headers.get("X-RenewalDesk-Bridge-Protocol", "").strip()
     if protocol_version != "2":
@@ -118,7 +135,6 @@ def authenticate_bridge():
             "bridge_upgrade_required",
             "Install Renewal Desk Bridge protocol version 2 before connecting this gym.",
         )
-    device_serial = request.headers.get("X-Device-Serial", "").strip()
     if not device_serial or not hmac.compare_digest(device_serial, installation.device_serial):
         return _json_error(
             403,
@@ -589,10 +605,23 @@ def pair_bridge():
 
     # Owner mobile onboarding codes take precedence.  The old admin deployment
     # code remains supported for existing direct-SDK installations.
+    # M9 (salted pairing codes): a salted hash cannot be looked up by
+    # hash, so try the legacy unsalted lookup first, then scan the
+    # (few, short-lived) salted candidates and verify each. Legacy
+    # unsalted codes keep working until they expire or are burned.
     integration = RRRIntegration.query.filter_by(
         pairing_code_hash=RRRIntegration.hash_pairing_code(pairing_code),
         connector_type="ebioserver",
     ).first()
+    if integration is None:
+        for candidate in RRRIntegration.query.filter(
+            RRRIntegration.connector_type == "ebioserver",
+            RRRIntegration.pairing_code_hash.isnot(None),
+            RRRIntegration.pairing_code_salt.isnot(None),
+        ).all():
+            if candidate.verify_pairing_code(pairing_code):
+                integration = candidate
+                break
     dep = None
     if not device_serial:
         if integration and integration.device_serial:
@@ -610,10 +639,24 @@ def pair_bridge():
             gym = db.session.get(Gym, integration.gym_id)
         connector_type = "ebioserver"
     else:
-        # Pairing codes are stored as SHA-256 hashes; compare hashes only.
+        # Pairing codes are stored as hashes (salted for new codes,
+        # unsalted for legacy codes); compare via the verifier, never
+        # against a plaintext code.
+        from app.models.rrr import verify_pairing_code as _verify_pairing_code
+
         dep = GymDeployment.query.filter_by(
             pairing_code=RRRIntegration.hash_pairing_code(pairing_code)
         ).first()
+        if dep is None:
+            for candidate in GymDeployment.query.filter(
+                GymDeployment.pairing_code.isnot(None),
+                GymDeployment.pairing_code_salt.isnot(None),
+            ).all():
+                if _verify_pairing_code(
+                    pairing_code, candidate.pairing_code, candidate.pairing_code_salt
+                ):
+                    dep = candidate
+                    break
         if not dep or not dep.pairing_code_expires_at:
             return _json_error(401, "pairing_code_invalid", "Invalid or expired pairing code.")
         expires_at = dep.pairing_code_expires_at
@@ -638,13 +681,14 @@ def pair_bridge():
     # Create or update BridgeInstallation for this gym
     installation = BridgeInstallation.query.filter_by(gym_id=gym.id).first()
     raw_api_key = generate_bridge_api_key()
-    api_key_hash = hash_bridge_api_key(raw_api_key)
+    api_key_salt, api_key_hash = new_bridge_api_key_hash(raw_api_key)
 
     if installation is None:
         installation = BridgeInstallation(
             gym_id=gym.id,
             public_id=generate_bridge_public_id(),
             api_key_hash=api_key_hash,
+            api_key_salt=api_key_salt,
             device_serial=device_serial,
             display_name=f"{gym.name} Biometric Bridge",
             installed_version=version[:32] if version else "2.0.0",
@@ -661,6 +705,7 @@ def pair_bridge():
     else:
         # Re-pairing / Updating existing installation
         installation.api_key_hash = api_key_hash
+        installation.api_key_salt = api_key_salt
         installation.device_serial = device_serial
         installation.installed_version = version[:32] if version else "2.0.0"
         if build_num and str(build_num).isdigit():
@@ -685,6 +730,7 @@ def pair_bridge():
     # Burn / invalidate pairing code.
     if integration:
         integration.pairing_code_hash = None
+        integration.pairing_code_salt = None
         integration.pairing_code_expires_at = None
         integration.device_serial = device_serial
         integration.device_name = str(_payload_value(payload, "deviceName", "device_name") or "").strip()[:160] or None
@@ -693,6 +739,7 @@ def pair_bridge():
         integration.last_success_at = utcnow()
     elif dep:
         dep.pairing_code = None
+        dep.pairing_code_salt = None
         dep.pairing_code_expires_at = None
         if "bridge_connected" in dep.checklist_json:
             dep.checklist_json["bridge_connected"]["status"] = "passed"

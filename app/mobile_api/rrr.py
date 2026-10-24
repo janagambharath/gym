@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlparse
 
 from flask import current_app, g, jsonify, request
+from sqlalchemy import or_
 
 from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
@@ -222,21 +223,43 @@ def register_rrr_routes(bp):
             return error_response("CONFLICT", "That device serial is already registered to another gym.", 409)
         row = RRRIntegration.query.filter_by(gym_id=g.gym_id, connector_type="adms_direct").first()
         if row is None:
+            # NEW integrations default to serial-fallback OFF (C1): only
+            # token-path requests authenticate. Existing rows keep
+            # whatever flag they already carry (legacy rows are
+            # backfilled ON by the hardening migration).
             row = RRRIntegration(
                 gym_id=g.gym_id, connector_type="adms_direct", display_name="Direct eSSL ADMS",
+                allow_serial_fallback=False,
             )
             db.session.add(row)
         row.device_serial = serial
         row.device_name = name
-        if not row.adms_path_token:
-            row.adms_path_token = secrets.token_urlsafe(32)
+        # Token issuance, hash-only (C1/H7): a fresh row gets a new
+        # token (returned once below); a legacy row keeps its existing
+        # plaintext token until the owner rotates; a hash-only row is
+        # NOT re-issued here (its token is unrecoverable by design —
+        # rotate to re-provision).
+        token_for_response = None
+        if not row.adms_path_token and not row.adms_token_hash:
+            token_for_response = row.issue_adms_token()
+        elif row.adms_path_token:
+            token_for_response = row.adms_path_token
         row.status = "not_configured"
         row.commands_enabled = False
         row.commissioning_status = "not_started"
         audit(action="direct_adms_provisioned", resource_type="rrr_integration", resource_id=row.id,
               gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": serial})
         db.session.commit()
-        settings = adms_terminal_settings(request.host_url, path_token=row.adms_path_token)
+        if token_for_response is not None:
+            settings = adms_terminal_settings(request.host_url, path_token=token_for_response)
+        else:
+            settings = adms_terminal_settings(request.host_url, path_token=None)
+            settings["path"] = None
+            settings["token_present"] = True
+            settings["token_note"] = (
+                "Token is stored as a hash and cannot be shown again. "
+                "Rotate the token to re-provision this terminal."
+            )
         settings["warning"] = (
             "Attendance works immediately. Automatic block/unblock unlocks after "
             "the supervised commissioning test on the integrations screen."
@@ -244,6 +267,86 @@ def register_rrr_routes(bp):
         return jsonify({"success": True, "data": {
             "integration": integration_payload(row),
             "terminal_settings": settings,
+        }})
+
+    @bp.post("/rrr/integrations/<int:integration_id>/adms/rotate-token")
+    @limiter.limit("20 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def rotate_adms_token(integration_id: int):
+        """Rotate an ADMS path token (H7).
+
+        The new token is returned exactly once — store it in the
+        terminal's ADMS server URL and keep it out of screenshots and
+        support packages. The previous token keeps working until
+        ``grace_until`` (default 7 days, 0 = revoked immediately) so
+        the terminal can be re-provisioned without a flag day; after
+        the grace window it is rejected outright. The URL-token
+        mechanism itself is unchanged — terminals that cannot send a
+        custom path cannot use it, which is why rotation + the
+        serial-fallback gate (not removal) is the fix.
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        payload = request.get_json(silent=True) or {}
+        try:
+            grace_days = int(payload.get("grace_days", 7))
+        except (TypeError, ValueError):
+            return error_response("VALIDATION_ERROR", "grace_days must be an integer.", 422)
+        grace_days = max(0, min(30, grace_days))
+        new_token = integration.rotate_adms_token(grace_days=grace_days)
+        audit(action="adms_token_rotated", resource_type="rrr_integration", resource_id=integration.id,
+              gym_id=g.gym_id, actor_id=g.user_id,
+              metadata={"token_version": integration.adms_token_version,
+                        "grace_days": grace_days})
+        db.session.commit()
+        settings = adms_terminal_settings(request.host_url, path_token=new_token)
+        return jsonify({"success": True, "data": {
+            "integration": integration_payload(integration),
+            "terminal_settings": settings,
+            "token": new_token,
+            "token_version": integration.adms_token_version,
+            "previous_token_grace_until": (
+                integration.adms_token_grace_until.isoformat()
+                if integration.adms_token_grace_until else None
+            ),
+            "warning": (
+                "This token is shown exactly once. Update the terminal's "
+                "ADMS server URL to the path above before the grace window "
+                "ends; after that the previous token stops working."
+            ),
+        }})
+
+    @bp.post("/rrr/integrations/<int:integration_id>/adms/serial-fallback")
+    @token_required
+    @roles_required("gym_owner")
+    def set_adms_serial_fallback(integration_id: int):
+        """Explicitly enable/disable bare-serial ADMS auth for one gym (C1).
+
+        Disabling is the re-commission step: once the terminal is
+        provisioned onto the token path, turn this off and serial-only
+        requests stop changing anything. Enabling it again re-opens
+        the legacy behaviour (warning-logged, never error-clearing)
+        for terminals that cannot send a custom path.
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        payload = request.get_json(silent=True) or {}
+        if "enabled" not in payload or not isinstance(payload.get("enabled"), bool):
+            return error_response("VALIDATION_ERROR", "enabled (true/false) is required.", 422)
+        integration.allow_serial_fallback = payload["enabled"]
+        audit(action="adms_serial_fallback_changed", resource_type="rrr_integration",
+              resource_id=integration.id, gym_id=g.gym_id, actor_id=g.user_id,
+              metadata={"allow_serial_fallback": payload["enabled"]})
+        db.session.commit()
+        return jsonify({"success": True, "data": {
+            "integration": integration_payload(integration),
         }})
 
     @bp.get("/rrr/integrations/<int:integration_id>/adms/commands")
@@ -435,6 +538,22 @@ def register_rrr_routes(bp):
         )
         if row.device_serial:
             attendance_query = attendance_query.filter_by(device_serial=row.device_serial)
+        if row.connector_type == "adms_direct" and not row.allow_serial_fallback:
+            # H1: for integrations with serial fallback OFF, a punch
+            # whose provenance is "serial" never satisfies the gate —
+            # a forged serial-only punch cannot commission the device.
+            # Token-authenticated punches ("token"/"token_prev") do.
+            # Provenance NULL means the punch was recorded before this
+            # column existed: post-hardening ingest always stamps a
+            # method, so NULL cannot be manufactured through the device
+            # API, and pre-hardening punches keep satisfying the gate
+            # (backward compatibility for already-commissioned gyms).
+            attendance_query = attendance_query.filter(
+                or_(
+                    RRRAttendanceEvent.auth_method.is_(None),
+                    RRRAttendanceEvent.auth_method.in_(("token", "token_prev")),
+                )
+            )
         attendance_exists = attendance_query.first()
         if attendance_exists is None:
             return error_response("COMMISSIONING_REQUIRED", "A mapped real attendance event from the selected device is required before commands can be enabled.", 409)

@@ -126,6 +126,18 @@ def _generate_pairing_code() -> str:
     return f"{secrets.randbelow(900000) + 100000}"
 
 
+def _salted_pairing_storage(raw_code: str) -> tuple[str, str]:
+    """Return ``(salt, hash)`` for a new pairing code (M9, salted).
+
+    The tuple order matches the assignment ``salt, hash = ...`` used
+    at the GymDeployment call sites.
+    """
+    from app.models.rrr import generate_pairing_salt, hash_pairing_code_salted
+
+    salt = generate_pairing_salt()
+    return salt, hash_pairing_code_salted(raw_code, salt)
+
+
 def _get_or_create_deployment(gym: Gym) -> GymDeployment:
     dep = GymDeployment.query.filter_by(gym_id=gym.id).first()
     if not dep:
@@ -1086,9 +1098,11 @@ def onboard_step(gym_id: int, step_num: int):
 
     # Ensure pairing code exists for step 7
     if dep and (not dep.pairing_code or not dep.pairing_code_expires_at or _as_utc(dep.pairing_code_expires_at) < utcnow()):
-        # Stored hashed; the plaintext is rendered once from the session below.
+        # Stored salted-hashed; the plaintext is rendered once from the session below.
         raw_code = _generate_pairing_code()
-        dep.pairing_code = RRRIntegration.hash_pairing_code(raw_code)
+        dep.pairing_code_salt, dep.pairing_code = (
+            _salted_pairing_storage(raw_code)
+        )
         dep.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
         session[f"bridge_pairing_{gym.id}"] = raw_code
         db.session.commit()
@@ -1545,9 +1559,9 @@ def generate_bridge_pairing(gym_id: int):
     gym = Gym.query.get_or_404(gym_id)
     dep = _get_or_create_deployment(gym)
     raw_code = _generate_pairing_code()
-    # Store only the hash; the plaintext code is shown once below and never logged.
+    # Store only the salted hash; the plaintext code is shown once below and never logged.
     session[f"bridge_pairing_{gym.id}"] = raw_code
-    dep.pairing_code = RRRIntegration.hash_pairing_code(raw_code)
+    dep.pairing_code_salt, dep.pairing_code = _salted_pairing_storage(raw_code)
     dep.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
     dep.add_timeline_event("Generated new biometric pairing code", actor=current_user.full_name)
     db.session.commit()

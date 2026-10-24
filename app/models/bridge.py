@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 import uuid
 
@@ -11,13 +12,33 @@ from app.models.mixins import TimestampMixin, utcnow
 
 
 def hash_bridge_api_key(api_key: str) -> str:
-    """Return the stored representation of a high-entropy bridge API key."""
+    """Legacy unsalted hash of a bridge API key — kept so already-paired
+    bridges keep authenticating. New keys must use
+    :func:`new_bridge_api_key_hash` (salted)."""
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
 def generate_bridge_api_key() -> str:
     """Generate a key shown once to the installer and never stored in plaintext."""
     return "rdb_live_" + secrets.token_urlsafe(32)
+
+
+def new_bridge_api_key_hash(api_key: str) -> tuple[str, str]:
+    """Return ``(salt, hash)`` for a new bridge API key (L1, salted)."""
+    salt = secrets.token_hex(16)
+    digest = hashlib.sha256(f"{salt}:{api_key}".encode("utf-8")).hexdigest()
+    return salt, digest
+
+
+def verify_bridge_api_key(api_key: str, stored_hash: str | None, salt: str | None) -> bool:
+    """Verify a bridge API key against a salted (new) or legacy hash."""
+    if not stored_hash or not api_key:
+        return False
+    if salt:
+        candidate = hashlib.sha256(f"{salt}:{api_key}".encode("utf-8")).hexdigest()
+    else:
+        candidate = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(candidate, stored_hash)
 
 
 def generate_bridge_public_id() -> str:
@@ -45,6 +66,7 @@ class BridgeInstallation(TimestampMixin, db.Model):
     )
     public_id = db.Column(db.String(64), nullable=False, unique=True, index=True)
     api_key_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    api_key_salt = db.Column(db.String(32), nullable=True)  # NULL = legacy unsalted hash
     # Bound at provisioning time to prevent a copied laptop config from being
     # used against a different biometric terminal.
     device_serial = db.Column(db.String(120), nullable=False, unique=True, index=True)
@@ -86,10 +108,12 @@ class BridgeInstallation(TimestampMixin, db.Model):
         cls, gym_id: int, display_name: str, device_serial: str
     ) -> tuple["BridgeInstallation", str]:
         raw_key = generate_bridge_api_key()
+        salt, digest = new_bridge_api_key_hash(raw_key)
         installation = cls(
             gym_id=gym_id,
             public_id=generate_bridge_public_id(),
-            api_key_hash=hash_bridge_api_key(raw_key),
+            api_key_hash=digest,
+            api_key_salt=salt,
             device_serial=device_serial.strip(),
             display_name=(display_name or "Gym biometric bridge").strip()[:120],
         )
@@ -97,7 +121,9 @@ class BridgeInstallation(TimestampMixin, db.Model):
 
     def rotate_key(self) -> str:
         raw_key = generate_bridge_api_key()
-        self.api_key_hash = hash_bridge_api_key(raw_key)
+        salt, digest = new_bridge_api_key_hash(raw_key)
+        self.api_key_hash = digest
+        self.api_key_salt = salt
         return raw_key
 
 
