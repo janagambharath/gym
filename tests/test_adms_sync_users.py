@@ -14,7 +14,7 @@ from app.services.bridge_service import adms_command_text
 
 
 def test_adms_command_text_sync_users():
-    assert adms_command_text("sync_users", None) == "DATA QUERY USERINFO"
+    assert adms_command_text("sync_users", None) == "DATA QUERY USERINFO PIN=ALL"
 
 
 def test_parse_userinfo_line():
@@ -32,7 +32,8 @@ def _seed_adms(app, seed_gym):
             connector_type="adms_direct",
             display_name="Test ADMS",
             device_serial="TEST-ADMS-1",
-            status="active",
+            status="not_configured",
+            adms_path_token=f"test-adms-token-{gym.id}",
         )
         db.session.add(integration)
         db.session.flush()
@@ -55,7 +56,7 @@ def test_userinfo_ingest_and_snapshot(client, app, seed_gym, seed_member):
     with app.app_context():
         cmd = RRRAdmsCommand(
             integration_id=iid, gym_id=gym.id, action="sync_users",
-            command_text="DATA QUERY USERINFO",
+            command_text="DATA QUERY USERINFO PIN=ALL",
         )
         db.session.add(cmd)
         db.session.commit()
@@ -84,6 +85,38 @@ def test_userinfo_ingest_and_snapshot(client, app, seed_gym, seed_member):
         suggestions = {s["enroll_number"]: s for s in result["suggestions"]}
         assert "7" in suggestions
         assert suggestions["7"]["member_id"] == seed_member.id
+
+
+def test_operlog_enrollment_persists_without_logging_member_data(client, app, seed_gym, caplog):
+    """The OPERLOG path must save the snapshot without leaking names or PINs."""
+    gym = seed_gym["gym"]
+    iid = _seed_adms(app, seed_gym)
+    with app.app_context():
+        integration = db.session.get(RRRIntegration, iid)
+        token = integration.adms_path_token
+
+    body = (
+        "USER PIN=73\tName=Private Fixture Member\tPri=0\tPasswd=\tCard=0\tGrp=1\n"
+    )
+    with caplog.at_level("INFO"):
+        response = client.post(
+            f"/iclock/{token}/cdata?SN=TEST-ADMS-1&table=OPERLOG",
+            data=body,
+            content_type="text/plain",
+        )
+
+    assert response.status_code == 200
+    with app.app_context():
+        command = RRRAdmsCommand.query.filter_by(
+            integration_id=iid, action="operlog_snapshot"
+        ).first()
+        assert command is not None
+        snapshot = enroll_match_service.get_adms_snapshot(gym.id)
+        assert snapshot is not None
+        assert {"enroll_number": "73", "name": "Private Fixture Member"} in snapshot["users"]
+
+    assert "Private Fixture Member" not in caplog.text
+    assert "PIN=73" not in caplog.text
 
 
 def test_enroll_scan_prefers_adms(client, app, seed_gym):
