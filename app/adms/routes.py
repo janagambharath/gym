@@ -365,7 +365,16 @@ def cdata(path_token: str | None = None):
     # Common ADMS clients expect a plain acknowledgement after a push and an
     # option payload on their initial GET.  Never put secrets in this response.
     if request.method == "GET":
-        return _plain("~SerialNumber={0}\n~DeviceName=RRR\n".format(integration.device_serial))
+        # TransFlag (Format II, tab-separated): explicitly allow the terminal
+        # to auto-upload attendance + operation-log + user enroll/change
+        # records. The X2008 never sent OPERLOG enrollments without this;
+        # worst case the terminal ignores the line (safe no-op).
+        return _plain(
+            "~SerialNumber={0}\n~DeviceName=RRR\n"
+            "~TransFlag=TransData\tAttLog\tOpLog\tEnrollUser\tChgUser\n".format(
+                integration.device_serial
+            )
+        )
     return _plain("OK")
 
 
