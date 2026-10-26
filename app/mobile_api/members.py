@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
+from app.mobile_api.date_rules import grid_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory
@@ -404,8 +405,25 @@ def register_members_routes(bp):
             local_today = today_for_gym(gym.timezone or "Asia/Kolkata")
             membership_start = _parse_date(data.get("membership_start")) or local_today
             membership_end = _parse_date(data.get("membership_end")) or local_today
+            # Strict date repair: an explicitly supplied off-grid end
+            # is rejected, not silently clamped. The no-date case
+            # (start == end == today, a same-day quick add) is an
+            # existing API behaviour and is left alone — the risk is
+            # a hand-typed end date, not the default.
+            if data.get("membership_end"):
+                strict_err = grid_error(
+                    membership_start,
+                    membership_end,
+                    plan.duration_days if plan else None,
+                )
+                if strict_err is not None:
+                    return error_response("VALIDATION_ERROR", strict_err, 400)
             if membership_end < membership_start:
-                membership_end = membership_start
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "membership_end must be on or after membership_start.",
+                    400,
+                )
 
             notes_val = (data.get("notes") or "").strip() or None
             address_val = (data.get("address") or "").strip() or None
@@ -440,8 +458,22 @@ def register_members_routes(bp):
                             method = "cash"
                         standard_price = plan.price if plan else amt
                         discount = max(Decimal("0.00"), standard_price - amt) if standard_price is not None else Decimal("0.00")
-                        days_diff = (membership_end - membership_start).days + 1 if membership_end and membership_start else (plan.duration_days if plan else 30)
-                        renewal_days = max(1, min(730, days_diff))
+                        # Strict: the initial ledger row records the
+                        # plan duration, never a days count derived
+                        # from a hand-typed end date.
+                        renewal_days = (
+                            plan.duration_days
+                            if plan
+                            else max(
+                                1,
+                                min(
+                                    730,
+                                    (membership_end - membership_start).days + 1
+                                    if membership_end and membership_start
+                                    else 30,
+                                ),
+                            )
+                        )
                         payment = PaymentVerification(
                             gym_id=g.gym_id,
                             member_id=member.id,
@@ -510,6 +542,22 @@ def register_members_routes(bp):
             return error_response("NOT_FOUND", "Member not found.", 404)
 
         data = request.get_json(silent=True) or {}
+        # Strict date repair: membership dates (and the plan that
+        # defines them) are owner-only. Staff may still edit name,
+        # phone and other non-date fields below, but a staff date
+        # edit is rejected before anything is applied.
+        date_fields = {"membership_start", "membership_end", "plan_id"}
+        if date_fields.intersection(data.keys()) and (
+            g.current_user is None or g.current_user.role != "gym_owner"
+        ):
+            return error_response(
+                "FORBIDDEN",
+                "Only the gym owner can change membership dates or plan.",
+                403,
+            )
+        _old_start = member.membership_start
+        _old_end = member.membership_end
+        _old_plan_id = member.plan_id
         if "full_name" in data or "name" in data:
             name = (data.get("full_name") or data.get("name") or "").strip()
             if not name:
@@ -546,6 +594,34 @@ def register_members_routes(bp):
                 return error_response("VALIDATION_ERROR", "Invalid membership_end date.", 400)
             member.membership_end = d
 
+        # Strict: when the caller explicitly changed a date, the
+        # resulting pair must sit on the plan's grid, or nothing is
+        # saved. A plan-only change leaves existing dates untouched
+        # (a mid-period plan change is legitimate, not a date edit).
+        if {"membership_start", "membership_end"}.intersection(data.keys()):
+            _result_plan = (
+                MembershipPlan.query.filter_by(id=member.plan_id, gym_id=g.gym_id).first()
+                if member.plan_id
+                else None
+            )
+            _grid_err = grid_error(
+                member.membership_start,
+                member.membership_end,
+                _result_plan.duration_days if _result_plan else None,
+            )
+        else:
+            _grid_err = None
+        if _grid_err is not None:
+            db.session.rollback()
+            return error_response("VALIDATION_ERROR", _grid_err, 400)
+        if member.membership_end is not None and member.membership_start is not None and member.membership_end < member.membership_start:
+            db.session.rollback()
+            return error_response(
+                "VALIDATION_ERROR",
+                "membership_end must be on or after membership_start.",
+                400,
+            )
+
         tz = g.current_user.gym.timezone or "Asia/Kolkata"
         if member.status == "active" and member.membership_end < today_for_gym(tz):
             member.status = "expired"
@@ -554,7 +630,15 @@ def register_members_routes(bp):
 
         queue_membership_command(member)
         audit(action="update_member", resource_type="member", resource_id=member.id,
-              gym_id=g.gym_id, actor_id=g.current_user.id)
+              gym_id=g.gym_id, actor_id=g.current_user.id,
+              metadata={
+                  "old_start": _old_start.isoformat() if _old_start else None,
+                  "new_start": member.membership_start.isoformat() if member.membership_start else None,
+                  "old_end": _old_end.isoformat() if _old_end else None,
+                  "new_end": member.membership_end.isoformat() if member.membership_end else None,
+                  "old_plan_id": _old_plan_id,
+                  "new_plan_id": member.plan_id,
+              })
         invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         db.session.refresh(member)

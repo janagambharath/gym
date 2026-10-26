@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload
 import urllib.parse
 
 from app.extensions import db
+from app.mobile_api.date_rules import plan_days_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, Member, MembershipPlan, MobileIdempotencyKey, PaymentVerification, RenewalHistory
@@ -363,6 +364,18 @@ def register_payments_routes(bp):
             return error_response("VALIDATION_ERROR", "Invalid renewal_days.", 400)
         if not 1 <= renewal_days <= 730:
             return error_response("VALIDATION_ERROR", "renewal_days must be between 1 and 730.", 400)
+        # Strict: free-typed renewal days were the original date bug.
+        # Days must equal the plan duration unless the gym owner
+        # supplies an override reason (audited below).
+        _override_reason = (data.get("override_reason") or "").strip() or None
+        _plan_err = plan_days_error(
+            renewal_days,
+            plan.duration_days if plan else None,
+            override_reason=_override_reason,
+            is_owner=(g.current_user is not None and g.current_user.role == "gym_owner"),
+        )
+        if _plan_err is not None:
+            return error_response("VALIDATION_ERROR", _plan_err, 400)
 
         paid_on_str = data.get("paid_on")
         try:
@@ -402,7 +415,7 @@ def register_payments_routes(bp):
             resource_id=payment.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"amount": str(amount), "channel": channel, "auto_verify": auto_verify},
+            metadata={"amount": str(amount), "channel": channel, "auto_verify": auto_verify, "renewal_days": renewal_days, "override_reason": _override_reason},
         )
         invalidate_dashboard_cache(g.gym_id)
         response_body = {"success": True, "data": _serialize_payment(payment)}

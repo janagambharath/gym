@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
+from app.mobile_api.date_rules import plan_days_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member, MobileIdempotencyKey, RenewalHistory
@@ -206,6 +207,21 @@ def register_renewals_routes(bp):
         elif member.plan:
             plan = member.plan
 
+        # Strict: renewal days must equal the (possibly new) plan
+        # duration unless the gym owner supplies an override reason.
+        # Checked here, after the plan is known and before any date
+        # is written, so a rejected renewal leaves nothing behind.
+        _override_reason = (data.get("override_reason") or "").strip() or None
+        _plan_err = plan_days_error(
+            renewal_days,
+            plan.duration_days if plan else None,
+            override_reason=_override_reason,
+            is_owner=(g.current_user is not None and g.current_user.role == "gym_owner"),
+        )
+        if _plan_err is not None:
+            db.session.rollback()
+            return error_response("VALIDATION_ERROR", _plan_err, 400)
+
         raw_standard = data.get("standard_price")
         standard_price: Decimal | None = None
         if raw_standard is not None and str(raw_standard).strip():
@@ -287,7 +303,7 @@ def register_renewals_routes(bp):
             resource_id=member.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"renewal_days": renewal_days, "new_end": new_end.isoformat()},
+            metadata={"renewal_days": renewal_days, "new_end": new_end.isoformat(), "override_reason": _override_reason},
         )
         invalidate_dashboard_cache(g.gym_id)
         response_body = {"success": True, "data": _serialize_renewal(renewal)}
