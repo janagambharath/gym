@@ -19,6 +19,12 @@ const CLASS_LABELS = {
   ledger_mismatch: 'End date changed outside a payment/renewal',
   span_mismatch: 'Span longer than the plan, no renewal history',
   oversized_renewal: 'A renewal applied more days than the plan allows',
+  historyless_pushed_end: 'No renewal history, but the end runs past the current period — check payments before confirming',
+  start_missing: 'No start date stored',
+  start_after_end: 'Start date is after the end date',
+  start_in_future: 'Start date is in the future — check if this is a pre-registration',
+  start_ledger_mismatch: 'Start date disagrees with the renewal history',
+  period_overlap: 'Two renewal periods overlap — check payments before fixing by hand',
 };
 
 export default {
@@ -51,13 +57,15 @@ export default {
                 <span style="flex:1;min-width:0">
                   <b>${esc(f.full_name)}</b> <span style="color:var(--muted)">· ${esc(f.plan_name)} (${f.plan_duration_days}d)</span><br>
                   <span>Now: ${fmtDate(f.membership_start)} → <b>${fmtDate(f.membership_end)}</b> (${f.span_days} days)</span><br>
-                  <span>Should be: → <b>${fmtDate(f.proposed_end)}</b></span><br>
+                  <span>Should be: → <b>${fmtDate(f.proposed_end || f.expected_end)}</b>${f.classification === 'historyless_pushed_end' ? ' (needs your confirm below — Apply alone will not change it)' : ''}</span><br>
                   <span style="color:var(--muted);font-size:var(--fs-sm)">${esc(CLASS_LABELS[f.classification] || f.classification)}. ${esc(f.reason)}</span><br>
                   <span style="color:var(--muted);font-size:var(--fs-sm)">Verified payments: ${f.verified_payments} (₹${Number(f.verified_paid_total || 0).toLocaleString('en-IN')}) · Renewals on record: ${f.ledger_periods}${f.freeze_events ? ` · Freezes: ${f.freeze_events} — verify before applying` : ''}</span>
                 </span>
               </label>
             `).join('')}
             <button class="btn btn-primary btn-lg btn-full" id="dr-apply">Apply Selected Repairs</button>
+            <button class="btn btn-lg btn-full" id="dr-confirm" style="border:2px solid var(--danger,#c0392b);color:var(--danger,#c0392b);background:transparent">Confirm Selected — No Extra Payment</button>
+            <p style="margin:0;color:var(--muted);font-size:var(--fs-sm)">Confirm is only for members with no renewal history whose end runs past the current period. Tap it only if you are sure they did NOT pay for the extra time — it will shorten their end date to the expected end shown.</p>
           `}
         </div></div>`;
       bindHeaderEvents(el, { onBack: () => navigate.pop() });
@@ -81,6 +89,31 @@ export default {
         } else {
           showToast(r.error.message, 'error');
           btn.disabled = false; btn.textContent = 'Apply Selected Repairs';
+        }
+      });
+
+      el.querySelector('#dr-confirm')?.addEventListener('click', async () => {
+        const byId = new Map(flagged.map(f => [f.member_id, f]));
+        const ids = [...el.querySelectorAll('.dr-check:checked')]
+          .map(c => Number(c.value))
+          .filter(id => byId.get(id)?.classification === 'historyless_pushed_end');
+        if (!ids.length) { showToast('Select at least one member with no renewal history', 'error'); return; }
+        const ok = await showConfirm({
+          title: 'Confirm no extra payment?',
+          message: `This will shorten the end date for ${ids.length} member${ids.length === 1 ? '' : 's'} to the expected end shown. Only confirm if they did NOT pay for time past that end. Payments and history are not changed.`,
+          confirmText: 'Confirm — no extra payment',
+        });
+        if (!ok) return;
+        const btn = el.querySelector('#dr-confirm');
+        btn.disabled = true; btn.textContent = 'Confirming…';
+        const r = await apiRequest('/api/mobile/v1/date-repair/confirm', { method: 'POST', body: { member_ids: ids, confirmed_no_extra_payment: true } });
+        if (r.ok) {
+          const applied = (r.data.results || []).filter(x => x.applied).length;
+          showToast(`Confirmed ${applied} member${applied === 1 ? '' : 's'}`, 'success');
+          load();
+        } else {
+          showToast(r.error.message, 'error');
+          btn.disabled = false; btn.textContent = 'Confirm Selected — No Extra Payment';
         }
       });
     };
