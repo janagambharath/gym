@@ -25,6 +25,7 @@ const CLASS_LABELS = {
   start_in_future: 'Start date is in the future — check if this is a pre-registration',
   start_ledger_mismatch: 'Start date disagrees with the renewal history',
   period_overlap: 'Two renewal periods overlap — check payments before fixing by hand',
+  payment_coverage_gap: 'Days in the period are not covered by a payment on record — check cash / free / discount before fixing by hand',
 };
 
 export default {
@@ -59,7 +60,7 @@ export default {
                   <span>Now: ${fmtDate(f.membership_start)} → <b>${fmtDate(f.membership_end)}</b> (${f.span_days} days)</span><br>
                   <span>Should be: → <b>${fmtDate(f.proposed_end || f.expected_end)}</b>${f.classification === 'historyless_pushed_end' ? ' (needs your confirm below — Apply alone will not change it)' : ''}</span><br>
                   <span style="color:var(--muted);font-size:var(--fs-sm)">${esc(CLASS_LABELS[f.classification] || f.classification)}. ${esc(f.reason)}</span><br>
-                  <span style="color:var(--muted);font-size:var(--fs-sm)">Verified payments: ${f.verified_payments} (₹${Number(f.verified_paid_total || 0).toLocaleString('en-IN')}) · Renewals on record: ${f.ledger_periods}${f.freeze_events ? ` · Freezes: ${f.freeze_events} — verify before applying` : ''}</span>
+                  <span style="color:var(--muted);font-size:var(--fs-sm)">Verified payments: ${f.verified_payments} (₹${Number(f.verified_paid_total || 0).toLocaleString('en-IN')}) · Renewals on record: ${f.ledger_periods}${f.paid_days !== undefined ? ` · Paid days: ${f.paid_days} vs ${f.span_days} stored days` : ''}${f.freeze_events ? ` · Freezes: ${f.freeze_events} — verify before applying` : ''}</span>
                 </span>
               </label>
             `).join('')}

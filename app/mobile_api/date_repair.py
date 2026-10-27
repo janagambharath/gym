@@ -43,6 +43,20 @@ implied by their plan and their renewal ledger (RenewalHistory):
   which row is wrong is ambiguous. A shared boundary day is tolerated,
   and a gap larger than one day is a restart after expiry — the code
   already treats restarts as legitimate — so neither is flagged.
+- ``payment_coverage_gap``: the member is otherwise clean, but days
+  inside the stored period are covered by neither a ledger period nor
+  a verified payment. Two evidences, either is enough: (a) a gap
+  between two ledger periods that falls inside the stored start/end
+  (a restart gap *before* the stored start is still legitimate and
+  is not flagged), or (b) verified payments exist for the member but
+  their total paid days cover fewer periods than the stored span
+  holds. Review-only: a cash payment taken offline, a free period or
+  a discount can explain the gap, so the scan never auto-corrects
+  it — the owner confirms per member. Hard gate: this check only
+  touches members who have at least one verified payment on
+  record. Members with no payment at all are left completely
+  alone by it — no flag, even on a ledger gap — because cash-only
+  members must not be pulled into a payment scan.
 
 Start-date checks run before the end-date checks: a bad start makes
 every span derived from it unreliable. Findings without a proposal are
@@ -64,7 +78,7 @@ from datetime import date as _date
 from datetime import timedelta
 
 from flask import g, jsonify, request
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
@@ -164,9 +178,37 @@ def _overlapping_pair(rows: list[RenewalHistory]) -> tuple | None:
     return None
 
 
+def _ledger_gap_inside_period(
+    rows: list[RenewalHistory], start: _date, end: _date
+) -> int:
+    """Days between consecutive ledger periods that fall inside the
+    stored period. A restart gap before the stored start is not
+    counted: the stored period starts at the restart, so those days
+    were never granted by the member's dates."""
+    gap_days = 0
+    for prev, cur in zip(rows, rows[1:]):
+        if prev.new_end is None or cur.new_start is None:
+            continue
+        gap_start = prev.new_end + timedelta(days=1)
+        gap_end = cur.new_start - timedelta(days=1)
+        if gap_end < gap_start:
+            continue
+        inside_start = max(gap_start, start)
+        inside_end = min(gap_end, end)
+        if inside_end >= inside_start:
+            gap_days += (inside_end - inside_start).days + 1
+    return gap_days
+
+
 def classify_member(
-    member: Member, rows: list[RenewalHistory], today: _date | None = None
+    member: Member,
+    rows: list[RenewalHistory],
+    today: _date | None = None,
+    payments: list | None = None,
 ) -> dict | None:
+    """``payments`` is the member's verified, non-test payments (or
+    None when payment data was not fetched); it is only used for the
+    payment-coverage check at the end of this function."""
     """Return a scan finding for *member*, or None when dates look right.
 
     Start-date checks run before the end-date checks: a bad start makes
@@ -355,7 +397,8 @@ def classify_member(
                     "applying."
                 ),
             }
-        return None
+        # Ledger agrees and no renewal is oversized: fall through to
+        # the payment-coverage check below instead of returning None.
 
     # 3) No usable ledger. A member still in their first period keeps
     #    the old span check: the span itself must fit one plan period.
@@ -405,6 +448,67 @@ def classify_member(
                     f"{span_days} days on a {duration}-day plan."
                 ),
             }
+        # No ledger at all and no earlier finding: the history-less
+        # checks above already own this member, so do not reach the
+        # payment check (which needs a ledger to check against).
+        return None
+
+    # 4) Payment coverage: otherwise clean, but days inside the
+    #    stored period are covered by neither a ledger period nor a
+    #    verified payment. Review-only, no proposal: Apply returns
+    #    needs_review for it, and the owner fixes it by hand after
+    #    confirming whether the extra time was paid in cash, free,
+    #    or discounted.
+    # Payment scan only touches members who have a payment on record.
+    # Members with no verified payment at all are left completely
+    # alone by this check — no flag, no date change — even if their
+    # ledger has a gap. That gap is a ledger matter, not a payment
+    # matter, and cash-only members must not be pulled in here.
+    if rows and duration > 0 and payments:
+        gap_days = _ledger_gap_inside_period(rows, start, end)
+        paid_days = sum(
+            (p.renewal_days or 0) for p in payments if not getattr(p, "is_test", False)
+        )
+        paid_periods = paid_days // duration if duration else 0
+        # Stored span in whole plan periods, rounded to the nearest:
+        # the chain convention adds ~1 day per period, so a stored
+        # span of 61 days on a 30-day plan is 2 periods, not 3.
+        expected_periods = (span_days + duration // 2) // duration
+        short_periods = 0
+        if payments and paid_periods < expected_periods:
+            short_periods = expected_periods - paid_periods
+        if gap_days > 0 or short_periods > 0:
+            parts = []
+            if gap_days > 0:
+                parts.append(
+                    f"{gap_days} days inside the stored period "
+                    f"{start.isoformat()} to {end.isoformat()} have no "
+                    "renewal period covering them"
+                )
+            if short_periods > 0:
+                parts.append(
+                    f"verified payments cover {paid_periods} "
+                    f"{'period' if paid_periods == 1 else 'periods'} "
+                    f"({paid_days} days) but the stored period holds "
+                    f"{expected_periods} "
+                    f"{'period' if expected_periods == 1 else 'periods'}"
+                )
+            finding = {
+                **base,
+                "classification": "payment_coverage_gap",
+                "confidence": "review",
+                "paid_days": paid_days,
+                "expected_periods": expected_periods,
+                "paid_periods": paid_periods,
+                "gap_days": gap_days,
+                "reason": (
+                    "Days in the membership period are not covered by "
+                    "a payment on record: " + " and ".join(parts) + ". "
+                    "Check whether the extra time was paid in cash, "
+                    "given free, or discounted before fixing by hand."
+                ),
+            }
+            return finding
 
     return None
 
@@ -437,16 +541,24 @@ def _scan_gym(gym_id: int) -> list[dict]:
             .scalars()
             .all()
         )
-        finding = classify_member(member, rows, today=today)
+        payments = (
+            db.session.execute(
+                select(PaymentVerification)
+                .where(
+                    PaymentVerification.member_id == member.id,
+                    PaymentVerification.status == "verified",
+                    PaymentVerification.is_test == False,  # noqa: E712
+                )
+                .order_by(PaymentVerification.id.asc())
+            )
+            .scalars()
+            .all()
+        )
+        finding = classify_member(member, rows, today=today, payments=payments)
         if finding is None:
             continue
-        paid_count, paid_total = db.session.execute(
-            select(func.count(PaymentVerification.id), func.coalesce(func.sum(PaymentVerification.amount), 0))
-            .where(
-                PaymentVerification.member_id == member.id,
-                PaymentVerification.status == "verified",
-            )
-        ).one()
+        paid_count = len(payments)
+        paid_total = sum((p.amount for p in payments), 0)
         finding["verified_payments"] = paid_count
         finding["verified_paid_total"] = str(paid_total)
         findings.append(finding)
