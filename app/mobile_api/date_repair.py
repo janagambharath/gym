@@ -1,4 +1,6 @@
 """Owner-only membership date repair endpoints.
+# Railway trigger 2026-10-27: no-code change, re-push to trigger deploy.
+"""
 
 Scan compares every member's stored membership_end against the end
 implied by their plan and their renewal ledger (RenewalHistory):
