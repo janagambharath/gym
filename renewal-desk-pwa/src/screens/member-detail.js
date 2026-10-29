@@ -158,7 +158,7 @@ export default {
                 ${icon('whatsapp', 18, 'white')} Send WhatsApp Reminder
               </button>
               <button class="btn btn-outline btn-full" id="btn-toggle-access" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
-                ${icon('lock', 18)} <span id="btn-toggle-access-label">Block Biometric Access</span>
+                ${icon('lock', 18)} <span id="btn-toggle-access-label">${member.door_blocked ? 'Unblock Biometric Access' : 'Block Biometric Access'}</span>
               </button>
               <button class="btn btn-outline btn-full" id="btn-biometric-records" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
                 ${icon('clock', 18)} Biometric Records
@@ -259,8 +259,9 @@ export default {
       el.querySelector('#btn-record-payment')?.addEventListener('click', () => navigate.push('record-payment', { memberId: String(member.id) }));
       el.querySelector('#btn-renewal-history')?.addEventListener('click', () => navigate.push('member-history', { memberId: String(member.id) }));
 
-      // Block / unblock biometric access (direct-ADMS terminal command)
-      let accessBlocked = false;
+      // Block / unblock biometric access (terminal command: direct-ADMS or bridge).
+      // The initial label reflects the member's actual door state (server-computed).
+      let accessBlocked = member.door_blocked === true;
       el.querySelector('#btn-toggle-access')?.addEventListener('click', async () => {
         const action = accessBlocked ? 'unblock' : 'block';
         const yes = await showConfirm({
@@ -278,8 +279,12 @@ export default {
         btn.disabled = false;
         if (res.ok) {
           accessBlocked = action === 'block';
+          member.door_blocked = accessBlocked;
           el.querySelector('#btn-toggle-access-label').textContent = accessBlocked ? 'Unblock Biometric Access' : 'Block Biometric Access';
-          showToast(res.data?.command ? `Command queued — the terminal applies it on its next check-in.` : `${action === 'block' ? 'Blocked' : 'Unblocked'}.`, 'success');
+          const queuedMsg = res.data?.connector === 'bridge'
+            ? 'Command queued — the bridge applies it on its next poll.'
+            : 'Command queued — the terminal applies it on its next check-in.';
+          showToast(res.data?.command ? queuedMsg : `${action === 'block' ? 'Blocked' : 'Unblocked'}.`, 'success');
         } else {
           showToast(res.error?.message || `Could not ${action} access`, 'error');
         }

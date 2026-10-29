@@ -19,7 +19,9 @@ from app.services.bridge_service import (
     ADMS_BLOCK_DESTRUCTIVE_NOTE,
     ADMS_DELIVERED_TIMEOUT_MINUTES,
     adms_command_text,
+    member_is_proven_enableable,
     queue_manual_adms_member_command,
+    queue_manual_bridge_member_command,
 )
 from app.services.rrr_service import (
     DEFAULT_RULES,
@@ -702,10 +704,17 @@ def register_rrr_routes(bp):
     def manual_member_access(member_id: int):
         """Owner-initiated block/unblock of one member's biometric access.
 
-        Queues a ``block``/``unblock`` ADMS command for the member's terminal
-        identity. Gated on supervised commissioning (``commands_enabled``) and
-        on the member having a bound enroll number — same safety bar as the
-        automatic path. The terminal picks the command up on its next poll.
+        Queues a ``block``/``unblock`` command for the member's terminal
+        identity.  Prefers the direct-ADMS path when the gym has a
+        commissioned terminal; otherwise falls back to the bridge (TCP)
+        path, where the .exe applies it on its next poll (deny time-zone
+        switch / restore).  Gated on the member having a bound enroll
+        number — same safety bar as the automatic path.
+
+        For ``unblock`` on the bridge path, the member must be proven
+        enableable (active, end date today or later) — otherwise the
+        serve-side guard would cancel it anyway, so this returns a clear
+        409 up front: fix the dates in Date Repair first, then unblock.
         """
         payload = request.get_json(silent=True) or {}
         action = str(payload.get("action") or "").strip().lower()
@@ -714,18 +723,45 @@ def register_rrr_routes(bp):
         member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
         if member is None or member.deleted_at is not None:
             return error_response("NOT_FOUND", "Member was not found.", 404)
+        if action == "unblock" and not member_is_proven_enableable(member):
+            return error_response(
+                "ENABLE_NOT_ALLOWED",
+                "Member is not active per the stored dates, so the door cannot be reopened. "
+                "Correct the dates in Date Repair first, then unblock.",
+                409,
+            )
         command = queue_manual_adms_member_command(member, action, g.user_id)
-        if command is None:
+        if command is not None:
+            db.session.commit()
+            # H3: an ADMS block is a terminal DELETE, not a reversible disable.
+            data_out = {"command": _adms_command_payload(command)}
+            if action == "block":
+                data_out["warning"] = ADMS_BLOCK_DESTRUCTIVE_NOTE
+            return jsonify({"success": True, "data": data_out}), 201
+        # Bridge (TCP) fallback — e.g. Yodha's old .exe.  The bridge .exe
+        # picks the command up on its next poll; serve-side guards
+        # (fail-safe for disables, H8 for enables) still apply.
+        bridge_command = queue_manual_bridge_member_command(member, action, g.user_id)
+        if bridge_command is None:
             return error_response(
                 "DEVICE_NOT_READY",
                 "Biometric commands are not available: finish device commissioning and bind this member's enroll number first.",
                 409,
             )
         db.session.commit()
-        # H3: an ADMS block is a terminal DELETE, not a reversible disable.
-        data_out = {"command": _adms_command_payload(command)}
+        data_out = {
+            "command": {
+                "id": bridge_command.id,
+                "command_type": bridge_command.command_type,
+                "status": bridge_command.status,
+            },
+            "connector": "bridge",
+        }
         if action == "block":
-            data_out["warning"] = ADMS_BLOCK_DESTRUCTIVE_NOTE
+            data_out["warning"] = (
+                "Block switches this member's terminal time-zone to the deny schedule. "
+                "Unblock restores it — no re-enrollment needed."
+            )
         return jsonify({"success": True, "data": data_out}), 201
 
     # ── Smart enroll matching ──────────────────────────────────────────

@@ -658,6 +658,142 @@ def queue_manual_adms_member_command(
     return command
 
 
+def door_blocked_state(member: Member) -> bool:
+    """Best-effort blocked-at-door state from the last acked terminal command.
+
+    Bridge: the latest acked ``BridgeCommand`` for the member — a
+    ``disable_user`` means the terminal is denying entry.
+    ADMS: the latest acked ``RRRAdmsCommand`` for the member's enroll
+    number — ``block``/``delete_user`` means denied.
+
+    No acked command (or no enroll number) → ``False``: the door is
+    assumed open.  Blocks applied purely terminal-side, never through the
+    server queue, are not visible here.
+    """
+    enroll = (member.device_enroll_number or "").strip()
+    if not enroll:
+        return False
+    try:
+        canonical = canonical_enroll_number(enroll)
+    except ValueError:
+        canonical = enroll
+    bridge_cmd = db.session.execute(
+        select(BridgeCommand)
+        .where(
+            BridgeCommand.gym_id == member.gym_id,
+            BridgeCommand.member_id == member.id,
+            BridgeCommand.status == "acked",
+        )
+        .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if bridge_cmd is not None:
+        return bridge_cmd.command_type == "disable_user"
+    adms_cmd = db.session.execute(
+        select(RRRAdmsCommand)
+        .where(
+            RRRAdmsCommand.gym_id == member.gym_id,
+            RRRAdmsCommand.test_enroll_number.in_([enroll, canonical]),
+            RRRAdmsCommand.status == "acked",
+        )
+        .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if adms_cmd is not None:
+        return adms_cmd.action in {"block", "delete_user"}
+    return False
+
+
+def queue_manual_bridge_member_command(
+    member: Member, action: str, actor_id: int | None
+) -> BridgeCommand | None:
+    """Queue an owner-initiated block/unblock for a bridge (TCP) terminal.
+
+    The bridge equivalent of :func:`queue_manual_adms_member_command`:
+    the owner explicitly chooses ``block``/``unblock`` (mapped to
+    ``disable_user``/``enable_user``) instead of the action being derived
+    from membership state.  The bridge .exe picks the command up on its
+    next poll; a block switches the member's terminal time-zone to the
+    deny schedule, an unblock restores it.
+
+    Safety is enforced at serve time, not here: the lease path cancels a
+    disable for a non-blockable member (fail-safe) and an enable for a
+    non-enableable member (H8), so a manual unblock can never re-open the
+    door for a paused/expired member.  Callers that want a clear,
+    actionable error up front (e.g. "fix the dates first") should check
+    :func:`member_is_proven_enableable` before calling.
+
+    Returns ``None`` when there is no active bridge installation or the
+    member has no enroll number.  Does not commit.
+    """
+    if action not in {"block", "unblock"}:
+        raise ValueError(f"Unknown manual bridge action: {action!r}")
+    installation = _active_installation(member.gym_id)
+    if installation is None:
+        return None
+    if not member.device_enroll_number:
+        return None
+    enroll_number = canonical_enroll_number(member.device_enroll_number)
+    command_type = "disable_user" if action == "block" else "enable_user"
+
+    # Deduplicate against the latest command for this member: never stack
+    # a second pending command of the same type, and let a not-yet-served
+    # pending command be replaced by the owner's explicit choice.
+    latest = db.session.execute(
+        select(BridgeCommand)
+        .where(BridgeCommand.bridge_id == installation.id, BridgeCommand.member_id == member.id)
+        .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+        .limit(1)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if latest is not None:
+        if (
+            latest.status in {"pending", "leased"}
+            and latest.command_type == command_type
+            and latest.enroll_number == enroll_number
+        ):
+            return latest
+        if latest.status == "pending":
+            latest.command_type = command_type
+            latest.enroll_number = enroll_number
+            latest.member_name = member.full_name
+            latest.delay_seconds = None
+            latest.last_error = None
+            latest.retry_attempt = 0
+            latest.not_before = None
+            db.session.flush()
+            audit(
+                action=f"bridge_manual_{action}_queued",
+                resource_type="bridge_command",
+                resource_id=latest.id,
+                gym_id=member.gym_id,
+                actor_id=actor_id,
+                metadata={"member_id": member.id, "enroll_number": enroll_number,
+                          "replaced_pending": True},
+            )
+            return latest
+
+    command = BridgeCommand(
+        bridge_id=installation.id,
+        gym_id=member.gym_id,
+        member_id=member.id,
+        command_type=command_type,
+        enroll_number=enroll_number,
+        member_name=member.full_name,
+    )
+    db.session.add(command)
+    db.session.flush()
+    audit(
+        action=f"bridge_manual_{action}_queued",
+        resource_type="bridge_command",
+        resource_id=command.id,
+        gym_id=member.gym_id,
+        actor_id=actor_id,
+        metadata={"member_id": member.id, "enroll_number": enroll_number},
+    )
+    return command
+
+
 def queue_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
     """Queue the latest required terminal state, without duplicating work.
 

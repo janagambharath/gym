@@ -17,7 +17,7 @@ from app.models.member_access_state import MemberAccessState
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
-from app.services.bridge_service import queue_membership_command
+from app.services.bridge_service import door_blocked_state, queue_membership_command
 from app.services.document_scan_service import DocumentScanService
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.mobile_member_import_service import validate_csv
@@ -366,6 +366,9 @@ def register_members_routes(bp):
         access_state = MemberAccessState.query.filter_by(gym_id=g.gym_id, member_id=member.id).first()
         data["is_inside"] = (access_state.current_state == "INSIDE") if access_state else False
         data["last_entry_at"] = access_state.last_entry_at.isoformat() if (access_state and access_state.last_entry_at) else None
+        # Best-effort door state from the last acked terminal command, so the
+        # Block/Unblock toggle can show the true label on first render.
+        data["door_blocked"] = door_blocked_state(member)
 
         # Security: never disclose a member's live OTP to staff clients.
         # Revealing it lets any staff credential impersonate the member and
