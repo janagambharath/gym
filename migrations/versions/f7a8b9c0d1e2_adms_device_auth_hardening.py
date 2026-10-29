@@ -74,13 +74,13 @@ def upgrade():
     # everything else (and all future rows, via the model default) is off.
     conn.execute(
         sa.text(
-            "UPDATE rrr_integrations SET allow_serial_fallback = 1 "
+            "UPDATE rrr_integrations SET allow_serial_fallback = TRUE "
             "WHERE connector_type = 'adms_direct'"
         )
     )
     conn.execute(
         sa.text(
-            "UPDATE rrr_integrations SET allow_serial_fallback = 0 "
+            "UPDATE rrr_integrations SET allow_serial_fallback = FALSE "
             "WHERE allow_serial_fallback IS NULL"
         )
     )
