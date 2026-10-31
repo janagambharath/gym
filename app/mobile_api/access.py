@@ -86,12 +86,27 @@ def register_access_routes(bp):
             gym_id=g.gym_id, connector_type="adms_direct"
         ).first()
         if adms:
+            from app.services.rrr_service import (
+                direct_adms_terminal_is_online,
+                direct_adms_terminal_last_seen_at,
+            )
+
             summary["adms_integration_id"] = adms.id
-            summary["adms_online"] = adms.status == "connected"
+            # A prior successful connection is not proof that the terminal
+            # can receive commands now. Use the same five-minute authenticated
+            # poll check as Direct Cloud commissioning.
+            summary["adms_online"] = direct_adms_terminal_is_online(adms)
+            adms_last_seen = direct_adms_terminal_last_seen_at(adms)
+            summary["adms_last_seen_at"] = (
+                adms_last_seen.isoformat() if adms_last_seen else None
+            )
+            summary["adms_commands_enabled"] = bool(adms.commands_enabled)
             summary["adms_device_name"] = adms.device_name or adms.device_serial
         else:
             summary["adms_integration_id"] = None
             summary["adms_online"] = False
+            summary["adms_last_seen_at"] = None
+            summary["adms_commands_enabled"] = False
             summary["adms_device_name"] = None
 
         # The top status card should show live if EITHER the bridge or the

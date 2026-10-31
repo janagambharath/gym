@@ -89,7 +89,11 @@ export default {
                 </span>
               </div>
               ${s.adms_device_name ? `<div style="font-size:var(--fs-xs);color:var(--muted)">${escapeHtml(s.adms_device_name)}</div>` : ''}
-              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">Punches sync automatically. Block/unblock runs on membership changes.</p>
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">${s.adms_online
+                ? (s.adms_commands_enabled
+                  ? 'Terminal polled recently. Membership block/restore commands are enabled.'
+                  : 'Terminal polled recently, but automatic membership commands are not enabled yet.')
+                : `No recent terminal poll${s.adms_last_seen_at ? ` (last seen ${escapeHtml(formatDateTime(s.adms_last_seen_at))})` : ''}. It cannot receive block/unblock commands until it reconnects.`}</p>
             </div>
             ` : ''}
 
