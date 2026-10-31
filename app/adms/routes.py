@@ -610,6 +610,7 @@ def getrequest(path_token: str | None = None):
     # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from
     # silently dropping a physical-access request.
     from app.services.bridge_service import (
+        ADMS_DISABLE_ACTIONS,
         ADMS_ENABLE_ACTIONS,
         ADMS_GROUP_TEST_ACTIONS,
         ADMS_TEST_ACTIONS,
@@ -671,7 +672,13 @@ def getrequest(path_token: str | None = None):
         # (C2): their wire text is a DELETE, caught by action name AND by
         # wire text. The separate eSSL Grp tests take the terminal-local
         # test-identity branch above and are USERINFO updates.
-        if adms_command_is_delete(candidate):
+        if candidate.action == "block" and adms_command_is_delete(candidate):
+            cancel_adms_command(
+                candidate,
+                error="Legacy destructive block was not sent; automatic blocks now use the tested Grp=100 update.",
+            )
+            continue
+        if candidate.action in ADMS_DISABLE_ACTIONS or adms_command_is_delete(candidate):
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if disable_must_be_cancelled(member):
                 cancel_adms_command(candidate)
@@ -781,14 +788,14 @@ def devicecmd(path_token: str | None = None):
     from app.services.bridge_service import (
         ADMS_ACKED_ABSENT_RESULT_CODE,
         ADMS_DESTRUCTIVE_ACTIONS,
+        adms_command_is_delete,
     )
 
-    _delete_actions = {"block", "block_test", "delete_user", "delete_biodata_test", "delete_fingertmp_test"}
     if result == "0":
         command.status = "acked"
         command.result_code = result
         command.result_message = detail or None
-    elif command.action in _delete_actions and result in ("-1", "-2"):
+    elif adms_command_is_delete(command) and result in ("-1", "-2"):
         command.status = "acked"
         command.result_code = ADMS_ACKED_ABSENT_RESULT_CODE
         command.result_message = (detail or "") + " [treated as success: already absent]"

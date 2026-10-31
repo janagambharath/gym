@@ -17,6 +17,7 @@ from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRInt
 from app.services.audit_service import audit
 from app.services.bridge_service import (
     ADMS_BLOCK_DESTRUCTIVE_NOTE,
+    ADMS_GROUP_BLOCK_NOTE,
     ADMS_DELIVERED_TIMEOUT_MINUTES,
     adms_command_text,
     member_is_proven_enableable,
@@ -639,18 +640,21 @@ def register_rrr_routes(bp):
         if attendance_exists is None:
             return error_response("COMMISSIONING_REQUIRED", "A mapped real attendance event from the selected device is required before commands can be enabled.", 409)
         if row.connector_type == "adms_direct":
-            # Machine proof that the PUSH command/acknowledgement path works
-            # both ways: the owner must have run at least one commissioning
-            # test command that the terminal acknowledged.
-            acked_test = RRRAdmsCommand.query.filter(
-                RRRAdmsCommand.integration_id == row.id,
-                RRRAdmsCommand.action.in_(("probe_info", "block_test", "unblock_test")),
-                RRRAdmsCommand.status == "acked",
-            ).first()
-            if acked_test is None:
+            # Require acknowledgements for both tested Group transitions;
+            # legacy DELETE/recreate tests do not prove this automatic path.
+            acked_group_tests = {
+                action
+                for (action,) in db.session.query(RRRAdmsCommand.action).filter(
+                    RRRAdmsCommand.integration_id == row.id,
+                    RRRAdmsCommand.action.in_(("essl_group_block_test", "essl_group_unblock_test")),
+                    RRRAdmsCommand.status == "acked",
+                ).distinct().all()
+            }
+            required_group_tests = {"essl_group_block_test", "essl_group_unblock_test"}
+            if not required_group_tests.issubset(acked_group_tests):
                 return error_response(
                     "COMMISSIONING_REQUIRED",
-                    "Run a test command from the integration screen and wait for the terminal to acknowledge it before enabling automatic commands.",
+                    "Run both eSSL Group tests and wait for Grp=100 and Grp=1 acknowledgements before enabling automatic commands.",
                     409,
                 )
         row.commissioning_status = "physical_test_passed"
@@ -787,10 +791,10 @@ def register_rrr_routes(bp):
         command = queue_manual_adms_member_command(member, action, g.user_id)
         if command is not None:
             db.session.commit()
-            # H3: an ADMS block is a terminal DELETE, not a reversible disable.
+            # ADMS membership blocks now use the tested reversible Group update.
             data_out = {"command": _adms_command_payload(command)}
             if action == "block":
-                data_out["warning"] = ADMS_BLOCK_DESTRUCTIVE_NOTE
+                data_out["note"] = ADMS_GROUP_BLOCK_NOTE
             return jsonify({"success": True, "data": data_out}), 201
         # Bridge (TCP) fallback — e.g. Yodha's old .exe.  The bridge .exe
         # picks the command up on its next poll; serve-side guards
@@ -1081,11 +1085,11 @@ def register_rrr_routes(bp):
             "total": len(all_targets),
             "skipped_not_blockable": skipped,
             "message": (
-                f"Queued removal for {queued} expired members. Terminal will block them on next poll."
+                f"Queued access blocks for {queued} expired members. The terminal will apply them on its next poll."
                 + (f" {skipped} members were skipped: they are not proven blockable "
                    "(e.g. still active) — expire them through the membership flow first."
                    if skipped else "")
-                + " " + ADMS_BLOCK_DESTRUCTIVE_NOTE
+                + " Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint."
             ),
         }})
 
@@ -1094,7 +1098,7 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner")
     def remove_member_from_terminal(member_id):
-        """Queue DELETE command for a single member (removes from terminal only, not from app)."""
+        """Queue the member's current membership state to the terminal."""
         from app.models.member import Member
         from app.services.bridge_service import queue_membership_command
         from app.services.audit_service import audit
@@ -1110,7 +1114,7 @@ def register_rrr_routes(bp):
         # guard will cancel — with a success message either way.
         if member.status == "active":
             return jsonify({"success": False, "error": (
-                "Member is still active. Removal from the terminal is only "
+                "Member is still active. Blocking from the terminal is only "
                 "available for expired, inactive, or paused members; expire "
                 "the membership first."
             )}), 400
@@ -1125,12 +1129,12 @@ def register_rrr_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.user_id,
             metadata={"enroll_number": member.device_enroll_number,
-                      "destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE},
+                      "method": "membership_state_block"},
         )
 
         return jsonify({"success": True, "data": {
             "queued": bool(cmd),
-            "message": f"Queued removal for {member.full_name or member.id}. {ADMS_BLOCK_DESTRUCTIVE_NOTE}",
+            "message": f"Queued terminal block for {member.full_name or member.id}. Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint.",
         }})
 
     @bp.post("/rrr/restore-deleted-members")

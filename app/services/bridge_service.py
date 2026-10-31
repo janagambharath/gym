@@ -19,17 +19,10 @@ from app.services.timezone_service import today_for_gym
 _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
 
 BRIDGE_DISABLE_COMMAND_TYPES = frozenset({"disable_user", "delete_user"})
-# Every ADMS action whose wire text is a DELETE (see adms_command_text and
-# the raw probe templates in app/mobile_api/adms_probe.py). The legacy
-# block_test still produces "DATA DELETE USERINFO" bytes; the new
-# eSSL-group test actions use DATA UPDATE and are guarded by ADMS_TEST_ACTIONS.
-# The template-delete tests
-# produce "DATA DELETE FINGERTMP", so omitting them let a test path delete
-# any terminal user, including an active member (investigation C2).
-# The probe_* names are not in the command-table action CHECK today, so
-# they cannot be queued on a CHECK-enforced DB — they are listed here so
-# they are guarded the moment that CHECK is ever widened, and getrequest
-# additionally guards on the wire text itself (adms_command_is_delete).
+# ADMS actions that deny access and must be revalidated against current
+# membership state immediately before delivery. Automatic ``block`` now uses
+# the tested Grp=100 USERINFO update; legacy/test delete actions remain guarded
+# by their action and by inspecting the actual wire text.
 ADMS_DISABLE_ACTIONS = frozenset({
     "block",
     "block_test",
@@ -72,16 +65,19 @@ ADMS_GROUP_TEST_ACTIONS = frozenset({
     "essl_group_unblock_test",
 })
 BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
-# Actions whose wire effect is a terminal DELETE (destructive: the user
-# record — and, on X2008, its fingerprint templates — are gone until the
-# member physically re-enrolls). Used for destructive-action labelling.
+# Actions whose wire effect can delete terminal records or fingerprint data.
+# Automatic ``block`` is intentionally absent: it now uses Grp=100.
 ADMS_DESTRUCTIVE_ACTIONS = frozenset(
-    {"block", "delete_user", "block_test", "delete_biodata_test", "delete_fingertmp_test"}
+    {"delete_user", "block_test", "delete_biodata_test", "delete_fingertmp_test"}
 )
 ADMS_BLOCK_DESTRUCTIVE_NOTE = (
-    "ADMS block deletes the user from the terminal — fingerprint "
-    "re-enrollment is required on unblock (templates are not backed up "
-    "on X2008)."
+    "Legacy DELETE USERINFO removes the terminal user; X2008 fingerprint "
+    "templates are not backed up, so restoring access may require "
+    "fingerprint re-enrollment."
+)
+ADMS_GROUP_BLOCK_NOTE = (
+    "Direct ADMS blocks with USERINFO Grp=100 and restores with Grp=1. "
+    "The terminal user and fingerprint stay enrolled."
 )
 # Single stuck-command timeout shared by the ADMS getrequest reaper and the
 # owner test-command endpoint (L5, aligned 2026-10-24). A delivered command
@@ -125,12 +121,12 @@ STALE_ENABLE_ERROR = (
 def adms_command_is_delete(command: RRRAdmsCommand) -> bool:
     """True when an ADMS command would delete terminal state.
 
-    Action-name check first; wire-text check second, so a DELETE produced
-    by any builder (including a future action name not yet in
-    ADMS_DISABLE_ACTIONS) is still caught at the point of no return.
+    Action-name check first for known destructive actions; wire-text check
+    second catches legacy ``block`` rows and future DELETE builders even if
+    their action name is not in the known set.
     """
 
-    if command.action in ADMS_DISABLE_ACTIONS:
+    if command.action in ADMS_DESTRUCTIVE_ACTIONS:
         return True
     text = (command.command_text or "").strip().upper()
     return text.startswith("DATA DELETE")
@@ -360,12 +356,11 @@ def adms_command_text(
 ) -> str:
     """Return the PUSH SDK wire text for a direct-ADMS terminal command.
 
-    ``block``/``unblock`` are the automatic membership commands. Legacy
-    ``block_test``/``unblock_test`` retain their original commissioning wire
-    formats. The separate ``essl_group_*_test`` actions reproduce eBioServer's
-    USERINFO group update for a manually selected test identity; REA static
-    analysis found Grp=100/Grp=1, but the target X2008 firmware has not been
-    validated yet.
+    ``block``/``unblock`` are the automatic membership commands and use the
+    X2008-verified USERINFO groups: Grp=100 denies access, Grp=1 restores it.
+    Legacy ``block_test``/``unblock_test`` retain their original commissioning
+    formats for compatibility. The separate ``essl_group_*_test`` actions
+    exercise those same Group updates on the dedicated test identity.
 
     Advanced commands added for the no-laptop direct-ADMS path:
 
@@ -405,16 +400,13 @@ def adms_command_text(
     if action == "delete_user":
         return f"DATA DELETE USERINFO PIN={enroll_number}"
 
-    if action in {"essl_group_block_test", "essl_group_unblock_test"}:
-        # Candidate copied from the public eSSL eBioServer implementation:
-        # BlockUser=true queues Grp=100; false queues Grp=1. This remains a
-        # test-only command until the exact X2008 firmware is physically checked.
+    if action in {"block", "unblock", "essl_group_block_test", "essl_group_unblock_test"}:
         name = sanitize_terminal_name(member_name) or "ADMS TEST"
-        group = "100" if action == "essl_group_block_test" else "1"
+        group = "100" if action in {"block", "essl_group_block_test"} else "1"
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tGrp={group}"
 
-    if action in {"block", "block_test"}:
-        # DELETE is the only proven block on X2008. NOTE: fingerprint
+    if action == "block_test":
+        # Legacy DELETE-based commissioning probe. NOTE: fingerprint
         # templates are NOT backed up — the X2008 never uploads USERINFO/
         # templates via query, so unblock recreates the user and the member
         # must re-scan their finger.
@@ -430,7 +422,7 @@ def adms_command_text(
         # required for DELETE too. Try FID=0 first.
         #   DATA DELETE FINGERTMP PIN=<pin>\tFID=0
         return f"DATA DELETE FINGERTMP PIN={enroll_number}\tFID=0"
-    elif action in {"unblock", "unblock_test"}:
+    elif action == "unblock_test":
         # Recreate the user. Fingerprint restore commands are queued
         # separately by queue_adms_membership_command.
         name = sanitize_terminal_name(member_name) or "Test User"
@@ -468,9 +460,8 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
     """Queue an automatic block/unblock for the direct-ADMS terminal.
 
     This is the direct-path twin of :func:`queue_membership_command`.  It is
-    deliberately gated on ``commands_enabled``: the owner must finish the
-    supervised commissioning (mapped real attendance + acknowledged test
-    command + physical door test) before any automatic command is queued.
+    deliberately gated on ``commands_enabled``: the owner must finish
+    supervised commissioning before any automatic command is queued.
 
     Delivery is pull-based (the terminal polls ``/iclock/getrequest`` and
     re-sends ``delivered`` commands until acknowledged), so queueing while the
@@ -517,6 +508,12 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
     if latest is not None:
         if latest.status == "queued":
             if latest.action == action:
+                # Rewrite a pre-deployment queued DELETE block before it can
+                # reach the terminal; the tested automatic block is Grp=100.
+                if action == "block" and adms_command_is_delete(latest):
+                    latest.command_text = command_text
+                    latest.result_code = None
+                    latest.result_message = None
                 return latest
             # A not-yet-delivered command can be replaced by the newest state.
             latest.action = action
@@ -531,14 +528,22 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                 resource_id=latest.id,
                 gym_id=member.gym_id,
                 metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True,
-                          **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                          **({"method": "essl_userinfo_group", "group": "100"}
                              if action == "block" else {})},
             )
             return latest
         if latest.status == "delivered":
             if latest.action == action:
-                # The terminal holds it and getrequest re-sends until acked.
-                return latest
+                if action == "block" and adms_command_is_delete(latest):
+                    # A delivered legacy DELETE may still be sitting in the
+                    # device queue. Retire it and queue the tested update.
+                    cancel_adms_command(
+                        latest,
+                        error="Legacy DELETE block was canceled; a Grp=100 update has replaced it.",
+                    )
+                else:
+                    # The terminal holds it and getrequest re-sends until acked.
+                    return latest
             # A different-state command is already in flight; queue the
             # follow-up.  getrequest serves older IDs first, so the terminal
             # converges on the newest state.
@@ -562,14 +567,9 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
         resource_id=command.id,
         gym_id=member.gym_id,
         metadata={"member_id": member.id, "enroll_number": enroll_number,
-                  **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                  **({"method": "essl_userinfo_group", "group": "100"}
                      if action == "block" else {})},
     )
-    # On unblock, queue fingerprint restore commands after the user recreation.
-    # The terminal processes commands in ID order, so templates are restored
-    # after the user exists.
-    if action == "unblock":
-        _queue_template_restore_commands(member, integration, enroll_number)
     return command
 
 
@@ -685,7 +685,7 @@ def queue_manual_adms_member_command(
         gym_id=member.gym_id,
         actor_id=actor_id,
         metadata={"member_id": member.id, "enroll_number": enroll_number,
-                  **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
+                  **({"method": "essl_userinfo_group", "group": "100"}
                      if action == "block" else {})},
     )
     return command

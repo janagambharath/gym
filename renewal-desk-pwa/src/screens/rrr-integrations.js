@@ -350,20 +350,28 @@ function pollCommand(el, integrationId, commandId) {
 
 function commissionBox(kind, integration, commands = []) {
   if (integration.commands_enabled) {
-    return `<section class="rrr-commission is-on"><b>✓ Automatic block/unblock is ON</b><p>Expired members are blocked and renewed members are restored automatically on this terminal.</p>${kind === 'direct' ? '<p><b>Direct ADMS note:</b> automatic block still sends DELETE USERINFO. The new eSSL Grp test above does not change that production command.</p>' : ''}</section>`;
+    return `<section class="rrr-commission is-on"><b>✓ Automatic block/unblock is ON</b><p>Expired members are blocked and renewed members are restored automatically on this terminal.</p>${kind === 'direct' ? '<p><b>Direct ADMS:</b> automatic blocks use the tested Grp=100 update; renewal restores Grp=1, keeping fingerprints enrolled.</p>' : ''}</section>`;
   }
   const hasAttendance = (integration.records_synced || 0) > 0;
-  const hasAckedTest = kind === 'direct'
-    ? commands.some(c => c.status === 'acked' && ['probe_info', 'block_test', 'unblock_test'].includes(c.action))
+  const hasAckedBlock = kind === 'direct'
+    ? commands.some(c => c.status === 'acked' && c.action === 'essl_group_block_test')
     : true;
+  const hasAckedUnblock = kind === 'direct'
+    ? commands.some(c => c.status === 'acked' && c.action === 'essl_group_unblock_test')
+    : true;
+  const hasAckedTests = hasAckedBlock && hasAckedUnblock;
   const check = (done, label) => `<li class="${done ? 'done' : ''}"><i>${done ? '✓' : '○'}</i><span>${label}</span></li>`;
+  const directChecks = kind === 'direct'
+    ? check(hasAckedBlock, 'The Grp=100 block test was acknowledged')
+      + check(hasAckedUnblock, 'The Grp=1 restore test was acknowledged')
+    : '';
   return `<section class="rrr-commission">
     <b>Supervised commissioning</b>
     <p>Stand at the door with the terminal. Automatic block/unblock switches on only after:</p>
-    ${kind === 'direct' ? '<p><b>Important:</b> the eSSL Grp=100/1 test above is test-only. It does not qualify this older automatic path, whose block command still deletes USERINFO.</p>' : ''}
+    ${kind === 'direct' ? '<p><b>Direct ADMS:</b> automation uses the tested Grp=100 block and Grp=1 restore; it keeps the terminal user and fingerprint enrolled.</p>' : ''}
     <ol class="rrr-checklist">
       ${check(hasAttendance, 'A real member punch reached RRR')}
-      ${kind === 'direct' ? check(hasAckedTest, 'A legacy automatic-path test command was acknowledged') : ''}
+      ${directChecks}
       ${check(false, 'You watched the door stay locked on test block and open on test unblock')}
     </ol>
     <label class="rrr-confirm"><input type="checkbox" id="rrr-door-confirm-${kind}"> I stood at the door and verified the lock behaviour myself.</label>
@@ -378,16 +386,20 @@ function wireCommission(el, kind, integration, commands = []) {
   const errorEl = el.querySelector(`#rrr-commission-error-${kind}`);
   if (!checkbox || !button) return;
   const hasAttendance = (integration.records_synced || 0) > 0;
-  const hasAckedTest = kind === 'direct'
-    ? commands.some(c => c.status === 'acked' && ['probe_info', 'block_test', 'unblock_test'].includes(c.action))
+  const hasAckedBlock = kind === 'direct'
+    ? commands.some(c => c.status === 'acked' && c.action === 'essl_group_block_test')
     : true;
-  const ready = () => checkbox.checked && hasAttendance && hasAckedTest;
+  const hasAckedUnblock = kind === 'direct'
+    ? commands.some(c => c.status === 'acked' && c.action === 'essl_group_unblock_test')
+    : true;
+  const hasAckedTests = hasAckedBlock && hasAckedUnblock;
+  const ready = () => checkbox.checked && hasAttendance && hasAckedTests;
   checkbox.addEventListener('change', () => { button.disabled = !ready(); });
   if (!ready()) {
     const hint = document.createElement('p');
     hint.className = 'rrr-muted-copy';
-    hint.textContent = kind === 'direct' && !hasAckedTest
-      ? 'The button unlocks after a legacy automatic-path test command is acknowledged. The new eSSL Grp tests do not qualify.'
+    hint.textContent = kind === 'direct' && !hasAckedTests
+      ? 'Run both eSSL Group tests and wait for the Grp=100 and Grp=1 acknowledgements.'
       : 'The button unlocks after the first real punch above reaches RRR.';
     button.after(hint);
   }
