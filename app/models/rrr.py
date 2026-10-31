@@ -253,10 +253,10 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     """One auditable command issued to a direct ADMS terminal.
 
     The command body is generated server-side from a narrowly scoped action.
-    ``probe_info``/``block_test``/``unblock_test`` are the owner-driven
-    commissioning tests; ``block``/``unblock`` are the automatic membership
-    commands queued by ``queue_adms_membership_command`` once the owner
-    finishes supervised commissioning.  It is deliberately not an arbitrary
+    ``probe_info``/``block_test``/``unblock_test`` and ``essl_group_*_test``
+    are owner-driven commissioning/test actions; ``block``/``unblock`` are
+    automatic membership commands queued by ``queue_adms_membership_command``
+    after supervised commissioning. It is deliberately not an arbitrary
     raw-command console.
 
     ``operlog_snapshot`` rows are NOT servable commands: they are created
@@ -270,7 +270,8 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "rrr_adms_commands"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('probe_info', 'block_test', 'unblock_test', 'block', 'unblock', "
+            "action IN ('probe_info', 'block_test', 'unblock_test', 'essl_group_block_test', "
+            "'essl_group_unblock_test', 'block', 'unblock', "
             "'create_user', 'delete_user', 'unlock_door', 'clear_log', 'reboot', 'check', "
             "'sync_users', 'restore_template', 'delete_biodata_test', 'delete_fingertmp_test', "
             "'operlog_snapshot')",

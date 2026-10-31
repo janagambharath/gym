@@ -180,16 +180,21 @@ function directPanel(direct, commands) {
       <div><b>Live commissioning</b><span id="rrr-cmd-progress">${latest ? progressText(latest) : 'No commissioning command sent yet.'}</span></div>
       <button class="rrr-secondary-button" data-adms-action="probe_info" ${connected ? '' : 'disabled'}>1. Send safe connection probe</button>
       ${connected ? '' : '<p class="rrr-muted-copy">Buttons unlock once the terminal phones home — finish step 2 above first.</p>'}
-      <label>Temporary device User ID<input id="rrr-test-enroll-number" inputmode="numeric" pattern="[0-9]*" placeholder="Example: 999"></label>
+      <label>Enrolled test-user ID<input id="rrr-test-enroll-number" inputmode="numeric" pattern="[0-9]*" placeholder="Example: 999"></label>
+      <label>Current name shown on terminal<input id="rrr-test-user-name" maxlength="24" autocomplete="off" placeholder="Enter the exact test-user name"></label>
       <div class="rrr-command-actions">
-        <button class="rrr-test-block" data-adms-action="block_test" ${connected ? '' : 'disabled'}>2. Test block</button>
-        <button class="rrr-test-unblock" data-adms-action="unblock_test" ${connected ? '' : 'disabled'}>3. Test unblock</button>
+        <button class="rrr-test-block" data-adms-action="essl_group_block_test" ${connected ? '' : 'disabled'}>2. Test eSSL block (Grp=100)</button>
+        <button class="rrr-test-unblock" data-adms-action="essl_group_unblock_test" ${connected ? '' : 'disabled'}>3. Test eSSL unblock (Grp=1)</button>
       </div>
-      <div class="rrr-command-actions" style="margin-top:8px">
-        <button class="rrr-secondary-button" data-adms-action="delete_biodata_test" ${connected ? '' : 'disabled'}>4. Delete fingerprints (FINGERTMP)</button>
-        <button class="rrr-secondary-button" data-adms-action="delete_fingertmp_test" ${connected ? '' : 'disabled'}>5. Delete finger 0 (FID=0)</button>
-      </div>
-      <p class="rrr-muted-copy">Tests 4-5 try to remove just the fingerprint template, keeping the user. If the punch fails but the user still shows in the terminal, we've cracked non-destructive blocking.</p>
+      <p class="rrr-muted-copy">Use only a dedicated, fingerprint-enrolled test account—not a real customer/member—and make sure its ID is not mapped to a Renewal Desk member. Enter its current name exactly. The command updates USERINFO with Grp=100 or Grp=1 and does not use DELETE. After each terminal acknowledgement, test the same finger at the device; the acknowledgement alone does not prove access changed or that the fingerprint remained enrolled. These tests do not enable automatic membership commands.</p>
+      <details class="rrr-danger-probes">
+        <summary>Advanced destructive fingerprint probes</summary>
+        <p class="rrr-muted-copy">These commands delete fingerprint template data for the test ID. You will need to enroll it again; they are not needed for the Grp test above.</p>
+        <div class="rrr-command-actions">
+          <button class="rrr-secondary-button" data-adms-action="delete_biodata_test" ${connected ? '' : 'disabled'}>Delete fingerprints (FINGERTMP)</button>
+          <button class="rrr-secondary-button" data-adms-action="delete_fingertmp_test" ${connected ? '' : 'disabled'}>Delete finger 0 (FID=0)</button>
+        </div>
+      </details>
       <p id="rrr-command-error" class="rrr-form-error" role="alert"></p>
     </section>
     ${commissionBox('direct', direct, commands)}
@@ -197,7 +202,14 @@ function directPanel(direct, commands) {
 }
 
 function progressText(cmd) {
-  const action = esc(String(cmd.action || '').replace(/_/g, ' '));
+  const rawAction = String(cmd.action || '');
+  const action = esc(rawAction.replace(/_/g, ' '));
+  if (cmd.status === 'acked' && rawAction === 'essl_group_block_test') {
+    return '✓ Grp=100 update acknowledged. Check that the test ID is denied at the terminal.';
+  }
+  if (cmd.status === 'acked' && rawAction === 'essl_group_unblock_test') {
+    return '✓ Grp=1 update acknowledged. Check that the same fingerprint works again.';
+  }
   if (cmd.status === 'acked') return `✓ ${action} — terminal acknowledged.`;
   if (cmd.status === 'failed') {
     if (cmd.result_message) return `✗ ${action} — ${esc(cmd.result_message)}`;
@@ -272,14 +284,24 @@ function wireDirectPanel(el, direct, commands) {
     const action = button.dataset.admsAction;
     const errorEl = el.querySelector('#rrr-command-error');
     const testEnrollNumber = el.querySelector('#rrr-test-enroll-number')?.value.trim();
+    const testUserName = el.querySelector('#rrr-test-user-name')?.value.trim();
+    const groupTest = ['essl_group_block_test', 'essl_group_unblock_test'].includes(action);
     if (action !== 'probe_info' && !/^[1-9][0-9]{0,8}$/.test(testEnrollNumber || '')) {
-      errorEl.textContent = 'Enter the temporary device User ID first (digits only, e.g. 999).';
+      errorEl.textContent = 'Enter the enrolled, terminal-local test-user ID first (digits only).';
       return;
     }
+    if (groupTest && !testUserName) {
+      errorEl.textContent = 'Enter the test user’s current name exactly as it appears on the terminal.';
+      return;
+    }
+    if (action === 'essl_group_block_test' && !window.confirm(`Queue a Grp=100 USERINFO update for dedicated test ID ${testEnrollNumber}? This may update its displayed name to “${testUserName}”. Never use a real customer/member ID.`)) return;
+    if (action === 'essl_group_unblock_test' && !window.confirm(`Queue a Grp=1 USERINFO update for dedicated test ID ${testEnrollNumber}? Never use a real customer/member ID. Verify the same fingerprint at the terminal after acknowledgement.`)) return;
     errorEl.textContent = '';
     el.querySelectorAll('[data-adms-action]').forEach(b => { b.disabled = true; });
+    const body = { action, test_enroll_number: testEnrollNumber };
+    if (groupTest) body.test_user_name = testUserName;
     const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`, {
-      method: 'POST', body: { action, test_enroll_number: testEnrollNumber },
+      method: 'POST', body,
     });
     if (!response.ok) {
       el.querySelectorAll('[data-adms-action]').forEach(b => { b.disabled = false; });
@@ -316,7 +338,7 @@ function pollCommand(el, integrationId, commandId) {
 
 function commissionBox(kind, integration, commands = []) {
   if (integration.commands_enabled) {
-    return `<section class="rrr-commission is-on"><b>✓ Automatic block/unblock is ON</b><p>Expired members are blocked and renewed members are restored automatically on this terminal.</p></section>`;
+    return `<section class="rrr-commission is-on"><b>✓ Automatic block/unblock is ON</b><p>Expired members are blocked and renewed members are restored automatically on this terminal.</p>${kind === 'direct' ? '<p><b>Direct ADMS note:</b> automatic block still sends DELETE USERINFO. The new eSSL Grp test above does not change that production command.</p>' : ''}</section>`;
   }
   const hasAttendance = (integration.records_synced || 0) > 0;
   const hasAckedTest = kind === 'direct'
@@ -326,9 +348,10 @@ function commissionBox(kind, integration, commands = []) {
   return `<section class="rrr-commission">
     <b>Supervised commissioning</b>
     <p>Stand at the door with the terminal. Automatic block/unblock switches on only after:</p>
+    ${kind === 'direct' ? '<p><b>Important:</b> the eSSL Grp=100/1 test above is test-only. It does not qualify this older automatic path, whose block command still deletes USERINFO.</p>' : ''}
     <ol class="rrr-checklist">
       ${check(hasAttendance, 'A real member punch reached RRR')}
-      ${kind === 'direct' ? check(hasAckedTest, 'A test command was acknowledged by the terminal') : ''}
+      ${kind === 'direct' ? check(hasAckedTest, 'A legacy automatic-path test command was acknowledged') : ''}
       ${check(false, 'You watched the door stay locked on test block and open on test unblock')}
     </ol>
     <label class="rrr-confirm"><input type="checkbox" id="rrr-door-confirm-${kind}"> I stood at the door and verified the lock behaviour myself.</label>
@@ -352,7 +375,7 @@ function wireCommission(el, kind, integration, commands = []) {
     const hint = document.createElement('p');
     hint.className = 'rrr-muted-copy';
     hint.textContent = kind === 'direct' && !hasAckedTest
-      ? 'The button unlocks after a test command above is acknowledged by the terminal.'
+      ? 'The button unlocks after a legacy automatic-path test command is acknowledged. The new eSSL Grp tests do not qualify.'
       : 'The button unlocks after the first real punch above reaches RRR.';
     button.after(hint);
   }

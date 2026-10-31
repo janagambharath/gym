@@ -22,6 +22,7 @@ from app.services.bridge_service import (
     member_is_proven_enableable,
     queue_manual_adms_member_command,
     queue_manual_bridge_member_command,
+    sanitize_terminal_name,
 )
 from app.services.rrr_service import (
     DEFAULT_RULES,
@@ -34,15 +35,21 @@ from app.services.rrr_service import (
 )
 
 
-def _direct_adms_command_text(action: str, enroll_number: str | None) -> str:
-    """Return only documented, server-generated PUSH SDK test commands.
+def _direct_adms_command_text(
+    action: str,
+    enroll_number: str | None,
+    *,
+    member_name: str | None = None,
+) -> str:
+    """Return server-generated PUSH commands for the owner-only test route.
 
     The wire format is shared with the automatic membership commands in
-    ``app.services.bridge_service.adms_command_text``; this wrapper keeps the
-    owner-driven commissioning endpoint on the same bytes.
+    ``app.services.bridge_service.adms_command_text``. The eSSL group actions
+    are a separate candidate copied from eBioServer's public implementation;
+    their effect on a specific terminal must be checked in person.
     """
 
-    return adms_command_text(action, enroll_number)
+    return adms_command_text(action, enroll_number, member_name=member_name)
 
 
 def _adms_command_payload(row: RRRAdmsCommand) -> dict:
@@ -390,13 +397,37 @@ def register_rrr_routes(bp):
             return error_response("DEVICE_OFFLINE", "Wait until the terminal is connected before queuing a test.", 409)
         payload = request.get_json(silent=True) or {}
         action = str(payload.get("action") or "").strip().lower()
-        if action not in {"probe_info", "block_test", "unblock_test", "sync_users", "delete_biodata_test", "delete_fingertmp_test"}:
-            return error_response("VALIDATION_ERROR", "action must be probe_info, block_test, unblock_test, sync_users, delete_biodata_test, or delete_fingertmp_test.", 422)
+        allowed_actions = {
+            "probe_info",
+            "block_test",
+            "unblock_test",
+            "essl_group_block_test",
+            "essl_group_unblock_test",
+            "sync_users",
+            "delete_biodata_test",
+            "delete_fingertmp_test",
+        }
+        if action not in allowed_actions:
+            return error_response(
+                "VALIDATION_ERROR",
+                "action must be probe_info, block_test, unblock_test, essl_group_block_test, "
+                "essl_group_unblock_test, sync_users, delete_biodata_test, or delete_fingertmp_test.",
+                422,
+            )
         enroll_number = None
         if action not in {"probe_info", "sync_users"}:
             enroll_number = str(payload.get("test_enroll_number") or "").strip()
             if not re.fullmatch(r"[1-9][0-9]{0,8}", enroll_number):
                 return error_response("VALIDATION_ERROR", "test_enroll_number must be a 1–9 digit number.", 422)
+        test_user_name = None
+        if action in {"essl_group_block_test", "essl_group_unblock_test"}:
+            test_user_name = sanitize_terminal_name(payload.get("test_user_name"))
+            if not test_user_name:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "test_user_name is required for the eSSL group test; enter the current device name.",
+                    422,
+                )
         existing = RRRAdmsCommand.query.filter(
             RRRAdmsCommand.integration_id == integration.id,
             RRRAdmsCommand.status.in_(("queued", "delivered")),
@@ -427,7 +458,9 @@ def register_rrr_routes(bp):
                 pass
         if existing is not None:
             return error_response("COMMAND_PENDING", "Wait for the current terminal command acknowledgement before sending another test.", 409)
-        command_text = _direct_adms_command_text(action, enroll_number)
+        command_text = _direct_adms_command_text(
+            action, enroll_number, member_name=test_user_name
+        )
         row = RRRAdmsCommand(
             gym_id=g.gym_id, integration_id=integration.id, action=action,
             test_enroll_number=enroll_number, command_text=command_text,

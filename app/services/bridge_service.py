@@ -20,9 +20,10 @@ _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
 
 BRIDGE_DISABLE_COMMAND_TYPES = frozenset({"disable_user", "delete_user"})
 # Every ADMS action whose wire text is a DELETE (see adms_command_text and
-# the raw probe templates in app/mobile_api/adms_probe.py).  The 2026-10-23
-# hotfix covered only {"block", "delete_user"}; block_test produces the
-# identical "DATA DELETE USERINFO" bytes and the template-delete tests
+# the raw probe templates in app/mobile_api/adms_probe.py). The legacy
+# block_test still produces "DATA DELETE USERINFO" bytes; the new
+# eSSL-group test actions use DATA UPDATE and are guarded by ADMS_TEST_ACTIONS.
+# The template-delete tests
 # produce "DATA DELETE FINGERTMP", so omitting them let a test path delete
 # any terminal user, including an active member (investigation C2).
 # The probe_* names are not in the command-table action CHECK today, so
@@ -47,13 +48,26 @@ ADMS_DISABLE_ACTIONS = frozenset({
 # who is currently active with an end date today or in the future may be
 # enabled.  Bridge set_valid_date is included because setting a validity
 # window is door-opening state, not a neutral read.
-ADMS_ENABLE_ACTIONS = frozenset({"unblock", "unblock_test", "create_user", "restore_template"})
+ADMS_ENABLE_ACTIONS = frozenset({
+    "unblock",
+    "unblock_test",
+    "essl_group_unblock_test",
+    "create_user",
+    "restore_template",
+})
 # Owner-initiated test actions (the PWA's "Temporary device User ID" field):
 # served only when the typed enroll number resolves to NO member — a
 # terminal-local test identity. A match on any member cancels, so the test
 # path can never touch a member row (fail-safe, C2). This is the inverse of
 # the production guards above, and it preserves the hard invariant.
-ADMS_TEST_ACTIONS = frozenset({"block_test", "unblock_test", "delete_biodata_test", "delete_fingertmp_test"})
+ADMS_TEST_ACTIONS = frozenset({
+    "block_test",
+    "unblock_test",
+    "essl_group_block_test",
+    "essl_group_unblock_test",
+    "delete_biodata_test",
+    "delete_fingertmp_test",
+})
 BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
 # Actions whose wire effect is a terminal DELETE (destructive: the user
 # record — and, on X2008, its fingerprint templates — are gone until the
@@ -343,10 +357,12 @@ def adms_command_text(
 ) -> str:
     """Return the PUSH SDK wire text for a direct-ADMS terminal command.
 
-    ``block``/``unblock`` are the automatic membership commands; the ``*_test``
-    variants are the owner-driven commissioning commands.  Both spellings share
-    the same wire format: Pri=1 is the vendor's inactive-user value and Pri=0
-    is a normal user.
+    ``block``/``unblock`` are the automatic membership commands. Legacy
+    ``block_test``/``unblock_test`` retain their original commissioning wire
+    formats. The separate ``essl_group_*_test`` actions reproduce eBioServer's
+    USERINFO group update for a manually selected test identity; REA static
+    analysis found Grp=100/Grp=1, but the target X2008 firmware has not been
+    validated yet.
 
     Advanced commands added for the no-laptop direct-ADMS path:
 
@@ -385,6 +401,14 @@ def adms_command_text(
 
     if action == "delete_user":
         return f"DATA DELETE USERINFO PIN={enroll_number}"
+
+    if action in {"essl_group_block_test", "essl_group_unblock_test"}:
+        # Candidate copied from the public eSSL eBioServer implementation:
+        # BlockUser=true queues Grp=100; false queues Grp=1. This remains a
+        # test-only command until the exact X2008 firmware is physically checked.
+        name = sanitize_terminal_name(member_name) or "ADMS TEST"
+        group = "100" if action == "essl_group_block_test" else "1"
+        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tGrp={group}"
 
     if action in {"block", "block_test"}:
         # DELETE is the only proven block on X2008. NOTE: fingerprint

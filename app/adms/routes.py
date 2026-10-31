@@ -656,8 +656,10 @@ def getrequest(path_token: str | None = None):
         # paused, or expired with a past end date.  Active members, future
         # or NULL end dates, and unresolvable identities all cancel the
         # command; serving continues with the next command.  This covers
-        # block_test and the template-delete tests too (C2): their wire
-        # text is a DELETE, caught by action name AND by wire text.
+        # the legacy destructive block_test and template-delete tests too
+        # (C2): their wire text is a DELETE, caught by action name AND by
+        # wire text. The separate eSSL Grp tests take the terminal-local
+        # test-identity branch above and are USERINFO updates.
         if adms_command_is_delete(candidate):
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if disable_must_be_cancelled(member):
