@@ -114,11 +114,15 @@ def test_init_get_returns_transflag_advertising_operlog_enroll(client, seed_gym)
     response = client.get(_cdata(FAKE_TOKEN, FAKE_SERIAL))
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert f"~SerialNumber={FAKE_SERIAL}\n" in body
-    assert "~DeviceName=RRR\n" in body
+    # Spec (PUSH SDK §4/§5): first line MUST be "GET OPTION FROM: <SN>" —
+    # without it a strict firmware never starts its getrequest poll loop.
+    assert body.startswith(f"GET OPTION FROM: {FAKE_SERIAL}\r\n")
+    assert "ErrorDelay=60\r\n" in body
+    assert "Delay=30\r\n" in body
     # Commit 4113d78: the terminal must be told to auto-upload OpLog and
     # user enroll/change records, or OPERLOG enrollments never arrive.
-    assert "~TransFlag=TransData\tAttLog\tOpLog\tEnrollUser\tChgUser\n" in body
+    assert "TransFlag=TransData\tAttLog\tOpLog\tEnrollUser\tChgUser\r\n" in body
+    assert "Realtime=1\r\n" in body
 
 
 def test_unknown_and_mismatched_devices_get_indistinguishable_ok(client, seed_gym):

@@ -528,15 +528,26 @@ def cdata(path_token: str | None = None):
     # Common ADMS clients expect a plain acknowledgement after a push and an
     # option payload on their initial GET.  Never put secrets in this response.
     if request.method == "GET":
-        # TransFlag (Format II, tab-separated): explicitly allow the terminal
-        # to auto-upload attendance + operation-log + user enroll/change
-        # records. The X2008 never sent OPERLOG enrollments without this;
-        # worst case the terminal ignores the line (safe no-op).
+        # Spec-compliant init handshake (PUSH SDK Attendance Protocol §4/§5):
+        # the FIRST line must be "GET OPTION FROM: <SN>". A strict firmware
+        # treats init as incomplete without it and may never start its
+        # getrequest poll loop — while realtime punch pushes (a separate
+        # code path) keep working. That is exactly the "punches arrive but
+        # commands never picked up" symptom. Delay=30 tells the terminal to
+        # poll getrequest every 30s; ErrorDelay=60 is the backoff after a
+        # failed poll. TransFlag (Format II, tab-separated) explicitly
+        # allows the terminal to auto-upload attendance + operation-log +
+        # user enroll/change records — the X2008 never sent OPERLOG
+        # enrollments without it.
         return _plain(
-            "~SerialNumber={0}\n~DeviceName=RRR\n"
-            "~TransFlag=TransData\tAttLog\tOpLog\tEnrollUser\tChgUser\n".format(
-                integration.device_serial
-            )
+            "GET OPTION FROM: {0}\r\n"
+            "Stamp=9999\r\n"
+            "OpStamp=9999\r\n"
+            "ErrorDelay=60\r\n"
+            "Delay=30\r\n"
+            "TransFlag=TransData\tAttLog\tOpLog\tEnrollUser\tChgUser\r\n"
+            "Realtime=1\r\n"
+            "Encrypt=0\r\n".format(integration.device_serial)
         )
     return _plain("OK")
 
