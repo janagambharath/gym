@@ -199,7 +199,10 @@ function directPanel(direct, commands) {
 function progressText(cmd) {
   const action = esc(String(cmd.action || '').replace(/_/g, ' '));
   if (cmd.status === 'acked') return `✓ ${action} — terminal acknowledged.`;
-  if (cmd.status === 'failed') return `✗ ${action} — terminal reported failure${cmd.result_code ? ` (result ${esc(cmd.result_code)})` : ''}. Check the device and retry.`;
+  if (cmd.status === 'failed') {
+    if (cmd.result_message) return `✗ ${action} — ${esc(cmd.result_message)}`;
+    return `✗ ${action} — terminal reported failure${cmd.result_code ? ` (result ${esc(cmd.result_code)})` : ''}. Check the device and retry.`;
+  }
   if (cmd.status === 'delivered') return `… ${action} — terminal received it, waiting for acknowledgement.`;
   return `… ${action} — sent, waiting for the terminal to pick it up.`;
 }
