@@ -291,6 +291,10 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     action = db.Column(db.String(24), nullable=False)
     status = db.Column(db.String(16), nullable=False, default="queued", index=True)
     test_enroll_number = db.Column(db.String(32), nullable=True)
+    # Set only after an owner explicitly confirms a fake member and the
+    # entered terminal name matches that member at queue time. The serve-time
+    # guard re-resolves the ID and requires this same member row.
+    test_member_id = db.Column(db.Integer, nullable=True)
     command_text = db.Column(db.Text, nullable=False)
     delivered_at = db.Column(db.DateTime(timezone=True), nullable=True)
     acknowledged_at = db.Column(db.DateTime(timezone=True), nullable=True)

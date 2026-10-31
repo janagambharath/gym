@@ -55,11 +55,10 @@ ADMS_ENABLE_ACTIONS = frozenset({
     "create_user",
     "restore_template",
 })
-# Owner-initiated test actions (the PWA's "Temporary device User ID" field):
-# served only when the typed enroll number resolves to NO member — a
-# terminal-local test identity. A match on any member cancels, so the test
-# path can never touch a member row (fail-safe, C2). This is the inverse of
-# the production guards above, and it preserves the hard invariant.
+# Owner-initiated test actions. Terminal-local IDs resolve to no member;
+# only the non-destructive eSSL Grp tests may target a mapped row, and then
+# only after the owner confirms the fake account and its exact name matches.
+# Legacy delete/template tests still require an unresolved terminal-local ID.
 ADMS_TEST_ACTIONS = frozenset({
     "block_test",
     "unblock_test",
@@ -67,6 +66,10 @@ ADMS_TEST_ACTIONS = frozenset({
     "essl_group_unblock_test",
     "delete_biodata_test",
     "delete_fingertmp_test",
+})
+ADMS_GROUP_TEST_ACTIONS = frozenset({
+    "essl_group_block_test",
+    "essl_group_unblock_test",
 })
 BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
 # Actions whose wire effect is a terminal DELETE (destructive: the user

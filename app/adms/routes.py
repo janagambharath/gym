@@ -611,6 +611,7 @@ def getrequest(path_token: str | None = None):
     # silently dropping a physical-access request.
     from app.services.bridge_service import (
         ADMS_ENABLE_ACTIONS,
+        ADMS_GROUP_TEST_ACTIONS,
         ADMS_TEST_ACTIONS,
         STALE_ENABLE_ERROR,
         STALE_ENABLE_MARKER,
@@ -630,15 +631,25 @@ def getrequest(path_token: str | None = None):
 
     command = None
     for candidate in [*delivered, *queued]:
-        # Test path (owner-typed temporary device user ID): serve ONLY when
-        # the enroll number resolves to no member — a terminal-local test
-        # identity like 999. A match on any member cancels instead: the test
-        # path must never touch a member row (fail-safe, C2). This is the
-        # inverse of the production guards below, and it preserves the hard
-        # invariant — active members cannot be blocked through the test path.
+        # Test path: terminal-local IDs are served when unresolved. The
+        # non-destructive Grp tests may also target an explicitly confirmed
+        # fake member, but only when the owner entered that member's current
+        # terminal name and the same member row still resolves here. All
+        # other test actions retain the no-member-only guard.
         if candidate.action in ADMS_TEST_ACTIONS:
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
-            if member is not None:
+            if member is None and candidate.test_member_id is not None:
+                cancel_adms_command(
+                    candidate,
+                    error="Test refused: the confirmed test member no longer matches this ID. Queue the test again.",
+                )
+                continue
+            confirmed_group_test = (
+                candidate.action in ADMS_GROUP_TEST_ACTIONS
+                and member is not None
+                and candidate.test_member_id == member.id
+            )
+            if member is not None and not confirmed_group_test:
                 if candidate.action in ADMS_ENABLE_ACTIONS:
                     cancel_adms_command(
                         candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
@@ -646,7 +657,7 @@ def getrequest(path_token: str | None = None):
                 else:
                     cancel_adms_command(
                         candidate,
-                        error="Test refused: that ID belongs to a member — use a temporary test ID.",
+                        error="Test refused: that ID belongs to a member. Only the explicitly confirmed fake account can use the eSSL Grp test.",
                     )
                 continue
             command = candidate

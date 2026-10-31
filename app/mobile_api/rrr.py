@@ -22,6 +22,7 @@ from app.services.bridge_service import (
     member_is_proven_enableable,
     queue_manual_adms_member_command,
     queue_manual_bridge_member_command,
+    resolve_adms_member,
     sanitize_terminal_name,
 )
 from app.services.rrr_service import (
@@ -428,6 +429,24 @@ def register_rrr_routes(bp):
                     "test_user_name is required for the eSSL group test; enter the current device name.",
                     422,
                 )
+            if payload.get("test_member_confirmed") is not True:
+                return error_response(
+                    "CONFIRMATION_REQUIRED",
+                    "Confirm that this is the dedicated fake test account before sending the eSSL group test.",
+                    422,
+                )
+        test_member_id = None
+        if action in {"essl_group_block_test", "essl_group_unblock_test"}:
+            matched_member = resolve_adms_member(g.gym_id, enroll_number)
+            if matched_member is not None:
+                expected_name = sanitize_terminal_name(matched_member.full_name)
+                if expected_name.casefold() != test_user_name.casefold():
+                    return error_response(
+                        "TEST_MEMBER_NAME_MISMATCH",
+                        "That ID belongs to a Renewal Desk member. For your fake test member, enter the exact name saved in Renewal Desk and shown on the terminal.",
+                        422,
+                    )
+                test_member_id = matched_member.id
         existing = RRRAdmsCommand.query.filter(
             RRRAdmsCommand.integration_id == integration.id,
             RRRAdmsCommand.status.in_(("queued", "delivered")),
@@ -463,7 +482,8 @@ def register_rrr_routes(bp):
         )
         row = RRRAdmsCommand(
             gym_id=g.gym_id, integration_id=integration.id, action=action,
-            test_enroll_number=enroll_number, command_text=command_text,
+            test_enroll_number=enroll_number, test_member_id=test_member_id,
+            command_text=command_text,
             requested_by_id=g.user_id,
         )
         db.session.add(row)

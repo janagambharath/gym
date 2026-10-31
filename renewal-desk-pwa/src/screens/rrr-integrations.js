@@ -182,11 +182,12 @@ function directPanel(direct, commands) {
       ${connected ? '' : '<p class="rrr-muted-copy">Buttons unlock once the terminal phones home — finish step 2 above first.</p>'}
       <label>Enrolled test-user ID<input id="rrr-test-enroll-number" inputmode="numeric" pattern="[0-9]*" placeholder="Example: 999"></label>
       <label>Current name shown on terminal<input id="rrr-test-user-name" maxlength="24" autocomplete="off" placeholder="Enter the exact test-user name"></label>
+      <label class="rrr-test-confirm"><input id="rrr-test-member-confirm" type="checkbox"> I confirm this is the dedicated fake test account I created, not a real customer.</label>
       <div class="rrr-command-actions">
         <button class="rrr-test-block" data-adms-action="essl_group_block_test" ${connected ? '' : 'disabled'}>2. Test eSSL block (Grp=100)</button>
         <button class="rrr-test-unblock" data-adms-action="essl_group_unblock_test" ${connected ? '' : 'disabled'}>3. Test eSSL unblock (Grp=1)</button>
       </div>
-      <p class="rrr-muted-copy">Use only a dedicated, fingerprint-enrolled test account—not a real customer/member—and make sure its ID is not mapped to a Renewal Desk member. Enter its current name exactly. The command updates USERINFO with Grp=100 or Grp=1 and does not use DELETE. After each terminal acknowledgement, test the same finger at the device; the acknowledgement alone does not prove access changed or that the fingerprint remained enrolled. These tests do not enable automatic membership commands.</p>
+      <p class="rrr-muted-copy">Use only the dedicated, fingerprint-enrolled fake account you created. A fake account saved as a Renewal Desk member is accepted when its current terminal name exactly matches the member name. The command updates USERINFO with Grp=100 or Grp=1 and does not use DELETE. After each terminal acknowledgement, test the same finger at the device; the acknowledgement alone does not prove access changed or that the fingerprint remained enrolled. These tests do not enable automatic membership commands.</p>
       <details class="rrr-danger-probes">
         <summary>Advanced destructive fingerprint probes</summary>
         <p class="rrr-muted-copy">These commands delete fingerprint template data for the test ID. You will need to enroll it again; they are not needed for the Grp test above.</p>
@@ -285,6 +286,7 @@ function wireDirectPanel(el, direct, commands) {
     const errorEl = el.querySelector('#rrr-command-error');
     const testEnrollNumber = el.querySelector('#rrr-test-enroll-number')?.value.trim();
     const testUserName = el.querySelector('#rrr-test-user-name')?.value.trim();
+    const testMemberConfirmed = !!el.querySelector('#rrr-test-member-confirm')?.checked;
     const groupTest = ['essl_group_block_test', 'essl_group_unblock_test'].includes(action);
     if (action !== 'probe_info' && !/^[1-9][0-9]{0,8}$/.test(testEnrollNumber || '')) {
       errorEl.textContent = 'Enter the enrolled, terminal-local test-user ID first (digits only).';
@@ -294,12 +296,19 @@ function wireDirectPanel(el, direct, commands) {
       errorEl.textContent = 'Enter the test user’s current name exactly as it appears on the terminal.';
       return;
     }
-    if (action === 'essl_group_block_test' && !window.confirm(`Queue a Grp=100 USERINFO update for dedicated test ID ${testEnrollNumber}? This may update its displayed name to “${testUserName}”. Never use a real customer/member ID.`)) return;
-    if (action === 'essl_group_unblock_test' && !window.confirm(`Queue a Grp=1 USERINFO update for dedicated test ID ${testEnrollNumber}? Never use a real customer/member ID. Verify the same fingerprint at the terminal after acknowledgement.`)) return;
+    if (groupTest && !testMemberConfirmed) {
+      errorEl.textContent = 'Confirm this is the fake test account you created before sending the Group test.';
+      return;
+    }
+    if (action === 'essl_group_block_test' && !window.confirm(`Queue a Grp=100 USERINFO update for fake test ID ${testEnrollNumber}? If this ID is linked to a Renewal Desk member, its name must match exactly. This may update the displayed name to “${testUserName}”.`)) return;
+    if (action === 'essl_group_unblock_test' && !window.confirm(`Queue a Grp=1 USERINFO update for fake test ID ${testEnrollNumber}? If linked to a Renewal Desk member, its name must match exactly. Verify the same fingerprint at the terminal after acknowledgement.`)) return;
     errorEl.textContent = '';
     el.querySelectorAll('[data-adms-action]').forEach(b => { b.disabled = true; });
     const body = { action, test_enroll_number: testEnrollNumber };
-    if (groupTest) body.test_user_name = testUserName;
+    if (groupTest) {
+      body.test_user_name = testUserName;
+      body.test_member_confirmed = true;
+    }
     const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`, {
       method: 'POST', body,
     });
