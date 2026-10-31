@@ -167,6 +167,13 @@ function directPanel(direct, commands) {
       ${copyRow('Path', settings.path || '/iclock')}
       ${copyRow('Mode', settings.server_mode || 'ADMS')}
     </div>
+    ${settings.token_present ? `
+    <div class="rrr-empty-state" id="rrr-rotate-box">
+      <b>Connection values hidden.</b>
+      <p>The token for this terminal is stored securely and can't be shown again — that's why the address and port above are blank. Rotate to get fresh values.</p>
+      <button class="rrr-secondary-button" id="rrr-rotate-token" type="button">Rotate token — get fresh values</button>
+      <p id="rrr-rotate-error" class="rrr-form-error" role="alert"></p>
+    </div>` : ''}
     <p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch. ${settings.https ? '<b>Important:</b> if your terminal has no HTTPS/SSL option in its menu, it cannot use Direct Cloud — use the eBioServer bridge instead.' : '<b>Note:</b> this terminal talks plain HTTP — keep it on a trusted network or use a VPN.'}</p>
     <section class="rrr-command-console">
       <div><b>Live commissioning</b><span id="rrr-cmd-progress">${latest ? progressText(latest) : 'No commissioning command sent yet.'}</span></div>
@@ -198,6 +205,33 @@ function progressText(cmd) {
 
 function wireDirectPanel(el, direct, commands) {
   el.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', () => copyText(button.dataset.copy, button)));
+  el.querySelector('#rrr-rotate-token')?.addEventListener('click', async () => {
+    const button = el.querySelector('#rrr-rotate-token');
+    const errorEl = el.querySelector('#rrr-rotate-error');
+    const box = el.querySelector('#rrr-rotate-box');
+    if (!window.confirm('Rotate the connection token? You will get fresh values to type into the terminal (shown once — copy them before leaving this screen). The old values keep working for 7 days.')) return;
+    button.disabled = true;
+    button.textContent = 'Rotating…';
+    errorEl.textContent = '';
+    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/rotate-token`, { method: 'POST', body: {} });
+    if (!response.ok) {
+      button.disabled = false;
+      button.textContent = 'Rotate token — get fresh values';
+      errorEl.textContent = apiMessage(response, 'Could not rotate the token. Try again.');
+      return;
+    }
+    const s = response.data.terminal_settings || {};
+    box.outerHTML = `<div class="rrr-server-card" id="rrr-fresh-settings">
+      <span class="rrr-server-card-title">Fresh values — copy them NOW</span>
+      <p class="rrr-muted-copy"><b>Shown once.</b> ${esc(response.data.warning || 'Save these in the terminal before leaving this screen.')}</p>
+      ${copyRow('Cloud Server Address', s.server_address || '—')}
+      ${copyRow('Port', String(s.server_port ?? '—'))}
+      ${copyRow('HTTPS', s.https ? 'On' : 'Off')}
+      ${copyRow('Path', s.path || '/iclock')}
+      ${copyRow('Mode', s.server_mode || 'ADMS')}
+    </div>`;
+    el.querySelectorAll('#rrr-fresh-settings [data-copy]').forEach(b => b.addEventListener('click', () => copyText(b.dataset.copy, b)));
+  });
   el.querySelectorAll('[data-adms-action]').forEach(button => button.addEventListener('click', async () => {
     const action = button.dataset.admsAction;
     const errorEl = el.querySelector('#rrr-command-error');
