@@ -394,15 +394,21 @@ function wireCommission(el, kind, integration, commands = []) {
     : true;
   const hasAckedTests = hasAckedBlock && hasAckedUnblock;
   const ready = () => checkbox.checked && hasAttendance && hasAckedTests;
-  checkbox.addEventListener('change', () => { button.disabled = !ready(); });
+  const hint = document.createElement('p');
+  hint.className = 'rrr-muted-copy';
   if (!ready()) {
-    const hint = document.createElement('p');
-    hint.className = 'rrr-muted-copy';
     hint.textContent = kind === 'direct' && !hasAckedTests
       ? 'Run both eSSL Group tests and wait for the Grp=100 and Grp=1 acknowledgements.'
-      : 'The button unlocks after the first real punch above reaches RRR.';
+      : !hasAttendance
+        ? 'The button unlocks after the first real punch above reaches RRR.'
+        : 'After verifying the door at the terminal, check the confirmation box to enable automatic block/unblock.';
     button.after(hint);
   }
+  checkbox.addEventListener('change', () => {
+    const canEnable = ready();
+    button.disabled = !canEnable;
+    if (canEnable) hint.remove();
+  });
   button.addEventListener('click', async () => {
     button.disabled = true; button.textContent = 'Enabling…';
     errorEl.textContent = '';
