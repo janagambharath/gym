@@ -29,6 +29,7 @@ from app.services.rrr_service import (
     DEFAULT_RULES,
     adms_terminal_settings,
     dashboard_for_gym,
+    direct_adms_terminal_is_online,
     ensure_default_rules,
     integration_payload,
     remap_unresolved,
@@ -394,7 +395,7 @@ def register_rrr_routes(bp):
         ).first()
         if integration is None:
             return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
-        if integration.status != "connected":
+        if not direct_adms_terminal_is_online(integration):
             return error_response("DEVICE_OFFLINE", "Wait until the terminal is connected before queuing a test.", 409)
         payload = request.get_json(silent=True) or {}
         action = str(payload.get("action") or "").strip().lower()

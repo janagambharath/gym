@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections import defaultdict
-from datetime import timedelta
+from datetime import timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import case, func
@@ -16,6 +16,7 @@ from app.models import Gym, Member, MembershipPlan, PaymentVerification, QRSetti
 from app.models.mixins import utcnow
 from app.models.rrr import (
     RRRAttendanceEvent,
+    RRRDevice,
     RRRIdentityMapping,
     RRRIntegration,
     RRROpportunity,
@@ -37,6 +38,36 @@ def rules_for_gym(gym_id: int) -> dict[str, int]:
     for rule in RRRRule.query.filter_by(gym_id=gym_id, is_enabled=True).all():
         values[rule.rule_key] = rule.value
     return values
+
+
+ADMS_RECENT_POLL_WINDOW = timedelta(minutes=5)
+
+
+def direct_adms_terminal_is_online(integration: RRRIntegration) -> bool:
+    """Treat a fresh poll from an explicitly serial-enabled terminal as online.
+
+    X2008 devices that cannot send the ADMS path token use the owner's
+    serial-fallback setting. Those authenticated requests refresh
+    ``RRRDevice.last_seen_at`` but intentionally do not clear auth errors or
+    set the integration's stronger token-authenticated ``connected`` state.
+    The commissioning UI and test endpoint still need to know that the
+    registered device is actively polling, so accept a recent sighting only
+    for that integration's exact serial while serial fallback is enabled.
+    """
+    if integration.status == "connected":
+        return True
+    if not integration.allow_serial_fallback or not integration.device_serial:
+        return False
+    device = RRRDevice.query.filter_by(
+        integration_id=integration.id,
+        serial_number=integration.device_serial,
+    ).first()
+    seen_at = device.last_seen_at if device else None
+    if seen_at is None:
+        return False
+    if seen_at.tzinfo is None:
+        seen_at = seen_at.replace(tzinfo=timezone.utc)
+    return seen_at >= utcnow() - ADMS_RECENT_POLL_WINDOW
 
 
 def ensure_default_rules(gym_id: int) -> list[RRRRule]:
@@ -457,7 +488,12 @@ def adms_terminal_settings(host_url: str | None = None, path_token: str | None =
 
 def integration_payload(row: RRRIntegration) -> dict:
     payload = {
-        "id": row.id, "type": row.connector_type, "name": row.display_name, "status": row.status,
+        "id": row.id, "type": row.connector_type, "name": row.display_name,
+        "status": (
+            "connected"
+            if row.connector_type == "adms_direct" and direct_adms_terminal_is_online(row)
+            else row.status
+        ),
         "primary": row.is_primary, "device_serial": row.device_serial, "device_name": row.device_name,
         "last_success_at": row.last_success_at.isoformat() if row.last_success_at else None,
         "last_error": row.last_error, "records_synced": row.records_synced,
