@@ -28,6 +28,13 @@ async function load(el) {
   const ownerName = session?.userName || 'Owner';
   const integration = data.integration;
   const integrationName = integration?.type === 'adms_direct' ? 'Direct Cloud' : integration?.type === 'legacy_bridge' ? 'Bridge' : integration?.type === 'direct_bridge' ? 'Bridge' : 'eBioServer';
+  const integrationStatusLabel = integration?.status === 'connected'
+    ? `${integrationName} live`
+    : integration?.type === 'adms_direct' && integration.commands_enabled
+      ? 'Automation ON · device offline'
+      : integration?.type === 'adms_direct' && (integration.records_synced || 0) > 0
+        ? 'Direct Cloud not polling'
+        : 'Attendance needs setup';
   const priorityCount = ['revenue', 'retain', 'recover'].reduce((total, key) => total + (data.pillars[key]?.count || 0), 0);
   const today = todayResult.ok ? todayResult.data : null;
 
@@ -38,7 +45,7 @@ async function load(el) {
     </header>
     <section class="rrr-dashboard-hero">
       <div><span class="rrr-eyebrow">TODAY AT ${escapeHtml(gymName).toUpperCase()}</span><h1>Run the gym. Grow the business.</h1><p>${priorityCount ? `${formatInteger(priorityCount)} member opportunities need your attention.` : 'Everything looks clear. New signals will appear as members check in, pay and renew.'}</p></div>
-      <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integration?.status === 'connected' ? `${integrationName} live` : 'Attendance needs setup'}</span>${icon('chevronRight', 16)}</button>
+      <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integrationStatusLabel}</span>${icon('chevronRight', 16)}</button>
     </section>
     ${data.unmapped_count ? `
     <section id="rrr-link-banner" class="rrr-link-banner">
