@@ -48,6 +48,12 @@ ADMS_DISABLE_ACTIONS = frozenset({
 # enabled.  Bridge set_valid_date is included because setting a validity
 # window is door-opening state, not a neutral read.
 ADMS_ENABLE_ACTIONS = frozenset({"unblock", "unblock_test", "create_user", "restore_template"})
+# Owner-initiated test actions (the PWA's "Temporary device User ID" field):
+# served only when the typed enroll number resolves to NO member — a
+# terminal-local test identity. A match on any member cancels, so the test
+# path can never touch a member row (fail-safe, C2). This is the inverse of
+# the production guards above, and it preserves the hard invariant.
+ADMS_TEST_ACTIONS = frozenset({"block_test", "unblock_test", "delete_biodata_test", "delete_fingertmp_test"})
 BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
 # Actions whose wire effect is a terminal DELETE (destructive: the user
 # record — and, on X2008, its fingerprint templates — are gone until the

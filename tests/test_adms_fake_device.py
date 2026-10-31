@@ -321,6 +321,45 @@ def test_getrequest_skips_cancelled_first_candidate_to_next_servable(
     )
 
 
+def test_getrequest_test_path_serves_unresolved_and_cancels_member_match(
+    client, seed_gym
+):
+    """Test actions (block_test/unblock_test) serve only for terminal-local
+    IDs that resolve to no member; a typed ID matching a real member is
+    cancelled (fail-safe, C2) — the inverse of the production guards."""
+    integration = _integration(seed_gym)
+    gym_id = seed_gym["gym"].id
+    _member(
+        seed_gym, name="Fake Real Member", phone="+919100009030", enroll="930",
+        status="active", end=date.today() + timedelta(days=30),
+    )
+    ghost_block = _command(
+        integration, gym_id, action="block_test", enroll="999",
+        text=adms_command_text("block_test", "999"), status="queued",
+    )
+    trapped_block = _command(
+        integration, gym_id, action="block_test", enroll="930",
+        text=adms_command_text("block_test", "930"), status="queued",
+    )
+    ghost_unblock = _command(
+        integration, gym_id, action="unblock_test", enroll="998",
+        text=adms_command_text("unblock_test", "998", member_name="Test User"),
+        status="queued",
+    )
+    # Terminal-local 999: no member row -> served.
+    first = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
+    assert first.get_data(as_text=True) == f"C:{ghost_block.id}:DATA DELETE USERINFO PIN=999\n"
+    client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, ghost_block.id, 0))
+    # 930 belongs to a real member -> cancelled in place, never served.
+    second = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
+    assert second.get_data(as_text=True) == (
+        f"C:{ghost_unblock.id}:{ghost_unblock.command_text}\n"
+    )
+    saved_trapped = db.session.get(RRRAdmsCommand, trapped_block.id)
+    assert saved_trapped.status == "failed"
+    assert "temporary test ID" in (saved_trapped.result_message or "")
+
+
 def test_getrequest_timeout_fails_stuck_command_and_moves_on(client, seed_gym):
     integration = _integration(seed_gym)
     gym_id = seed_gym["gym"].id

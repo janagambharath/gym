@@ -600,6 +600,7 @@ def getrequest(path_token: str | None = None):
     # silently dropping a physical-access request.
     from app.services.bridge_service import (
         ADMS_ENABLE_ACTIONS,
+        ADMS_TEST_ACTIONS,
         STALE_ENABLE_ERROR,
         STALE_ENABLE_MARKER,
         adms_command_is_delete,
@@ -618,6 +619,27 @@ def getrequest(path_token: str | None = None):
 
     command = None
     for candidate in [*delivered, *queued]:
+        # Test path (owner-typed temporary device user ID): serve ONLY when
+        # the enroll number resolves to no member — a terminal-local test
+        # identity like 999. A match on any member cancels instead: the test
+        # path must never touch a member row (fail-safe, C2). This is the
+        # inverse of the production guards below, and it preserves the hard
+        # invariant — active members cannot be blocked through the test path.
+        if candidate.action in ADMS_TEST_ACTIONS:
+            member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
+            if member is not None:
+                if candidate.action in ADMS_ENABLE_ACTIONS:
+                    cancel_adms_command(
+                        candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
+                    )
+                else:
+                    cancel_adms_command(
+                        candidate,
+                        error="Test refused: that ID belongs to a member — use a temporary test ID.",
+                    )
+                continue
+            command = candidate
+            break
         # Final guard at the point of no return (fail-safe): a block/delete
         # is served only when the resolved member is proven blockable —
         # paused, or expired with a past end date.  Active members, future
