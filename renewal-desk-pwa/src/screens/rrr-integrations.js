@@ -23,13 +23,15 @@ function timeAgo(iso) {
 }
 
 function isLive(integration) {
-  if (!integration || integration.status !== 'connected' || !integration.last_success_at) return false;
-  return Date.now() - new Date(integration.last_success_at).getTime() < 5 * 60 * 1000;
+  const seenAt = integration?.last_seen_at || integration?.last_success_at;
+  if (!integration || integration.status !== 'connected' || !seenAt) return false;
+  return Date.now() - new Date(seenAt).getTime() < 5 * 60 * 1000;
 }
 
 function livePill(integration) {
   if (isLive(integration)) return '<span class="rrr-status-pill is-live">LIVE</span>';
-  if (integration?.last_success_at) return `<span class="rrr-status-pill">LAST SEEN ${esc(timeAgo(integration.last_success_at).toUpperCase())}</span>`;
+  const seenAt = integration?.last_seen_at || integration?.last_success_at;
+  if (seenAt) return `<span class="rrr-status-pill">LAST SEEN ${esc(timeAgo(seenAt).toUpperCase())}</span>`;
   return '<span class="rrr-status-pill">NOT CONNECTED</span>';
 }
 
@@ -153,9 +155,10 @@ function directPanel(direct, commands) {
   const latest = commands[0];
   return `<div class="rrr-direct-live">
     <div class="rrr-device-identity"><b>${esc(direct.device_name || 'Elite Gym Entry')}</b><span>Serial ${esc(direct.device_serial || '')}</span></div>
-    ${direct.status === 'connected' || direct.last_success_at ? '' : `
+    ${connected ? '' : `
       <div class="rrr-empty-state">
-        <b>We haven't heard from this terminal yet.</b>
+        <b>${direct.last_seen_at ? 'This terminal has not polled recently.' : "We haven't heard from this terminal yet."}</b>
+        ${direct.last_seen_at ? `<p>Last terminal poll: ${esc(timeAgo(direct.last_seen_at))}.</p>` : ''}
         ${direct.last_error ? `<p>Last error: ${esc(direct.last_error)}</p>` : ''}
         <p>Checklist: ① the values below are saved in <b>Menu → Comm. → Cloud Server Setting</b>, ② the terminal has internet access, ③ the serial matches the sticker on the device.</p>
       </div>`}

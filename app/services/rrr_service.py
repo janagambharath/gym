@@ -43,31 +43,39 @@ def rules_for_gym(gym_id: int) -> dict[str, int]:
 ADMS_RECENT_POLL_WINDOW = timedelta(minutes=5)
 
 
-def direct_adms_terminal_is_online(integration: RRRIntegration) -> bool:
-    """Treat a fresh poll from an explicitly serial-enabled terminal as online.
+def direct_adms_terminal_last_seen_at(integration: RRRIntegration):
+    """Return the latest authenticated sighting for this integration's serial."""
+    if not integration.device_serial:
+        return None
+    device = RRRDevice.query.filter_by(
+        integration_id=integration.id,
+        serial_number=integration.device_serial,
+    ).first()
+    seen_at = device.last_seen_at if device else integration.last_success_at
+    if seen_at is not None and seen_at.tzinfo is None:
+        seen_at = seen_at.replace(tzinfo=timezone.utc)
+    return seen_at
+
+
+def direct_adms_terminal_is_online(
+    integration: RRRIntegration, *, last_seen_at=None
+) -> bool:
+    """Treat a recent authenticated poll as online for commissioning.
 
     X2008 devices that cannot send the ADMS path token use the owner's
     serial-fallback setting. Those authenticated requests refresh
     ``RRRDevice.last_seen_at`` but intentionally do not clear auth errors or
     set the integration's stronger token-authenticated ``connected`` state.
-    The commissioning UI and test endpoint still need to know that the
-    registered device is actively polling, so accept a recent sighting only
-    for that integration's exact serial while serial fallback is enabled.
+    The commissioning UI and test endpoint accept a recent sighting only
+    when the integration is token-connected or serial fallback is enabled.
     """
-    if integration.status == "connected":
-        return True
-    if not integration.allow_serial_fallback or not integration.device_serial:
+    if last_seen_at is None:
+        last_seen_at = direct_adms_terminal_last_seen_at(integration)
+    if last_seen_at is None:
         return False
-    device = RRRDevice.query.filter_by(
-        integration_id=integration.id,
-        serial_number=integration.device_serial,
-    ).first()
-    seen_at = device.last_seen_at if device else None
-    if seen_at is None:
+    if integration.status != "connected" and not integration.allow_serial_fallback:
         return False
-    if seen_at.tzinfo is None:
-        seen_at = seen_at.replace(tzinfo=timezone.utc)
-    return seen_at >= utcnow() - ADMS_RECENT_POLL_WINDOW
+    return last_seen_at >= utcnow() - ADMS_RECENT_POLL_WINDOW
 
 
 def ensure_default_rules(gym_id: int) -> list[RRRRule]:
@@ -487,12 +495,26 @@ def adms_terminal_settings(host_url: str | None = None, path_token: str | None =
 
 
 def integration_payload(row: RRRIntegration) -> dict:
+    terminal_last_seen = (
+        direct_adms_terminal_last_seen_at(row)
+        if row.connector_type == "adms_direct"
+        else None
+    )
+    terminal_online = (
+        direct_adms_terminal_is_online(row, last_seen_at=terminal_last_seen)
+        if row.connector_type == "adms_direct"
+        else False
+    )
     payload = {
         "id": row.id, "type": row.connector_type, "name": row.display_name,
         "status": (
             "connected"
-            if row.connector_type == "adms_direct" and direct_adms_terminal_is_online(row)
-            else row.status
+            if row.connector_type == "adms_direct" and terminal_online
+            else (
+                "disconnected"
+                if row.connector_type == "adms_direct" and row.status == "connected"
+                else row.status
+            )
         ),
         "primary": row.is_primary, "device_serial": row.device_serial, "device_name": row.device_name,
         "last_success_at": row.last_success_at.isoformat() if row.last_success_at else None,
@@ -501,6 +523,7 @@ def integration_payload(row: RRRIntegration) -> dict:
         "commands_enabled": row.commands_enabled,
     }
     if row.connector_type == "adms_direct":
+        payload["last_seen_at"] = terminal_last_seen.isoformat() if terminal_last_seen else None
         # NEVER issue or backfill a token here: a payload read must not
         # mint a credential nobody sees. Tokens are issued only by
         # provision (fresh) and rotate (owner action), and returned once.
