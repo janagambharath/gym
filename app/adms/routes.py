@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timezone
-from urllib.parse import unquote_plus
+from urllib.parse import parse_qs, unquote_plus
 
 from flask import Blueprint, Response, current_app, g, request
 from sqlalchemy import or_
@@ -723,7 +723,25 @@ def devicecmd(path_token: str | None = None):
     if integration is None:
         return _unknown()
     _touch(integration, method=method, full=(method in ("token", "token_prev")))
-    raw_id = str(request.args.get("ID") or request.form.get("ID") or "").strip()
+    # PUSH terminals normally URL-encode the devicecmd result, but some send
+    # the same `ID=...&Return=...&CMD=...` fields as text/plain. Flask leaves
+    # request.form empty for that content type. Parse the body as a fallback
+    # so a valid result clears the delivered command instead of pinning the
+    # ADMS queue until its timeout.
+    body_fields = {}
+    if request.method == "POST":
+        raw_body = request.get_data(cache=True, as_text=True).strip()
+        if raw_body and "=" in raw_body:
+            body_fields = parse_qs(raw_body, keep_blank_values=True)
+
+    def field(name: str) -> str:
+        value = request.args.get(name) or request.form.get(name)
+        if value is None:
+            values = body_fields.get(name) or []
+            value = values[0] if values else ""
+        return str(value or "").strip()
+
+    raw_id = field("ID")
     try:
         command_id = int(raw_id)
     except (TypeError, ValueError):
@@ -735,10 +753,8 @@ def devicecmd(path_token: str | None = None):
     if command is None:
         db.session.commit()
         return _plain("OK")
-    result = str(request.args.get("Return") or request.form.get("Return") or "").strip()[:32]
-    detail = str(
-        request.args.get("Content") or request.form.get("Content") or request.args.get("CMD") or request.form.get("CMD") or ""
-    ).strip()[:500]
+    result = field("Return")[:32]
+    detail = (field("Content") or field("CMD"))[:500]
     command.acknowledged_at = utcnow()
     # M5: for DELETE-type commands the desired end state is "user not on
     # terminal". Return=-1/-2 from the X2008 means the user/template was
