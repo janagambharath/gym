@@ -111,7 +111,7 @@ export default {
         const plan = plans.find(p => p.id === planId);
         if (plan?.duration_days) {
           const d = new Date(startDate);
-          d.setDate(d.getDate() + Number(plan.duration_days));
+          d.setDate(d.getDate() + Number(plan.duration_days) - 1);
           endDate = d.toISOString().slice(0, 10);
         }
       }

@@ -26,13 +26,36 @@ export default {
           ${renderFormField({ id: 'em-address', label: 'Address', type: 'textarea', value: m.address || '' })}
           ${renderFormField({ id: 'em-plan', label: 'Plan', value: m.plan?.id || '', options: plans.map(p => ({ value: p.id, label: p.name })) })}
           ${renderFormField({ id: 'em-start', label: 'Start Date', type: 'date', value: m.membership_start || '' })}
-          ${renderFormField({ id: 'em-end', label: 'End Date', type: 'date', value: m.membership_end || '' })}
+          <div class="form-group">
+            <label class="form-label">End Date (auto-calculated)</label>
+            <div id="em-end-display" class="form-input" style="background:var(--bg-muted,#f1f5f9);color:var(--muted);">—</div>
+            <span class="form-hint">Calculated from Plan + Start Date. To grant extra days, use the owner override.</span>
+          </div>
           ${renderFormField({ id: 'em-notes', label: 'Notes', type: 'textarea', value: m.notes || '' })}
           <button type="submit" class="btn btn-primary btn-lg btn-full" id="em-submit">Save Changes</button>
         </form>
       </div></div>`;
 
     bindHeaderEvents(el, { onBack: () => navigate.pop() });
+
+    // End date is auto-calculated from Plan + Start (never hand-typed).
+    // Uses the renewal convention: end = start + duration - 1.
+    const calcEnd = () => {
+      const planId = el.querySelector('#em-plan')?.value ? Number(el.querySelector('#em-plan').value) : null;
+      const startDate = el.querySelector('#em-start')?.value || null;
+      const display = el.querySelector('#em-end-display');
+      if (!planId || !startDate) { if (display) display.textContent = '—'; return null; }
+      const plan = plans.find(p => p.id === planId);
+      if (!plan?.duration_days) { if (display) display.textContent = '—'; return null; }
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + Number(plan.duration_days) - 1);
+      const endDate = d.toISOString().slice(0, 10);
+      if (display) display.textContent = endDate;
+      return endDate;
+    };
+    el.querySelector('#em-plan')?.addEventListener('change', calcEnd);
+    el.querySelector('#em-start')?.addEventListener('change', calcEnd);
+    calcEnd();
 
     el.querySelector('#edit-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -44,7 +67,7 @@ export default {
       const phone = el.querySelector('#em-phone').value.trim();
 
       const startDate = el.querySelector('#em-start').value || null;
-      const endDate = el.querySelector('#em-end').value || null;
+      const endDate = calcEnd();
       if (startDate && endDate && endDate < startDate) {
         showToast('End date cannot be before start date', 'error');
         btn.disabled = false;
