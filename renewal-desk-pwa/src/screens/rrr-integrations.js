@@ -173,6 +173,7 @@ function directPanel(direct, commands) {
       <p>The token for this terminal is stored securely and can't be shown again — that's why the address and port above are blank. Rotate to get fresh values.</p>
       <button class="rrr-secondary-button" id="rrr-rotate-token" type="button">Rotate token — get fresh values</button>
       <p id="rrr-rotate-error" class="rrr-form-error" role="alert"></p>
+      <div id="rrr-serial-box"></div>
     </div>` : ''}
     <p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch. ${settings.https ? '<b>Important:</b> if your terminal has no HTTPS/SSL option in its menu, it cannot use Direct Cloud — use the eBioServer bridge instead.' : '<b>Note:</b> this terminal talks plain HTTP — keep it on a trusted network or use a VPN.'}</p>
     <section class="rrr-command-console">
@@ -232,6 +233,38 @@ function wireDirectPanel(el, direct, commands) {
     </div>`;
     el.querySelectorAll('#rrr-fresh-settings [data-copy]').forEach(b => b.addEventListener('click', () => copyText(b.dataset.copy, b)));
   });
+  const paintSerialBox = (on) => {
+    const box = el.querySelector('#rrr-serial-box');
+    if (!box) return;
+    box.innerHTML = on ? `
+      <p class="rrr-muted-copy"><b>Serial-number login is ON</b> for this terminal — it connects with address + port only, no token needed.</p>
+      <button class="rrr-secondary-button" id="rrr-serial-fallback" type="button">Turn off serial login</button>
+      <p id="rrr-serial-error" class="rrr-form-error" role="alert"></p>` : `
+      <p class="rrr-muted-copy"><b>No path/URL field on your terminal?</b> Some terminals can't send the token. Let this terminal log in with its serial number instead — it then needs only the address and port.</p>
+      <button class="rrr-secondary-button" id="rrr-serial-fallback" type="button">Connect with serial number instead</button>
+      <p id="rrr-serial-error" class="rrr-form-error" role="alert"></p>`;
+    box.querySelector('#rrr-serial-fallback')?.addEventListener('click', () => toggleSerial(!on));
+  };
+  const toggleSerial = async (enabling) => {
+    const button = el.querySelector('#rrr-serial-fallback');
+    const errorEl = el.querySelector('#rrr-serial-error');
+    if (!button) return;
+    if (!window.confirm(enabling
+      ? 'Let this terminal log in with its serial number? It will connect with just the server address and port — no token needed. You can turn this off again any time.'
+      : 'Turn off serial-number login? This terminal will stop connecting until it uses the token path.')) return;
+    button.disabled = true;
+    button.textContent = 'Switching…';
+    if (errorEl) errorEl.textContent = '';
+    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/serial-fallback`, { method: 'POST', body: { enabled: enabling } });
+    if (!response.ok) {
+      button.disabled = false;
+      button.textContent = enabling ? 'Connect with serial number instead' : 'Turn off serial login';
+      if (errorEl) errorEl.textContent = apiMessage(response, 'Could not switch login mode. Try again.');
+      return;
+    }
+    paintSerialBox(enabling);
+  };
+  paintSerialBox(!!direct.allow_serial_fallback);
   el.querySelectorAll('[data-adms-action]').forEach(button => button.addEventListener('click', async () => {
     const action = button.dataset.admsAction;
     const errorEl = el.querySelector('#rrr-command-error');
