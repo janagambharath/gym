@@ -103,7 +103,10 @@ export default {
                   ${icon('alert', 16, '#B45309')}
                   <span><strong>${formatInteger(s.failed_commands)} command(s)</strong> failed to sync</span>
                 </div>
-                <button class="btn btn-sm btn-primary" id="btn-retry-sync" style="font-size:var(--fs-xs);padding:4px 10px">Retry All</button>
+                <div style="display:flex;gap:8px">
+                  <button class="btn btn-sm btn-primary" id="btn-retry-sync" style="font-size:var(--fs-xs);padding:4px 10px">Retry All</button>
+                  <button class="btn btn-sm" id="btn-clear-failed" style="font-size:var(--fs-xs);padding:4px 10px;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA">Clear</button>
+                </div>
               </div>
             ` : ''}
 
@@ -252,6 +255,20 @@ export default {
           await loadData();
         } else {
           showToast(res.error?.message || 'Could not retry syncs', 'error');
+          if (btn) btn.disabled = false;
+        }
+      });
+
+      // Clear Failed Biometric Commands (irreversible — for bridge migration)
+      scroll.querySelector('#btn-clear-failed')?.addEventListener('click', async () => {
+        if (!confirm('Permanently delete all failed biometric commands? This cannot be undone.')) return;
+        const btn = scroll.querySelector('#btn-clear-failed');        if (btn) btn.disabled = true;
+        const res = await apiRequest('/api/mobile/v1/access/clear-failed', { method: 'POST' });
+        if (res.ok) {
+          showToast(res.data?.message || 'Failed commands cleared', 'success');
+          await loadData();
+        } else {
+          showToast(res.error?.message || 'Could not clear commands', 'error');
           if (btn) btn.disabled = false;
         }
       });
