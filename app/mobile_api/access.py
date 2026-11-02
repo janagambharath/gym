@@ -320,6 +320,46 @@ def register_access_routes(bp):
             },
         })
 
+    @bp.route("/access/clear-failed", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def clear_failed():
+        """Permanently delete failed biometric commands for this gym.
+
+        Scoped: only status='failed', only this gym's bridge.
+        Used when migrating a gym off the bridge (e.g. to ADMS direct).
+        Irreversible — failed commands are undelivered and cannot be retried after.
+        """
+        bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
+        if not bridge:
+            return jsonify({
+                "success": True,
+                "data": {"cleared_count": 0, "message": "No active biometric bridge connected."},
+            })
+
+        failed_cmds = BridgeCommand.query.filter_by(bridge_id=bridge.id, status="failed").all()
+        cleared_count = len(failed_cmds)
+        for cmd in failed_cmds:
+            db.session.delete(cmd)
+
+        db.session.commit()
+        audit(
+            action="clear_failed_biometric_commands",
+            resource_type="bridge",
+            resource_id=bridge.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"cleared_count": cleared_count},
+        )
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "cleared_count": cleared_count,
+                "message": f"Cleared {cleared_count} failed command(s).",
+            },
+        })
+
     @bp.route("/access/reconcile", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
