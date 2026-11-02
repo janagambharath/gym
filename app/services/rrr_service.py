@@ -480,12 +480,21 @@ def adms_terminal_settings(host_url: str | None = None, path_token: str | None =
     parsed = urlparse(fallback or "")
     configured_base = urlparse(str(current_app.config.get("ADMS_PUBLIC_URL") or current_app.config.get("PUBLIC_BASE_URL") or fallback or ""))
     host = configured_base.hostname or parsed.hostname
-    port = configured_base.port or (443 if configured_base.scheme == "https" else 80)
+    # Hard fallback to the known GCP nginx ADMS proxy (plain HTTP) when no
+    # env var is set — eSSL terminals cannot do HTTPS, so never hand them
+    # the Railway HTTPS URL.
+    if not host:
+        host = "136.87.19.164"
+        port = 80
+        use_https = False
+    else:
+        port = configured_base.port or (443 if configured_base.scheme == "https" else 80)
+        use_https = configured_base.scheme == "https"
     return {
         "server_mode": "ADMS",
         "server_address": host,
         "server_port": port,
-        "https": configured_base.scheme == "https",
+        "https": use_https,
         # The per-integration path token makes the ADMS URL unguessable;
         # without it the terminal falls back to serial-only auth, which
         # is gated by the integration's allow_serial_fallback flag
@@ -538,15 +547,16 @@ def integration_payload(row: RRRIntegration) -> dict:
             # Legacy plaintext row (pre-hardening): still displayable.
             payload["terminal_settings"] = adms_terminal_settings(path_token=row.adms_path_token)
         elif row.adms_token_hash:
-            payload["terminal_settings"] = {
-                "server_mode": "ADMS",
+            base = adms_terminal_settings()
+            base.update({
                 "path": None,
                 "token_present": True,
                 "token_note": (
                     "Token is stored as a hash and cannot be shown again. "
                     "Rotate the token to re-provision this terminal."
                 ),
-            }
+            })
+            payload["terminal_settings"] = base
         else:
             payload["terminal_settings"] = adms_terminal_settings(path_token=None)
     return payload
