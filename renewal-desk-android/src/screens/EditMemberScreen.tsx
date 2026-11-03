@@ -6,19 +6,21 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
 import { ErrorState } from '../components/ErrorState';
 import { FormField } from '../components/FormField';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Plan } from '../types';
-import { formatCurrency } from '../types';
+import { formatCurrency, getGymTodayISO } from '../types';
 
 type EditMemberScreenProps = {
   memberId: number;
@@ -27,6 +29,7 @@ type EditMemberScreenProps = {
 };
 
 export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreenProps) {
+  const canEditMembership = getCachedSession()?.userRole === 'gym_owner';
   const [member, setMember] = useState<Member | undefined>();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +44,8 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
   const [gender, setGender] = useState('');
   const [notes, setNotes] = useState('');
   const [planId, setPlanId] = useState<number | undefined>();
+  const [startDate, setStartDate] = useState('');
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
@@ -64,6 +69,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
         setGender(m.gender ?? '');
         setNotes(m.notes ?? '');
         setPlanId(m.plan?.id);
+        setStartDate(m.membership_start ?? '');
       } else {
         setError(memberRes.error.message);
       }
@@ -85,6 +91,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
   const handleSave = useCallback(async () => {
     if (saving) return;
     if (!validate()) return;
+    if (!member) return;
     setSaving(true);
     setFormErrors({});
 
@@ -106,7 +113,25 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
     else body.gender = null;
     if (notes.trim()) body.notes = notes.trim();
     else body.notes = null;
-    if (planId) body.plan_id = planId;
+    const membershipChanged = planId !== member.plan?.id || startDate !== (member.membership_start ?? '');
+    if (canEditMembership && membershipChanged) {
+      if (planId !== member.plan?.id && planId) body.plan_id = planId;
+      if (startDate) {
+        const selectedPlan = plans.find((plan) => plan.id === planId);
+        const duration = selectedPlan?.duration_days ?? (
+          member.membership_start && member.membership_end
+            ? Math.max(1, Math.round((new Date(`${member.membership_end}T12:00:00`).getTime() - new Date(`${member.membership_start}T12:00:00`).getTime()) / 86400000) + 1)
+            : 30
+        );
+        if (duration) {
+          const [year, month, day] = startDate.split('-').map(Number);
+          const end = new Date(year, month - 1, day);
+          end.setDate(end.getDate() + duration - 1);
+          body.membership_start = startDate;
+          body.membership_end = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+        }
+      }
+    }
 
     const result = await apiRequest<Member>(`/api/mobile/v1/members/${memberId}`, {
       method: 'PATCH',
@@ -122,7 +147,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
     } else {
       Alert.alert('Error', result.error.message);
     }
-  }, [fullName, phone, email, address, gender, notes, planId, memberId, validate, onBack, onSaved, saving]);
+  }, [fullName, phone, email, address, gender, notes, planId, startDate, plans, canEditMembership, member, memberId, validate, onBack, onSaved, saving]);
 
   if (loading) {
     return (
@@ -184,12 +209,22 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
               onChangeText={setAddress}
               placeholder="Street, locality, city"
             />
-            <FormField
-              label="Gender"
-              value={gender}
-              onChangeText={setGender}
-              placeholder="Male / Female / Other"
-            />
+            <View style={styles.genderField}>
+              <Text style={styles.genderLabel}>Gender</Text>
+              <View style={styles.genderOptions}>
+                {['Male', 'Female', 'Other'].map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: gender.toLowerCase() === option.toLowerCase() }}
+                    style={[styles.genderOption, gender.toLowerCase() === option.toLowerCase() && styles.genderOptionSelected]}
+                    onPress={() => setGender(gender.toLowerCase() === option.toLowerCase() ? '' : option)}
+                  >
+                    <Text style={[styles.genderOptionText, gender.toLowerCase() === option.toLowerCase() && styles.genderOptionTextSelected]}>{option}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
           </View>
 
           <View style={styles.card}>
@@ -197,7 +232,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
               <Icon name="plan" size={18} color={colors.brand} />
               <Text style={styles.sectionTitle}>Membership</Text>
             </View>
-            {plans.length > 0 ? (
+            {canEditMembership && plans.length > 0 ? (
               <View style={styles.planGrid}>
                 {plans.map((p) => (
                   <PrimaryButton
@@ -209,6 +244,19 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
                     style={styles.planButton}
                   />
                 ))}
+              </View>
+            ) : null}
+            {!canEditMembership ? <Text style={styles.readOnlyCopy}>Only the gym owner can change the plan or membership dates.</Text> : null}
+            {canEditMembership ? (
+              <View style={styles.dateField}>
+                <Text style={styles.genderLabel}>Membership Start Date</Text>
+                <TouchableOpacity style={styles.dateButton} onPress={() => { if (!startDate) setStartDate(getGymTodayISO()); setShowStartDatePicker(true); }}>
+                  <Text style={styles.dateButtonText}>{startDate || 'Choose start date'}</Text>
+                  <Icon name="calendar" size={18} color={colors.brand} />
+                </TouchableOpacity>
+                <Text style={styles.readOnlyCopy}>
+                  End date will be recalculated from the selected plan or the current membership length.
+                </Text>
               </View>
             ) : null}
           </View>
@@ -238,11 +286,35 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
           />
         </ScrollView>
       </KeyboardAvoidingView>
+      {showStartDatePicker ? (
+        <DateTimePicker
+          value={(() => { const [year, month, day] = startDate.split('-').map(Number); return new Date(year, month - 1, day); })()}
+          mode="date"
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowStartDatePicker(false);
+            if (event.type === 'set' && selectedDate) {
+              setStartDate(`${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`);
+            }
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  genderField: { gap: spacing.xs },
+  genderLabel: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
+  genderOptions: { flexDirection: 'row', gap: spacing.sm },
+  genderOption: { borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flex: 1, paddingVertical: spacing.sm, alignItems: 'center' },
+  genderOptionSelected: { backgroundColor: colors.brandSubtle, borderColor: colors.brand },
+  genderOptionText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
+  genderOptionTextSelected: { color: colors.brand, fontWeight: fontWeight.semibold },
+  dateField: { gap: spacing.xs, marginTop: spacing.md },
+  dateButton: { alignItems: 'center', backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 48, paddingHorizontal: spacing.lg },
+  dateButtonText: { color: colors.text, fontSize: fontSize.base },
+  readOnlyCopy: { color: colors.muted, fontSize: fontSize.xs, lineHeight: 18, marginTop: spacing.xs },
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,

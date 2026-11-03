@@ -48,6 +48,34 @@ def _create_owner_and_headers(client, app, email="testowner@gym.com"):
     return gym_id, plan_id, owner_id, headers
 
 
+def test_biometric_link_banner_preference_is_persisted_in_gym_settings(client, app):
+    gym_id, _, _, headers = _create_owner_and_headers(client, app, "bannerpref@gym.com")
+
+    initial = client.get("/api/mobile/v1/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.get_json()["data"]["gym"]["show_biometric_link_banner"] is True
+
+    updated = client.patch(
+        "/api/mobile/v1/settings",
+        json={"show_biometric_link_banner": False},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    persisted = client.get("/api/mobile/v1/settings", headers=headers)
+    assert persisted.get_json()["data"]["gym"]["show_biometric_link_banner"] is False
+
+    invalid = client.patch(
+        "/api/mobile/v1/settings",
+        json={"show_biometric_link_banner": "false"},
+        headers=headers,
+    )
+    assert invalid.status_code == 400
+
+    with app.app_context():
+        gym = db.session.get(Gym, gym_id)
+        assert gym.show_biometric_link_banner is False
+
+
 def test_mobile_staff_management_flow(client, app):
     gym_id, plan_id, owner_id, headers = _create_owner_and_headers(client, app, "staffmgr@gym.com")
 

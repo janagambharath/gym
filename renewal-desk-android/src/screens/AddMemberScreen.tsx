@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
 import { FormField } from '../components/FormField';
@@ -40,6 +41,18 @@ const PAYMENT_METHODS = [
 ] as const;
 
 type PaymentMethodType = (typeof PAYMENT_METHODS)[number]['id'];
+
+function dateFromISO(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function dateToISO(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 type AddMemberScreenProps = {
   onBack: () => void;
@@ -82,6 +95,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const [isPaid, setIsPaid] = useState<boolean>(true);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('cash');
   const [paymentReference, setPaymentReference] = useState('');
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
 
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
@@ -158,8 +172,9 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     const today = getGymTodayISO();
     const start = /^\d{4}-\d{2}-\d{2}$/.test(startDate.trim()) ? startDate.trim() : today;
     const duration = selectedPlan?.duration_days ?? 30;
-    const startObj = new Date(start + 'T00:00:00');
-    const endDate = new Date(startObj.getTime() + duration * 86400000).toISOString().split('T')[0];
+    const startObj = dateFromISO(start);
+    startObj.setDate(startObj.getDate() + duration - 1);
+    const endDate = dateToISO(startObj);
 
     const cleanDigits = phone.replace(/\D/g, '');
     const normalizedPhone = phone.trim().startsWith('+')
@@ -197,12 +212,14 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     phone,
     email,
     address,
+    gender,
     selectedPlanId,
     notes,
     customAmount,
     isPaid,
     paymentMethod,
     paymentReference,
+    startDate,
     loading,
     onLogout,
     onMemberCreated,
@@ -524,13 +541,17 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
 
           {/* Notes */}
           <View style={styles.card}>
-            <FormField
-              label="Start Date"
-              value={startDate}
-              onChangeText={setStartDate}
-              placeholder="YYYY-MM-DD"
-              autoCapitalize="none"
-            />
+            <Text style={styles.dateLabel}>Membership Start Date</Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`Choose membership start date, currently ${startDate}`}
+              style={styles.dateButton}
+              onPress={() => setShowStartDatePicker(true)}
+            >
+              <Text style={styles.dateButtonText}>{startDate}</Text>
+              <Icon name="calendar" size={18} color={colors.brand} />
+            </TouchableOpacity>
+            <Text style={styles.dateHelp}>Choose the actual membership start date. Plan expiry is calculated from this date.</Text>
             <FormField
               label="Notes"
               value={notes}
@@ -557,11 +578,32 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
           />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {showStartDatePicker ? (
+        <DateTimePicker
+          value={dateFromISO(startDate)}
+          mode="date"
+          display="default"
+          onChange={(event, selectedDate) => {
+            setShowStartDatePicker(false);
+            if (event.type === 'set' && selectedDate) setStartDate(dateToISO(selectedDate));
+          }}
+        />
+      ) : null}
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  dateLabel: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
+  dateButton: {
+    alignItems: 'center', backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md,
+    borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 48,
+    paddingHorizontal: spacing.lg,
+  },
+  dateButtonText: { color: colors.text, fontSize: fontSize.lg },
+  dateHelp: { color: colors.muted, fontSize: fontSize.xs, lineHeight: 18 },
   dupWarning: {
     backgroundColor: colors.warningSurface,
     borderColor: colors.warning,

@@ -164,6 +164,7 @@ export type GymSettings = {
   timezone: string;
   country: string;
   currency: string;
+  show_biometric_link_banner: boolean;
   whatsapp_enabled: boolean;
   whatsapp_connection_status: 'NOT_CONNECTED' | 'PENDING' | 'ACTION_REQUIRED' | 'CONNECTED' | 'FAILED';
   max_members: number | null;

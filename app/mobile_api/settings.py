@@ -85,6 +85,7 @@ def register_settings_routes(bp):
                     "timezone": gym.timezone,
                     "country": gym.country,
                     "currency": gym.currency,
+                    "show_biometric_link_banner": gym.show_biometric_link_banner,
                     "whatsapp_enabled": gym.whatsapp_enabled,
                     "whatsapp_connection_status": gym.whatsapp_connection_status,
                     "max_members": gym.max_members,
@@ -111,6 +112,17 @@ def register_settings_routes(bp):
                 val = (data[key] or "").strip() if isinstance(data.get(key), str) else data[key]
                 setattr(gym, key, val or None if key != "name" else val)
                 updates[key] = val
+
+        if "show_biometric_link_banner" in data:
+            value = data["show_biometric_link_banner"]
+            if not isinstance(value, bool):
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "show_biometric_link_banner must be a boolean.",
+                    400,
+                )
+            gym.show_biometric_link_banner = value
+            updates["show_biometric_link_banner"] = value
 
         if "name" in updates and not updates["name"]:
             return error_response("VALIDATION_ERROR", "Gym name cannot be empty.", 400)

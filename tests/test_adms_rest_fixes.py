@@ -150,6 +150,17 @@ def test_operlog_log_line_has_pin_but_no_name(client, seed_gym, caplog):
     assert "John Doe" not in records[0].getMessage()
 
 
+def test_operlog_parser_accepts_typed_user_row():
+    from app.adms.routes import _parse_operlog_enrollment
+
+    assert _parse_operlog_enrollment(
+        "USER PIN=901\tName=John Doe\tPri=0\tPasswd=\tCard=\tGrp=1"
+    ) == {"enroll_number": "901", "name": "John Doe"}
+    assert _parse_operlog_enrollment(
+        "USER PIN=902\tName=Jane Doe\tPrivilege=0\tCard=0"
+    ) == {"enroll_number": "902", "name": "Jane Doe"}
+
+
 # ─── M4: stray USERINFO uploads ──────────────────────────────────────────
 
 def test_stray_userinfo_upload_applies_nothing(client, seed_gym):

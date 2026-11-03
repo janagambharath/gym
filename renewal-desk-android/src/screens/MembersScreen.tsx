@@ -25,6 +25,7 @@ type MembersScreenProps = {
   onLogout: () => void;
   onSelectMember?: (member: Member) => void;
   onAddMember?: () => void;
+  onImportMembers?: () => void;
   refreshToken?: number;
 };
 
@@ -33,9 +34,10 @@ const FILTER_OPTIONS = [
   { key: 'active', label: 'Active', dotColor: colors.statusActive },
   { key: 'expiring', label: 'Expiring', dotColor: colors.statusExpiring },
   { key: 'expired', label: 'Expired', dotColor: colors.statusExpired },
+  { key: 'not_enrolled', label: 'Not enrolled' },
 ];
 
-export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshToken }: MembersScreenProps) {
+export function MembersScreen({ onLogout, onSelectMember, onAddMember, onImportMembers, refreshToken }: MembersScreenProps) {
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -67,11 +69,13 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
     if (debouncedSearch.trim()) {
       params.set('q', debouncedSearch.trim());
     }
-    if (statusFilter !== 'all' && statusFilter !== 'expiring') {
+    if (statusFilter !== 'all' && statusFilter !== 'expiring' && statusFilter !== 'not_enrolled') {
       params.set('status', statusFilter);
     }
     if (statusFilter === 'expiring') {
       params.set('expiring_within_days', '7');
+    } else if (statusFilter === 'not_enrolled') {
+      params.set('biometric', 'not_enrolled');
     }
 
     void apiRequest<MembersResponse>(`/api/mobile/v1/members?${params.toString()}`).then((result) => {
@@ -146,6 +150,16 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, refreshTo
           <Text style={styles.headerSubtitle}>{formatInteger(totalCount)} members</Text>
         </View>
         <View style={styles.headerActions}>
+          {onImportMembers ? (
+            <TouchableOpacity
+              accessibilityLabel="Import members"
+              accessibilityRole="button"
+              onPress={onImportMembers}
+              style={styles.notificationButton}
+            >
+              <Icon name="document" size={21} color={colors.text} />
+            </TouchableOpacity>
+          ) : null}
           <View accessibilityLabel="Notifications" style={styles.notificationButton}>
             <Icon name="notifications" size={21} color={colors.text} />
           </View>

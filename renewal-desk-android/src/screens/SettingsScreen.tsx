@@ -5,6 +5,7 @@ import {
   Linking,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -56,12 +57,15 @@ export function SettingsScreen({
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings | undefined>();
+  const [showLinkBanner, setShowLinkBanner] = useState(true);
+  const [savingLinkBannerPreference, setSavingLinkBannerPreference] = useState(false);
   const session = getCachedSession();
 
   useEffect(() => {
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((result) => {
       if (result.ok) {
         setGym(result.data.gym);
+        setShowLinkBanner(result.data.gym.show_biometric_link_banner !== false);
         setPaymentSettings(result.data.payment_settings);
       } else if (result.error.status === 401) {
         onLogout();
@@ -73,6 +77,25 @@ export function SettingsScreen({
     await logout();
     onLogout();
   }, [onLogout]);
+
+  const handleToggleLinkBanner = useCallback(async (value: boolean) => {
+    if (savingLinkBannerPreference) return;
+    const previous = showLinkBanner;
+    setShowLinkBanner(value);
+    setGym((current) => current ? { ...current, show_biometric_link_banner: value } : current);
+    setSavingLinkBannerPreference(true);
+    const result = await apiRequest<{ message: string }>('/api/mobile/v1/settings', {
+      method: 'PATCH',
+      body: { show_biometric_link_banner: value },
+    });
+    setSavingLinkBannerPreference(false);
+    if (!result.ok) {
+      setShowLinkBanner(previous);
+      setGym((current) => current ? { ...current, show_biometric_link_banner: previous } : current);
+      if (result.error.status === 401) onLogout();
+      else Alert.alert('Could not save setting', result.error.message);
+    }
+  }, [savingLinkBannerPreference, showLinkBanner, onLogout]);
 
   const handleDeleteAccount = useCallback(() => {
     Alert.alert(
@@ -233,6 +256,27 @@ export function SettingsScreen({
         </View>
 
         {/* 6. Analytics & Reports */}
+        {session?.userRole === 'gym_owner' ? (
+          <View style={styles.card}>
+            <SectionHeader title="Dashboard Preferences" icon={<Icon name="settings" size={18} color={colors.brand} />} />
+            <View style={styles.preferenceRow}>
+              <View style={styles.preferenceCopy}>
+                <Text style={styles.preferenceTitle}>Biometric ID linking reminder</Text>
+                <Text style={styles.preferenceDescription}>Show a reminder when terminal IDs need a member match.</Text>
+              </View>
+              <Switch
+                accessibilityLabel="Show biometric ID linking reminder"
+                value={showLinkBanner}
+                onValueChange={(value) => void handleToggleLinkBanner(value)}
+                disabled={savingLinkBannerPreference}
+                trackColor={{ false: colors.gray300, true: colors.brand }}
+                thumbColor={colors.surface}
+              />
+            </View>
+          </View>
+        ) : null}
+
+        {/* 7. Analytics & Reports */}
         <View style={styles.card}>
           <SectionHeader title="RRR Growth & Reports" icon={<Icon name="analytics" size={18} color={colors.brand} />} />
           <View style={styles.menuList}>
@@ -328,6 +372,10 @@ function MenuItem({ icon, label, onPress }: { icon: IconName; label: string; onP
 }
 
 const styles = StyleSheet.create({
+  preferenceRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.md, paddingTop: spacing.md },
+  preferenceCopy: { flex: 1 },
+  preferenceTitle: { color: colors.text, fontSize: fontSize.base, fontWeight: fontWeight.semibold },
+  preferenceDescription: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 19, marginTop: 4 },
   aboutHeader: {
     alignItems: 'center',
     borderBottomColor: colors.borderLight,

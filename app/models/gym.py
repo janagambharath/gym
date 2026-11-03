@@ -51,6 +51,8 @@ class Gym(TimestampMixin, db.Model):
     phone_number_id = db.Column(db.String(255), nullable=True, unique=True, index=True)
     business_phone_number = db.Column(db.String(40), nullable=True, unique=True, index=True)
     whatsapp_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    # Controls the dashboard reminder only; biometric ID mapping remains available.
+    show_biometric_link_banner = db.Column(db.Boolean, nullable=False, default=True)
     whatsapp_connection_status = db.Column(
         db.String(32), nullable=False, default="NOT_CONNECTED", index=True
     )

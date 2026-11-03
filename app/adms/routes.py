@@ -263,19 +263,27 @@ def _parse_userinfo_line(line: str) -> dict | None:
 def _parse_operlog_enrollment(line: str) -> dict | None:
     """Parse a user-enrollment record from an OPERLOG upload.
 
-    When a user is enrolled on the terminal, OPERLOG carries the full record:
-    ``PIN=<id>\\tName=<name>\\tPri=0\\tPasswd=\\tCard=\\tGrp=1...``
+    When a user is enrolled on the terminal, OPERLOG may carry a typed row:
+    ``USER PIN=<id>\\tName=<name>\\tPri=0\\tPasswd=\\tCard=\\tGrp=1...``
     (ZKTeco PUSH SDK "User Registration (OPERLOG)" format.)
 
     Returns {"enroll_number": ..., "name": ...} or None if the line
     is not an enrollment record.
     """
     line = line.strip()
+    # Firmware may prefix the key/value record with its row type. Without
+    # removing this prefix, the first parsed field becomes "USER PIN" and
+    # the PIN is silently missed.
+    if line.upper().startswith("USER "):
+        line = line[5:].lstrip()
     upper = line.upper()
-    # Must have PIN=, NAME= and PRI= to be an enrollment record.
-    # M3: the Pri= requirement filters out admin/modify OPERLOG lines that
-    # merely mention a PIN and a name in another context.
-    if "PIN=" not in upper or "NAME=" not in upper or "PRI=" not in upper:
+    # Must have PIN=, NAME= and a privilege field to be a user record.
+    # Firmware variants use either Pri= or Privilege=.
+    if (
+        "PIN=" not in upper
+        or "NAME=" not in upper
+        or not ("PRI=" in upper or "PRIVILEGE=" in upper)
+    ):
         return None
     fields: dict[str, str] = {}
     for part in line.split("\t"):

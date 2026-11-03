@@ -32,6 +32,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
   const [unresolved, setUnresolved] = useState<Unresolved[]>([]);
+  const [showBiometricLinkBanner, setShowBiometricLinkBanner] = useState(true);
   const [people, setPeople] = useState<Person[]>([]);
   const [rules, setRules] = useState<Record<string, number>>({});
   const [ownerToday, setOwnerToday] = useState<OwnerToday>();
@@ -57,13 +58,14 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const directLive = isLive(direct);
 
   const load = useCallback(async () => {
-    const [dashboard, integrationData, mappings, members, ruleData, ownerTodayData] = await Promise.all([
+    const [dashboard, integrationData, mappings, members, ruleData, ownerTodayData, settings] = await Promise.all([
       apiRequest<Payload>('/api/mobile/v1/rrr/dashboard'),
       apiRequest<{ integrations: Integration[]; devices: Device[] }>('/api/mobile/v1/rrr/integrations'),
       apiRequest<{ events: Unresolved[] }>('/api/mobile/v1/rrr/mappings/unresolved'),
       apiRequest<{ members: Person[] }>('/api/mobile/v1/members?page=1&page_size=100'),
       apiRequest<{ rules: Record<string, number> }>('/api/mobile/v1/rrr/rules'),
       apiRequest<OwnerToday>('/api/mobile/v1/owner/today'),
+      apiRequest<{ gym: { show_biometric_link_banner?: boolean } }>('/api/mobile/v1/settings'),
     ]);
     if (dashboard.ok) setData(dashboard.data);
     if (integrationData.ok) {
@@ -78,6 +80,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       } else setCommands([]);
     }
     if (mappings.ok) setUnresolved(mappings.data.events || []);
+    if (settings.ok) setShowBiometricLinkBanner(settings.data.gym?.show_biometric_link_banner !== false);
     if (members.ok) setPeople(members.data.members || []);
     if (ruleData.ok) setRules(ruleData.data.rules || {});
     if (ownerTodayData.ok) {
@@ -192,7 +195,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       </TouchableOpacity>
       <Text style={styles.copy}>I stood at the door and verified block/unblock works on the terminal.</Text>
     </View><Button text={commissioning ? 'Enabling…' : bridge.commands_enabled ? 'Automatic block/unblock is ON' : 'Enable automatic block/unblock'} onPress={() => void commissionBridge()} /></>}</View>
-    <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolved.length} punches need a member</Text>{unresolved.length ? unresolved.slice(0, 5).map((event, index) => <View style={styles.deviceRow} key={`${event.biometric_user_id}-${index}`}><View><Text style={styles.rowTitle}>Terminal ID {event.biometric_user_id}</Text><Text style={styles.rowSub}>{new Date(event.punch_time).toLocaleString()}</Text></View><TouchableOpacity onPress={() => setPickerEvent(event)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity></View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}</View>
+    {showBiometricLinkBanner && <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolved.length} punches need a member</Text>{unresolved.length ? unresolved.slice(0, 5).map((event, index) => <View style={styles.deviceRow} key={`${event.biometric_user_id}-${index}`}><View><Text style={styles.rowTitle}>Terminal ID {event.biometric_user_id}</Text><Text style={styles.rowSub}>{new Date(event.punch_time).toLocaleString()}</Text></View><TouchableOpacity onPress={() => setPickerEvent(event)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity></View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}</View>}
     {(direct || bridge) && <View style={styles.card}><Text style={styles.cardEyebrow}>SMART MATCHING</Text><Text style={styles.cardTitle}>Who is who on the terminal?</Text><Text style={styles.copy}>We read the names on your terminal and match them to members. One tap per match — nothing links without your approval.</Text><Button text={scanning ? 'Scanning…' : 'Scan terminal users'} onPress={() => { void loadMatches(); void scanTerminalUsers(); }} secondary />
       {(matches?.suggestions || []).map((s) => <View style={styles.deviceRow} key={s.enroll_number}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>#{s.enroll_number} {s.terminal_name || 'No name'}</Text><Text style={styles.rowSub}>→ {s.member_name}{s.member_phone ? ` · ${s.member_phone}` : ''} · {s.confidence}%</Text></View><TouchableOpacity onPress={() => void confirmMatch(s)}><Text style={styles.link}>Confirm</Text></TouchableOpacity></View>)}
       {(matches?.unmatched_terminal || []).length > 0 && <Text style={styles.copy}>{matches?.unmatched_terminal?.length} terminal user(s) couldn't be matched confidently — ask staff and link from the member profile.</Text>}

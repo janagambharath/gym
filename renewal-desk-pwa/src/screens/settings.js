@@ -9,6 +9,10 @@ import { escapeHtml } from '../utils.js';
 export default {
   async mount(el) {
     const session = getCachedSession();
+    const settingsRes = await apiRequest('/api/mobile/v1/settings');
+    const showLinkBanner = settingsRes.ok
+      ? settingsRes.data.gym?.show_biometric_link_banner !== false
+      : true;
     el.innerHTML = `
       ${renderHeader({ title: 'More', showBack: router.depth > 0 })}
       <div class="scroll-view"><div class="scroll-content">
@@ -35,6 +39,16 @@ export default {
           ${renderMenuItem({ iconName: 'wallet', label: 'Payment Setup', desc: 'UPI & QR settings', iconBg: 'var(--status-pending-surface)', iconColor: 'var(--status-pending)', onClick: 'payment-setup' })}
           ${renderMenuItem({ iconName: 'access', label: 'Access Control', desc: 'Biometric & attendance', iconBg: '#fce7f3', iconColor: '#db2777', onClick: 'access' })}
         </div>
+
+        ${session?.userRole === 'gym_owner' ? `
+        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Dashboard Preferences</div>
+        <div class="card" style="margin:var(--sp-sm) var(--sp-lg) var(--sp-lg)">
+          <label for="show-biometric-link-banner" style="display:flex;align-items:center;gap:var(--sp-md);padding:var(--sp-lg);cursor:pointer">
+            <span style="flex:1;min-width:0"><b style="display:block;color:var(--text);font-size:var(--fs-md)">Biometric ID linking reminder</b><small style="display:block;color:var(--text-secondary);margin-top:4px;line-height:1.45">Show a reminder when terminal IDs need a member match.</small></span>
+            <input id="show-biometric-link-banner" type="checkbox" ${showLinkBanner ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand);flex:0 0 auto">
+          </label>
+          <p id="biometric-link-banner-status" role="status" style="margin:0;padding:0 var(--sp-lg) var(--sp-md);font-size:var(--fs-xs);color:var(--muted)"></p>
+        </div>` : ''}
 
         <!-- Communication -->
         <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Communication</div>
@@ -68,6 +82,24 @@ export default {
       item.addEventListener('click', () => {
         navigate.push(item.dataset.action);
       });
+    });
+
+    const linkBannerToggle = el.querySelector('#show-biometric-link-banner');
+    linkBannerToggle?.addEventListener('change', async () => {
+      const previous = !linkBannerToggle.checked;
+      linkBannerToggle.disabled = true;
+      const result = await apiRequest('/api/mobile/v1/settings', {
+        method: 'PATCH',
+        body: { show_biometric_link_banner: linkBannerToggle.checked },
+      });
+      linkBannerToggle.disabled = false;
+      const status = el.querySelector('#biometric-link-banner-status');
+      if (result.ok) {
+        status.textContent = linkBannerToggle.checked ? 'Reminder is on.' : 'Reminder is off on this gym’s dashboards.';
+      } else {
+        linkBannerToggle.checked = previous;
+        status.textContent = result.error?.message || 'Could not save this preference.';
+      }
     });
 
     el.querySelector('#btn-logout').addEventListener('click', async () => {

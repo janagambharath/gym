@@ -581,6 +581,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
               props.navigation.navigate('MemberDetail', { member })
             }
             onAddMember={() => props.navigation.navigate('AddMember')}
+            onImportMembers={() => props.navigation.navigate('ImportMembers')}
             refreshToken={refreshToken}
           />
         )}

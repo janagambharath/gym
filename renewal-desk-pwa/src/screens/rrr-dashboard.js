@@ -13,9 +13,10 @@ export default { async mount(el) { await load(el); } };
 
 async function load(el) {
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page"><div class="rrr-dashboard-skeleton"><div class="skeleton" style="height:52px;border-radius:14px;margin-bottom:20px"></div><div class="skeleton skeleton-text" style="width:45%;height:14px;margin-bottom:8px"></div><div class="skeleton skeleton-text" style="width:80%;height:34px;margin-bottom:8px"></div><div class="skeleton skeleton-text short" style="width:60%;margin-bottom:22px"></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">${'<div class="skeleton" style="height:110px;border-radius:16px"></div>'.repeat(4)}</div>${'<div class="skeleton" style="height:190px;border-radius:20px;margin-bottom:14px"></div>'.repeat(3)}</div></main>`;
-  const [result, todayResult] = await Promise.all([
+  const [result, todayResult, settingsResult] = await Promise.all([
     apiRequest('/api/mobile/v1/rrr/dashboard'),
     apiRequest('/api/mobile/v1/owner/today'),
+    apiRequest('/api/mobile/v1/settings'),
   ]);
   if (!result.ok) {
     el.innerHTML = `<div class="rrr-empty"><h2>Your dashboard is temporarily unavailable</h2><p>${escapeHtml(result.error?.message || 'Please try again.')}</p><button id="rrr-retry">Retry</button></div>`;
@@ -37,6 +38,9 @@ async function load(el) {
         : 'Attendance needs setup';
   const priorityCount = ['revenue', 'retain', 'recover'].reduce((total, key) => total + (data.pillars[key]?.count || 0), 0);
   const today = todayResult.ok ? todayResult.data : null;
+  const showBiometricLinkBanner = settingsResult.ok
+    ? settingsResult.data.gym?.show_biometric_link_banner !== false
+    : true;
 
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page">
     <header class="rrr-workspace-bar">
@@ -47,7 +51,7 @@ async function load(el) {
       <div><span class="rrr-eyebrow">TODAY AT ${escapeHtml(gymName).toUpperCase()}</span><h1>Run the gym. Grow the business.</h1><p>${priorityCount ? `${formatInteger(priorityCount)} member opportunities need your attention.` : 'Everything looks clear. New signals will appear as members check in, pay and renew.'}</p></div>
       <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integrationStatusLabel}</span>${icon('chevronRight', 16)}</button>
     </section>
-    ${data.unmapped_count ? `
+    ${showBiometricLinkBanner && data.unmapped_count ? `
     <section id="rrr-link-banner" class="rrr-link-banner">
       <div class="rrr-link-banner-icon">🔗</div>
       <div class="rrr-link-banner-text">
