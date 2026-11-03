@@ -3,15 +3,18 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { apiClient } from '../services/apiClient';
@@ -31,17 +34,106 @@ export const ProfileScreen: React.FC = () => {
     payment_info: any;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [profileForm, setProfileForm] = useState({ email: '', address: '', gender: '' });
 
   const fetchProfile = useCallback(async () => {
+    setLoading(true);
+    setProfileError(null);
     try {
       const data = await apiClient.getProfile();
       setProfileData(data);
-    } catch {
-      // Non-fatal
+      setProfileForm({
+        email: data.member.email || '',
+        address: data.member.address || '',
+        gender: data.member.gender || '',
+      });
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : 'Could not load your profile.');
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const handleChoosePhoto = useCallback(async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.82,
+        exif: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      if (asset.fileSize && asset.fileSize > 3 * 1024 * 1024) {
+        Alert.alert('Photo is too large', 'Choose a photo that is 3 MB or smaller.');
+        return;
+      }
+      const mimeType = asset.mimeType || (asset.fileName?.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+        Alert.alert('Unsupported photo', 'Choose a JPEG, PNG, or WebP image.');
+        return;
+      }
+      setPhotoBusy(true);
+      const photoUrl = await apiClient.uploadProfilePhoto(
+        asset.uri,
+        mimeType,
+        asset.fileName || `profile.${mimeType === 'image/png' ? 'png' : 'jpg'}`,
+      );
+      setProfileData((current) => current ? {
+        ...current,
+        member: { ...current.member, profile_photo_url: photoUrl },
+      } : current);
+    } catch (error) {
+      Alert.alert('Could not update photo', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }, []);
+
+  const handleRemovePhoto = useCallback(() => {
+    Alert.alert('Remove profile photo?', 'Your profile will show your initials instead.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setPhotoBusy(true);
+          try {
+            await apiClient.removeProfilePhoto();
+            setProfileData((current) => current ? {
+              ...current,
+              member: { ...current.member, profile_photo_url: null },
+            } : current);
+          } catch (error) {
+            Alert.alert('Could not remove photo', error instanceof Error ? error.message : 'Please try again.');
+          } finally {
+            setPhotoBusy(false);
+          }
+        },
+      },
+    ]);
+  }, []);
+
+  const handleSaveDetails = useCallback(async () => {
+    setSavingDetails(true);
+    try {
+      const saved = await apiClient.updateProfile({
+        email: profileForm.email.trim() || null,
+        address: profileForm.address.trim() || null,
+        gender: profileForm.gender.trim() || null,
+      });
+      setProfileData((current) => current ? { ...current, member: saved.member } : current);
+      Alert.alert('Profile updated', 'Your contact details have been saved.');
+    } catch (error) {
+      Alert.alert('Could not save details', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setSavingDetails(false);
+    }
+  }, [profileForm]);
 
   useEffect(() => {
     fetchProfile();
@@ -119,14 +211,27 @@ export const ProfileScreen: React.FC = () => {
           <Text style={styles.headerSubtitle}>Member profile and gym contact information</Text>
         </View>
 
+        {profileError ? (
+          <View style={styles.loadErrorCard}>
+            <Text style={styles.loadErrorText}>{profileError}</Text>
+            <TouchableOpacity onPress={fetchProfile} disabled={loading} style={styles.retryProfileButton}>
+              <Text style={styles.retryProfileText}>{loading ? 'Loading…' : 'Try again'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {/* Member Profile Card */}
         <View style={styles.card}>
           <View style={styles.memberHeaderRow}>
-            <View style={[styles.avatarCircle, { backgroundColor: theme.primary }]}>
-              <Text style={[styles.avatarText, { color: theme.primaryText }]}>
-                {member?.full_name ? member.full_name.charAt(0).toUpperCase() : 'M'}
-              </Text>
-            </View>
+            {member?.profile_photo_url ? (
+              <Image source={{ uri: member.profile_photo_url }} style={styles.avatarPhoto} />
+            ) : (
+              <View style={[styles.avatarCircle, { backgroundColor: theme.primary }]}>
+                <Text style={[styles.avatarText, { color: theme.primaryText }]}>
+                  {member?.full_name ? member.full_name.charAt(0).toUpperCase() : 'M'}
+                </Text>
+              </View>
+            )}
             <View style={styles.memberInfo}>
               <Text style={styles.memberName}>{member?.full_name || 'Gym Member'}</Text>
               <Text style={styles.memberPhone}>+91 {member?.phone?.replace(/\D/g, '')}</Text>
@@ -138,6 +243,54 @@ export const ProfileScreen: React.FC = () => {
             <Text style={styles.memberIdText}>Member ID: #{member?.id}</Text>
             <StatusBadge status={member?.status || 'ACTIVE'} size="sm" />
           </View>
+          <View style={styles.photoActions}>
+            <TouchableOpacity style={[styles.photoButton, { backgroundColor: theme.primary, opacity: loading || !profileData ? 0.55 : 1 }]} onPress={handleChoosePhoto} disabled={photoBusy || loading || !profileData}>
+              <Ionicons name="camera-outline" size={17} color={theme.primaryText} />
+              <Text style={[styles.photoButtonText, { color: theme.primaryText }]}>{photoBusy ? 'Working…' : member?.profile_photo_url ? 'Change photo' : 'Add profile photo'}</Text>
+            </TouchableOpacity>
+            {member?.profile_photo_url ? (
+              <TouchableOpacity style={styles.removePhotoButton} onPress={handleRemovePhoto} disabled={photoBusy || loading || !profileData}>
+                <Text style={styles.removePhotoText}>Remove</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <Text style={styles.photoHint}>JPEG, PNG, or WebP · up to 3 MB</Text>
+        </View>
+
+        {/* Member-editable contact details. Name and phone remain gym managed so access records stay matched. */}
+        <View style={styles.card}>
+          <Text style={styles.cardSectionTitle}>Your contact details</Text>
+          <Text style={styles.memberEmail}>Your name and login number are managed by your gym.</Text>
+          <Text style={styles.fieldLabel}>Email</Text>
+          <TextInput
+            value={profileForm.email}
+            onChangeText={(email) => setProfileForm((current) => ({ ...current, email }))}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            maxLength={255}
+            style={styles.profileInput}
+          />
+          <Text style={styles.fieldLabel}>Address</Text>
+          <TextInput
+            value={profileForm.address}
+            onChangeText={(address) => setProfileForm((current) => ({ ...current, address }))}
+            placeholder="Your address"
+            multiline
+            maxLength={2000}
+            style={[styles.profileInput, styles.addressInput]}
+          />
+          <Text style={styles.fieldLabel}>Gender (optional)</Text>
+          <TextInput
+            value={profileForm.gender}
+            onChangeText={(gender) => setProfileForm((current) => ({ ...current, gender }))}
+            placeholder="Prefer not to say"
+            maxLength={32}
+            style={styles.profileInput}
+          />
+          <TouchableOpacity style={[styles.saveDetailsButton, { backgroundColor: theme.primary, opacity: loading || !profileData ? 0.55 : 1 }]} onPress={handleSaveDetails} disabled={savingDetails || loading || !profileData}>
+            <Text style={[styles.photoButtonText, { color: theme.primaryText }]}>{savingDetails ? 'Saving…' : 'Save details'}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Gym Information & Contact Card */}
@@ -264,6 +417,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarPhoto: {
+    width: 64,
+    height: 64,
+    borderRadius: radii.full,
+    borderWidth: 2,
+    borderColor: colors.border,
+    backgroundColor: colors.borderSubtle,
+  },
   avatarText: {
     fontSize: 22,
     fontWeight: '700',
@@ -297,6 +458,89 @@ const styles = StyleSheet.create({
   memberIdText: {
     ...typography.caption,
     color: colors.muted,
+  },
+  photoActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  photoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  photoButtonText: {
+    ...typography.bodySemibold,
+  },
+  removePhotoButton: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  removePhotoText: {
+    ...typography.subtext,
+    color: colors.expired,
+    fontWeight: '600',
+  },
+  photoHint: {
+    ...typography.caption,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+  },
+  loadErrorCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  loadErrorText: {
+    ...typography.subtext,
+    color: colors.expired,
+  },
+  retryProfileButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  retryProfileText: {
+    ...typography.bodySemibold,
+    color: colors.expired,
+  },
+  fieldLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  profileInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    color: colors.text,
+    backgroundColor: '#FFFFFF',
+    fontSize: 15,
+  },
+  addressInput: {
+    minHeight: 84,
+    textAlignVertical: 'top',
+  },
+  saveDetailsButton: {
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.md,
+    marginTop: spacing.lg,
   },
   gymHeaderRow: {
     flexDirection: 'row',

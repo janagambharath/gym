@@ -5,6 +5,8 @@ export interface Member {
   full_name: string;
   phone: string;
   email?: string | null;
+  gender?: string | null;
+  profile_photo_url?: string | null;
   address?: string | null;
   joined_on?: string | null;
   status: string;
@@ -122,7 +124,7 @@ export interface UPIPaymentSession {
 
 export interface AccessEventRecord {
   id: number;
-  event_type: 'ENTRY' | 'EXIT' | 'DENIED';
+  event_type: 'ENTRY' | 'EXIT' | 'DENIED' | 'ACCESS_DENIED' | 'ATTENDANCE' | 'UNKNOWN' | string;
   direction?: string | null;
   timestamp: string;
   device_name?: string | null;

@@ -6,6 +6,7 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +25,9 @@ export const AttendanceScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'ALL' | 'ENTRY' | 'EXIT' | 'DENIED'>('ALL');
 
   const fetchAccess = useCallback(async (pageNum = 1) => {
     try {
@@ -36,11 +40,13 @@ export const AttendanceScreen: React.FC = () => {
       }
       setHasMore(res.pagination.page < res.pagination.total_pages);
       setPage(pageNum);
-    } catch {
-      // Non-fatal
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load attendance.');
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   }, []);
 
@@ -54,10 +60,18 @@ export const AttendanceScreen: React.FC = () => {
   }, [fetchAccess]);
 
   const onEndReached = () => {
-    if (!loading && hasMore) {
+    if (!loading && !loadingMore && hasMore) {
+      setLoadingMore(true);
       fetchAccess(page + 1);
     }
   };
+
+  const filteredEvents = events.filter((event) => {
+    if (filter === 'ALL') return true;
+    const type = String(event.event_type).toUpperCase();
+    if (filter === 'DENIED') return type.includes('DENIED');
+    return type === filter;
+  });
 
   const formatEventTime = (iso: string) => {
     try {
@@ -81,7 +95,7 @@ export const AttendanceScreen: React.FC = () => {
   const renderEventItem = ({ item }: { item: AccessEventRecord }) => {
     const isEntry = item.event_type === 'ENTRY';
     const isExit = item.event_type === 'EXIT';
-    const isDenied = item.event_type === 'DENIED';
+    const isDenied = String(item.event_type).toUpperCase().includes('DENIED');
 
     let iconName: keyof typeof Ionicons.glyphMap = 'radio-button-on';
     let iconColor = colors.textSecondary;
@@ -105,7 +119,7 @@ export const AttendanceScreen: React.FC = () => {
 
     return (
       <View style={styles.eventCard}>
-        <View style={[styles.eventIconCircle, { backgroundColor: isEntry ? colors.activeSurface : isExit ? colors.expiringSurface : '#F1F5F9' }]}>
+        <View style={[styles.eventIconCircle, { backgroundColor: isDenied ? colors.expiredSurface : isEntry ? colors.activeSurface : isExit ? colors.expiringSurface : '#F1F5F9' }]}>
           <Ionicons name={iconName} size={18} color={iconColor} />
         </View>
         <View style={styles.eventInfo}>
@@ -136,7 +150,7 @@ export const AttendanceScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea}>
       <FlatList
-        data={events}
+        data={filteredEvents}
         renderItem={renderEventItem}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.listContent}
@@ -205,14 +219,41 @@ export const AttendanceScreen: React.FC = () => {
             </View>
 
             <Text style={styles.logSectionTitle}>Recent Check-In Activity</Text>
+            <View style={styles.filterRow}>
+              {(['ALL', 'ENTRY', 'EXIT', 'DENIED'] as const).map((value) => (
+                <TouchableOpacity
+                  key={value}
+                  onPress={() => setFilter(value)}
+                  style={[styles.filterChip, filter === value && styles.filterChipActive]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: filter === value }}
+                >
+                  <Text style={[styles.filterText, filter === value && styles.filterTextActive]}>
+                    {value === 'ALL' ? 'All' : value === 'ENTRY' ? 'Entries' : value === 'EXIT' ? 'Exits' : 'Denied'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         }
-        ListEmptyComponent={
+        ListEmptyComponent={error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.loadError}>{error}</Text>
+            <TouchableOpacity onPress={() => fetchAccess(1)} style={styles.retryButton}>
+              <Text style={styles.retryText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
           <EmptyState
             icon="footsteps-outline"
             title="No Attendance Records Yet"
             description="Your check-ins at the gym entrance terminal will automatically appear here."
           />
+        )}
+        ListFooterComponent={
+          loadingMore ? <ActivityIndicator style={styles.listFooter} color={theme.primary} /> :
+          error && events.length > 0 ? <TouchableOpacity onPress={onEndReached} style={styles.retryButton}><Text style={styles.retryText}>Could not load older visits · Retry</Text></TouchableOpacity> :
+          hasMore && events.length > 0 ? <Text style={styles.listFooter}>Scroll to load older visits</Text> : null
         }
       />
     </SafeAreaView>
@@ -331,6 +372,53 @@ const styles = StyleSheet.create({
     ...typography.h3,
     color: colors.text,
     marginBottom: spacing.md,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  filterChip: {
+    borderRadius: radii.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    backgroundColor: colors.card,
+  },
+  filterChipActive: {
+    borderColor: colors.platform,
+    backgroundColor: colors.platformSubtle,
+  },
+  filterText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  filterTextActive: {
+    color: colors.platformDark,
+    fontWeight: '700',
+  },
+  listFooter: {
+    paddingVertical: spacing.lg,
+    textAlign: 'center',
+    color: colors.muted,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  loadError: {
+    textAlign: 'center',
+    color: colors.expired,
+  },
+  retryButton: {
+    alignSelf: 'center',
+    padding: spacing.md,
+  },
+  retryText: {
+    ...typography.bodySemibold,
+    color: colors.platformDark,
+    textAlign: 'center',
   },
   eventCard: {
     flexDirection: 'row',

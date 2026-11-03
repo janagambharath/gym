@@ -20,13 +20,14 @@ import hashlib
 import hmac
 import logging
 import random
+import re
 import secrets
 import string
 import time
 from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, current_app, g, jsonify, request, url_for
+from flask import Blueprint, abort, current_app, g, jsonify, request, send_from_directory, url_for
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
@@ -70,6 +71,41 @@ def _member_qr_url(qr: QRSettings | None) -> str | None:
     serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="qr-media")
     token = serializer.dumps({"path": path.replace("\\", "/")})
     return url_for("signed_qr_file", token=token, _external=True)
+
+
+def _member_profile_photo_url(member: Member) -> str | None:
+    path = member.profile_photo_path
+    if not path:
+        return None
+    if path.startswith(("http://", "https://")):
+        return path
+    if current_app.config.get("STORAGE_BACKEND") == "s3":
+        bucket = current_app.config.get("AWS_S3_BUCKET")
+        if not bucket:
+            return None
+        try:
+            import boto3
+
+            s3 = boto3.client(
+                "s3",
+                aws_access_key_id=current_app.config.get("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=current_app.config.get("AWS_SECRET_ACCESS_KEY"),
+                region_name=current_app.config.get("AWS_S3_REGION"),
+            )
+            return s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": path},
+                ExpiresIn=7 * 24 * 60 * 60,
+            )
+        except Exception:
+            _logger.exception("Could not create signed profile photo URL for member %s", member.id)
+            return None
+
+    from itsdangerous import URLSafeTimedSerializer
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="member-profile-photo")
+    token = serializer.dumps({"path": path, "gym_id": member.gym_id, "member_id": member.id})
+    return url_for("member_api.member_profile_photo_file", token=token, _external=True)
 
 
 def _is_reviewer_bypass_enabled() -> bool:
@@ -633,6 +669,7 @@ def member_dashboard():
                 "full_name": member.full_name,
                 "phone": member.phone,
                 "address": member.address,
+                "profile_photo_url": _member_profile_photo_url(member),
                 "status": member.status,
                 "membership_start": member.membership_start.isoformat() if member.membership_start else None,
                 "membership_end": member.membership_end.isoformat() if member.membership_end else None,
@@ -1324,8 +1361,8 @@ def fail_upi_payment():
 @member_token_required
 def member_payments():
     """Return authenticated member's payment history."""
-    page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 50)
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = max(1, min(request.args.get("per_page", 20, type=int), 50))
 
     query = PaymentVerification.query.filter_by(
         member_id=g.member_id, gym_id=g.gym_id
@@ -1382,8 +1419,8 @@ def member_access():
     gym = member.gym
     gym_timezone = gym.timezone if gym else "Asia/Kolkata"
 
-    page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 50)
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = max(1, min(request.args.get("per_page", 20, type=int), 50))
 
     query = AccessEvent.query.filter_by(
         member_id=g.member_id, gym_id=g.gym_id
@@ -1460,12 +1497,40 @@ def member_access():
 # ── Profile ───────────────────────────────────────────────────────────
 
 
-@member_bp.route("/profile", methods=["GET"])
+@member_bp.route("/profile", methods=["GET", "PUT"])
 @member_token_required
 def member_profile():
-    """Return authenticated member's profile information."""
+    """Return or update safe, member-managed profile information."""
     member = g.current_member
     gym = member.gym
+
+    if request.method == "PUT":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "A JSON profile is required."}), 400
+        allowed_fields = {"email", "address", "gender"}
+        if set(data) - allowed_fields:
+            return jsonify({"success": False, "error": "Only email, address, and gender can be updated here."}), 400
+
+        email = data.get("email", member.email)
+        if email is not None:
+            email = str(email).strip() or None
+            if email and (len(email) > 255 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)):
+                return jsonify({"success": False, "error": "Enter a valid email address."}), 400
+        address = data.get("address", member.address)
+        if address is not None:
+            address = str(address).strip() or None
+            if address and len(address) > 2000:
+                return jsonify({"success": False, "error": "Address must be 2,000 characters or fewer."}), 400
+        gender = data.get("gender", member.gender)
+        if gender is not None:
+            gender = str(gender).strip() or None
+            if gender and len(gender) > 32:
+                return jsonify({"success": False, "error": "Gender must be 32 characters or fewer."}), 400
+        member.email = email
+        member.address = address
+        member.gender = gender
+        db.session.commit()
 
     # Payment info for the gym
     qr_settings = QRSettings.query.filter_by(gym_id=g.gym_id).first() if gym else None
@@ -1479,6 +1544,8 @@ def member_profile():
                 "phone": member.phone,
                 "email": member.email,
                 "address": member.address,
+                "gender": member.gender,
+                "profile_photo_url": _member_profile_photo_url(member),
                 "joined_on": member.joined_on.isoformat() if member.joined_on else None,
                 "status": member.status,
             },
@@ -1495,6 +1562,88 @@ def member_profile():
             } if qr_settings else None,
         },
     })
+
+
+@member_bp.route("/profile/photo", methods=["POST", "DELETE"])
+@member_token_required
+def member_profile_photo():
+    """Upload or remove the authenticated member's own profile photo."""
+    member = g.current_member
+    old_path = member.profile_photo_path
+
+    if request.method == "DELETE":
+        member.profile_photo_path = None
+        db.session.commit()
+        if old_path:
+            try:
+                from app.services.storage_service import delete_member_profile_photo
+                delete_member_profile_photo(old_path)
+            except Exception:
+                _logger.exception("Could not delete old profile photo for member %s", member.id)
+        return jsonify({"success": True, "data": {"profile_photo_url": None}})
+
+    upload = request.files.get("photo")
+    if not upload or not upload.filename:
+        return jsonify({"success": False, "error": "Choose a profile photo to upload."}), 400
+    try:
+        from app.services.storage_service import save_member_profile_photo, delete_member_profile_photo
+        new_path = save_member_profile_photo(upload, g.gym_id, member.id)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        _logger.exception("Could not save profile photo for member %s", member.id)
+        return jsonify({"success": False, "error": "The photo could not be saved. Please try again."}), 500
+
+    member.profile_photo_path = new_path
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        try:
+            delete_member_profile_photo(new_path)
+        except Exception:
+            _logger.exception("Could not clean up failed profile photo upload for member %s", member.id)
+        raise
+
+    if old_path and old_path != new_path:
+        try:
+            delete_member_profile_photo(old_path)
+        except Exception:
+            _logger.exception("Could not delete replaced profile photo for member %s", member.id)
+    return jsonify({"success": True, "data": {"profile_photo_url": _member_profile_photo_url(member)}})
+
+
+@member_bp.route("/profile/photo/<token>", methods=["GET"])
+def member_profile_photo_file(token: str):
+    """Serve a signed URL for the current local profile photo, with expiry."""
+    from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="member-profile-photo")
+    try:
+        payload = serializer.loads(token, max_age=7 * 24 * 60 * 60)
+    except (BadSignature, SignatureExpired):
+        abort(403)
+    path = str(payload.get("path", "")).replace("\\", "/")
+    parts = path.split("/")
+    try:
+        gym_id = int(payload.get("gym_id"))
+        member_id = int(payload.get("member_id"))
+        safe_path = (
+            len(parts) == 4
+            and parts[0] == "member_profiles"
+            and int(parts[1]) == gym_id
+            and int(parts[2]) == member_id
+        )
+    except (TypeError, ValueError):
+        safe_path = False
+    if not safe_path:
+        abort(403)
+    member = Member.query.filter_by(id=member_id, gym_id=gym_id, profile_photo_path=path).first()
+    if not member:
+        abort(404)
+    return send_from_directory(
+        current_app.config["UPLOAD_FOLDER"], path, mimetype="image/jpeg", max_age=3600
+    )
 
 
 # ── Payment Info (for renewal flow) ──────────────────────────────────

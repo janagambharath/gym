@@ -50,8 +50,9 @@ async function request<T>(
   timeoutMs = 12000
 ): Promise<T> {
   const token = await getToken();
+  const isMultipart = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string>),
   };
 
@@ -263,5 +264,32 @@ export const apiClient = {
   }> {
     const res = await request<{ success: boolean; data: any }>('/api/member/v1/profile');
     return res.data;
+  },
+
+  async updateProfile(input: { email: string | null; address: string | null; gender: string | null }): Promise<{
+    member: Member;
+    gym: { name: string | null; phone: string | null; address: string | null };
+    payment_info: PaymentInfo | null;
+  }> {
+    const res = await request<{ success: boolean; data: any }>('/api/member/v1/profile', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    });
+    return res.data;
+  },
+
+  async uploadProfilePhoto(uri: string, mimeType: string, fileName: string): Promise<string | null> {
+    const form = new FormData();
+    form.append('photo', { uri, type: mimeType, name: fileName } as unknown as Blob);
+    const res = await request<{ success: boolean; data: { profile_photo_url: string | null } }>(
+      '/api/member/v1/profile/photo',
+      { method: 'POST', body: form },
+      30000,
+    );
+    return res.data.profile_photo_url;
+  },
+
+  async removeProfilePhoto(): Promise<void> {
+    await request('/api/member/v1/profile/photo', { method: 'DELETE' });
   },
 };

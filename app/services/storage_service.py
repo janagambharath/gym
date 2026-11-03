@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
@@ -54,6 +55,101 @@ def save_gym_qr(file: FileStorage, gym_id: int) -> str:
     if current_app.config.get("STORAGE_BACKEND") == "s3":
         return _save_to_s3(file, gym_id, extension)
     return _save_to_local(file, gym_id, extension)
+
+
+def save_member_profile_photo(file: FileStorage, gym_id: int, member_id: int) -> str:
+    """Validate, normalize, and store a small member profile photo.
+
+    Decoding and re-encoding with Pillow strips EXIF metadata and prevents a
+    renamed non-image file from being served as a profile photo.
+    """
+    if not file or not file.filename:
+        raise ValueError("Choose a photo to upload.")
+
+    raw = file.stream.read(3 * 1024 * 1024 + 1)
+    file.stream.seek(0)
+    if len(raw) > 3 * 1024 * 1024:
+        raise ValueError("Profile photos must be 3 MB or smaller.")
+
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(BytesIO(raw)) as image:
+            if image.format not in {"JPEG", "PNG", "WEBP"}:
+                raise ValueError("Use a JPEG, PNG, or WebP photo.")
+            if image.width * image.height > 24_000_000:
+                raise ValueError("This photo is too large to process. Choose a smaller image.")
+            image.verify()
+        with Image.open(BytesIO(raw)) as image:
+            image = ImageOps.exif_transpose(image)
+            if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+                rgba = image.convert("RGBA")
+                background = Image.new("RGB", rgba.size, "white")
+                background.paste(rgba, mask=rgba.getchannel("A"))
+                image = background
+            else:
+                image = image.convert("RGB")
+            image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+            normalized = BytesIO()
+            image.save(normalized, format="JPEG", quality=86, optimize=True)
+            content = normalized.getvalue()
+    except ValueError:
+        raise
+    except Exception as exc:
+        # Keep parser details out of the API response.
+        raise ValueError("The selected file is not a supported image.") from exc
+
+    key = f"member_profiles/{gym_id}/{member_id}/{uuid4().hex}.jpg"
+    if current_app.config.get("STORAGE_BACKEND") == "s3":
+        import boto3
+
+        bucket = current_app.config.get("AWS_S3_BUCKET")
+        if not bucket:
+            raise ValueError("AWS_S3_BUCKET is required when STORAGE_BACKEND=s3")
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=current_app.config.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=current_app.config.get("AWS_SECRET_ACCESS_KEY"),
+            region_name=current_app.config.get("AWS_S3_REGION"),
+        )
+        s3.upload_fileobj(BytesIO(content), bucket, key, ExtraArgs={"ContentType": "image/jpeg"})
+    else:
+        target = Path(current_app.config["UPLOAD_FOLDER"]) / key
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    return key
+
+
+def delete_member_profile_photo(path: str | None) -> None:
+    """Delete only a generated member-profile key from the configured store."""
+    if not path:
+        return
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    if len(parts) != 4 or parts[0] != "member_profiles" or not parts[1].isdigit() or not parts[2].isdigit():
+        raise ValueError("Refusing to delete a file outside member profile storage.")
+    filename = parts[3]
+    if (
+        len(filename) != 36
+        or not filename.endswith(".jpg")
+        or any(char not in "0123456789abcdef" for char in filename[:-4])
+    ):
+        raise ValueError("Refusing to delete a file outside member profile storage.")
+    if current_app.config.get("STORAGE_BACKEND") == "s3":
+        import boto3
+
+        bucket = current_app.config.get("AWS_S3_BUCKET")
+        if not bucket:
+            raise ValueError("AWS_S3_BUCKET is required when STORAGE_BACKEND=s3")
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=current_app.config.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=current_app.config.get("AWS_SECRET_ACCESS_KEY"),
+            region_name=current_app.config.get("AWS_S3_REGION"),
+        )
+        s3.delete_object(Bucket=bucket, Key=normalized)
+        return
+    delete_local_upload(normalized)
 
 
 def delete_local_upload(relative_path: str | None) -> None:

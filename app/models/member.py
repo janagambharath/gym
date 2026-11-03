@@ -52,6 +52,9 @@ class Member(TenantMixin, TimestampMixin, db.Model):
     phone = db.Column(db.String(40), nullable=False)
     email = db.Column(db.String(255), nullable=True)
     gender = db.Column(db.String(32), nullable=True)
+    # Stored path/key for the member-managed profile image. The URL is resolved
+    # by the authenticated member API and is never persisted in the database.
+    profile_photo_path = db.Column(db.String(2048), nullable=True)
     joined_on = db.Column(db.Date, nullable=False, default=date.today)
     membership_start = db.Column(db.Date, nullable=False, default=date.today)
     membership_end = db.Column(db.Date, nullable=True)
