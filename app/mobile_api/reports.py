@@ -33,6 +33,12 @@ def register_reports_routes(bp):
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         start_at = _parse_period(period, gym_timezone)
         today = today_for_gym(gym_timezone)
+        if period == "7d":
+            period_start_date = today - timedelta(days=7)
+        elif period == "30d":
+            period_start_date = today - timedelta(days=30)
+        else:
+            period_start_date = today
         soon = today + timedelta(days=7)
         gym_id = g.gym_id
 
@@ -78,6 +84,7 @@ def register_reports_routes(bp):
             .filter(
                 PaymentVerification.gym_id == gym_id,
                 PaymentVerification.verified_at >= start_at,
+                PaymentVerification.is_test.is_(False),
             )
             .scalar()
         )
@@ -93,7 +100,7 @@ def register_reports_routes(bp):
                     0,
                 )
             )
-            .filter(PaymentVerification.gym_id == gym_id)
+            .filter(PaymentVerification.gym_id == gym_id, PaymentVerification.is_test.is_(False))
             .scalar()
         )
 
@@ -126,16 +133,38 @@ def register_reports_routes(bp):
             .filter(
                 RenewalHistory.gym_id == gym_id,
                 RenewalHistory.created_at >= start_at,
+                RenewalHistory.is_test.is_(False),
             )
             .scalar() or 0
         )
-
-        total_due_for_renewal = renewals_completed + expired_members
-        renewal_rate = (
-            round((renewals_completed / total_due_for_renewal) * 100, 1)
-            if total_due_for_renewal > 0
-            else 0.0
-        )
+        # Measure a completed-expiry cohort: memberships whose old end date
+        # fell in the period, plus those still expired today. Do not divide
+        # renewal activity by every currently expired member, which mixes
+        # unrelated time windows and inflates/deflates the rate.
+        renewed_member_ids = {
+            row[0] for row in db.session.query(RenewalHistory.member_id)
+            .filter(
+                RenewalHistory.gym_id == gym_id,
+                RenewalHistory.is_test.is_(False),
+                RenewalHistory.previous_end >= period_start_date,
+                RenewalHistory.previous_end < today,
+            )
+            .distinct()
+            .all()
+        }
+        unrenewed_member_ids = {
+            row[0] for row in db.session.query(Member.id)
+            .filter(
+                Member.gym_id == gym_id,
+                Member.deleted_at.is_(None),
+                Member.status.in_(("active", "expired")),
+                Member.membership_end >= period_start_date,
+                Member.membership_end < today,
+            )
+            .all()
+        }
+        due_member_ids = renewed_member_ids | unrenewed_member_ids
+        renewal_rate = round(len(renewed_member_ids) / len(due_member_ids) * 100, 1) if due_member_ids else 0.0
 
         # WhatsApp
         reminders_sent = (

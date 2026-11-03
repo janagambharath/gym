@@ -10,15 +10,19 @@ Gym owners can customize the message via NotificationTemplate (trigger column).
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as tz
 import logging
+from zoneinfo import ZoneInfo
 
+from flask import current_app
 from app.extensions import db
 from app.models import Gym, Member, NotificationTemplate, ReminderLog
-from app.services.rrr_service import rules_for_gym
+from app.models.rrr import RRRAttendanceEvent
+from app.services.rrr_service import attendance_visit_counts, rules_for_gym
 from app.services.timezone_service import today_for_gym
-from app.services.whatsapp_service import WhatsAppService
+from app.services.whatsapp_service import WhatsAppResult, WhatsAppService
 from app.services.whatsapp_template_service import render_message_template
+from app.utils.helpers import phone_to_whatsapp
 
 _logger = logging.getLogger(__name__)
 
@@ -27,27 +31,27 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_TEMPLATES = {
     "retention_no_visit": (
-        "Hi {member_name}! We miss you at {gym_name} \U0001f4aa\n\n"
+        "Hi {{ member_name }}! We miss you at {{ gym_name }} \U0001f4aa\n\n"
         "It's been a while since your last workout. Everything okay?\n"
         "Your fitness journey matters to us — drop in anytime, we're here to help you stay on track!"
     ),
     "retention_attendance_drop": (
-        "Hi {member_name}! Noticed you've been coming in less often at {gym_name}.\n\n"
+        "Hi {{ member_name }}! Noticed you've been coming in less often at {{ gym_name }}.\n\n"
         "We wanted to check in — is there anything we can do to help you get back to your routine? "
         "Your progress matters to us \U0001f4aa"
     ),
     "retention_winback_1": (
-        "Hi {member_name}! Your membership at {gym_name} recently ended.\n\n"
+        "Hi {{ member_name }}! Your membership at {{ gym_name }} recently ended.\n\n"
         "We'd love to have you back! Your fitness goals are still within reach. "
         "Reply to this message and we'll help you get restarted."
     ),
     "retention_winback_2": (
-        "Hi {member_name}, just checking in from {gym_name}.\n\n"
+        "Hi {{ member_name }}, just checking in from {{ gym_name }}.\n\n"
         "It's been a week since your membership ended. Many of our members find that "
         "getting back into routine is easier than they expect. Want to talk about options?"
     ),
     "retention_winback_3": (
-        "Hi {member_name}! Last call from {gym_name} \U0001f3af\n\n"
+        "Hi {{ member_name }}! Last call from {{ gym_name }} \U0001f3af\n\n"
         "We have a special rejoin offer waiting for you. Don't let your progress slip away — "
         "reply YES and we'll set everything up for you."
     ),
@@ -84,19 +88,19 @@ def ensure_retention_template(gym_id: int, trigger: str) -> NotificationTemplate
     return template
 
 
-def _already_sent(gym_id: int, member_id: int, trigger: str) -> bool:
-    """Check if this retention nudge was already sent to this member."""
+def _retention_log(gym_id: int, member: Member, trigger: str) -> ReminderLog | None:
+    """Return this trigger's log for the member's current membership cycle."""
+    cycle_end = member.membership_end or member.membership_start
     return (
-        db.session.query(ReminderLog.id)
-        .join(NotificationTemplate, ReminderLog.template_id == NotificationTemplate.id)
+        ReminderLog.query
         .filter(
-            NotificationTemplate.gym_id == gym_id,
-            NotificationTemplate.trigger == trigger,
-            ReminderLog.member_id == member_id,
-            ReminderLog.status == "sent",
+            ReminderLog.gym_id == gym_id,
+            ReminderLog.member_id == member.id,
+            ReminderLog.cycle_end_date == cycle_end,
+            ReminderLog.reminder_stage == trigger,
+            ReminderLog.channel == "whatsapp",
         )
         .first()
-        is not None
     )
 
 
@@ -107,7 +111,9 @@ def _send_nudge(
     gym_timezone: str,
 ) -> bool:
     """Send a single retention nudge. Returns True if sent."""
-    if _already_sent(gym.id, member.id, trigger):
+    # Retention messages are proactive marketing. Never send without the
+    # member's recorded WhatsApp opt-in, even if the gym enabled WhatsApp.
+    if not member.whatsapp_opted_in or not member.phone:
         return False
 
     try:
@@ -119,24 +125,73 @@ def _send_nudge(
         return False
 
     try:
+        # Older generated rows stored Python-style placeholders. Convert only
+        # the supported token names so customized template wording survives a
+        # deploy and does not send literal braces to members.
+        template_body = template.message_body or ""
+        for variable in ("member_name", "gym_name", "expiry_date", "days_left", "payment_upi_id"):
+            template_body = template_body.replace(f"{{{variable}}}", f"{{{{ {variable} }}}}")
         message = render_message_template(
-            template.message_body,
+            template_body,
             gym_name=gym.name,
             member_name=member.full_name or "there",
             expiry_date=member.membership_end.strftime("%d %b %Y") if member.membership_end else "",
+            days_left=(member.membership_end - today_for_gym(gym_timezone)).days if member.membership_end else 0,
         )
-        service = WhatsAppService(gym)
-        result = service.send_text(member.phone, message)
+        log = _retention_log(gym.id, member, trigger)
+        if log and log.status == "sent":
+            return False
+        if log is None:
+            log = ReminderLog(
+                gym_id=gym.id,
+                member_id=member.id,
+                template_id=template.id,
+                channel="whatsapp",
+                reminder_stage=trigger,
+                cycle_end_date=member.membership_end or member.membership_start,
+                scheduled_for=today_for_gym(gym_timezone),
+                phone_snapshot=phone_to_whatsapp(member.phone),
+            )
+            db.session.add(log)
+        log.template_id = template.id
+        log.phone_snapshot = phone_to_whatsapp(member.phone)
+        log.message_snapshot = message
+        log.status = "sending"
+        log.attempts = (log.attempts or 0) + 1
+        db.session.commit()
 
-        log = ReminderLog(
-            gym_id=gym.id,
-            member_id=member.id,
-            template_id=template.id,
-            channel="whatsapp",
-            status="sent" if result.ok else "failed",
-            error=result.error if not result.ok else None,
-        )
-        db.session.add(log)
+        service = WhatsAppService(gym)
+        template_name = current_app.config.get("WHATSAPP_RETENTION_TEMPLATE_NAME", "")
+        if template_name:
+            parameter_names = current_app.config.get(
+                "WHATSAPP_RETENTION_TEMPLATE_BODY_PARAMS", ["member_name", "gym_name"]
+            )
+            context = {
+                "member_name": member.full_name or "there",
+                "gym_name": gym.name,
+                "expiry_date": member.membership_end.strftime("%d %b %Y") if member.membership_end else "",
+                "days_left": (member.membership_end - today_for_gym(gym_timezone)).days if member.membership_end else 0,
+                "payment_upi_id": getattr(getattr(gym, "qr_settings", None), "upi_id", "") or "",
+            }
+            result = service.send_template(
+                to=log.phone_snapshot,
+                template_name=template_name,
+                language_code=current_app.config.get("WHATSAPP_RETENTION_TEMPLATE_LANGUAGE", "en"),
+                body_parameters=[str(context.get(name, "")) for name in parameter_names],
+            )
+            if not result.ok and member.has_open_whatsapp_session:
+                result = service.send_text(to=log.phone_snapshot, body=message)
+        elif member.has_open_whatsapp_session:
+            result = service.send_text(to=log.phone_snapshot, body=message)
+        else:
+            result = WhatsAppResult(
+                ok=False,
+                error="No approved retention WhatsApp template is configured and the 24-hour reply window is closed.",
+            )
+        log.status = "sent" if result.ok else "failed"
+        log.sent_at = datetime.now(tz=tz.utc) if result.ok else None
+        log.provider_message_id = result.provider_message_id
+        log.error_message = result.error if not result.ok else None
         db.session.commit()
         return result.ok
     except Exception:
@@ -147,16 +202,18 @@ def _send_nudge(
 
 def _last_visit_map(gym_id: int) -> dict[int, object]:
     """Map member_id -> last attendance datetime."""
-    from app.models import Attendance
     from sqlalchemy import func
 
     rows = (
         db.session.query(
-            Attendance.member_id,
-            func.max(Attendance.punch_time).label("last_visit"),
+            RRRAttendanceEvent.member_id,
+            func.max(RRRAttendanceEvent.punch_time).label("last_visit"),
         )
-        .filter(Attendance.gym_id == gym_id)
-        .group_by(Attendance.member_id)
+        .filter(
+            RRRAttendanceEvent.gym_id == gym_id,
+            RRRAttendanceEvent.member_id.isnot(None),
+        )
+        .group_by(RRRAttendanceEvent.member_id)
         .all()
     )
     return {r.member_id: r.last_visit for r in rows}
@@ -183,10 +240,16 @@ def run_retention_nudges_for_gym(gym_id: int, gym_timezone: str = "Asia/Kolkata"
     for member in active_members:
         visit = last_visit.get(member.id)
         if visit is None:
-            days_since = 999  # Never visited
+            # A newly enrolled member should not be labelled inactive before
+            # their no-visit window has actually elapsed.
+            days_since = max(0, (local_today - member.membership_start).days)
         else:
-            # visit may be datetime; compare dates
-            visit_date = visit.date() if hasattr(visit, "date") else visit
+            if visit.tzinfo is None:
+                visit = visit.replace(tzinfo=tz.utc)
+            try:
+                visit_date = visit.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
+            except Exception:
+                visit_date = visit.astimezone(ZoneInfo("Asia/Kolkata")).date()
             days_since = (local_today - visit_date).days
         if days_since >= no_visit_threshold:
             if _send_nudge(gym, member, "retention_no_visit", gym_timezone):
@@ -196,36 +259,15 @@ def run_retention_nudges_for_gym(gym_id: int, gym_timezone: str = "Asia/Kolkata"
 
     # ── 2. Attendance drop: 50%+ decline vs prior 14 days ──
     # (Uses the same logic as rrr_service opportunity detection)
-    from app.models import Attendance
-    from datetime import datetime, timezone as tz
-
-    now_utc = datetime.now(tz=tz.utc)
-    recent_start = now_utc - timedelta(days=14)
-    baseline_start = now_utc - timedelta(days=28)
-
-    recent_counts: dict[int, int] = {}
-    baseline_counts: dict[int, int] = {}
-    for row in (
-        db.session.query(Attendance.member_id, Attendance.punch_time)
-        .filter(
-            Attendance.gym_id == gym_id,
-            Attendance.punch_time >= baseline_start,
-        )
-        .all()
-    ):
-        # Normalize to date for day-level dedup
-        punch = row.punch_time
-        if punch >= recent_start:
-            recent_counts[row.member_id] = recent_counts.get(row.member_id, 0) + 1
-        else:
-            baseline_counts[row.member_id] = baseline_counts.get(row.member_id, 0) + 1
+    visit_counts = attendance_visit_counts(
+        gym_id, [member.id for member in active_members], gym_timezone, local_today
+    )
 
     drop_threshold = rules.get("attendance_drop_percent", 50)
     for member in active_members:
-        baseline = baseline_counts.get(member.id, 0)
+        recent, baseline = visit_counts.get(member.id, (0, 0))
         if baseline < 2:
             continue  # Skip sparse histories (same as rrr_service)
-        recent = recent_counts.get(member.id, 0)
         decline = round((baseline - recent) / baseline * 100)
         if decline >= drop_threshold:
             if _send_nudge(gym, member, "retention_attendance_drop", gym_timezone):
@@ -235,21 +277,31 @@ def run_retention_nudges_for_gym(gym_id: int, gym_timezone: str = "Asia/Kolkata"
 
     # ── 3. Win-back sequence for recently expired ──
     recent_expiry_days = rules.get("recent_expiry_days", 30)
-    for trigger, days_after in WINBACK_SCHEDULE.items():
-        target_date = local_today - timedelta(days=days_after)
-        expired_members = (
-            Member.query.filter_by(gym_id=gym_id)
-            .filter(Member.deleted_at.is_(None))
-            .filter(Member.membership_end == target_date)
-            .all()
-        )
-        for member in expired_members:
-            # Only win back if they haven't renewed
-            if member.status == "active":
-                continue
-            if _send_nudge(gym, member, trigger, gym_timezone):
-                counts["winback"] += 1
-            else:
-                counts["skipped"] += 1
+    expired_members = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None))
+        .filter(Member.membership_end < local_today)
+        .filter(Member.membership_end >= local_today - timedelta(days=recent_expiry_days))
+        .all()
+    )
+    for member in expired_members:
+        # Send only the latest due stage. This catches a scheduler outage
+        # without blasting all three messages on the next run. A stage's
+        # ReminderLog prevents duplicate delivery on subsequent daily runs.
+        days_expired = (local_today - member.membership_end).days
+        due_stages = [
+            (trigger, days_after)
+            for trigger, days_after in WINBACK_SCHEDULE.items()
+            if days_expired >= days_after
+        ]
+        if not due_stages:
+            continue
+        trigger, _days_after = due_stages[-1]
+        if member.status == "active":
+            continue
+        if _send_nudge(gym, member, trigger, gym_timezone):
+            counts["winback"] += 1
+        else:
+            counts["skipped"] += 1
 
     return counts

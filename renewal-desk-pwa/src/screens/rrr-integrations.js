@@ -191,14 +191,6 @@ function directPanel(direct, commands) {
         <button class="rrr-test-unblock" data-adms-action="essl_group_unblock_test" ${connected ? '' : 'disabled'}>3. Test eSSL unblock (Grp=1)</button>
       </div>
       <p class="rrr-muted-copy">Use only the dedicated, fingerprint-enrolled fake account you created. A fake account saved as a Renewal Desk member is accepted when its current terminal name exactly matches the member name. The command updates USERINFO with Grp=100 or Grp=1 and does not use DELETE. After each terminal acknowledgement, test the same finger at the device; the acknowledgement alone does not prove access changed or that the fingerprint remained enrolled. These tests do not enable automatic membership commands.</p>
-      <details class="rrr-danger-probes">
-        <summary>Advanced destructive fingerprint probes</summary>
-        <p class="rrr-muted-copy">These commands delete fingerprint template data for the test ID. You will need to enroll it again; they are not needed for the Grp test above.</p>
-        <div class="rrr-command-actions">
-          <button class="rrr-secondary-button" data-adms-action="delete_biodata_test" ${connected ? '' : 'disabled'}>Delete fingerprints (FINGERTMP)</button>
-          <button class="rrr-secondary-button" data-adms-action="delete_fingertmp_test" ${connected ? '' : 'disabled'}>Delete finger 0 (FID=0)</button>
-        </div>
-      </details>
       <p id="rrr-command-error" class="rrr-form-error" role="alert"></p>
     </section>
     ${commissionBox('direct', direct, commands)}

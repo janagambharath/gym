@@ -40,6 +40,10 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     discount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     paid_on = db.Column(db.Date, nullable=True)
+    # Date the purchased membership period starts. Pending online payments
+    # keep this value so later verification applies the same dates selected
+    # by the owner.
+    renewal_start_date = db.Column(db.Date, nullable=True)
     method = db.Column(db.String(64), nullable=False, default="upi")
     channel = db.Column(db.String(32), nullable=False, default="offline")
     reference = db.Column(db.String(160), nullable=True)

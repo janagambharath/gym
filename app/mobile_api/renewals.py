@@ -202,8 +202,6 @@ def register_renewals_routes(bp):
         plan = None
         if plan_id:
             plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=g.gym_id).first()
-            if plan:
-                member.plan_id = plan.id
         elif member.plan:
             plan = member.plan
 
@@ -245,6 +243,7 @@ def register_renewals_routes(bp):
 
         channel = str(data.get("channel", "offline")).strip().lower()
 
+        previous_start = member.membership_start
         previous_end = member.membership_end
         gym_timezone = (
             g.current_user.gym.timezone
@@ -252,25 +251,64 @@ def register_renewals_routes(bp):
             else "Asia/Kolkata"
         )
         today = today_for_gym(gym_timezone)
-        if previous_end and previous_end >= today:
-            new_start = previous_end + timedelta(days=1)
-        else:
-            new_start = today
-            member.membership_start = new_start
-        new_end = new_start + timedelta(days=renewal_days - 1)
+        raw_start_date = data.get("renewal_start_date")
+        try:
+            requested_start = (
+                date.fromisoformat(raw_start_date.strip())
+                if isinstance(raw_start_date, str) and raw_start_date.strip()
+                else None
+            )
+        except ValueError:
+            db.session.rollback()
+            return error_response("VALIDATION_ERROR", "Invalid renewal_start_date; use YYYY-MM-DD.", 400)
+        if raw_start_date is not None and not isinstance(raw_start_date, str):
+            db.session.rollback()
+            return error_response("VALIDATION_ERROR", "renewal_start_date must use YYYY-MM-DD.", 400)
 
-        member.membership_end = new_end
-        member.status = "active"
-        # Pin the renewal amount as the expected value for reporting.
-        member.price = amount
-        queue_membership_command(member)
+        earliest_start = previous_end + timedelta(days=1) if previous_end and previous_end >= today else today
+        new_start = requested_start or earliest_start
+        if previous_end and previous_end >= today and new_start < earliest_start:
+            db.session.rollback()
+            return error_response(
+                "VALIDATION_ERROR",
+                f"Renewal start date must be {earliest_start.isoformat()} or later so the current paid membership is not shortened.",
+                400,
+            )
+        new_end = new_start + timedelta(days=renewal_days - 1)
+        if new_end < today:
+            db.session.rollback()
+            return error_response("VALIDATION_ERROR", "This renewal would already be expired. Choose a later start date.", 400)
+
+        scheduled = new_start > today
+        target_plan_id = plan.id if plan else member.plan_id
+        if scheduled:
+            existing_schedule = RenewalHistory.query.filter(
+                RenewalHistory.gym_id == g.gym_id,
+                RenewalHistory.member_id == member.id,
+                RenewalHistory.new_start > today,
+            ).first()
+            if existing_schedule:
+                db.session.rollback()
+                return error_response(
+                    "CONFLICT",
+                    "This member already has a future renewal scheduled.",
+                    409,
+                )
+        else:
+            member.membership_start = new_start
+            member.membership_end = new_end
+            member.status = "active"
+            member.plan_id = target_plan_id
+            # Pin the renewal amount as the expected value for reporting.
+            member.price = amount
+            queue_membership_command(member)
 
         renewal = RenewalHistory(
             gym_id=g.gym_id,
             member_id=member.id,
-            plan_id=member.plan_id,
+            plan_id=target_plan_id,
             renewed_by_id=g.current_user.id,
-            previous_start=member.membership_start,
+            previous_start=previous_start,
             previous_end=previous_end,
             new_start=new_start,
             new_end=new_end,
@@ -303,10 +341,18 @@ def register_renewals_routes(bp):
             resource_id=member.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"renewal_days": renewal_days, "new_end": new_end.isoformat(), "override_reason": _override_reason},
+            metadata={"renewal_days": renewal_days, "new_end": new_end.isoformat(),
+                      "scheduled": scheduled, "override_reason": _override_reason},
         )
         invalidate_dashboard_cache(g.gym_id)
-        response_body = {"success": True, "data": _serialize_renewal(renewal)}
+        response_body = {
+            "success": True,
+            "data": {
+                **_serialize_renewal(renewal),
+                "scheduled": scheduled,
+                "message": "Renewal scheduled." if scheduled else "Membership renewed.",
+            },
+        }
         if idempotency_key:
             db.session.add(
                 MobileIdempotencyKey(

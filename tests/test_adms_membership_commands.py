@@ -54,8 +54,7 @@ def test_expiry_queues_adms_block(seed_gym, seed_member):
     cmd = RRRAdmsCommand.query.filter_by(integration_id=integration.id).one()
     assert cmd.action == "block"
     assert cmd.test_enroll_number == "42"
-    # A10: block is DELETE on current code, not the stale Pri=1 update.
-    assert cmd.command_text == "DATA DELETE USERINFO PIN=42"
+    assert cmd.command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tGrp=100"
     assert cmd.status == "queued"
     assert db.session.get(type(seed_member), seed_member.id).status == "expired"
 
@@ -104,8 +103,7 @@ def test_renewal_queues_unblock_and_dedupes(seed_gym, seed_member):
     cmds = RRRAdmsCommand.query.filter_by(integration_id=integration.id).all()
     assert len(cmds) == 1
     assert cmds[0].action == "unblock"
-    # A10: unblock recreates the user WITH its name on current code.
-    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tPri=0"
+    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tGrp=1"
 
     # Terminal acknowledged the unblock; a later edit re-sends nothing.
     cmds[0].status = "acked"
@@ -159,11 +157,13 @@ def test_commission_adms_direct_requires_evidence(client, seed_gym, seed_member)
     denied = client.post(url, headers=headers(seed_gym), json={"physical_test_passed": True})
     assert denied.status_code == 409  # no acknowledged test command yet
 
-    db.session.add(RRRAdmsCommand(
-        gym_id=seed_gym["gym"].id, integration_id=integration.id, action="block_test",
-        test_enroll_number="999", command_text=adms_command_text("block_test", "999"),
-        status="acked",
-    ))
+    for action in ("essl_group_block_test", "essl_group_unblock_test"):
+        db.session.add(RRRAdmsCommand(
+            gym_id=seed_gym["gym"].id, integration_id=integration.id, action=action,
+            test_enroll_number="999",
+            command_text=adms_command_text(action, "999", member_name="Test Fake"),
+            status="acked",
+        ))
     db.session.commit()
     ok = client.post(url, headers=headers(seed_gym), json={"physical_test_passed": True})
     assert ok.status_code == 200

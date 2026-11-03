@@ -10,6 +10,7 @@ from flask import Flask
 
 from app.extensions import scheduler
 from app.models import Gym
+from app.services.payment_service import apply_due_scheduled_renewals
 from app.services.reminder_service import auto_expire_members_for_gym, run_due_reminders_for_gym
 
 
@@ -187,6 +188,19 @@ def _scheduled_reminder_job(app: Flask) -> None:
             except Exception:
                 db.session.rollback()
                 app.logger.exception("Auto-expiry failed for gym %s", gym.id)
+
+            try:
+                activated_count = apply_due_scheduled_renewals(gym)
+                if activated_count:
+                    db.session.commit()
+                    app.logger.info(
+                        "Activated %s scheduled renewals for gym %s",
+                        activated_count,
+                        gym.id,
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Scheduled renewal activation failed for gym %s", gym.id)
 
             # Reconcile failed blocks: expired members whose block command
             # never acked (terminal offline, timeout, etc.) get re-queued.

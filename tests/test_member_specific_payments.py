@@ -1,6 +1,7 @@
 """Comprehensive tests for member-specific pricing, automated UPI renewals, and revenue operations."""
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from app.extensions import db
@@ -68,7 +69,7 @@ def test_custom_price_derives_discount_and_preserves_plan_catalog(client, seed_g
     assert refreshed_plan.price == Decimal("2000.00")
 
 
-def test_auto_verify_counter_cash_renews_immediately(client, seed_gym, seed_member):
+def test_auto_verify_counter_cash_schedules_after_current_paid_period(client, seed_gym, seed_member):
     """Staff records counter cash of ₹1,700 for a ₹2,000 plan with auto_verify=True."""
     headers = _staff_headers(seed_gym)
     plan = seed_gym["plan"]
@@ -103,9 +104,9 @@ def test_auto_verify_counter_cash_renews_immediately(client, seed_gym, seed_memb
     assert payment.discount == Decimal("300.00")
     assert payment.channel == "offline"
 
-    # Membership must be extended
+    # Keep the existing paid period intact and schedule the renewal after it.
     refreshed_member = db.session.get(Member, seed_member.id)
-    assert refreshed_member.membership_end > old_end
+    assert refreshed_member.membership_end == old_end
 
     # RenewalHistory record has the custom pricing snapshot
     renewal = RenewalHistory.query.filter_by(payment_verification_id=payment.id).first()
@@ -113,6 +114,8 @@ def test_auto_verify_counter_cash_renews_immediately(client, seed_gym, seed_memb
     assert renewal.amount == Decimal("1700.00")
     assert renewal.standard_price == Decimal("2000.00")
     assert renewal.discount == Decimal("300.00")
+    assert renewal.new_start == old_end + timedelta(days=1)
+    assert renewal.new_end == old_end + timedelta(days=30)
 
 
 def test_vynla_receives_authoritative_discounted_demand_and_confirms_upi(client, seed_gym, seed_member):
@@ -181,7 +184,10 @@ def test_vynla_receives_authoritative_discounted_demand_and_confirms_upi(client,
     assert confirm_data["amount_paid"] == "1800.00"
 
     refreshed_member = db.session.get(Member, seed_member.id)
-    assert refreshed_member.membership_end > old_end
+    assert refreshed_member.membership_end == old_end
+    renewal = RenewalHistory.query.filter_by(payment_verification_id=payment_id).one()
+    assert renewal.new_start == old_end + timedelta(days=1)
+    assert renewal.new_end == old_end + timedelta(days=30)
 
     # 5. Revenue summary on Renewal Desk shows actual collected ₹1,800, NOT ₹2,000
     summary_res = client.get("/api/mobile/v1/payments/summary", headers=staff_headers)

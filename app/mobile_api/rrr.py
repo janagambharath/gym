@@ -16,7 +16,6 @@ from app.models import Member
 from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
 from app.services.bridge_service import (
-    ADMS_BLOCK_DESTRUCTIVE_NOTE,
     ADMS_GROUP_BLOCK_NOTE,
     ADMS_DELIVERED_TIMEOUT_MINUTES,
     adms_command_text,
@@ -112,17 +111,30 @@ def register_rrr_routes(bp):
         status = str(payload.get("status") or "").lower()
         if status not in {"open", "actioned", "closed", "dismissed"}:
             return error_response("VALIDATION_ERROR", "Invalid opportunity status.", 422)
+        amount = None
+        if status == "closed":
+            try:
+                amount = Decimal(str(payload.get("outcome_revenue", "0")))
+            except Exception:
+                return error_response("VALIDATION_ERROR", "outcome_revenue must be a number.", 422)
+            if not amount.is_finite() or amount < 0:
+                return error_response("VALIDATION_ERROR", "outcome_revenue must be a finite, non-negative amount.", 422)
+
         row.status = status
         if status == "actioned":
             from app.models.mixins import utcnow
             row.actioned_at = utcnow()
+            row.closed_at = None
         if status == "closed":
             from app.models.mixins import utcnow
             row.closed_at = utcnow()
-            try:
-                row.outcome_revenue = Decimal(str(payload.get("outcome_revenue") or 0))
-            except Exception:
-                return error_response("VALIDATION_ERROR", "outcome_revenue must be a number.", 422)
+            row.outcome_revenue = amount
+        if status == "open":
+            row.actioned_at = None
+            row.closed_at = None
+            row.outcome_revenue = Decimal("0")
+        if status == "dismissed":
+            row.closed_at = None
         audit(action="rrr_opportunity_updated", resource_type="rrr_opportunity", resource_id=row.id,
               gym_id=g.gym_id, actor_id=g.user_id, metadata={"status": status})
         db.session.commit()
@@ -402,19 +414,14 @@ def register_rrr_routes(bp):
         action = str(payload.get("action") or "").strip().lower()
         allowed_actions = {
             "probe_info",
-            "block_test",
-            "unblock_test",
             "essl_group_block_test",
             "essl_group_unblock_test",
             "sync_users",
-            "delete_biodata_test",
-            "delete_fingertmp_test",
         }
         if action not in allowed_actions:
             return error_response(
                 "VALIDATION_ERROR",
-                "action must be probe_info, block_test, unblock_test, essl_group_block_test, "
-                "essl_group_unblock_test, sync_users, delete_biodata_test, or delete_fingertmp_test.",
+                "action must be probe_info, essl_group_block_test, essl_group_unblock_test, or sync_users.",
                 422,
             )
         enroll_number = None
@@ -507,9 +514,7 @@ def register_rrr_routes(bp):
 
         Supported actions:
           - create_user: Create/update a user on the terminal
-          - delete_user: Delete a user from the terminal
           - unlock_door: Remotely unlock the door relay
-          - clear_log:   Clear attendance logs from the device
           - reboot:      Reboot the terminal
           - check:       Request device status check
         """
@@ -529,12 +534,11 @@ def register_rrr_routes(bp):
 
         payload = request.get_json(silent=True) or {}
         action = str(payload.get("action") or "").strip().lower()
-        allowed = {"create_user", "delete_user", "unlock_door", "clear_log", "reboot", "check"}
+        allowed = {"create_user", "unlock_door", "reboot", "check"}
         if action not in allowed:
             return error_response("VALIDATION_ERROR", f"action must be one of: {', '.join(sorted(allowed))}.", 422)
-        # H5: destructive/door commands need an explicit confirmation flag
-        # — one owner click must not clear logs, reboot, or unlock a door.
-        if action in {"unlock_door", "clear_log", "reboot"} and not (
+        # Door-control and reboot commands require an explicit confirmation.
+        if action in {"unlock_door", "reboot"} and not (
             payload.get("confirm") is True or payload.get("confirmed") is True
         ):
             return error_response(
@@ -547,7 +551,7 @@ def register_rrr_routes(bp):
         member_name = None
         delay_seconds = 5
 
-        if action in {"create_user", "delete_user"}:
+        if action == "create_user":
             enroll_number = str(payload.get("enroll_number") or payload.get("test_enroll_number") or "").strip()
             if not re.fullmatch(r"[1-9][0-9]{0,8}", enroll_number):
                 return error_response("VALIDATION_ERROR", "enroll_number must be a 1–9 digit number.", 422)
@@ -590,15 +594,10 @@ def register_rrr_routes(bp):
                 "enroll_number": enroll_number,
                 "member_name": member_name,
                 "delay_seconds": delay_seconds,
-                **({"destructive": True, "destructive_note": ADMS_BLOCK_DESTRUCTIVE_NOTE}
-                   if action == "delete_user" else {}),
             },
         )
         db.session.commit()
-        # H3: label the ADMS delete as destructive in the owner response.
         payload_out = {"command": _adms_command_payload(row)}
-        if action == "delete_user":
-            payload_out["warning"] = ADMS_BLOCK_DESTRUCTIVE_NOTE
         return jsonify({"success": True, "data": payload_out}), 201
 
     @bp.post("/rrr/integrations/<int:integration_id>/commission")
@@ -970,10 +969,8 @@ def register_rrr_routes(bp):
         events = query.offset((page - 1) * per_page).limit(per_page).all()
 
         # Summary stats
-        from datetime import datetime, timezone
-        from sqlalchemy import func
-        thirty_days_ago = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        # Use date comparison
+        from datetime import datetime, timedelta, timezone
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
         recent_count = RRRAttendanceEvent.query.filter(
             RRRAttendanceEvent.gym_id == g.gym_id,
             RRRAttendanceEvent.member_id == member_id,
@@ -990,6 +987,7 @@ def register_rrr_routes(bp):
             "events": [{
                 "id": e.id,
                 "punch_time": e.punch_time.isoformat() if e.punch_time else None,
+                "biometric_user_id": e.biometric_user_id,
                 "device_serial": e.device_serial,
                 "verify_method": e.verify_method,
                 "direction": e.direction,

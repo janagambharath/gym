@@ -160,6 +160,7 @@ export default {
               <button class="btn btn-outline btn-full" id="btn-toggle-access" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
                 ${icon('lock', 18)} <span id="btn-toggle-access-label">${member.door_blocked ? 'Unblock Biometric Access' : 'Block Biometric Access'}</span>
               </button>
+              <div class="form-hint" id="door-access-state" role="status">${member.door_access_error ? escapeHtml(member.door_access_error) : member.door_access_pending ? `Waiting for the terminal to confirm ${escapeHtml(member.door_access_pending_action || 'the access change')}.` : ''}</div>
               <button class="btn btn-outline btn-full" id="btn-biometric-records" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
                 ${icon('clock', 18)} Biometric Records
               </button>
@@ -280,12 +281,19 @@ export default {
         if (res.ok) {
           accessBlocked = action === 'block';
           member.door_blocked = accessBlocked;
+          member.door_access_pending = Boolean(res.data?.command);
+          member.door_access_pending_action = action;
+          member.door_access_error = null;
           el.querySelector('#btn-toggle-access-label').textContent = accessBlocked ? 'Unblock Biometric Access' : 'Block Biometric Access';
+          el.querySelector('#door-access-state').textContent = member.door_access_pending
+            ? `Waiting for the terminal to confirm ${action}.`
+            : '';
           const queuedMsg = res.data?.connector === 'bridge'
             ? 'Command queued — the bridge applies it on its next poll.'
             : 'Command queued — the terminal applies it on its next check-in.';
           showToast(res.data?.command ? queuedMsg : `${action === 'block' ? 'Blocked' : 'Unblocked'}.`, 'success');
         } else {
+          el.querySelector('#door-access-state').textContent = res.error?.message || '';
           showToast(res.error?.message || `Could not ${action} access`, 'error');
         }
       });

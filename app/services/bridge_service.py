@@ -20,21 +20,10 @@ _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
 
 BRIDGE_DISABLE_COMMAND_TYPES = frozenset({"disable_user", "delete_user"})
 # ADMS actions that deny access and must be revalidated against current
-# membership state immediately before delivery. Automatic ``block`` now uses
-# the tested Grp=100 USERINFO update; legacy/test delete actions remain guarded
-# by their action and by inspecting the actual wire text.
+# membership state immediately before delivery. ``block`` uses the tested
+# reversible Grp=100 USERINFO update.
 ADMS_DISABLE_ACTIONS = frozenset({
     "block",
-    "block_test",
-    "delete_user",
-    "delete_biodata_test",
-    "delete_fingertmp_test",
-    "probe_del_tmp_bare",
-    "probe_del_tmp_fid0",
-    "probe_del_tmp_fid1",
-    "probe_del_bio_bare",
-    "probe_del_bio_type1",
-    "probe_del_auth",
 })
 # Enable-type actions/commands: serving one opens (or re-opens) the door.
 # They get the mirror-image serve-time revalidation (H8): only a member
@@ -43,38 +32,22 @@ ADMS_DISABLE_ACTIONS = frozenset({
 # window is door-opening state, not a neutral read.
 ADMS_ENABLE_ACTIONS = frozenset({
     "unblock",
-    "unblock_test",
     "essl_group_unblock_test",
     "create_user",
     "restore_template",
 })
-# Owner-initiated test actions. Terminal-local IDs resolve to no member;
-# only the non-destructive eSSL Grp tests may target a mapped row, and then
-# only after the owner confirms the fake account and its exact name matches.
-# Legacy delete/template tests still require an unresolved terminal-local ID.
+# Owner-initiated test actions use only the reversible eSSL Group updates.
+# They may target a mapped row only after the owner confirms the fake account
+# and its exact name matches.
 ADMS_TEST_ACTIONS = frozenset({
-    "block_test",
-    "unblock_test",
     "essl_group_block_test",
     "essl_group_unblock_test",
-    "delete_biodata_test",
-    "delete_fingertmp_test",
 })
 ADMS_GROUP_TEST_ACTIONS = frozenset({
     "essl_group_block_test",
     "essl_group_unblock_test",
 })
 BRIDGE_ENABLE_COMMAND_TYPES = frozenset({"enable_user", "create_user", "set_valid_date"})
-# Actions whose wire effect can delete terminal records or fingerprint data.
-# Automatic ``block`` is intentionally absent: it now uses Grp=100.
-ADMS_DESTRUCTIVE_ACTIONS = frozenset(
-    {"delete_user", "block_test", "delete_biodata_test", "delete_fingertmp_test"}
-)
-ADMS_BLOCK_DESTRUCTIVE_NOTE = (
-    "Legacy DELETE USERINFO removes the terminal user; X2008 fingerprint "
-    "templates are not backed up, so restoring access may require "
-    "fingerprint re-enrollment."
-)
 ADMS_GROUP_BLOCK_NOTE = (
     "Direct ADMS blocks with USERINFO Grp=100 and restores with Grp=1. "
     "The terminal user and fingerprint stay enrolled."
@@ -84,11 +57,6 @@ ADMS_GROUP_BLOCK_NOTE = (
 # is failed after this long without an ack; the same value bounds getrequest
 # re-sends (L6) — a delivered command is re-served only inside this window.
 ADMS_DELIVERED_TIMEOUT_MINUTES = 10
-# Distinct devicecmd outcome for DELETE commands the terminal reports as
-# already absent (Return -1/-2). Status stays "acked" (the desired end
-# state — user not on terminal — is achieved) but the outcome is no longer
-# silently recorded as a plain success (H4).
-ADMS_ACKED_ABSENT_RESULT_CODE = "ACKED_ABSENT"
 # Bridge JSON ingestion cap (M12), matching the 256 KB ADMS body cap.
 BRIDGE_MAX_JSON_BYTES = 262144
 
@@ -118,18 +86,30 @@ STALE_ENABLE_ERROR = (
 )
 
 
-def adms_command_is_delete(command: RRRAdmsCommand) -> bool:
-    """True when an ADMS command would delete terminal state.
+def adms_command_is_forbidden(command: RRRAdmsCommand) -> bool:
+    """Recognize a legacy destructive row so it can be rejected at delivery.
 
-    Action-name check first for known destructive actions; wire-text check
-    second catches legacy ``block`` rows and future DELETE builders even if
-    their action name is not in the known set.
+    Destructive command generation is removed. Historical rows may remain in
+    the audit table, so delivery checks the old action names and wire text and
+    cancels them before they can reach a terminal.
     """
 
-    if command.action in ADMS_DESTRUCTIVE_ACTIONS:
+    if command.action in {
+        "delete_user",
+        "block_test",
+        "delete_biodata_test",
+        "delete_fingertmp_test",
+        "probe_del_tmp_bare",
+        "probe_del_tmp_fid0",
+        "probe_del_tmp_fid1",
+        "probe_del_bio_bare",
+        "probe_del_bio_type1",
+        "probe_del_auth",
+        "clear_log",
+    }:
         return True
     text = (command.command_text or "").strip().upper()
-    return text.startswith("DATA DELETE")
+    return text.startswith("DATA DELETE") or text == "CLEAR LOG"
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -358,16 +338,10 @@ def adms_command_text(
 
     ``block``/``unblock`` are the automatic membership commands and use the
     X2008-verified USERINFO groups: Grp=100 denies access, Grp=1 restores it.
-    Legacy ``block_test``/``unblock_test`` retain their original commissioning
-    formats for compatibility. The separate ``essl_group_*_test`` actions
-    exercise those same Group updates on the dedicated test identity.
-
     Advanced commands added for the no-laptop direct-ADMS path:
 
     * ``create_user`` — ``DATA UPDATE USERINFO PIN=<id>\tName=<name>``
-    * ``delete_user`` — ``DATA DELETE USERINFO PIN=<id>``
     * ``unlock_door`` — ``CONTROL DEVICE 1 <delay_tenths>``
-    * ``clear_log``   — ``CLEAR LOG``
     * ``reboot``      — ``REBOOT``
     * ``check``       — ``CHECK``
     * ``sync_users``  — ``DATA QUERY USERINFO`` (terminal uploads its user table;
@@ -384,9 +358,6 @@ def adms_command_text(
         return "CHECK"
     if action == "reboot":
         return "REBOOT"
-    if action == "clear_log":
-        return "CLEAR LOG"
-
     if action == "unlock_door":
         # CONTROL DEVICE <operation> <param>
         # operation=1 = unlock door, param = delay in tenths of a second
@@ -397,38 +368,11 @@ def adms_command_text(
         name = sanitize_terminal_name(member_name) or "Member"
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
 
-    if action == "delete_user":
-        return f"DATA DELETE USERINFO PIN={enroll_number}"
-
     if action in {"block", "unblock", "essl_group_block_test", "essl_group_unblock_test"}:
         name = sanitize_terminal_name(member_name) or "ADMS TEST"
         group = "100" if action in {"block", "essl_group_block_test"} else "1"
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tGrp={group}"
-
-    if action == "block_test":
-        # Legacy DELETE-based commissioning probe. NOTE: fingerprint
-        # templates are NOT backed up — the X2008 never uploads USERINFO/
-        # templates via query, so unblock recreates the user and the member
-        # must re-scan their finger.
-        return f"DATA DELETE USERINFO PIN={enroll_number}"
-    elif action in {"delete_biodata_test"}:
-        # Delete all fingerprint templates for the user, keeping the user record.
-        # X2008 runs ZAM180_TFT (classic ADMS dialect) — uses FINGERTMP table,
-        # not the unified 'biodata' table (which returns -1 on this firmware).
-        #   DATA DELETE FINGERTMP PIN=<pin>
-        return f"DATA DELETE FINGERTMP PIN={enroll_number}"
-    elif action in {"delete_fingertmp_test"}:
-        # Per-finger delete (FID-scoped). FID is mandatory in QUERY, may be
-        # required for DELETE too. Try FID=0 first.
-        #   DATA DELETE FINGERTMP PIN=<pin>\tFID=0
-        return f"DATA DELETE FINGERTMP PIN={enroll_number}\tFID=0"
-    elif action == "unblock_test":
-        # Recreate the user. Fingerprint restore commands are queued
-        # separately by queue_adms_membership_command.
-        name = sanitize_terminal_name(member_name) or "Test User"
-        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
-    else:
-        raise ValueError(f"Unknown ADMS command action: {action!r}")
+    raise ValueError(f"Unknown ADMS command action: {action!r}")
 
 
 def resolve_adms_enroll_number(member: Member) -> str | None:
@@ -510,7 +454,7 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
             if latest.action == action:
                 # Rewrite a pre-deployment queued DELETE block before it can
                 # reach the terminal; the tested automatic block is Grp=100.
-                if action == "block" and adms_command_is_delete(latest):
+                if action == "block" and adms_command_is_forbidden(latest):
                     latest.command_text = command_text
                     latest.result_code = None
                     latest.result_message = None
@@ -534,7 +478,7 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
             return latest
         if latest.status == "delivered":
             if latest.action == action:
-                if action == "block" and adms_command_is_delete(latest):
+                if action == "block" and adms_command_is_forbidden(latest):
                     # A delivered legacy DELETE may still be sitting in the
                     # device queue. Retire it and queue the tested update.
                     cancel_adms_command(
@@ -691,50 +635,126 @@ def queue_manual_adms_member_command(
     return command
 
 
-def door_blocked_state(member: Member) -> bool:
-    """Best-effort blocked-at-door state from the last acked terminal command.
+def door_blocked_state(member: Member) -> dict[str, object]:
+    """Return the latest requested or acknowledged access state for a member.
 
-    Bridge: the latest acked ``BridgeCommand`` for the member — a
-    ``disable_user`` means the terminal is denying entry.
-    ADMS: the latest acked ``RRRAdmsCommand`` for the member's enroll
-    number — ``block``/``delete_user`` means denied.
-
-    No acked command (or no enroll number) → ``False``: the door is
-    assumed open.  Blocks applied purely terminal-side, never through the
-    server queue, are not visible here.
+    A command queued by the owner is the effective requested state while it
+    waits for the device. Only access-changing acknowledgements participate;
+    unrelated INFO, sync, and enrollment commands must not reset the toggle.
+    The terminal identity may come from a confirmed ADMS mapping even when
+    ``members.device_enroll_number`` has not been populated.
     """
-    enroll = (member.device_enroll_number or "").strip()
-    if not enroll:
-        return False
-    try:
-        canonical = canonical_enroll_number(enroll)
-    except ValueError:
-        canonical = enroll
+    candidates: list[tuple[datetime, int, bool, str, str, str | None]] = []
+    failures: list[tuple[datetime, int, str, str | None]] = []
+
     bridge_cmd = db.session.execute(
         select(BridgeCommand)
         .where(
             BridgeCommand.gym_id == member.gym_id,
             BridgeCommand.member_id == member.id,
-            BridgeCommand.status == "acked",
+            BridgeCommand.command_type.in_(("disable_user", "enable_user")),
+            BridgeCommand.status.in_(("pending", "leased", "acked")),
         )
         .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
         .limit(1)
     ).scalar_one_or_none()
     if bridge_cmd is not None:
-        return bridge_cmd.command_type == "disable_user"
-    adms_cmd = db.session.execute(
-        select(RRRAdmsCommand)
+        candidates.append((
+            _as_utc(bridge_cmd.created_at),
+            bridge_cmd.id,
+            bridge_cmd.command_type == "disable_user",
+            bridge_cmd.status,
+            "bridge",
+            None,
+        ))
+    bridge_failure = db.session.execute(
+        select(BridgeCommand)
         .where(
-            RRRAdmsCommand.gym_id == member.gym_id,
-            RRRAdmsCommand.test_enroll_number.in_([enroll, canonical]),
-            RRRAdmsCommand.status == "acked",
+            BridgeCommand.gym_id == member.gym_id,
+            BridgeCommand.member_id == member.id,
+            BridgeCommand.command_type.in_(("disable_user", "enable_user")),
+            BridgeCommand.status == "failed",
         )
-        .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
+        .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if adms_cmd is not None:
-        return adms_cmd.action in {"block", "delete_user"}
-    return False
+    if bridge_failure is not None:
+        failures.append((
+            _as_utc(bridge_failure.created_at),
+            bridge_failure.id,
+            "bridge",
+            bridge_failure.last_error,
+        ))
+
+    try:
+        enroll = resolve_adms_enroll_number(member)
+    except ValueError:
+        enroll = None
+    if enroll:
+        ids = {enroll}
+        try:
+            ids.add(canonical_enroll_number(enroll))
+        except ValueError:
+            pass
+        adms_cmd = db.session.execute(
+            select(RRRAdmsCommand)
+            .where(
+                RRRAdmsCommand.gym_id == member.gym_id,
+                RRRAdmsCommand.test_enroll_number.in_(ids),
+                RRRAdmsCommand.action.in_(("block", "unblock", "delete_user")),
+                RRRAdmsCommand.status.in_(("queued", "delivered", "acked")),
+            )
+            .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if adms_cmd is not None:
+            candidates.append((
+                _as_utc(adms_cmd.created_at),
+                adms_cmd.id,
+                adms_cmd.action in {"block", "delete_user"},
+                adms_cmd.status,
+                "adms_direct",
+                adms_cmd.result_message,
+            ))
+        adms_failure = db.session.execute(
+            select(RRRAdmsCommand)
+            .where(
+                RRRAdmsCommand.gym_id == member.gym_id,
+                RRRAdmsCommand.test_enroll_number.in_(ids),
+                RRRAdmsCommand.action.in_(("block", "unblock")),
+                RRRAdmsCommand.status == "failed",
+            )
+            .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if adms_failure is not None:
+            failures.append((
+                _as_utc(adms_failure.created_at),
+                adms_failure.id,
+                "adms_direct",
+                adms_failure.result_message,
+            ))
+
+    latest = max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
+    latest_failure = max(failures, key=lambda item: (item[0], item[1])) if failures else None
+    if latest is None:
+        blocked = False
+        status = ""
+        connector = latest_failure[2] if latest_failure else None
+    else:
+        _, _, blocked, status, connector, _ = latest
+    pending = status in {"pending", "leased", "queued", "delivered"}
+    detail = None
+    if latest_failure and (latest is None or latest_failure[:2] > latest[:2]):
+        detail = latest_failure[3]
+        connector = latest_failure[2]
+    return {
+        "blocked": blocked,
+        "pending": pending,
+        "pending_action": ("block" if blocked else "unblock") if pending else None,
+        "connector": connector,
+        "detail": detail,
+    }
 
 
 def queue_manual_bridge_member_command(

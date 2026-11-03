@@ -22,7 +22,6 @@ from app.models.rrr import (
     RRRIntegration,
 )
 from app.services.bridge_service import (
-    ADMS_ACKED_ABSENT_RESULT_CODE,
     adms_command_text,
     sanitize_terminal_name,
 )
@@ -209,14 +208,15 @@ def test_oversized_userinfo_snapshot_is_rejected_not_truncated(client, seed_gym)
     assert after.result_data is None
 
 
-# ─── H4 + M11: acked-absent + serve/ack audit ────────────────────────────
+# ─── M11: nonzero Group update result + serve/ack audit ──────────────────
 
-def test_devicecmd_delete_absent_is_distinct_and_audited(client, seed_gym):
+def test_devicecmd_nonzero_group_update_fails_and_is_audited(client, seed_gym):
     integration = _integration(seed_gym)
     cmd = RRRAdmsCommand(
         integration_id=integration.id, gym_id=seed_gym["gym"].id,
         action="block", test_enroll_number="942",
-        command_text="DATA DELETE USERINFO PIN=942", status="delivered",
+        command_text=adms_command_text("block", "942", member_name="Fake Block User"),
+        status="delivered",
     )
     db.session.add(cmd)
     db.session.commit()
@@ -224,11 +224,10 @@ def test_devicecmd_delete_absent_is_distinct_and_audited(client, seed_gym):
         f"/iclock/{TOKEN}/devicecmd?ID={cmd.id}&Return=-1&SN={SERIAL}")
     assert res.status_code == 200
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "acked"
-    assert saved.result_code == ADMS_ACKED_ABSENT_RESULT_CODE
-    assert saved.result_message.endswith("[treated as success: already absent]")
+    assert saved.status == "failed"
+    assert saved.result_code == "-1"
     ack = AuditLog.query.filter_by(action="adms_command_acked").one()
-    assert ack.metadata_json["result_code"] == ADMS_ACKED_ABSENT_RESULT_CODE
+    assert ack.metadata_json["result_code"] == "-1"
     assert ack.metadata_json["session"] == "token"
 
 
@@ -294,7 +293,7 @@ def test_getrequest_resend_bounded_by_stuck_timeout(client, seed_gym):
 
 # ─── H3/H5: destructive labelling + confirmation + owner-only unlock ────
 
-def test_manual_block_response_carries_destructive_warning(client, seed_gym, seed_member):
+def test_manual_block_response_explains_reversible_access_update(client, seed_gym, seed_member):
     _integration(seed_gym)
     seed_member.device_enroll_number = "101"
     db.session.commit()
@@ -303,9 +302,10 @@ def test_manual_block_response_carries_destructive_warning(client, seed_gym, see
         headers=_owner_headers(seed_gym), json={"action": "block"},
     )
     assert res.status_code == 201
-    assert "re-enrollment" in res.json["data"]["warning"]
+    assert "fingerprint stay enrolled" in res.json["data"]["note"]
     audit_row = AuditLog.query.filter_by(action="adms_manual_block_queued").one()
-    assert audit_row.metadata_json["destructive"] is True
+    assert audit_row.metadata_json["method"] == "essl_userinfo_group"
+    assert audit_row.metadata_json["group"] == "100"
 
 
 def test_advanced_destructive_commands_require_confirmation(client, seed_gym):
@@ -314,9 +314,10 @@ def test_advanced_destructive_commands_require_confirmation(client, seed_gym):
     headers = _owner_headers(seed_gym)
     res = client.post(url, headers=headers, json={"action": "clear_log"})
     assert res.status_code == 422
-    assert res.json["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert res.json["error"]["code"] == "VALIDATION_ERROR"
     res = client.post(url, headers=headers, json={"action": "clear_log", "confirm": True})
-    assert res.status_code == 201
+    assert res.status_code == 422
+    assert RRRAdmsCommand.query.filter_by(integration_id=integration.id, action="clear_log").count() == 0
 
 
 def test_remote_unlock_is_owner_only(client, seed_gym):

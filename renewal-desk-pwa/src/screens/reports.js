@@ -15,24 +15,24 @@ export default { async mount(el) {
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-lg)">
       <div class="metric-grid">
-        <div class="metric-card"><div class="metric-card-value" style="color:var(--success)">${formatInteger(d.total_active||0)}</div><div class="metric-card-label">Active Members</div></div>
-        <div class="metric-card"><div class="metric-card-value" style="color:var(--warning)">${formatInteger(d.total_expired||0)}</div><div class="metric-card-label">Expired Members</div></div>
-        <div class="metric-card"><div class="metric-card-value" style="color:var(--brand)">${formatInteger(d.total_members||0)}</div><div class="metric-card-label">Total Members</div></div>
-        <div class="metric-card"><div class="metric-card-value" style="color:var(--status-pending)">${formatInteger(d.new_members_this_month||0)}</div><div class="metric-card-label">New This Month</div></div>
+        <div class="metric-card"><div class="metric-card-value" style="color:var(--success)">${formatInteger(d.members?.active||0)}</div><div class="metric-card-label">Active Members</div></div>
+        <div class="metric-card"><div class="metric-card-value" style="color:var(--warning)">${formatInteger(d.members?.expired||0)}</div><div class="metric-card-label">Expired Members</div></div>
+        <div class="metric-card"><div class="metric-card-value" style="color:var(--brand)">${formatInteger(d.members?.total||0)}</div><div class="metric-card-label">Total Members</div></div>
+        <div class="metric-card"><div class="metric-card-value" style="color:var(--status-pending)">${formatInteger(d.members?.new||0)}</div><div class="metric-card-label">New in Selected Period</div></div>
       </div>
     </div>
     ${section('Revenue', [
-      ['Today', formatCurrency(d.revenue_today||'0')],
-      ['This Week', formatCurrency(d.revenue_week||'0')],
-      ['This Month', formatCurrency(d.revenue_month||'0')],
+      ['Collected (selected period)', formatCurrency(d.revenue?.collected||'0')],
+      ['Pending', formatCurrency(d.revenue?.pending||'0')],
+      ['At risk (next 7 days)', formatCurrency(d.revenue?.at_risk||'0')],
     ])}
     ${d.renewals ? section('Renewals', [
-      ['Renewed This Month', formatInteger(d.renewals.renewed_this_month||0)],
-      ['Recovery Rate', (d.renewals.recovery_rate||'0')+'%'],
+      ['Renewals in Selected Period', formatInteger(d.renewals.completed||0)],
+      ['Renewal rate (members due in period)', (d.renewals.renewal_rate||'0')+'%'],
     ]) : ''}
     ${d.whatsapp ? section('WhatsApp', [
-      ['Messages Sent Today', formatInteger(d.whatsapp.sent_today||0)],
-      ['Total Sent', formatInteger(d.whatsapp.total_sent||0)],
+      ['Messages Sent', formatInteger(d.whatsapp.sent||0)],
+      ['Failed Messages', formatInteger(d.whatsapp.failed||0)],
     ]) : ''}
   </div>`;
 }};

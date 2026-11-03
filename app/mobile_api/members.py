@@ -366,9 +366,16 @@ def register_members_routes(bp):
         access_state = MemberAccessState.query.filter_by(gym_id=g.gym_id, member_id=member.id).first()
         data["is_inside"] = (access_state.current_state == "INSIDE") if access_state else False
         data["last_entry_at"] = access_state.last_entry_at.isoformat() if (access_state and access_state.last_entry_at) else None
-        # Best-effort door state from the last acked terminal command, so the
-        # Block/Unblock toggle can show the true label on first render.
-        data["door_blocked"] = door_blocked_state(member)
+        # Include the newest access request even while it awaits a terminal
+        # acknowledgement. The profile toggle must keep the selected action
+        # visible across refreshes, and unrelated sync commands must not make
+        # an acknowledged block appear to be an unblock.
+        access = door_blocked_state(member)
+        data["door_blocked"] = access["blocked"]
+        data["door_access_pending"] = access["pending"]
+        data["door_access_pending_action"] = access["pending_action"]
+        data["door_access_connector"] = access["connector"]
+        data["door_access_error"] = access["detail"]
 
         # Security: never disclose a member's live OTP to staff clients.
         # Revealing it lets any staff credential impersonate the member and

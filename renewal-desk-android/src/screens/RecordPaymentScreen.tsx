@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
 import { Avatar } from '../components/Avatar';
@@ -21,6 +22,27 @@ import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Payment } from '../types';
 import { formatCurrency, getCurrencySymbol } from '../types';
+
+function dateKeyInTimezone(value: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function dateKeyFromLocalDate(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function addDays(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day + days, 12);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function pickerDate(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day, 12);
+}
 
 const PAYMENT_METHODS = ['cash', 'upi', 'bank_transfer', 'card', 'other'] as const;
 
@@ -43,7 +65,24 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [renewalDays, setRenewalDays] = useState('30');
+  const [gymTimezone, setGymTimezone] = useState('Asia/Kolkata');
+  const [renewalStartDateOverride, setRenewalStartDateOverride] = useState<string>();
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void apiRequest<{ gym?: { timezone?: string } }>('/api/mobile/v1/settings').then((res) => {
+      if (res.ok) setGymTimezone(res.data.gym?.timezone || 'Asia/Kolkata');
+    });
+  }, []);
+
+  const minimumStartDate = (() => {
+    const today = dateKeyInTimezone(new Date(), gymTimezone);
+    return selectedMember?.membership_end && selectedMember.membership_end >= today
+      ? addDays(selectedMember.membership_end, 1)
+      : today;
+  })();
+  const renewalStartDate = renewalStartDateOverride || minimumStartDate;
 
   // Pre-select member if provided
   useEffect(() => {
@@ -51,6 +90,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
       void apiRequest<Member>(`/api/mobile/v1/members/${preselectedMemberId}`).then((res) => {
         if (res.ok) {
           setSelectedMember(res.data);
+          setRenewalStartDateOverride(undefined);
           if (res.data.plan?.duration_days) {
             setRenewalDays(String(res.data.plan.duration_days));
           }
@@ -107,6 +147,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
           reference: reference.trim() || undefined,
           notes: notes.trim() || undefined,
           renewal_days: days,
+          renewal_start_date: renewalStartDate,
         },
       });
 
@@ -181,7 +222,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
     }
 
     await proceed();
-  }, [selectedMember, amount, method, reference, notes, renewalDays, onBack, onCreated, saving]);
+  }, [selectedMember, amount, method, reference, notes, renewalDays, renewalStartDate, onBack, onCreated, saving]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -208,6 +249,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
                 <TouchableOpacity
                   onPress={() => {
                     setSelectedMember(undefined);
+                    setRenewalStartDateOverride(undefined);
                     setSearchQuery('');
                   }}
                   style={styles.changeMember}
@@ -234,6 +276,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
                     style={styles.searchResult}
                     onPress={() => {
                       setSelectedMember(m);
+                      setRenewalStartDateOverride(undefined);
                       setSearchResults([]);
                       if (m.plan?.price) setAmount(m.plan.price);
                       if (m.plan?.duration_days) setRenewalDays(String(m.plan.duration_days));
@@ -296,6 +339,29 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
               placeholder="30"
               keyboardType="number-pad"
             />
+
+            <Text style={styles.fieldLabel}>Membership Start Date</Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => setShowStartDatePicker(true)}
+              style={styles.startDateButton}
+            >
+              <Icon name="calendar" size={18} color={colors.brand} />
+              <Text style={styles.startDateText}>{renewalStartDate}</Text>
+              <Icon name="forward" size={16} color={colors.muted} />
+            </TouchableOpacity>
+            {showStartDatePicker ? (
+              <DateTimePicker
+                value={pickerDate(renewalStartDate)}
+                mode="date"
+                display="default"
+                minimumDate={pickerDate(minimumStartDate)}
+                onChange={(_, selectedDate) => {
+                  setShowStartDatePicker(false);
+                  if (selectedDate) setRenewalStartDateOverride(dateKeyFromLocalDate(selectedDate));
+                }}
+              />
+            ) : null}
 
             <FormField
               label="Notes"
@@ -370,6 +436,18 @@ const styles = StyleSheet.create({
   searchingText: { color: colors.muted, fontSize: fontSize.sm, paddingVertical: spacing.sm },
   sectionHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   sectionTitle: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.bold },
+  startDateButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+  },
+  startDateText: { color: colors.text, flex: 1, fontSize: fontSize.base, fontWeight: fontWeight.semibold },
   selectedMember: {
     alignItems: 'center',
     backgroundColor: colors.gray50,

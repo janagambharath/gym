@@ -131,11 +131,10 @@ def test_complete_owner_and_member_lifecycle(client):
     verify_payment(payment, verified_by_id=owner.id, renewal_days=30)
     db.session.commit()
 
-    # 8. Member membership extended seamlessly
+    # 8. A verified renewal starts after the already-paid period.
     db.session.refresh(member)
     assert member.status == "active"
-    # End date should extend by 30 days from initial_end + 1
-    assert member.membership_end == initial_end + timedelta(days=30)
+    assert member.membership_end == initial_end
     # Historical membership_start preserved!
     assert member.membership_start == join_date
 
@@ -143,7 +142,8 @@ def test_complete_owner_and_member_lifecycle(client):
     renewal = RenewalHistory.query.filter_by(member_id=member.id, gym_id=gym.id).first()
     assert renewal is not None
     assert renewal.amount == Decimal("1800.00")
-    assert renewal.new_end == member.membership_end
+    assert renewal.new_start == initial_end + timedelta(days=1)
+    assert renewal.new_end == initial_end + timedelta(days=30)
 
     # 10. Member views payment history in VYNLA
     history_resp = client.get("/api/member/v1/payments", headers=member_headers)

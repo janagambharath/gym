@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections import defaultdict
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, func
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
@@ -38,6 +39,55 @@ def rules_for_gym(gym_id: int) -> dict[str, int]:
     for rule in RRRRule.query.filter_by(gym_id=gym_id, is_enabled=True).all():
         values[rule.rule_key] = rule.value
     return values
+
+
+def attendance_visit_counts(
+    gym_id: int,
+    member_ids: list[int],
+    gym_timezone: str,
+    today=None,
+) -> dict[int, tuple[int, int]]:
+    """Count distinct local attendance days for recent and baseline 14-day windows.
+
+    A terminal may emit both entry and exit punches, or duplicate scans on one
+    day. Counting raw rows would inflate visit frequency and create false
+    attendance-drop signals, so one member can contribute at most one visit per
+    local calendar day.
+    """
+    if not member_ids:
+        return {}
+
+    today = today or today_for_gym(gym_timezone)
+    recent_start_day = today - timedelta(days=13)
+    baseline_start_day = today - timedelta(days=27)
+    try:
+        zone = ZoneInfo(gym_timezone or "Asia/Kolkata")
+    except Exception:
+        zone = ZoneInfo("Asia/Kolkata")
+    baseline_start = datetime.combine(baseline_start_day, datetime.min.time(), tzinfo=zone)
+    rows = (
+        db.session.query(RRRAttendanceEvent.member_id, RRRAttendanceEvent.punch_time)
+        .filter(
+            RRRAttendanceEvent.gym_id == gym_id,
+            RRRAttendanceEvent.member_id.in_(member_ids),
+            RRRAttendanceEvent.punch_time >= baseline_start.astimezone(timezone.utc),
+        )
+        .all()
+    )
+    recent_days: dict[int, set] = defaultdict(set)
+    baseline_days: dict[int, set] = defaultdict(set)
+    for member_id, punch_time in rows:
+        if punch_time.tzinfo is None:
+            punch_time = punch_time.replace(tzinfo=timezone.utc)
+        local_day = punch_time.astimezone(zone).date()
+        if local_day >= recent_start_day:
+            recent_days[member_id].add(local_day)
+        elif local_day >= baseline_start_day:
+            baseline_days[member_id].add(local_day)
+    return {
+        member_id: (len(recent_days[member_id]), len(baseline_days[member_id]))
+        for member_id in member_ids
+    }
 
 
 ADMS_RECENT_POLL_WINDOW = timedelta(minutes=5)
@@ -243,8 +293,12 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
 
 def _upsert_opportunity(*, gym_id: int, member: Member, pillar: str, reason_code: str,
                         reason_text: str, priority: str, potential_revenue: Decimal,
-                        existing: dict | None = None) -> RRROpportunity:
-    key = f"{pillar}:{reason_code}:{member.id}"
+                        existing: dict | None = None, dedupe_suffix: str = "") -> RRROpportunity:
+    # Keep one opportunity per member per reason per membership cycle. A
+    # member can renew and later become at risk again, so a lifetime key would
+    # permanently suppress the next expiry/no-visit signal.
+    cycle = member.membership_end.isoformat() if member.membership_end else "no-end"
+    key = f"{pillar}:{reason_code}:{member.id}:{cycle}{dedupe_suffix}"
     row = (existing or {}).get(key)
     if row is None and existing is None:
         row = RRROpportunity.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
@@ -257,7 +311,11 @@ def _upsert_opportunity(*, gym_id: int, member: Member, pillar: str, reason_code
         db.session.add(row)
         if existing is not None:
             existing[key] = row
-    elif row.status in {"open", "actioned"}:
+    elif row.status in {"open", "actioned", "resolved"}:
+        if row.status == "resolved":
+            row.status = "open"
+            row.closed_at = None
+            row.outcome_revenue = Decimal("0")
         row.reason_text = reason_text
         row.priority = priority
         row.potential_revenue = potential_revenue
@@ -314,25 +372,8 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
     )
     pending_by_member = {p.member_id: p for p in pending_rows}
 
-    # Attendance counts per member in one grouped query (recent 14d vs prior 14d).
-    recent_start = now - timedelta(days=14)
-    baseline_start = now - timedelta(days=28)
-    count_rows = (
-        db.session.query(
-            RRRAttendanceEvent.member_id,
-            func.sum(case((RRRAttendanceEvent.punch_time >= recent_start, 1), else_=0)).label("recent"),
-            func.sum(case(((RRRAttendanceEvent.punch_time >= baseline_start)
-                           & (RRRAttendanceEvent.punch_time < recent_start), 1), else_=0)).label("baseline"),
-        )
-        .filter(
-            RRRAttendanceEvent.gym_id == gym_id,
-            RRRAttendanceEvent.member_id.in_(member_ids),
-            RRRAttendanceEvent.punch_time >= baseline_start,
-        )
-        .group_by(RRRAttendanceEvent.member_id)
-        .all()
-    )
-    counts_by_member = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in count_rows}
+    # Count unique attendance days, not raw entry/exit punch rows.
+    counts_by_member = attendance_visit_counts(gym_id, member_ids, gym_timezone, today)
 
     # Existing open/actioned opportunities keyed by dedupe_key (bulk).
     existing = {
@@ -365,11 +406,20 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                 gym_id=gym_id, member=member, pillar="retain", reason_code="payment_friction",
                 reason_text=f"A payment of \u20b9{pending_payment.amount} has been awaiting verification since {pending_payment.created_at.date().isoformat()}.",
                 priority="high", potential_revenue=Decimal(str(pending_payment.amount or 0)),
-                existing=existing,
+                existing=existing, dedupe_suffix=f":payment:{pending_payment.id}",
             ))
         visit = last_visit.get(member.id)
-        if member.status == "active" and (visit is None or (now - visit).days >= rules["no_visit_days"]):
-            no_visit_days = rules["no_visit_days"] if visit is None else max(0, (now - visit).days)
+        if visit is not None:
+            if visit.tzinfo is None:
+                visit = visit.replace(tzinfo=timezone.utc)
+            try:
+                last_activity_day = visit.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
+            except Exception:
+                last_activity_day = visit.astimezone(ZoneInfo("Asia/Kolkata")).date()
+        else:
+            last_activity_day = member.membership_start
+        no_visit_days = max(0, (today - last_activity_day).days)
+        if member.status == "active" and no_visit_days >= rules["no_visit_days"]:
             created.append(_upsert_opportunity(
                 gym_id=gym_id, member=member, pillar="retain", reason_code="no_recent_visit",
                 reason_text=f"No attendance recorded for {no_visit_days} day(s).",
@@ -388,6 +438,13 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                     priority="high" if decline >= 75 else "medium", potential_revenue=value,
                     existing=existing,
                 ))
+    active_keys = {row.dedupe_key for row in created}
+    for row in existing.values():
+        if row.status in {"open", "actioned"} and row.dedupe_key not in active_keys:
+            # Signals are continuously recalculated. Once the source data no
+            # longer supports an opportunity, stop showing it as actionable.
+            row.status = "resolved"
+            row.closed_at = now
     return created
 
 
@@ -412,6 +469,25 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     by_pillar: dict[str, list[RRROpportunity]] = defaultdict(list)
     for item in opportunities:
         by_pillar[item.pillar].append(item)
+    # A member may appear in several pillars. The pipeline KPI is a member
+    # opportunity estimate, so count the largest estimate once per person.
+    potential_by_member: dict[int, Decimal] = {}
+    for item in opportunities:
+        potential_by_member[item.member_id] = max(
+            potential_by_member.get(item.member_id, Decimal("0")),
+            Decimal(str(item.potential_revenue or 0)),
+        )
+    owner_confirmed_revenue = (
+        db.session.query(func.coalesce(func.sum(RRROpportunity.outcome_revenue), 0))
+        .join(Member, Member.id == RRROpportunity.member_id)
+        .filter(
+            RRROpportunity.gym_id == gym_id,
+            RRROpportunity.status == "closed",
+            Member.deleted_at.is_(None),
+        )
+        .scalar()
+        or Decimal("0")
+    )
     active_members = Member.query.filter_by(gym_id=gym_id, status="active").filter(Member.deleted_at.is_(None)).count()
     total_members = Member.query.filter_by(gym_id=gym_id).filter(Member.deleted_at.is_(None)).count()
     month_start = utcnow() - timedelta(days=30)
@@ -453,6 +529,8 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
                    "items": [_opportunity_payload(x) for x in by_pillar[name][:5]]}
             for name in ("revenue", "retain", "recover")
         },
+        "total_potential_revenue": str(sum(potential_by_member.values(), Decimal("0"))),
+        "owner_confirmed_revenue": str(owner_confirmed_revenue),
         "unmapped_count": RRRAttendanceEvent.query.filter_by(gym_id=gym_id, processing_status="unmapped").count(),
         "opportunities": [_opportunity_payload(x) for x in opportunities[:12]],
         # Setup-checklist signals for new gyms (PWA dashboard).

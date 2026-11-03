@@ -9,13 +9,15 @@ import logging
 from datetime import date, datetime, timedelta, timezone as tz
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from flask import current_app
 from sqlalchemy import func
 
 from app.extensions import db
-from app.models import Gym, Member, MembershipPlan, PaymentVerification, ReminderLog
+from app.models import Gym, Member, MembershipPlan, PaymentVerification, ReminderLog, RenewalHistory
 from app.models.campaign import Campaign, CampaignRecipient, SEGMENT_TYPES
+from app.models.rrr import RRRAttendanceEvent
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.timezone_service import today_for_gym
@@ -353,17 +355,68 @@ def check_cooldown_recipients(
 
 
 def _inactive_since(gym_id: int, days: int, gym_timezone: str) -> list[Member]:
-    """Members whose last attendance/renewal is older than `days` ago."""
+    """Active, opted-in members with no attendance or renewal in `days`.
+
+    Member.updated_at is intentionally not used here: editing a phone number
+    or note is not evidence that the member visited the gym.
+    """
     today = today_for_gym(gym_timezone)
     cutoff = today - timedelta(days=days)
-    return (
+    members = (
         Member.query.filter_by(gym_id=gym_id, status="active")
         .filter(Member.deleted_at.is_(None))
+        .filter(Member.whatsapp_opted_in.is_(True))
         .filter(Member.membership_end >= today)  # still active
-        .filter(Member.updated_at <= datetime(cutoff.year, cutoff.month, cutoff.day, tzinfo=tz.utc))
         .order_by(Member.membership_end.asc())
         .all()
     )
+    member_ids = [member.id for member in members]
+    if not member_ids:
+        return []
+
+    latest_attendance = dict(
+        db.session.query(
+            RRRAttendanceEvent.member_id,
+            func.max(RRRAttendanceEvent.punch_time),
+        )
+        .filter(
+            RRRAttendanceEvent.gym_id == gym_id,
+            RRRAttendanceEvent.member_id.in_(member_ids),
+        )
+        .group_by(RRRAttendanceEvent.member_id)
+        .all()
+    )
+    latest_renewal = dict(
+        db.session.query(
+            RenewalHistory.member_id,
+            func.max(RenewalHistory.new_start),
+        )
+        .filter(
+            RenewalHistory.gym_id == gym_id,
+            RenewalHistory.member_id.in_(member_ids),
+            RenewalHistory.is_test.is_(False),
+        )
+        .group_by(RenewalHistory.member_id)
+        .all()
+    )
+
+    inactive = []
+    for member in members:
+        # The current membership start is the correct baseline for new members
+        # and for legacy records without renewal history.
+        last_activity = max(member.membership_start, latest_renewal.get(member.id, member.membership_start))
+        punch = latest_attendance.get(member.id)
+        if punch is not None:
+            if punch.tzinfo is None:
+                punch = punch.replace(tzinfo=tz.utc)
+            try:
+                attendance_day = punch.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
+            except Exception:
+                attendance_day = punch.astimezone(ZoneInfo("Asia/Kolkata")).date()
+            last_activity = max(last_activity, attendance_day)
+        if last_activity <= cutoff:
+            inactive.append(member)
+    return inactive
 
 
 def get_segment_members(gym_id: int, segment_type: str, gym_timezone: str = "Asia/Kolkata") -> list[Member]:

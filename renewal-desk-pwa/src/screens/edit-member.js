@@ -50,12 +50,10 @@ export default {
       const d = new Date(startDate);
       d.setDate(d.getDate() + Number(plan.duration_days) - 1);
       const endDate = d.toISOString().slice(0, 10);
-      // Display matches the Start Date field's human format ("2 Dec 2026");
-      // the ISO value above is what the PATCH body sends.
-      const [ey, emo, eda] = endDate.split('-').map(Number);
-      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const prettyEnd = `${eda} ${MONTHS[emo - 1]} ${ey}`;
-      if (display) display.textContent = prettyEnd;
+      // Match the Start Date field's human-readable format; keep ISO for PATCH.
+      const [year, month, day] = endDate.split('-').map(Number);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      if (display) display.textContent = `${day} ${months[month - 1]} ${year}`;
       return endDate;
     };
     el.querySelector('#em-plan')?.addEventListener('change', calcEnd);

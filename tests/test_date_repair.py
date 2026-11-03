@@ -50,7 +50,10 @@ def _staff(seed_gym):
     return staff
 
 
-START = date(2026, 9, 16)
+# Keep fixtures in the first membership period regardless of the calendar
+# date on which the suite runs; older starts use the separate review-only
+# historyless-pushed-end classification.
+START = date.today() - timedelta(days=15)
 
 
 def test_healthy_member_not_flagged(client, seed_gym):

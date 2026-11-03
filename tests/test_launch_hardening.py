@@ -46,8 +46,8 @@ def test_renewal_null_membership_end_does_not_crash(client, seed_gym):
     assert member.membership_end == date.today() + timedelta(days=29)
 
 
-def test_active_member_renewal_preserves_membership_start(client, seed_gym):
-    """P1-1: Active member renewal does not overwrite original membership_start."""
+def test_active_member_renewal_schedules_after_paid_period(client, seed_gym):
+    """A future renewal preserves the existing period until its selected start."""
     gym = seed_gym["gym"]
     original_start = date.today() - timedelta(days=60)
     current_end = date.today() + timedelta(days=10)
@@ -70,10 +70,15 @@ def test_active_member_renewal_preserves_membership_start(client, seed_gym):
         json={"renewal_days": 30, "amount": "1200.00"},
     )
     assert resp.status_code == 201
+    payload = resp.get_json()["data"]
+    assert payload["scheduled"] is True
+    assert payload["new_start"] == (current_end + timedelta(days=1)).isoformat()
 
     db.session.refresh(member)
     assert member.membership_start == original_start  # preserved!
-    assert member.membership_end == current_end + timedelta(days=30)
+    assert member.membership_end == current_end
+    renewal = RenewalHistory.query.filter_by(member_id=member.id).one()
+    assert renewal.new_end == current_end + timedelta(days=30)
 
 
 def test_reviewer_bypass_disabled_by_default(client, seed_gym, monkeypatch):

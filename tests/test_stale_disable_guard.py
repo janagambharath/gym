@@ -15,7 +15,7 @@ from app.extensions import db
 from app.mobile_api.token_service import create_access_token
 from app.models import BridgeCommand, BridgeInstallation, Gym, Member
 from app.models.rrr import RRRAdmsCommand, RRRIntegration
-from app.services.bridge_service import STALE_DISABLE_MARKER, lease_pending_commands
+from app.services.bridge_service import STALE_DISABLE_MARKER, adms_command_text, lease_pending_commands
 from app.services.reminder_scheduler import _scheduled_reminder_job
 
 
@@ -153,7 +153,7 @@ def test_adms_getrequest_cancels_stale_block_but_serves_freeze(client, seed_gym,
         integration_id=integration.id,
         action="block",
         test_enroll_number="42",
-        command_text="DATA DELETE USERINFO PIN=42",
+        command_text=adms_command_text("block", "42", member_name=diverged.full_name),
         status="queued",
     )
     paused_command = RRRAdmsCommand(
@@ -161,7 +161,7 @@ def test_adms_getrequest_cancels_stale_block_but_serves_freeze(client, seed_gym,
         integration_id=integration.id,
         action="block",
         test_enroll_number=paused.device_enroll_number,
-        command_text="DATA DELETE USERINFO PIN=45",
+        command_text=adms_command_text("block", "45", member_name=paused.full_name),
         status="queued",
     )
     db.session.add_all([stale_command, paused_command])
@@ -173,7 +173,7 @@ def test_adms_getrequest_cancels_stale_block_but_serves_freeze(client, seed_gym,
 
     assert response.status_code == 200
     assert response.get_data(as_text=True) == (
-        f"C:{paused_command.id}:DATA DELETE USERINFO PIN=45\n"
+        f"C:{paused_command.id}:{paused_command.command_text}\n"
     )
     saved_stale = db.session.get(RRRAdmsCommand, stale_command.id)
     assert saved_stale.status == "failed"
@@ -290,7 +290,7 @@ def test_adms_getrequest_failsafe_active_past_and_null_end(client, seed_gym):
             integration_id=integration.id,
             action="block",
             test_enroll_number=member.device_enroll_number,
-            command_text=f"DATA DELETE USERINFO PIN={enroll}",
+            command_text=adms_command_text("block", enroll, member_name=member.full_name),
             status="queued",
         )
         db.session.add(command)
@@ -303,7 +303,7 @@ def test_adms_getrequest_failsafe_active_past_and_null_end(client, seed_gym):
     # The two unproven blocks are cancelled in ID order; the genuinely
     # expired member's block is the one served.
     assert response.get_data(as_text=True) == (
-        f"C:{commands[2].id}:DATA DELETE USERINFO PIN=83\n"
+        f"C:{commands[2].id}:{commands[2].command_text}\n"
     )
     for cancelled in commands[:2]:
         saved = db.session.get(RRRAdmsCommand, cancelled.id)
@@ -400,8 +400,8 @@ def _adms_command(integration, action, enroll, text):
     return command
 
 
-def test_adms_getrequest_cancels_test_deletes_for_active_member(client, seed_gym):
-    """C2: block_test / template-delete tests cancel exactly like block."""
+def test_adms_getrequest_cancels_legacy_test_deletes_and_serves_group_block(client, seed_gym):
+    """Legacy delete tests are inert; a reversible paused-member block serves."""
     integration = _adms_integration(
         seed_gym["gym"].id, serial="C2-X2008", token="c2-token"
     )
@@ -420,11 +420,14 @@ def test_adms_getrequest_cancels_test_deletes_for_active_member(client, seed_gym
         _adms_command(integration, "delete_biodata_test", "101", "DATA DELETE FINGERTMP PIN=101"),
         _adms_command(integration, "delete_fingertmp_test", "101", "DATA DELETE FINGERTMP PIN=101\tFID=0"),
     ]
-    legit = _adms_command(integration, "block", "102", "DATA DELETE USERINFO PIN=102")
+    legit = _adms_command(
+        integration, "block", "102",
+        adms_command_text("block", "102", member_name=paused.full_name),
+    )
 
     response = client.get("/iclock/c2-token/getrequest?SN=C2-X2008")
     assert response.status_code == 200
-    assert response.get_data(as_text=True) == f"C:{legit.id}:DATA DELETE USERINFO PIN=102\n"
+    assert response.get_data(as_text=True) == f"C:{legit.id}:{legit.command_text}\n"
     for cmd in test_cmds:
         saved = db.session.get(RRRAdmsCommand, cmd.id)
         assert saved.status == "failed"

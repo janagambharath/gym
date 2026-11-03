@@ -172,28 +172,54 @@ def revenue_recovered(
 
 
 def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
-    """Calculate the revenue recovery rate.
+    """Calculate renewal recovery for one expiry cohort.
 
-    Recovery Rate = Revenue Recovered / Revenue at Risk × 100
-
-    Returns the rate as a percentage and component values.
+    The cohort includes expiries from the prior 30 days and upcoming expiries
+    in the next 7 days. The denominator combines currently outstanding risk
+    with the standard value of renewals already recorded for that same cohort;
+    the numerator includes only those matched renewals. This avoids dividing
+    all recent renewals by a current-risk snapshot from a different period.
     """
+    today = today_for_gym(gym_timezone)
+    cohort_start = today - timedelta(days=30)
+    cohort_end = today + timedelta(days=7)
     risk = revenue_at_risk(gym_id, gym_timezone)
-    recovered = revenue_recovered(gym_id, gym_timezone, period_days=30)
+    cohort_rows = (
+        db.session.query(
+            RenewalHistory.member_id,
+            RenewalHistory.amount,
+            func.coalesce(RenewalHistory.standard_price, RenewalHistory.amount),
+            RenewalHistory.campaign_id,
+        )
+        .filter(
+            RenewalHistory.gym_id == gym_id,
+            RenewalHistory.is_test.is_(False),
+            RenewalHistory.previous_end >= cohort_start,
+            RenewalHistory.previous_end <= cohort_end,
+        )
+        .all()
+    )
+    cohort_actual = sum((Decimal(str(row[1] or 0)) for row in cohort_rows), Decimal("0"))
+    cohort_expected = sum((Decimal(str(row[2] or 0)) for row in cohort_rows), Decimal("0"))
+    campaign_rows = [row for row in cohort_rows if row[3] is not None]
 
-    risk_total = Decimal(risk["total"])
-    recovered_total = Decimal(recovered["total_amount"])
+    risk_total = Decimal(risk["total"]) + cohort_expected
 
     if risk_total > 0:
-        rate = (recovered_total / risk_total * 100).quantize(Decimal("0.1"))
+        rate = (cohort_actual / risk_total * 100).quantize(Decimal("0.1"))
     else:
         rate = Decimal("0.0")
 
     return {
-        "revenue_at_risk": risk["total"],
-        "revenue_recovered": recovered["total_amount"],
+        "revenue_at_risk": str(risk_total),
+        "revenue_recovered": str(cohort_actual),
         "recovery_rate": str(rate),
-        "risk_breakdown": risk,
-        "recovered_breakdown": recovered,
+        "risk_breakdown": {**risk, "renewed_cohort_expected": str(cohort_expected)},
+        "recovered_breakdown": {
+            "total_renewals": len(cohort_rows),
+            "total_amount": str(cohort_actual),
+            "campaign_renewals": len(campaign_rows),
+            "campaign_amount": str(sum((Decimal(str(row[1] or 0)) for row in campaign_rows), Decimal("0"))),
+        },
     }
 

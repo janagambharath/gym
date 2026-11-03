@@ -97,6 +97,7 @@ def _serialize_payment(p: PaymentVerification) -> dict:
         "final_payable": str(p.amount),
         "amount": str(p.amount),
         "paid_on": p.paid_on.isoformat() if p.paid_on else None,
+        "renewal_start_date": p.renewal_start_date.isoformat() if p.renewal_start_date else None,
         "method": p.method,
         "channel": p.channel or "offline",
         "reference": p.reference,
@@ -387,6 +388,18 @@ def register_payments_routes(bp):
         except (ValueError, TypeError):
             return error_response("VALIDATION_ERROR", "Invalid paid_on date.", 400)
 
+        raw_start_date = data.get("renewal_start_date")
+        try:
+            renewal_start_date = (
+                date.fromisoformat(raw_start_date.strip())
+                if isinstance(raw_start_date, str) and raw_start_date.strip()
+                else None
+            )
+        except ValueError:
+            return error_response("VALIDATION_ERROR", "Invalid renewal_start_date; use YYYY-MM-DD.", 400)
+        if raw_start_date is not None and not isinstance(raw_start_date, str):
+            return error_response("VALIDATION_ERROR", "renewal_start_date must use YYYY-MM-DD.", 400)
+
         payment = PaymentVerification(
             gym_id=g.gym_id,
             member_id=member.id,
@@ -396,6 +409,7 @@ def register_payments_routes(bp):
             discount=discount,
             amount=amount,
             paid_on=paid_on,
+            renewal_start_date=renewal_start_date,
             method=data.get("method", "upi"),
             channel=channel,
             reference=(data.get("reference") or "").strip() or None,
@@ -407,7 +421,11 @@ def register_payments_routes(bp):
         db.session.flush()
 
         if auto_verify:
-            verify_payment(payment, verified_by_id=g.current_user.id, renewal_days=renewal_days)
+            try:
+                verify_payment(payment, verified_by_id=g.current_user.id, renewal_days=renewal_days)
+            except ValueError as exc:
+                db.session.rollback()
+                return error_response("VALIDATION_ERROR", str(exc), 400)
 
         audit(
             action="create_payment",
@@ -491,7 +509,11 @@ def register_payments_routes(bp):
             db.session.rollback()
             return error_response("CONFLICT", str(exc), 409)
 
-        return jsonify({"success": True, "data": {"message": "Payment verified and membership extended."}})
+        return jsonify({"success": True, "data": {
+            "message": "Payment verified and renewal scheduled." if renewal.new_start > today_for_gym(payment.member.gym.timezone or "Asia/Kolkata") else "Payment verified and membership renewed.",
+            "renewal_start_date": renewal.new_start.isoformat(),
+            "membership_end": renewal.new_end.isoformat(),
+        }})
 
     @bp.route("/payments/<int:payment_id>/reject", methods=["POST"])
     @token_required

@@ -388,21 +388,21 @@ export function DashboardScreen({
 
                     <View style={styles.revenueHeroRow}>
                       <View style={styles.revenueHeroStat}>
-                        <Text style={styles.revenueHeroLabel}>At Risk</Text>
+                        <Text style={styles.revenueHeroLabel}>Expiry cohort value</Text>
                         <Text style={[styles.revenueHeroValue, { color: colors.critical }]}>
-                          {formatCurrency(data.revenue_at_risk || '0')}
+                          {formatCurrency(data.recovery_rate?.revenue_at_risk || data.revenue_at_risk || '0')}
                         </Text>
                       </View>
                       <View style={styles.revenueHeroDivider} />
                       <View style={styles.revenueHeroStat}>
-                        <Text style={styles.revenueHeroLabel}>Recovered (30d)</Text>
+                        <Text style={styles.revenueHeroLabel}>Renewed in cohort</Text>
                         <Text style={[styles.revenueHeroValue, { color: colors.success }]}>
-                          {formatCurrency(data.revenue_recovered?.total_amount || '0')}
+                          {formatCurrency(data.recovery_rate?.revenue_recovered || '0')}
                         </Text>
                       </View>
                       <View style={styles.revenueHeroDivider} />
                       <View style={styles.revenueHeroStat}>
-                        <Text style={styles.revenueHeroLabel}>Rate</Text>
+                        <Text style={styles.revenueHeroLabel}>Cohort recovery</Text>
                         <Text style={[styles.revenueHeroValue, { color: colors.brand }]}>
                           {data.recovery_rate?.recovery_rate ?? '0'}%
                         </Text>

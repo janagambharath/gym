@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.extensions import db
 from app.models import Member, PaymentVerification, RenewalHistory
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
 from app.services.timezone_service import today_for_gym
 
@@ -58,31 +59,59 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
             f"vs member gym {member.gym_id}"
         )
 
+    previous_start = member.membership_start
     previous_end = member.membership_end
     gym_timezone = (
         member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
     )
     today = today_for_gym(gym_timezone)
-    if previous_end and previous_end >= today:
-        new_start = previous_end + timedelta(days=1)
-    else:
-        new_start = today
-        member.membership_start = new_start
+    earliest_start = previous_end + timedelta(days=1) if previous_end and previous_end >= today else today
+    new_start = locked_payment.renewal_start_date or earliest_start
+    if previous_end and previous_end >= today and new_start < earliest_start:
+        raise ValueError(
+            f"Renewal start date must be {earliest_start.isoformat()} or later so the current paid membership is not shortened."
+        )
     new_end = new_start + timedelta(days=renewal_days - 1)
+    if new_start <= today and new_end < today:
+        raise ValueError("This renewal would already be expired. Choose a later start date.")
+
+    # A verified future renewal is stored now but only becomes the member's
+    # current access period on its start date. This lets an existing paid
+    # period run to expiry and prevents a selected gap from keeping the door
+    # open. Only one verified future renewal may be waiting for a member.
+    scheduled = new_start > today
+    if scheduled:
+        existing_schedule = (
+            RenewalHistory.query.join(
+                PaymentVerification,
+                RenewalHistory.payment_verification_id == PaymentVerification.id,
+            )
+            .filter(
+                RenewalHistory.member_id == member.id,
+                RenewalHistory.new_start > today,
+                RenewalHistory.payment_verification_id != locked_payment.id,
+                PaymentVerification.status == "verified",
+            )
+            .first()
+        )
+        if existing_schedule:
+            raise ValueError("This member already has a verified future renewal scheduled.")
+
+    locked_payment.renewal_start_date = new_start
 
     locked_payment.status = "verified"
     locked_payment.verified_by_id = verified_by_id
     locked_payment.verified_at = utcnow()
 
-    member.membership_end = new_end
-    member.status = "active"
-    # Pin the paid amount as the expected renewal value for reporting.
-    member.price = locked_payment.amount
-    queue_membership_command(member)
-
     target_plan_id = locked_payment.plan_id or member.plan_id
-    if locked_payment.plan_id and locked_payment.plan_id != member.plan_id:
-        member.plan_id = locked_payment.plan_id
+    if not scheduled:
+        member.membership_start = new_start
+        member.membership_end = new_end
+        member.status = "active"
+        member.price = locked_payment.amount
+        if locked_payment.plan_id:
+            member.plan_id = locked_payment.plan_id
+        queue_membership_command(member)
 
     renewal = RenewalHistory(
         gym_id=locked_payment.gym_id,
@@ -90,7 +119,7 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         plan_id=target_plan_id,
         payment_verification_id=locked_payment.id,
         renewed_by_id=verified_by_id,
-        previous_start=member.membership_start,
+        previous_start=previous_start,
         previous_end=previous_end,
         new_start=new_start,
         new_end=new_end,
@@ -122,6 +151,63 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
 
     invalidate_dashboard_cache(locked_payment.gym_id)
     return renewal
+
+
+def apply_due_scheduled_renewals(gym) -> int:
+    """Activate verified future renewals whose gym-local start date arrived.
+
+    Date and command changes are made in one transaction by the caller. A
+    stale scheduled row never overwrites a later manual edit or renewal: the
+    member's current end must still match the snapshot saved when the
+    renewal was verified.
+    """
+    today = today_for_gym(gym.timezone or "Asia/Kolkata")
+    rows = (
+        RenewalHistory.query.outerjoin(
+            PaymentVerification,
+            RenewalHistory.payment_verification_id == PaymentVerification.id,
+        )
+        .filter(
+            RenewalHistory.gym_id == gym.id,
+            RenewalHistory.new_start <= today,
+            or_(
+                RenewalHistory.payment_verification_id.is_(None),
+                PaymentVerification.status == "verified",
+            ),
+        )
+        .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())
+        .all()
+    )
+    activated = 0
+    for renewal in rows:
+        member = db.session.execute(
+            select(Member).where(Member.id == renewal.member_id).with_for_update()
+        ).scalar_one_or_none()
+        if member is None or member.gym_id != gym.id or member.deleted_at is not None:
+            continue
+        if member.membership_start == renewal.new_start and member.membership_end == renewal.new_end:
+            continue
+        if member.membership_end != renewal.previous_end or renewal.new_end < today:
+            continue
+        member.membership_start = renewal.new_start
+        member.membership_end = renewal.new_end
+        member.status = "active"
+        member.price = renewal.amount
+        if renewal.plan_id:
+            member.plan_id = renewal.plan_id
+        queue_membership_command(member)
+        audit(
+            action="scheduled_renewal_activated",
+            resource_type="renewal_history",
+            resource_id=renewal.id,
+            gym_id=gym.id,
+            actor_id=None,
+            metadata={"member_id": member.id, "start_date": renewal.new_start.isoformat()},
+        )
+        activated += 1
+    if activated:
+        invalidate_dashboard_cache(gym.id)
+    return activated
 
 
 def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None:

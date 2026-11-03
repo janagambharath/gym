@@ -25,6 +25,11 @@ export type Member = {
   has_biometric: boolean;
   device_enroll_number?: string | null;
   is_inside?: boolean;
+  door_blocked?: boolean;
+  door_access_pending?: boolean;
+  door_access_pending_action?: 'block' | 'unblock' | null;
+  door_access_connector?: 'adms_direct' | 'bridge' | null;
+  door_access_error?: string | null;
 };
 
 export type MembersResponse = {
@@ -78,6 +83,7 @@ export type Payment = {
   reference: string | null;
   status: string;
   renewal_days: number | null;
+  renewal_start_date?: string | null;
   notes: string | null;
   created_by?: string | null;
   verified_by: string | null;

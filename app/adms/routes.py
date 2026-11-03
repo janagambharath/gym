@@ -624,7 +624,7 @@ def getrequest(path_token: str | None = None):
         ADMS_TEST_ACTIONS,
         STALE_ENABLE_ERROR,
         STALE_ENABLE_MARKER,
-        adms_command_is_delete,
+        adms_command_is_forbidden,
         cancel_adms_command,
         disable_must_be_cancelled,
         enable_must_be_cancelled,
@@ -640,6 +640,14 @@ def getrequest(path_token: str | None = None):
 
     command = None
     for candidate in [*delivered, *queued]:
+        # Never deliver legacy/delete-shaped rows, even if queued before
+        # destructive ADMS actions were removed.
+        if adms_command_is_forbidden(candidate):
+            cancel_adms_command(
+                candidate,
+                error="Destructive ADMS delete commands are disabled. Use the reversible Grp=100/Grp=1 access update.",
+            )
+            continue
         # Test path: terminal-local IDs are served when unresolved. The
         # non-destructive Grp tests may also target an explicitly confirmed
         # fake member, but only when the owner entered that member's current
@@ -680,16 +688,23 @@ def getrequest(path_token: str | None = None):
         # (C2): their wire text is a DELETE, caught by action name AND by
         # wire text. The separate eSSL Grp tests take the terminal-local
         # test-identity branch above and are USERINFO updates.
-        if candidate.action == "block" and adms_command_is_delete(candidate):
-            cancel_adms_command(
-                candidate,
-                error="Legacy destructive block was not sent; automatic blocks now use the tested Grp=100 update.",
-            )
-            continue
-        if candidate.action in ADMS_DISABLE_ACTIONS or adms_command_is_delete(candidate):
+        # Owner-requested profile blocks are an explicit override for an
+        # otherwise active member. Automatic membership blocks remain
+        # constrained to paused/expired members.
+        if candidate.action in ADMS_DISABLE_ACTIONS and candidate.requested_by_id is None:
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if disable_must_be_cancelled(member):
                 cancel_adms_command(candidate)
+                continue
+        elif candidate.action in ADMS_DISABLE_ACTIONS:
+            # Owners may deliberately block an active member, but a stale or
+            # reassigned terminal ID must never be applied to an unknown user.
+            member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
+            if member is None:
+                cancel_adms_command(
+                    candidate,
+                    error="The member no longer resolves to this terminal ID. Confirm the biometric mapping and queue the access change again.",
+                )
                 continue
         # Mirror guard for enables (H8): an unblock/create/restore is
         # served only when the resolved member is proven enableable —
@@ -717,8 +732,6 @@ def getrequest(path_token: str | None = None):
     # Session type matters: a token-path serve is authenticated by the
     # per-integration secret; a serial-only serve is not (see C1).
     from app.services.audit_service import audit
-    from app.services.bridge_service import ADMS_DESTRUCTIVE_ACTIONS
-
     audit(
         action="adms_command_served",
         resource_type="rrr_adms_command",
@@ -728,7 +741,6 @@ def getrequest(path_token: str | None = None):
             "action": command.action,
             "enroll_number": command.test_enroll_number,
             "session": "token" if path_token else "serial",
-            **({"destructive": True} if command.action in ADMS_DESTRUCTIVE_ACTIONS else {}),
         },
     )
     db.session.commit()
@@ -782,31 +794,15 @@ def devicecmd(path_token: str | None = None):
     result = field("Return")[:32]
     detail = (field("Content") or field("CMD"))[:500]
     command.acknowledged_at = utcnow()
-    # M5: for DELETE-type commands the desired end state is "user not on
-    # terminal". Return=-1/-2 from the X2008 means the user/template was
-    # already absent — treat as achieved, not failed, so the C1 retry
-    # reconciliation doesn't re-queue forever.
-    # H4: that case is recorded as a DISTINCT outcome, not a plain success:
-    # status stays "acked" (the end state is achieved, and reconciliation
-    # keys on status), but result_code is ACKED_ABSENT instead of the raw
-    # "-1"/"-2", so an acked-absent delete is distinguishable from a
-    # delete the terminal actually executed. No new status value is
-    # introduced, so no CHECK migration is needed for this.
     from app.services.audit_service import audit
     from app.services.bridge_service import (
-        ADMS_ACKED_ABSENT_RESULT_CODE,
-        ADMS_DESTRUCTIVE_ACTIONS,
-        adms_command_is_delete,
+        adms_command_is_forbidden,
     )
 
     if result == "0":
         command.status = "acked"
         command.result_code = result
         command.result_message = detail or None
-    elif adms_command_is_delete(command) and result in ("-1", "-2"):
-        command.status = "acked"
-        command.result_code = ADMS_ACKED_ABSENT_RESULT_CODE
-        command.result_message = (detail or "") + " [treated as success: already absent]"
     else:
         command.status = "failed"
         command.result_code = result or None
@@ -822,7 +818,7 @@ def devicecmd(path_token: str | None = None):
             "enroll_number": command.test_enroll_number,
             "session": "token" if path_token else "serial",
             "result_code": command.result_code,
-            **({"destructive": True} if command.action in ADMS_DESTRUCTIVE_ACTIONS else {}),
+            **({"legacy_forbidden_rejected": True} if adms_command_is_forbidden(command) else {}),
         },
     )
     db.session.commit()

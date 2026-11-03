@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest } from '../services/apiClient';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { MemberPickerModal, PickerPerson } from '../components/MemberPickerModal';
 import { CardSkeleton, PillarCardSkeleton } from '../components/LoadingSkeleton';
 
-type Opportunity = { id: number; pillar: string; reason: string; potential_revenue: string; member: { name: string } };
+type Opportunity = { id: number; pillar: string; status: string; reason: string; potential_revenue: string; member: { name: string } };
 type Device = { id: number; name: string; serial_number: string; status: string; selected: boolean };
 type Unresolved = { biometric_user_id: string; punch_time: string };
 type Person = { id: number; full_name: string };
@@ -15,7 +15,7 @@ type TerminalSettings = { server_mode?: string; server_address?: string; server_
 type Command = { id: number; action: string; status: string; result_code?: string };
 type EnrollSuggestion = { enroll_number: string; terminal_name: string; member_id: number; member_name: string; member_phone?: string; confidence: number };
 type EnrollMatches = { suggestions: EnrollSuggestion[]; unmatched_terminal: { enroll_number: string; terminal_name: string }[]; snapshot?: { terminal_user_count: number; source: string; acknowledged_at?: string } | null; error?: string };
-type Payload = { opportunities: Opportunity[]; pillars: Record<string, { count: number; potential_revenue: string }>; unmapped_count: number; members?: { total?: number; attendance_rate?: number } };
+type Payload = { opportunities: Opportunity[]; pillars: Record<string, { count: number; potential_revenue: string }>; unmapped_count: number; total_potential_revenue?: string; owner_confirmed_revenue?: string; members?: { total?: number; attendance_rate?: number } };
 type OwnerToday = {
   collections: { total: string; expected_cash: string };
   cash_close: { closed: boolean; counted_cash?: string | null; variance?: string | null };
@@ -40,6 +40,8 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [serial, setSerial] = useState('');
   const [deviceName, setDeviceName] = useState('Elite Gym Entry');
   const [testUserId, setTestUserId] = useState('');
+  const [testUserName, setTestUserName] = useState('');
+  const [testMemberConfirmed, setTestMemberConfirmed] = useState(false);
   const [doorConfirmed, setDoorConfirmed] = useState(false);
   const [directDoorConfirmed, setDirectDoorConfirmed] = useState(false);
   const [commissioning, setCommissioning] = useState(false);
@@ -48,12 +50,15 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [matches, setMatches] = useState<EnrollMatches | null>(null);
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [recoveryTarget, setRecoveryTarget] = useState<Opportunity | null>(null);
+  const [outcomeAmount, setOutcomeAmount] = useState('');
+  const [now, setNow] = useState(0);
   const direct = integrations.find((item) => item.type === 'adms_direct');
   const bridge = integrations.find((item) => item.type === 'ebioserver');
   // Port of the PWA's 5-minute liveness check — status alone never goes stale server-side.
   const isLive = (integration?: Integration) => {
     if (!integration || integration.status !== 'connected' || !integration.last_success_at) return false;
-    return Date.now() - new Date(integration.last_success_at).getTime() < 5 * 60 * 1000;
+    return now > 0 && now - new Date(integration.last_success_at).getTime() < 5 * 60 * 1000;
   };
   const directLive = isLive(direct);
 
@@ -67,6 +72,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       apiRequest<OwnerToday>('/api/mobile/v1/owner/today'),
       apiRequest<{ gym: { show_biometric_link_banner?: boolean } }>('/api/mobile/v1/settings'),
     ]);
+    setNow(Date.now());
     if (dashboard.ok) setData(dashboard.data);
     if (integrationData.ok) {
       setIntegrations(integrationData.data.integrations || []);
@@ -134,14 +140,61 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     if (!direct) return;
     await commissionIntegration(direct, directDoorConfirmed);
   };
-  const queue = async (action: 'probe_info' | 'block_test' | 'unblock_test') => {
+  const sendTestCommand = async (action: 'probe_info' | 'essl_group_block_test' | 'essl_group_unblock_test') => {
     if (!direct) return;
-    if (action !== 'probe_info' && !/^[1-9][0-9]{0,8}$/.test(testUserId)) { Alert.alert('Temporary User ID required', 'Use a 1–9 digit temporary User ID that exists only for this test.'); return; }
-    const result = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`, { method: 'POST', body: { action, test_enroll_number: testUserId } });
+    const groupTest = action !== 'probe_info';
+    const result = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`, {
+      method: 'POST',
+      body: {
+        action,
+        ...(groupTest ? {
+          test_enroll_number: testUserId.trim(),
+          test_user_name: testUserName.trim(),
+          test_member_confirmed: true,
+        } : {}),
+      },
+    });
     if (result.ok) { Alert.alert('Command queued', 'Keep the terminal online; it will receive this on its next cloud poll.'); void load(); }
     else Alert.alert('Command not queued', result.error.message);
   };
+  const queue = (action: 'probe_info' | 'essl_group_block_test' | 'essl_group_unblock_test') => {
+    if (!direct) return;
+    if (action === 'probe_info') { void sendTestCommand(action); return; }
+    if (!/^[1-9][0-9]{0,8}$/.test(testUserId.trim())) {
+      Alert.alert('Temporary User ID required', 'Use the 1–9 digit ID of the dedicated fake account created on the terminal.');
+      return;
+    }
+    if (!testUserName.trim()) {
+      Alert.alert('Current terminal name required', 'Enter the fake account name exactly as it appears on the terminal.');
+      return;
+    }
+    if (!testMemberConfirmed) {
+      Alert.alert('Fake account confirmation required', 'Confirm that this is the dedicated fake test account, not a real customer or member.');
+      return;
+    }
+    const isBlock = action === 'essl_group_block_test';
+    Alert.alert(
+      isBlock ? 'Confirm safe eSSL block test' : 'Confirm safe eSSL unblock test',
+      isBlock
+        ? `Queue a Grp=100 update for fake test ID ${testUserId.trim()}? This updates USERINFO without deleting the user or fingerprint.`
+        : `Queue a Grp=1 restore for fake test ID ${testUserId.trim()}? Verify that the same fingerprint still works at the terminal.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Queue test', onPress: () => void sendTestCommand(action) },
+      ],
+    );
+  };
   const markActioned = async (id: number) => { const result = await apiRequest(`/api/mobile/v1/rrr/opportunities/${id}`, { method: 'PATCH', body: { status: 'actioned' } }); if (result.ok) void load(); else Alert.alert('Could not update opportunity', result.error.message); };
+  const saveRecovery = async () => {
+    const amount = outcomeAmount.trim();
+    if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount)) { Alert.alert('Enter recovered amount', 'Use a non-negative amount with up to two decimal places.'); return; }
+    if (!recoveryTarget) return;
+    const result = await apiRequest(`/api/mobile/v1/rrr/opportunities/${recoveryTarget.id}`, { method: 'PATCH', body: { status: 'closed', outcome_revenue: amount } });
+    if (!result.ok) { Alert.alert('Could not record recovery', result.error.message); return; }
+    setRecoveryTarget(null);
+    setOutcomeAmount('');
+    void load();
+  };
   const mapIdentity = async (externalId: string, memberId: number) => { const result = await apiRequest(`/api/mobile/v1/rrr/mappings/${encodeURIComponent(externalId)}`, { method: 'POST', body: { member_id: memberId } }); if (result.ok) void load(); else Alert.alert('Could not map biometric ID', result.error.message); };
   const saveRules = async () => { const result = await apiRequest('/api/mobile/v1/rrr/rules', { method: 'PUT', body: { rules } }); if (result.ok) Alert.alert('Saved', 'RRR signal thresholds updated.'); else Alert.alert('Could not save rules', result.error.message); };
   const loadMatches = useCallback(async () => {
@@ -169,19 +222,19 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     else Alert.alert('Could not link', result.error.message);
   };
   const pillars = data?.pillars || {};
-  const potential = Object.values(pillars).reduce((sum, item) => sum + Number(item.potential_revenue || 0), 0);
+  const potential = Number(data?.total_potential_revenue ?? Object.values(pillars).reduce((sum, item) => sum + Number(item.potential_revenue || 0), 0));
   const latest = commands[0];
 
   return <SafeAreaView style={styles.safe}><ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl tintColor={colors.brand} refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}>
     <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹ Settings</Text></TouchableOpacity>
     {loading ? <><View style={styles.hero}><Text style={styles.eyebrow}>RRR GYM GROWTH SYSTEM</Text><Text style={styles.title}>Run the gym. Grow the business.</Text></View><PillarCardSkeleton /><PillarCardSkeleton /><PillarCardSkeleton /><CardSkeleton count={2} /></> : <>
     <View style={styles.hero}><Text style={styles.eyebrow}>RRR GYM GROWTH SYSTEM</Text><Text style={styles.title}>Run the gym. Grow the business.</Text><Text style={styles.subtitle}>Revenue, retention, recovery and attendance—one owner workspace.</Text></View>
-    <View style={styles.metrics}><Metric value={String(data?.members?.total ?? 0)} label="Members" /><Metric value={`${data?.members?.attendance_rate ?? 0}%`} label="Attendance" /><Metric value={`₹${money(potential)}`} label="Pipeline" /></View>
+    <View style={[styles.metrics, recoveryStyles.metricsWrap]}><Metric value={String(data?.members?.total ?? 0)} label="Members" /><Metric value={`${data?.members?.attendance_rate ?? 0}%`} label="Attendance" /><Metric value={`₹${money(potential)}`} label="Pipeline" /><Metric value={`₹${money(Number(data?.owner_confirmed_revenue || 0))}`} label="Confirmed recovered" /></View>
     {ownerToday && <View style={[styles.card, ownerStyles.todayCard]}><View style={styles.cardHeader}><View><Text style={styles.cardEyebrow}>OWNER TODAY</Text><Text style={styles.cardTitle}>Run this shift with clarity</Text></View><Text style={ownerStyles.todayTotal}>₹{money(Number(ownerToday.collections.total || 0))}</Text></View><Text style={styles.copy}>{ownerToday.follow_up_count} lead follow-up(s) and {ownerToday.trials_today.length} trial visit(s) need attention today.</Text>{ownerToday.actions.slice(0, 4).map((action, index) => <View style={ownerStyles.todayAction} key={`${action.title}-${index}`}><View style={[ownerStyles.actionDot, action.priority === 'high' && ownerStyles.actionDotHigh]} /><View style={ownerStyles.todayActionCopy}><Text style={styles.rowTitle}>{action.title}</Text><Text style={styles.rowSub}>{action.detail}</Text></View><Text style={ownerStyles.actionCount}>{action.count}</Text></View>)}</View>}
-    {(['revenue', 'retain', 'recover'] as const).map((pillar) => { const tone = tones[pillar]; const values = pillars[pillar]; return <View key={pillar} style={[styles.focus, { backgroundColor: tone.surface }]}><View style={styles.focusTop}><View><Text style={[styles.focusLabel, { color: tone.color }]}>{tone.label}</Text><Text style={styles.rowSub}>{tone.copy}</Text></View><Text style={[styles.focusCount, { color: tone.color }]}>{values?.count ?? 0}</Text></View><View style={styles.focusBottom}><Text style={styles.copy}>{pillar === 'revenue' ? 'Revenue opportunities' : pillar === 'retain' ? 'Members at risk' : 'Inactive / expired'}</Text><Text style={[styles.focusValue, { color: tone.color }]}>₹{money(Number(values?.potential_revenue || 0))}</Text></View>{(data?.opportunities || []).filter((item) => item.pillar === pillar).slice(0, 2).map((item) => <TouchableOpacity key={item.id} onPress={() => void markActioned(item.id)} style={styles.opportunity}><View><Text style={styles.rowTitle}>{item.member.name}</Text><Text style={styles.rowSub}>{item.reason}</Text></View><Text style={[styles.link, { color: tone.color }]}>Action ›</Text></TouchableOpacity>)}</View>; })}
+    {(['revenue', 'retain', 'recover'] as const).map((pillar) => { const tone = tones[pillar]; const values = pillars[pillar]; return <View key={pillar} style={[styles.focus, { backgroundColor: tone.surface }]}><View style={styles.focusTop}><View><Text style={[styles.focusLabel, { color: tone.color }]}>{tone.label}</Text><Text style={styles.rowSub}>{tone.copy}</Text></View><Text style={[styles.focusCount, { color: tone.color }]}>{values?.count ?? 0}</Text></View><View style={styles.focusBottom}><Text style={styles.copy}>{pillar === 'revenue' ? 'Revenue opportunities' : pillar === 'retain' ? 'Members at risk' : 'Inactive / expired'}</Text><Text style={[styles.focusValue, { color: tone.color }]}>₹{money(Number(values?.potential_revenue || 0))}</Text></View>{(data?.opportunities || []).filter((item) => item.pillar === pillar).slice(0, 2).map((item) => <View key={item.id} style={styles.opportunity}><View style={recoveryStyles.opportunityCopy}><Text style={styles.rowTitle}>{item.member.name}</Text><Text style={styles.rowSub}>{item.reason}</Text><Text style={styles.rowSub}>{item.status}</Text></View><View style={recoveryStyles.opportunityActions}><TouchableOpacity onPress={() => void markActioned(item.id)}><Text style={[styles.link, { color: tone.color }]}>Action</Text></TouchableOpacity><TouchableOpacity onPress={() => { setOutcomeAmount(''); setRecoveryTarget(item); }}><Text style={[styles.link, { color: colors.successDark }]}>Recovered</Text></TouchableOpacity></View></View>)}</View>; })}
     <View style={[styles.card, styles.directCard]}><View style={styles.cardHeader}><View><Text style={styles.cardEyebrow}>ATTENDANCE CONNECTION</Text><Text style={styles.cardTitle}>Direct Cloud</Text></View><View style={[styles.status, directLive ? styles.live : styles.setup]}><Text style={[styles.statusText, directLive ? styles.liveText : styles.setupText]}>{directLive ? 'LIVE' : 'SET UP'}</Text></View></View>
       {direct ? <><Text style={styles.deviceTitle}>{direct.device_name || 'Gym entry terminal'}</Text><Text style={styles.copy}>{direct.device_serial} · {direct.records_synced || 0} attendance records · {data?.unmapped_count || 0} need review</Text><View style={styles.server}><Text style={styles.serverLabel}>Terminal Cloud Server</Text><Text selectable style={styles.serverHost}>{direct.terminal_settings?.server_address || '—'}</Text><Text style={styles.serverMeta}>ADMS mode · Port {direct.terminal_settings?.server_port ?? '—'} · HTTPS {direct.terminal_settings?.https === false ? 'off' : 'on'} · Path {direct.terminal_settings?.path || '/iclock'}</Text></View><Text style={styles.copy}>Terminal: Menu → Comm. → Cloud Server Setting. Save these values and make a test punch. Your phone never joins the gym LAN.</Text></> : <><Text style={styles.copy}>Connect eSSL attendance directly to RRR Cloud—no gym PC or bridge is required for attendance.</Text><TextInput style={styles.textInput} value={serial} onChangeText={setSerial} placeholder="Terminal serial number" placeholderTextColor={colors.muted} autoCapitalize="characters" /><TextInput style={styles.textInput} value={deviceName} onChangeText={setDeviceName} placeholder="Friendly terminal name" placeholderTextColor={colors.muted} /><Button text="Save terminal and continue" onPress={() => void provision()} /></>}</View>
-    {direct && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>Only auditable test commands are available. Automatic access rules remain off until the terminal returns a supervised acknowledgment.</Text><Text style={styles.command}>{latest ? `${latest.action.replace('_', ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => void queue('probe_info')} secondary /><TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Temporary terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><View style={styles.commands}><TouchableOpacity style={styles.block} onPress={() => void queue('block_test')}><Text style={styles.blockText}>2. Test block</Text></TouchableOpacity><TouchableOpacity style={styles.unblock} onPress={() => void queue('unblock_test')}><Text style={styles.unblockText}>3. Test unblock</Text></TouchableOpacity></View>
+    {direct && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>These safe Group tests update USERINFO and preserve the fingerprint. Automatic access rules remain off until a test command is acknowledged and you verify the door in person.</Text><Text style={styles.command}>{latest ? `${latest.action.replace(/_/g, ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => queue('probe_info')} secondary /><TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Fake terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><TextInput style={styles.textInput} value={testUserName} onChangeText={setTestUserName} placeholder="Exact name currently shown on terminal" placeholderTextColor={colors.muted} /><TouchableOpacity style={recoveryStyles.testConfirmation} onPress={() => setTestMemberConfirmed((value) => !value)}><Text style={recoveryStyles.testConfirmationBox}>{testMemberConfirmed ? '☑' : '☐'}</Text><Text style={styles.copy}>I confirm this is the dedicated fake test account I created, not a real customer/member.</Text></TouchableOpacity><View style={styles.commands}><TouchableOpacity style={styles.block} onPress={() => queue('essl_group_block_test')}><Text style={styles.blockText}>2. Test eSSL block (Grp=100)</Text></TouchableOpacity><TouchableOpacity style={styles.unblock} onPress={() => queue('essl_group_unblock_test')}><Text style={styles.unblockText}>3. Test eSSL unblock (Grp=1)</Text></TouchableOpacity></View>
     <View style={styles.commissionRow}>
       <TouchableOpacity style={styles.checkbox} onPress={() => setDirectDoorConfirmed(!directDoorConfirmed)}>
         <Text style={styles.checkboxText}>{directDoorConfirmed ? '☑' : '☐'}</Text>
@@ -198,7 +251,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     {showBiometricLinkBanner && <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolved.length} punches need a member</Text>{unresolved.length ? unresolved.slice(0, 5).map((event, index) => <View style={styles.deviceRow} key={`${event.biometric_user_id}-${index}`}><View><Text style={styles.rowTitle}>Terminal ID {event.biometric_user_id}</Text><Text style={styles.rowSub}>{new Date(event.punch_time).toLocaleString()}</Text></View><TouchableOpacity onPress={() => setPickerEvent(event)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity></View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}</View>}
     {(direct || bridge) && <View style={styles.card}><Text style={styles.cardEyebrow}>SMART MATCHING</Text><Text style={styles.cardTitle}>Who is who on the terminal?</Text><Text style={styles.copy}>We read the names on your terminal and match them to members. One tap per match — nothing links without your approval.</Text><Button text={scanning ? 'Scanning…' : 'Scan terminal users'} onPress={() => { void loadMatches(); void scanTerminalUsers(); }} secondary />
       {(matches?.suggestions || []).map((s) => <View style={styles.deviceRow} key={s.enroll_number}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>#{s.enroll_number} {s.terminal_name || 'No name'}</Text><Text style={styles.rowSub}>→ {s.member_name}{s.member_phone ? ` · ${s.member_phone}` : ''} · {s.confidence}%</Text></View><TouchableOpacity onPress={() => void confirmMatch(s)}><Text style={styles.link}>Confirm</Text></TouchableOpacity></View>)}
-      {(matches?.unmatched_terminal || []).length > 0 && <Text style={styles.copy}>{matches?.unmatched_terminal?.length} terminal user(s) couldn't be matched confidently — ask staff and link from the member profile.</Text>}
+      {(matches?.unmatched_terminal || []).length > 0 && <Text style={styles.copy}>{matches?.unmatched_terminal?.length} terminal user(s) couldn&apos;t be matched confidently — ask staff and link from the member profile.</Text>}
       {matches && !(matches.suggestions || []).length && !(matches.unmatched_terminal || []).length && matches.snapshot && <Text style={styles.copy}>Everyone on the terminal is already linked. 🎉</Text>}</View>}
     <MemberPickerModal
       visible={pickerEvent !== null}
@@ -212,10 +265,20 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       }}
     />
     <View style={styles.card}><Text style={styles.cardEyebrow}>GROWTH ENGINE</Text><Text style={styles.cardTitle}>Signal thresholds</Text>{ruleFields.map(([key, label]) => <View style={styles.rule} key={key}><Text style={styles.copy}>{label}</Text><View style={styles.ruleValue}><TextInput keyboardType="number-pad" value={String(rules[key] ?? '')} onChangeText={(value) => setRules((old) => ({ ...old, [key]: Number(value) }))} style={styles.ruleInput} /><Text style={styles.unit}>{key === 'attendance_drop_percent' ? '%' : 'days'}</Text></View></View>)}<Button text="Save thresholds" onPress={() => void saveRules()} /></View>
-  </>}</ScrollView></SafeAreaView>;
+  </>}</ScrollView>
+    <Modal visible={recoveryTarget !== null} transparent animationType="fade" onRequestClose={() => setRecoveryTarget(null)}>
+      <View style={recoveryStyles.modalOverlay}><View style={recoveryStyles.recoveryModal}>
+        <Text style={styles.cardEyebrow}>OWNER CONFIRMATION</Text>
+        <Text style={styles.cardTitle}>Record recovered revenue</Text>
+        <Text style={styles.copy}>{recoveryTarget?.member.name} · Enter the amount actually collected. This is an owner-confirmed outcome.</Text>
+        <TextInput style={styles.textInput} value={outcomeAmount} onChangeText={setOutcomeAmount} keyboardType="decimal-pad" placeholder="Amount collected (₹)" placeholderTextColor={colors.muted} />
+        <View style={styles.commands}><TouchableOpacity style={recoveryStyles.cancelRecovery} onPress={() => setRecoveryTarget(null)}><Text style={recoveryStyles.cancelRecoveryText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={recoveryStyles.saveRecovery} onPress={() => void saveRecovery()}><Text style={recoveryStyles.saveRecoveryText}>Save recovery</Text></TouchableOpacity></View>
+      </View></View>
+    </Modal>
+  </SafeAreaView>;
 }
 
-function Metric({ value, label }: { value: string; label: string }) { return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>; }
+function Metric({ value, label }: { value: string; label: string }) { return <View style={[styles.metric, recoveryStyles.metricGridItem]}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>; }
 function Button({ text, onPress, secondary = false }: { text: string; onPress: () => void; secondary?: boolean }) { return <TouchableOpacity style={secondary ? styles.secondaryButton : styles.button} onPress={onPress}><Text style={secondary ? styles.secondaryText : styles.buttonText}>{text}</Text></TouchableOpacity>; }
 function money(value: number) { return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number.isFinite(value) ? value : 0); }
 
@@ -234,4 +297,19 @@ const ownerStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background }, content: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.section }, back: { color: colors.brand, fontWeight: fontWeight.semibold, fontSize: fontSize.md }, hero: { gap: spacing.xs, paddingTop: spacing.xs }, eyebrow: { color: colors.brand, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, fontSize: fontSize.xs, letterSpacing: 1 }, title: { color: colors.text, fontSize: fontSize['4xl'], lineHeight: 30, fontWeight: fontWeight.extrabold }, subtitle: { color: colors.textSecondary, fontSize: fontSize.lg, lineHeight: 21 }, metrics: { flexDirection: 'row', gap: spacing.sm }, metric: { flex: 1, minHeight: 82, padding: spacing.md, justifyContent: 'center', backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, ...shadows.sm }, metricValue: { color: colors.text, fontSize: fontSize['2xl'], fontWeight: fontWeight.extrabold }, metricLabel: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: spacing.xs }, focus: { borderRadius: radius.xl, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.borderLight }, focusTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }, focusLabel: { fontSize: fontSize.lg, fontWeight: fontWeight.extrabold }, focusCount: { fontSize: fontSize['5xl'], lineHeight: 32, fontWeight: fontWeight.extrabold }, focusBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }, focusValue: { fontSize: fontSize.lg, fontWeight: fontWeight.bold }, opportunity: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: spacing.sm, borderTopWidth: 1, borderColor: 'rgba(15,23,42,0.08)' }, rowTitle: { color: colors.text, fontWeight: fontWeight.semibold, fontSize: fontSize.sm }, rowSub: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 }, link: { color: colors.brand, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, fontSize: fontSize.sm }, card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius.xl, padding: spacing.lg, gap: spacing.sm, ...shadows.sm }, directCard: { borderColor: colors.successBorder }, cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }, cardEyebrow: { color: colors.textSecondary, fontSize: fontSize.xs, fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold, letterSpacing: .8 }, cardTitle: { color: colors.text, fontSize: fontSize.xl, fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra, marginTop: 2 }, status: { borderRadius: radius.full, paddingHorizontal: spacing.sm, paddingVertical: 5 }, live: { backgroundColor: colors.successSurface }, setup: { backgroundColor: colors.warningSurface }, statusText: { fontSize: fontSize.xs, fontWeight: fontWeight.bold }, liveText: { color: colors.successDark }, setupText: { color: colors.warningDark }, deviceTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: fontWeight.bold }, copy: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 }, server: { padding: spacing.md, backgroundColor: colors.brandSubtle, borderRadius: radius.md, gap: 3 }, serverLabel: { color: colors.brandDark, fontSize: fontSize.xs, fontWeight: fontWeight.bold }, serverHost: { color: colors.text, fontSize: fontSize.md, fontWeight: fontWeight.bold }, serverMeta: { color: colors.textSecondary, fontSize: fontSize.xs }, textInput: { width: '100%', color: colors.text, backgroundColor: colors.gray50, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 11, fontSize: fontSize.base }, button: { backgroundColor: colors.brand, borderRadius: radius.md, padding: spacing.md, alignItems: 'center', marginTop: spacing.xs }, buttonText: { color: colors.textInverse, fontWeight: fontWeight.bold }, secondaryButton: { borderWidth: 1, borderColor: colors.successBorder, backgroundColor: colors.successSurface, borderRadius: radius.md, padding: spacing.md, alignItems: 'center', marginTop: spacing.xs }, secondaryText: { color: colors.successDark, fontWeight: fontWeight.bold }, command: { color: colors.text, backgroundColor: colors.gray50, borderRadius: radius.sm, padding: spacing.sm, fontSize: fontSize.sm }, commands: { flexDirection: 'row', gap: spacing.sm }, block: { flex: 1, backgroundColor: colors.criticalSurface, borderRadius: radius.md, borderColor: colors.criticalBorder, borderWidth: 1, padding: spacing.md, alignItems: 'center' }, blockText: { color: colors.criticalDark, fontSize: fontSize.sm, fontWeight: fontWeight.bold }, unblock: { flex: 1, backgroundColor: colors.successSurface, borderRadius: radius.md, borderColor: colors.successBorder, borderWidth: 1, padding: spacing.md, alignItems: 'center' }, unblockText: { color: colors.successDark, fontSize: fontSize.sm, fontWeight: fontWeight.bold }, deviceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderColor: colors.borderLight }, code: { color: colors.text, fontSize: fontSize.md, padding: spacing.sm, backgroundColor: colors.gray100, borderRadius: radius.sm }, rule: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, paddingVertical: spacing.xs }, ruleValue: { flexDirection: 'row', alignItems: 'center', width: 104, backgroundColor: colors.gray50, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.sm }, ruleInput: { flex: 1, color: colors.text, textAlign: 'right', paddingVertical: spacing.xs, fontSize: fontSize.md }, unit: { color: colors.muted, fontSize: fontSize.xs, marginLeft: spacing.xs }, commissionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.sm }, checkbox: { padding: 4 }, checkboxText: { fontSize: 22, color: colors.brand },
+});
+
+const recoveryStyles = StyleSheet.create({
+  metricsWrap: { flexWrap: 'wrap' },
+  metricGridItem: { minWidth: '46%' },
+  testConfirmation: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  testConfirmationBox: { color: colors.brand, fontSize: 22, lineHeight: 24 },
+  opportunityCopy: { flex: 1, paddingRight: spacing.sm },
+  opportunityActions: { alignItems: 'flex-end', gap: spacing.xs },
+  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: spacing.lg },
+  recoveryModal: { backgroundColor: colors.card, borderRadius: radius.xl, padding: spacing.lg, gap: spacing.md },
+  cancelRecovery: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, alignItems: 'center' },
+  cancelRecoveryText: { color: colors.textSecondary, fontWeight: fontWeight.bold },
+  saveRecovery: { flex: 1, backgroundColor: colors.successDark, borderRadius: radius.md, padding: spacing.md, alignItems: 'center' },
+  saveRecoveryText: { color: colors.textInverse, fontWeight: fontWeight.bold },
 });

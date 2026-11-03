@@ -160,6 +160,12 @@ the configured welcome message on first contact. Scheduled renewal reminders sca
 active members; members without an open 24-hour window are sent through the approved Meta
 template when configured.
 
+RRR inactivity and win-back messages go only to members with recorded WhatsApp opt-in.
+Outside a member's 24-hour reply window, configure a Meta-approved retention template with
+`WHATSAPP_RETENTION_TEMPLATE_NAME`, its language, and the comma-separated body parameter
+order. Without that template, the scheduler records the message as failed instead of sending
+unapproved free text.
+
 ## Tenant safety
 
 Tenant-facing routes use `current_user.gym_id` and tenant repositories for object lookup. Super admin routes live under `/admin` and require the `super_admin` role. Suspended gyms are blocked from tenant dashboards.

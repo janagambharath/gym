@@ -2,12 +2,31 @@
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, renderAvatar, renderBadge, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatCurrency, formatDate, uuid, getMemberDisplayStatus } from '../utils.js';
+
+function dateKeyInTimezone(value, timezone) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
+  const part = (type) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function addDays(value, days) {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days, 12));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
 export default { async mount(el, params) {
     const idempotencyKey = uuid(); // one key per form mount, reused across retries
   const member = params?.member ? JSON.parse(params.member) : null;
   if (!member) { el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No member selected</div></div>'; return; }
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
   const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
+  const timezone = settingsRes.ok ? settingsRes.data.gym?.timezone || 'Asia/Kolkata' : 'Asia/Kolkata';
+  const today = dateKeyInTimezone(new Date(), timezone);
+  const minStartDate = member.membership_end && member.membership_end >= today
+    ? addDays(member.membership_end, 1)
+    : today;
+  const defaultStartDate = minStartDate;
   const status = getMemberDisplayStatus(member);
   el.innerHTML = `${renderHeader({ title: 'Renew Membership', showBack: true })}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <div class="card card-body" style="margin-bottom:var(--sp-xl);display:flex;align-items:center;gap:var(--sp-md)">
@@ -16,6 +35,8 @@ export default { async mount(el, params) {
       <div style="margin-left:auto">${renderBadge(status)}</div></div>
     <form id="renew-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
       ${renderFormField({ id: 'rn-plan', label: 'Plan', value: member.plan?.id || '', options: plans.map(p => ({value:p.id,label:`${p.name} — ${formatCurrency(p.price)} / ${p.duration_days}d`})), required: true })}
+      ${renderFormField({ id: 'rn-start-date', label: 'Membership start date', type: 'date', value: defaultStartDate, required: true, hint: member.membership_end && member.membership_end >= today ? `Next available date: ${formatDate(minStartDate)}. This protects the member's current paid period.` : 'Choose the date this renewal should begin.' })}
+      <div class="form-hint" id="rn-end-preview" style="margin-top:-var(--sp-md)"></div>
       ${renderFormField({ id: 'rn-amount', label: 'Amount', type: 'number', value: member.plan?.price || '', required: true })}
       ${renderFormField({ id: 'rn-method', label: 'Payment Method', value: 'cash', options: [{value:'cash',label:'Cash'},{value:'upi',label:'UPI'},{value:'card',label:'Card'},{value:'online',label:'Online'},{value:'other',label:'Other'}], required: true })}
       ${renderFormField({ id: 'rn-ref', label: 'Reference / Transaction ID', placeholder: 'Optional' })}
@@ -28,9 +49,19 @@ export default { async mount(el, params) {
     </form></div></div>`;
   bindHeaderEvents(el, { onBack: () => navigate.pop() });
   // Auto-fill amount on plan change
+  const updateEndPreview = () => {
+    const selectedPlan = plans.find(p => String(p.id) === el.querySelector('#rn-plan').value);
+    const startDate = el.querySelector('#rn-start-date').value;
+    const endDate = startDate && selectedPlan ? addDays(startDate, selectedPlan.duration_days - 1) : '';
+    el.querySelector('#rn-end-preview').textContent = endDate ? `Membership ends ${formatDate(endDate)} (${selectedPlan.duration_days} days).` : '';
+  };
+  el.querySelector('#rn-start-date').min = minStartDate;
+  el.querySelector('#rn-start-date').addEventListener('change', updateEndPreview);
+  updateEndPreview();
   el.querySelector('#rn-plan').addEventListener('change', (e) => {
     const plan = plans.find(p => String(p.id) === e.target.value);
     if (plan) el.querySelector('#rn-amount').value = plan.price;
+    updateEndPreview();
   });
   el.querySelector('#rn-confirm').addEventListener('change', (e) => {
     el.querySelector('#rn-submit').disabled = !e.target.checked;
@@ -38,11 +69,18 @@ export default { async mount(el, params) {
   el.querySelector('#renew-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = el.querySelector('#rn-submit'); btn.disabled = true; btn.textContent = 'Processing...';
+    const paymentMethod = el.querySelector('#rn-method').value;
     const body = { member_id: member.id, plan_id: Number(el.querySelector('#rn-plan').value),
-      amount: el.querySelector('#rn-amount').value, method: el.querySelector('#rn-method').value,
+      amount: el.querySelector('#rn-amount').value, method: paymentMethod,
+      channel: paymentMethod === 'online' ? 'online' : 'offline',
+      auto_verify: paymentMethod !== 'online',
+      renewal_start_date: el.querySelector('#rn-start-date').value,
       reference: el.querySelector('#rn-ref').value.trim() || null, notes: el.querySelector('#rn-notes').value.trim() || null };
     const res = await apiRequest('/api/mobile/v1/payments', { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } });
-    if (res.ok) { showToast('Renewal recorded!', 'success'); navigate.pop(); } 
+    if (res.ok) {
+      showToast(paymentMethod === 'online' ? 'Online renewal payment requested.' : 'Payment verified and renewal recorded.', 'success');
+      navigate.pop();
+    }
     else { showToast(res.error.message, 'error'); btn.disabled = false; btn.textContent = 'Renew & Record Payment'; }
   });
 }};

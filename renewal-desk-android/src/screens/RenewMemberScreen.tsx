@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
 import { Avatar } from '../components/Avatar';
@@ -36,6 +37,39 @@ function createPaymentRequestKey(): string {
   return `payment-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+function dateKeyInTimezone(value: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function addDaysToDateKey(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const result = new Date(year, month - 1, day + days, 12);
+  return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, '0')}-${String(result.getDate()).padStart(2, '0')}`;
+}
+
+function dateKeyFromLocalDate(value: Date): string {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function datePickerValue(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+
+function suggestedRenewalStart(membershipEnd: string | null, timezone: string): string {
+  const today = dateKeyInTimezone(new Date(), timezone);
+  return membershipEnd && membershipEnd >= today
+    ? addDaysToDateKey(membershipEnd, 1)
+    : today;
+}
+
 export function RenewMemberScreen({
   member,
   onBack,
@@ -45,10 +79,16 @@ export function RenewMemberScreen({
 }: RenewMemberScreenProps) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(member.plan?.id ?? null);
+  const [gymTimezone, setGymTimezone] = useState('Asia/Kolkata');
+  const [renewalStartDate, setRenewalStartDate] = useState(() => suggestedRenewalStart(member.membership_end, 'Asia/Kolkata'));
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
+  const startDateTouchedRef = useRef(false);
 
   // Financial Pricing Engine
   const [finalPayable, setFinalPayable] = useState<string>(member.plan?.price ?? '0');
-  const [channelMode, setChannelMode] = useState<ChannelMode>('online');
+  // Desk renewals are normally paid at the counter; online invoice mode is
+  // an explicit switch. Offline payments should activate immediately.
+  const [channelMode, setChannelMode] = useState<ChannelMode>('offline');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [discountNote, setDiscountNote] = useState('');
 
@@ -67,10 +107,15 @@ export function RenewMemberScreen({
   // Fetch available gym plans
   useEffect(() => {
     let cancelled = false;
-    void apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings').then((res) => {
+    void apiRequest<{ plans: Plan[]; gym?: { timezone?: string } }>('/api/mobile/v1/settings').then((res) => {
       if (cancelled) return;
       if (res.ok && res.data.plans.length > 0) {
         setPlans(res.data.plans);
+        const timezone = res.data.gym?.timezone || 'Asia/Kolkata';
+        setGymTimezone(timezone);
+        if (!startDateTouchedRef.current) {
+          setRenewalStartDate(suggestedRenewalStart(member.membership_end, timezone));
+        }
         if (!selectedPlanId) {
           const match = res.data.plans.find((p) => p.id === member.plan?.id) || res.data.plans[0];
           setSelectedPlanId(match.id);
@@ -81,11 +126,15 @@ export function RenewMemberScreen({
     return () => {
       cancelled = true;
     };
-  }, [member.plan?.id, selectedPlanId]);
+  }, [member.membership_end, member.plan?.id, selectedPlanId]);
 
   const activePlan = plans.find((p) => p.id === selectedPlanId) || member.plan;
   const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 0;
   const renewalDays = activePlan?.duration_days ?? 30;
+  const minimumStartDate = suggestedRenewalStart(member.membership_end, gymTimezone);
+  const renewalEndDate = renewalStartDate
+    ? addDaysToDateKey(renewalStartDate, renewalDays - 1)
+    : '';
 
   // Derive discount and savings
   const numericPayable = parseFloat(finalPayable) || 0;
@@ -123,6 +172,7 @@ export function RenewMemberScreen({
         method: channelMode === 'online' ? 'upi' : paymentMethod,
         auto_verify: channelMode === 'offline',
         renewal_days: renewalDays,
+        renewal_start_date: renewalStartDate,
         notes: discountNote.trim() || (derivedDiscount > 0 ? `Member-specific discount of ${getCurrencySymbol()}${derivedDiscount}` : 'Renewal recorded from Desk.'),
       },
     });
@@ -140,7 +190,7 @@ export function RenewMemberScreen({
       setError(result.error.message);
     }
     setRenewing(false);
-  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, discountNote, member.id, onComplete, onLogout]);
+  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, renewalStartDate, discountNote, member.id, onComplete, onLogout]);
 
   const handleSendWhatsApp = useCallback(async () => {
     if (sendingWhatsApp) return;
@@ -167,6 +217,9 @@ export function RenewMemberScreen({
 
   if (success && paymentResult) {
     const isOnlineDemand = paymentResult.channel === 'online';
+    const isScheduledRenewal = paymentResult.status === 'verified'
+      && Boolean(paymentResult.renewal_start_date)
+      && String(paymentResult.renewal_start_date) > dateKeyInTimezone(new Date(), gymTimezone);
     return (
       <SafeAreaView style={styles.safeArea}>
         <AppHeader title="Renewal Created" onBack={onBack} />
@@ -180,12 +233,16 @@ export function RenewMemberScreen({
           </View>
 
           <Text style={styles.successTitle}>
-            {isOnlineDemand ? "Invoice Published to VYNLA" : "Payment Recorded & Active"}
+            {isOnlineDemand
+              ? "Invoice Published to VYNLA"
+              : isScheduledRenewal ? "Payment Recorded & Scheduled" : "Payment Recorded & Active"}
           </Text>
           <Text style={styles.successSubtitle}>
             {isOnlineDemand
               ? `${member.full_name} will see a fixed payable amount of ${formatCurrency(paymentResult.amount)} on VYNLA.`
-              : `Membership for ${member.full_name} has been renewed and activated.`}
+              : isScheduledRenewal
+                ? `${member.full_name}'s renewed membership starts on ${formatDate(paymentResult.renewal_start_date)}.`
+                : `Membership for ${member.full_name} has been renewed and activated.`}
           </Text>
 
           {/* Pricing breakdown card */}
@@ -288,6 +345,33 @@ export function RenewMemberScreen({
           </View>
           <InfoRow label="Current Expiry Date" value={formatDate(member.membership_end)} />
           <InfoRow label="Renewal Extension" value={`+${renewalDays} days`} valueColor={colors.brand} />
+            <Text style={styles.inputLabel}>Membership Start Date</Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`Renewal starts ${formatDate(renewalStartDate)}`}
+              onPress={() => setShowStartDatePicker(true)}
+              style={styles.startDateButton}
+            >
+              <Icon name="calendar" size={18} color={colors.brand} />
+              <Text style={styles.startDateButtonText}>{formatDate(renewalStartDate)}</Text>
+              <Icon name="forward" size={16} color={colors.muted} />
+            </TouchableOpacity>
+            {showStartDatePicker ? (
+              <DateTimePicker
+                value={datePickerValue(renewalStartDate)}
+                mode="date"
+                display="default"
+                minimumDate={datePickerValue(minimumStartDate)}
+                onChange={(_, selectedDate) => {
+                  setShowStartDatePicker(false);
+                  if (selectedDate) {
+                    startDateTouchedRef.current = true;
+                    setRenewalStartDate(dateKeyFromLocalDate(selectedDate));
+                  }
+                }}
+              />
+            ) : null}
+            <InfoRow label="New Membership End Date" value={formatDate(renewalEndDate)} valueColor={colors.brand} />
         </View>
 
         {/* 2. Commercial Pricing Engine */}
@@ -915,6 +999,25 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: fontWeight.semibold,
     marginBottom: spacing.xs,
+  },
+  startDateButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+  },
+  startDateButtonText: {
+    color: colors.text,
+    flex: 1,
+    fontSize: fontSize.md,
+    fontWeight: fontWeight.semibold,
   },
   currencyInputRow: {
     alignItems: 'center',

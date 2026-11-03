@@ -161,13 +161,13 @@ def test_new_integration_serial_getrequest_and_devicecmd_do_nothing(client, seed
     _member(seed_gym, name="Fake Paused Auth", phone="+919100007001", enroll="710",
             status="paused")
     cmd = _command(integration, gym_id, action="block", enroll="710",
-                   text="DATA DELETE USERINFO PIN=710")
+                   text=adms_command_text("block", "710", member_name="Fake Paused Auth"))
     served = client.get(f"/iclock/getrequest?SN={SERIAL}")
     assert served.get_data(as_text=True) == "OK"
     assert db.session.get(RRRAdmsCommand, cmd.id).status == "queued"
 
     delivered = _command(integration, gym_id, action="block", enroll="710",
-                         text="DATA DELETE USERINFO PIN=710", status="delivered")
+                         text=adms_command_text("block", "710", member_name="Fake Paused Auth"), status="delivered")
     ack = client.get(f"/iclock/devicecmd?SN={SERIAL}&ID={delivered.id}&Return=0")
     assert ack.get_data(as_text=True) == "OK"
     assert db.session.get(RRRAdmsCommand, delivered.id).status == "delivered"
@@ -210,9 +210,9 @@ def test_legacy_serial_fallback_still_works(client, seed_gym, seed_member):
     _member(seed_gym, name="Fake Paused Legacy", phone="+919100007002", enroll="711",
             status="paused")
     cmd = _command(integration, gym_id, action="block", enroll="711",
-                   text="DATA DELETE USERINFO PIN=711")
+                   text=adms_command_text("block", "711", member_name="Fake Paused Legacy"))
     served = client.get(f"/iclock/getrequest?SN={SERIAL}")
-    assert served.get_data(as_text=True) == f"C:{cmd.id}:DATA DELETE USERINFO PIN=711\n"
+    assert served.get_data(as_text=True) == f"C:{cmd.id}:{cmd.command_text}\n"
 
 
 def test_legacy_plaintext_token_migrates_to_hash_on_first_use(client, seed_gym, seed_member):
@@ -390,6 +390,13 @@ def test_commission_rejects_serial_provenance_accepts_token(client, seed_gym, se
         gym_id=seed_gym["gym"].id, integration_id=integration.id, action="probe_info",
         command_text=adms_command_text("probe_info", None), status="acked",
     ))
+    for action in ("essl_group_block_test", "essl_group_unblock_test"):
+        db.session.add(RRRAdmsCommand(
+            gym_id=seed_gym["gym"].id, integration_id=integration.id, action=action,
+            test_enroll_number="999",
+            command_text=adms_command_text(action, "999", member_name="Fake Commissioning User"),
+            status="acked",
+        ))
     db.session.commit()
     denied = client.post(url, headers=_headers(seed_gym), json={"physical_test_passed": True})
     assert denied.status_code == 409

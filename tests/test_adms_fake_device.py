@@ -17,8 +17,7 @@ Covered (the riskiest previously-unverified protocol paths):
 * getrequest serving order: delivered-before-queued re-send, iteration past
   a first candidate cancelled by the fail-safe guard, and the 10-minute ack
   timeout moving the queue on;
-* devicecmd ack semantics, including DELETE-absent (-1/-2) treated as
-  success for delete-type commands only;
+* devicecmd ack semantics for reversible USERINFO Group updates;
 * ATTLOG dedup/replay (same punch twice -> one event);
 * USERINFO sync_users round-trip, and a USERINFO upload with no outstanding
   sync_users command (harmless no-op).
@@ -35,6 +34,7 @@ from datetime import date, datetime, timedelta, timezone
 from app.extensions import db
 from app.models import Member
 from app.models.rrr import RRRAdmsCommand, RRRDevice, RRRIntegration
+from app.mobile_api.token_service import create_access_token
 from app.services.bridge_service import STALE_DISABLE_MARKER, adms_command_text
 
 FAKE_SERIAL = "FAKE-TEST-X2008"
@@ -183,7 +183,7 @@ def test_operlog_enrollment_links_and_blocks_expired_member(client, seed_gym):
         integration_id=integration.id, action="block",
         test_enroll_number="902").one()
     assert cmd.status == "queued"
-    assert cmd.command_text == "DATA DELETE USERINFO PIN=902"
+    assert cmd.command_text == "DATA UPDATE USERINFO PIN=902\tName=Fake Expired User\tGrp=100"
 
 
 def test_operlog_non_enrollment_lines_are_ignored(client, seed_gym, seed_member):
@@ -256,7 +256,7 @@ def test_getrequest_resends_delivered_before_queued_then_advances_on_ack(
     )
     block = _command(
         integration, gym_id, action="block", enroll="910",
-        text="DATA DELETE USERINFO PIN=910", status="delivered",
+        text=adms_command_text("block", "910", member_name="Fake Paused One"), status="delivered",
         delivered_at=datetime.now(timezone.utc),
     )
     unblock = _command(
@@ -266,7 +266,7 @@ def test_getrequest_resends_delivered_before_queued_then_advances_on_ack(
     )
     # Delivered-before-queued: the in-flight block is re-served first.
     first = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
-    assert first.get_data(as_text=True) == f"C:{block.id}:DATA DELETE USERINFO PIN=910\n"
+    assert first.get_data(as_text=True) == f"C:{block.id}:{block.command_text}\n"
     assert db.session.get(RRRAdmsCommand, unblock.id).status == "queued"
 
     # Terminal acks the block; the next poll advances to the queued unblock.
@@ -299,11 +299,11 @@ def test_getrequest_skips_cancelled_first_candidate_to_next_servable(
     )
     stale = _command(
         integration, gym_id, action="block", enroll="920",
-        text="DATA DELETE USERINFO PIN=920", status="queued",
+        text=adms_command_text("block", "920", member_name="Fake Active Two"), status="queued",
     )
     freeze = _command(
         integration, gym_id, action="block", enroll="921",
-        text="DATA DELETE USERINFO PIN=921", status="queued",
+        text=adms_command_text("block", "921", member_name="Fake Paused Two"), status="queued",
     )
     unblock = _command(
         integration, gym_id, action="unblock", enroll="922",
@@ -313,7 +313,7 @@ def test_getrequest_skips_cancelled_first_candidate_to_next_servable(
     # First candidate is an ACTIVE member's block: cancelled in place, and
     # the same poll still serves the next (paused/freeze) command.
     first = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
-    assert first.get_data(as_text=True) == f"C:{freeze.id}:DATA DELETE USERINFO PIN=921\n"
+    assert first.get_data(as_text=True) == f"C:{freeze.id}:{freeze.command_text}\n"
     saved_stale = db.session.get(RRRAdmsCommand, stale.id)
     assert saved_stale.status == "failed"
     assert saved_stale.result_code == STALE_DISABLE_MARKER
@@ -325,12 +325,11 @@ def test_getrequest_skips_cancelled_first_candidate_to_next_servable(
     )
 
 
-def test_getrequest_test_path_serves_unresolved_and_cancels_member_match(
+def test_getrequest_group_test_requires_confirmed_fake_member_and_name(
     client, seed_gym
 ):
-    """Test actions (block_test/unblock_test) serve only for terminal-local
-    IDs that resolve to no member; a typed ID matching a real member is
-    cancelled (fail-safe, C2) — the inverse of the production guards."""
+    """Safe Group tests serve an unlinked fake ID; a member ID needs an
+    explicitly confirmed match and its exact current terminal name."""
     integration = _integration(seed_gym)
     gym_id = seed_gym["gym"].id
     _member(
@@ -338,21 +337,21 @@ def test_getrequest_test_path_serves_unresolved_and_cancels_member_match(
         status="active", end=date.today() + timedelta(days=30),
     )
     ghost_block = _command(
-        integration, gym_id, action="block_test", enroll="999",
-        text=adms_command_text("block_test", "999"), status="queued",
+        integration, gym_id, action="essl_group_block_test", enroll="999",
+        text=adms_command_text("essl_group_block_test", "999", member_name="Test Fake"), status="queued",
     )
     trapped_block = _command(
-        integration, gym_id, action="block_test", enroll="930",
-        text=adms_command_text("block_test", "930"), status="queued",
+        integration, gym_id, action="essl_group_block_test", enroll="930",
+        text=adms_command_text("essl_group_block_test", "930", member_name="Fake Real Member"), status="queued",
     )
     ghost_unblock = _command(
-        integration, gym_id, action="unblock_test", enroll="998",
-        text=adms_command_text("unblock_test", "998", member_name="Test User"),
+        integration, gym_id, action="essl_group_unblock_test", enroll="998",
+        text=adms_command_text("essl_group_unblock_test", "998", member_name="Test Fake"),
         status="queued",
     )
     # Terminal-local 999: no member row -> served.
     first = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
-    assert first.get_data(as_text=True) == f"C:{ghost_block.id}:DATA DELETE USERINFO PIN=999\n"
+    assert first.get_data(as_text=True) == f"C:{ghost_block.id}:{ghost_block.command_text}\n"
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, ghost_block.id, 0))
     # 930 belongs to a real member -> cancelled in place, never served.
     second = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
@@ -361,7 +360,7 @@ def test_getrequest_test_path_serves_unresolved_and_cancels_member_match(
     )
     saved_trapped = db.session.get(RRRAdmsCommand, trapped_block.id)
     assert saved_trapped.status == "failed"
-    assert "temporary test ID" in (saved_trapped.result_message or "")
+    assert "explicitly confirmed fake account" in (saved_trapped.result_message or "")
 
 
 def test_getrequest_timeout_fails_stuck_command_and_moves_on(client, seed_gym):
@@ -377,7 +376,7 @@ def test_getrequest_timeout_fails_stuck_command_and_moves_on(client, seed_gym):
     )
     stuck = _command(
         integration, gym_id, action="block", enroll="930",
-        text="DATA DELETE USERINFO PIN=930", status="delivered",
+        text=adms_command_text("block", "930", member_name="Fake Paused Three"), status="delivered",
         delivered_at=datetime.now(timezone.utc) - timedelta(minutes=11),
     )
     nxt = _command(
@@ -406,17 +405,17 @@ def test_devicecmd_ack_semantics(client, seed_gym):
     gym_id = seed_gym["gym"].id
     ok_cmd = _command(
         integration, gym_id, action="block", enroll="940",
-        text="DATA DELETE USERINFO PIN=940", status="delivered",
+        text=adms_command_text("block", "940", member_name="Fake Block User"), status="delivered",
         delivered_at=datetime.now(timezone.utc),
     )
     absent_cmd = _command(
         integration, gym_id, action="block", enroll="941",
-        text="DATA DELETE USERINFO PIN=941", status="delivered",
+        text=adms_command_text("block", "941", member_name="Fake Block User"), status="delivered",
         delivered_at=datetime.now(timezone.utc),
     )
     fail_cmd = _command(
         integration, gym_id, action="block", enroll="942",
-        text="DATA DELETE USERINFO PIN=942", status="delivered",
+        text=adms_command_text("block", "942", member_name="Fake Block User"), status="delivered",
         delivered_at=datetime.now(timezone.utc),
     )
     unblock_absent = _command(
@@ -427,22 +426,96 @@ def test_devicecmd_ack_semantics(client, seed_gym):
     assert client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, ok_cmd.id, 0)).status_code == 200
     assert db.session.get(RRRAdmsCommand, ok_cmd.id).status == "acked"
 
-    # DELETE-absent (-1) means "already absent" = desired end state, acked.
+    # Group updates never use DELETE's "already absent" success semantics.
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, absent_cmd.id, -1))
     saved = db.session.get(RRRAdmsCommand, absent_cmd.id)
-    assert saved.status == "acked"
-    assert saved.result_message.endswith("[treated as success: already absent]")
+    assert saved.status == "failed"
 
     # Any other non-zero result fails.
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, fail_cmd.id, 3))
     assert db.session.get(RRRAdmsCommand, fail_cmd.id).status == "failed"
 
-    # The -1 leniency applies to DELETE-type actions only, not unblock.
+    # A non-zero device result also fails an unblock.
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, unblock_absent.id, -1))
     assert db.session.get(RRRAdmsCommand, unblock_absent.id).status == "failed"
 
     # Unknown command id: indistinguishable OK, no crash.
     assert client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, 999999, 0)).status_code == 200
+
+
+def test_member_profile_access_block_and_unblock_reach_direct_adms_and_refresh_state(
+    client, seed_gym
+):
+    """Exercise the same member-profile route and device poll the apps use."""
+    integration = _integration(seed_gym)
+    member = _member(
+        seed_gym, name="Fake Profile Member", phone="+919100009099", enroll="990",
+        status="active", end=date.today() + timedelta(days=30),
+    )
+    owner = seed_gym["owner"]
+    headers = {"Authorization": f"Bearer {create_access_token(owner.id, seed_gym['gym'].id, owner.role)}"}
+
+    blocked = client.post(
+        f"/api/mobile/v1/rrr/members/{member.id}/access",
+        headers=headers,
+        json={"action": "block"},
+    )
+    assert blocked.status_code == 201
+    block_command = RRRAdmsCommand.query.filter_by(
+        integration_id=integration.id, action="block", test_enroll_number="990"
+    ).one()
+    assert block_command.command_text == (
+        "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tGrp=100"
+    )
+    served_block = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
+    assert served_block.get_data(as_text=True) == f"C:{block_command.id}:{block_command.command_text}\n"
+    pending_profile = client.get(
+        f"/api/mobile/v1/members/{member.id}", headers=headers
+    ).get_json()["data"]
+    assert pending_profile["door_blocked"] is True
+    assert pending_profile["door_access_pending"] is True
+    assert pending_profile["door_access_pending_action"] == "block"
+
+    client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, block_command.id, 0))
+    blocked_profile = client.get(
+        f"/api/mobile/v1/members/{member.id}", headers=headers
+    ).get_json()["data"]
+    assert blocked_profile["door_blocked"] is True
+    assert blocked_profile["door_access_pending"] is False
+
+    unblocked = client.post(
+        f"/api/mobile/v1/rrr/members/{member.id}/access",
+        headers=headers,
+        json={"action": "unblock"},
+    )
+    assert unblocked.status_code == 201
+    unblock_command = RRRAdmsCommand.query.filter_by(
+        integration_id=integration.id, action="unblock", test_enroll_number="990"
+    ).one()
+    served_unblock = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
+    assert served_unblock.get_data(as_text=True) == (
+        f"C:{unblock_command.id}:{unblock_command.command_text}\n"
+    )
+    assert unblock_command.command_text == (
+        "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tGrp=1"
+    )
+    client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, unblock_command.id, 0))
+    restored_profile = client.get(
+        f"/api/mobile/v1/members/{member.id}", headers=headers
+    ).get_json()["data"]
+    assert restored_profile["door_blocked"] is False
+    assert restored_profile["door_access_pending"] is False
+
+
+def test_historical_destructive_adms_command_is_cancelled_before_delivery(client, seed_gym):
+    integration = _integration(seed_gym)
+    old_delete = _command(
+        integration, seed_gym["gym"].id, action="delete_user", enroll="991",
+        text="DATA DELETE USERINFO PIN=991", status="queued",
+    )
+    response = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
+    assert response.get_data(as_text=True) == "OK"
+    assert db.session.get(RRRAdmsCommand, old_delete.id).status == "failed"
 
 
 # ─── USERINFO sync round-trip ──────────────────────────────────────────────

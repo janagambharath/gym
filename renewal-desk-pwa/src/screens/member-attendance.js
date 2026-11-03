@@ -62,7 +62,7 @@ async function load(el, params) {
           <div class="rrr-att-icon">→</div>
           <div class="rrr-att-info">
             <div class="rrr-att-date">${dateStr} <span class="rrr-att-time">${timeStr}</span></div>
-            <div class="rrr-att-meta">${esc(p.device_serial || '')} · ${esc(p.verify_method || 'Entry')}</div>
+          <div class="rrr-att-meta">${[p.biometric_user_id ? `ID ${esc(p.biometric_user_id)}` : '', p.device_serial ? esc(p.device_serial) : '', esc(p.verify_method || p.source || 'Entry')].filter(Boolean).join(' · ')}</div>
           </div>
           <span class="rrr-att-badge">${esc(p.direction === "exit" ? "Exit" : "Entry")}</span>
         </div>`;

@@ -113,6 +113,20 @@ class Config:
         ).split(",")
         if name.strip()
     ]
+    # Proactive retention messages are sent only through an approved Meta
+    # template. Free-text is allowed only while the member's 24-hour session
+    # window is open. Configure these values to enable out-of-session nudges.
+    WHATSAPP_RETENTION_TEMPLATE_NAME = os.getenv("WHATSAPP_RETENTION_TEMPLATE_NAME", "").strip()
+    WHATSAPP_RETENTION_TEMPLATE_LANGUAGE = os.getenv(
+        "WHATSAPP_RETENTION_TEMPLATE_LANGUAGE", "en"
+    ).strip()
+    WHATSAPP_RETENTION_TEMPLATE_BODY_PARAMS = [
+        item.strip()
+        for item in os.getenv(
+            "WHATSAPP_RETENTION_TEMPLATE_BODY_PARAMS", "member_name,gym_name"
+        ).split(",")
+        if item.strip()
+    ]
     WHATSAPP_OTP_TEMPLATE_NAME = os.getenv("WHATSAPP_OTP_TEMPLATE_NAME", "").strip()
     WHATSAPP_OTP_TEMPLATE_LANGUAGE = os.getenv(
         "WHATSAPP_OTP_TEMPLATE_LANGUAGE", "en"

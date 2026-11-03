@@ -35,6 +35,22 @@ type MemberDetailScreenProps = {
   refreshToken?: number;
 };
 
+type BiometricRecord = {
+  id: number;
+  punch_time: string | null;
+  biometric_user_id?: string | null;
+  device_serial?: string | null;
+  verify_method?: string | null;
+  direction?: string | null;
+  source?: string | null;
+};
+type BiometricHistory = {
+  events: BiometricRecord[];
+  stats: { total_punches: number; last_30_days: number };
+  member: { enroll_number?: string | null };
+  pagination: { page: number; pages: number; total: number; per_page: number };
+};
+
 export function MemberDetailScreen({
   member: initialMember,
   onBack,
@@ -48,6 +64,9 @@ export function MemberDetailScreen({
   const [member, setMember] = useState(initialMember);
   const [renewals, setRenewals] = useState<Renewal[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [biometricHistory, setBiometricHistory] = useState<BiometricHistory>();
+  const [biometricError, setBiometricError] = useState<string>();
+  const [loadingMoreBiometrics, setLoadingMoreBiometrics] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
@@ -60,6 +79,9 @@ export function MemberDetailScreen({
   const [unenrolling, setUnenrolling] = useState(false);
   const [togglingAccess, setTogglingAccess] = useState(false);
   const [accessBlocked, setAccessBlocked] = useState(false);
+  const [doorAccessPending, setDoorAccessPending] = useState(false);
+  const [doorAccessPendingAction, setDoorAccessPendingAction] = useState<'block' | 'unblock' | null>(null);
+  const [doorAccessError, setDoorAccessError] = useState<string | undefined>();
   const [showFreezeModal, setShowFreezeModal] = useState(false);
   const [freezeDaysInput, setFreezeDaysInput] = useState('14');
   const [freezeReasonInput, setFreezeReasonInput] = useState('');
@@ -79,9 +101,16 @@ export function MemberDetailScreen({
       apiRequest<Member>(`/api/mobile/v1/members/${member.id}`),
       apiRequest<{ renewals: Renewal[] }>(`/api/mobile/v1/renewals?member_id=${member.id}&page_size=5`),
       apiRequest<{ payments: Payment[] }>(`/api/mobile/v1/payments?page_size=50`),
-    ]).then(([memberRes, renewalRes, paymentRes]) => {
+      apiRequest<BiometricHistory>(`/api/mobile/v1/rrr/member/${member.id}/attendance?page=1&per_page=50`),
+    ]).then(([memberRes, renewalRes, paymentRes, biometricRes]) => {
 
-    if (memberRes.ok) setMember(memberRes.data);
+    if (memberRes.ok) {
+      setMember(memberRes.data);
+      setAccessBlocked(memberRes.data.door_blocked === true);
+      setDoorAccessPending(memberRes.data.door_access_pending === true);
+      setDoorAccessPendingAction(memberRes.data.door_access_pending_action || null);
+      setDoorAccessError(memberRes.data.door_access_error || undefined);
+    }
     else if (memberRes.error.status === 401) { onLogout(); return; }
 
     if (renewalRes.ok) setRenewals(renewalRes.data.renewals);
@@ -89,10 +118,38 @@ export function MemberDetailScreen({
       // Filter payments for this member
       setPayments(paymentRes.data.payments.filter((p) => p.member_id === member.id));
     }
+    if (biometricRes.ok) {
+      setBiometricHistory(biometricRes.data);
+      setBiometricError(undefined);
+    } else if (biometricRes.error.status === 401) {
+      onLogout();
+      return;
+    } else {
+      setBiometricHistory(undefined);
+      setBiometricError(biometricRes.error.message);
+    }
     setRefreshing(false);
   }), [member.id, onLogout]);
 
   const [checkingIn, setCheckingIn] = useState(false);
+
+  const loadMoreBiometricRecords = useCallback(async () => {
+    if (!biometricHistory || loadingMoreBiometrics || biometricHistory.pagination.page >= biometricHistory.pagination.pages) return;
+    setLoadingMoreBiometrics(true);
+    const nextPage = biometricHistory.pagination.page + 1;
+    const result = await apiRequest<BiometricHistory>(`/api/mobile/v1/rrr/member/${member.id}/attendance?page=${nextPage}&per_page=${biometricHistory.pagination.per_page}`);
+    if (result.ok) {
+      setBiometricHistory((current) => current ? {
+        ...result.data,
+        events: [...current.events, ...result.data.events],
+      } : result.data);
+    } else if (result.error.status === 401) {
+      onLogout();
+    } else {
+      showMessage(result.error.message, 'error');
+    }
+    setLoadingMoreBiometrics(false);
+  }, [biometricHistory, loadingMoreBiometrics, member.id, onLogout]);
 
   const handleCheckInToggle = useCallback(async () => {
     if (checkingIn) return;
@@ -189,17 +246,21 @@ export function MemberDetailScreen({
     setTogglingAccess(false);
     if (res.ok) {
       setAccessBlocked(action === 'block');
+      setDoorAccessPending(true);
+      setDoorAccessPendingAction(action);
+      setDoorAccessError(undefined);
       showMessage(
         action === 'block'
-          ? 'Block command queued — the terminal will deny this member on its next cloud poll.'
-          : 'Unblock command queued — the terminal will allow this member on its next cloud poll.',
+          ? 'Block command queued. Access changes after the terminal acknowledges its next cloud poll.'
+          : 'Unblock command queued. Access changes after the terminal acknowledges its next cloud poll.',
         'success'
       );
       onMemberUpdated?.();
+      void fetchMemberData();
     } else {
       showMessage(res.error.message, 'error');
     }
-  }, [member.id, onMemberUpdated]);
+  }, [member.id, onMemberUpdated, fetchMemberData]);
 
   const handleFreeze = useCallback(async () => {
     const days = parseInt(freezeDaysInput, 10);
@@ -501,6 +562,40 @@ export function MemberDetailScreen({
             </View>
             <StatusBadge status={member.has_biometric ? 'active' : 'pending'} />
           </View>
+          <View style={styles.biometricRecords}>
+            <View style={styles.biometricRecordsHeader}>
+              <Text style={styles.activityTitle}>Biometric Records</Text>
+              <Text style={styles.activitySub}>
+                {biometricHistory ? `${biometricHistory.stats.total_punches} punches · ${biometricHistory.stats.last_30_days} in last 30 days` : biometricError ? 'Punch history unavailable' : 'Loading records…'}
+              </Text>
+            </View>
+            {biometricError ? (
+              <Text style={styles.activitySub}>{biometricError}</Text>
+            ) : !member.has_biometric && !biometricHistory?.events.length ? (
+              <Text style={styles.activitySub}>Link this member’s terminal ID to show their punches here.</Text>
+            ) : biometricHistory?.events.length ? biometricHistory.events.map((record) => (
+              <View style={styles.biometricRecordRow} key={record.id}>
+                <View style={styles.biometricRecordIcon}>
+                  <Icon name="time" size={14} color={colors.successDark} />
+                </View>
+                <View style={styles.biometricRecordCopy}>
+                  <Text style={styles.activityTitle}>
+                    {record.punch_time ? new Date(record.punch_time).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Punch time unavailable'}
+                  </Text>
+                  <Text style={styles.activitySub}>
+                    {[record.direction ? record.direction[0].toUpperCase() + record.direction.slice(1) : 'Entry', record.verify_method, record.device_serial || record.source].filter(Boolean).join(' · ')}
+                  </Text>
+                </View>
+              </View>
+            )) : biometricHistory ? (
+              <Text style={styles.activitySub}>No mapped biometric punches yet.</Text>
+            ) : null}
+            {!!biometricHistory && biometricHistory.pagination.page < biometricHistory.pagination.pages && (
+              <TouchableOpacity onPress={() => void loadMoreBiometricRecords()} disabled={loadingMoreBiometrics} style={styles.biometricLoadMore}>
+                <Text style={styles.biometricLoadMoreText}>{loadingMoreBiometrics ? 'Loading…' : `Load more (${Math.max(0, biometricHistory.pagination.total - biometricHistory.events.length)} remaining)`}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Biometric Access Management Card */}
@@ -581,6 +676,13 @@ export function MemberDetailScreen({
                     </Text>
                   </TouchableOpacity>
                 </View>
+                {doorAccessError ? (
+                  <Text style={[styles.biometricAccessHint, { color: colors.critical }]}>{doorAccessError}</Text>
+                ) : doorAccessPending ? (
+                  <Text style={styles.biometricAccessHint}>
+                    Waiting for the terminal to confirm {doorAccessPendingAction || 'the access change'}.
+                  </Text>
+                ) : null}
               </View>
             ) : (
               <View style={styles.biometricEmptyBox}>
@@ -872,6 +974,45 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.base,
     fontWeight: fontWeight.medium,
+  },
+  biometricRecords: {
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    marginTop: spacing.sm,
+    paddingTop: spacing.md,
+  },
+  biometricRecordsHeader: {
+    marginBottom: spacing.sm,
+  },
+  biometricRecordRow: {
+    alignItems: 'center',
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  biometricRecordIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.successSurface,
+    borderRadius: radius.full,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  biometricRecordCopy: {
+    flex: 1,
+  },
+  biometricLoadMore: {
+    alignItems: 'center',
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    paddingVertical: spacing.md,
+  },
+  biometricLoadMoreText: {
+    color: colors.brandDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
   },
   card: {
     backgroundColor: colors.card,
@@ -1181,6 +1322,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     paddingTop: spacing.sm,
+  },
+  biometricAccessHint: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    marginTop: spacing.sm,
   },
   biometricActionBtn: {
     alignItems: 'center',

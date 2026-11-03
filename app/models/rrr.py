@@ -253,11 +253,12 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     """One auditable command issued to a direct ADMS terminal.
 
     The command body is generated server-side from a narrowly scoped action.
-    ``probe_info``/``block_test``/``unblock_test`` and ``essl_group_*_test``
-    are owner-driven commissioning/test actions; ``block``/``unblock`` are
-    automatic membership commands queued by ``queue_adms_membership_command``
-    after supervised commissioning. It is deliberately not an arbitrary
-    raw-command console.
+    ``probe_info`` and ``essl_group_*_test`` are owner-driven, non-destructive
+    commissioning actions; ``block``/``unblock`` are reversible USERINFO
+    group updates queued for membership or owner-requested access changes.
+    Legacy destructive action names remain in the database constraint only
+    so old audit rows can be retained; current code never generates or serves
+    them. This is deliberately not an arbitrary raw-command console.
 
     ``operlog_snapshot`` rows are NOT servable commands: they are created
     with ``status='acked'`` and hold the accumulated OPERLOG enrollment

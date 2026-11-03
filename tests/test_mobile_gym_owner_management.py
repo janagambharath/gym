@@ -125,11 +125,11 @@ def test_mobile_staff_management_flow(client, app):
 def test_mobile_remote_unlock_and_sync(client, app):
     gym_id, plan_id, owner_id, headers = _create_owner_and_headers(client, app, "unlockowner@gym.com")
 
-    # 1. Remote unlock is refused until a verified controller command is
-    # commissioned: no physical command is sent and no access event is fabricated.
+    # 1. Remote unlock is refused when no bridge is paired: no physical
+    # command is sent and no access event is fabricated.
     unlock_resp = client.post("/api/mobile/v1/access/remote-unlock", headers=headers)
-    assert unlock_resp.status_code == 409
-    assert unlock_resp.get_json()["error"]["code"] == "UNSUPPORTED_DEVICE_COMMAND"
+    assert unlock_resp.status_code == 404
+    assert unlock_resp.get_json()["error"]["code"] == "BRIDGE_NOT_CONNECTED"
 
     # 2. No access event was fabricated
     with app.app_context():

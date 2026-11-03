@@ -701,6 +701,7 @@ def _register_cli(app: Flask) -> None:
             auto_expire_members_for_gym,
             run_due_reminders_for_gym,
         )
+        from app.services.payment_service import apply_due_scheduled_renewals
         from app.services.access_event_service import auto_reset_stale_inside_members
 
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
@@ -712,6 +713,15 @@ def _register_cli(app: Flask) -> None:
                 app.logger.info(
                     json.dumps(
                         {"event": "auto_expired", "gym_id": gym.id, "count": expired_count}
+                    )
+                )
+
+            activated_count = apply_due_scheduled_renewals(gym)
+            if activated_count:
+                db.session.commit()
+                app.logger.info(
+                    json.dumps(
+                        {"event": "scheduled_renewals_activated", "gym_id": gym.id, "count": activated_count}
                     )
                 )
 

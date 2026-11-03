@@ -16,6 +16,7 @@ def headers(seed_gym):
 
 def test_rrr_dashboard_uses_real_expiry_and_no_visit_data(client, seed_gym, seed_member):
     seed_member.membership_end = date.today() + timedelta(days=5)
+    seed_member.membership_start = date.today() - timedelta(days=30)
     seed_member.device_enroll_number = "42"
     db.session.commit()
 
@@ -31,7 +32,7 @@ def test_rrr_dashboard_uses_real_expiry_and_no_visit_data(client, seed_gym, seed
 def test_unmapped_event_is_retained_then_resolved(client, seed_gym, seed_member):
     gym = seed_gym["gym"]
     event, created = normalize_attendance(
-        gym_id=gym.id, source="ebioserver", biometric_user_id="BIO-77",
+        gym_id=gym.id, source="ebioserver", biometric_user_id="77",
         punch_time=datetime.now(timezone.utc), external_event_id="log-77", device_serial="X2008",
     )
     db.session.commit()
@@ -39,10 +40,10 @@ def test_unmapped_event_is_retained_then_resolved(client, seed_gym, seed_member)
 
     unresolved = client.get("/api/mobile/v1/rrr/mappings/unresolved", headers=headers(seed_gym))
     assert unresolved.status_code == 200
-    assert unresolved.get_json()["data"]["events"][0]["biometric_user_id"] == "BIO-77"
+    assert unresolved.get_json()["data"]["events"][0]["biometric_user_id"] == "77"
 
     resolved = client.post(
-        "/api/mobile/v1/rrr/mappings/BIO-77", headers=headers(seed_gym), json={"member_id": seed_member.id}
+        "/api/mobile/v1/rrr/mappings/77", headers=headers(seed_gym), json={"member_id": seed_member.id}
     )
     assert resolved.status_code == 200
     assert resolved.get_json()["data"]["events_resolved"] == 1
@@ -145,7 +146,7 @@ def test_direct_adms_provisions_device_and_ingests_attendance(client, seed_gym, 
 
     hello = client.get(f"{adms_path}/cdata?SN=ELITE-X2008-01&options=all")
     assert hello.status_code == 200
-    assert "~SerialNumber=ELITE-X2008-01" in hello.get_data(as_text=True)
+    assert hello.get_data(as_text=True).startswith("GET OPTION FROM: ELITE-X2008-01\r\n")
 
     uploaded = client.post(
         f"{adms_path}/cdata?SN=ELITE-X2008-01&table=ATTLOG",
@@ -203,7 +204,12 @@ def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_g
 
     queued = client.post(
         f"/api/mobile/v1/rrr/integrations/{integration_id}/adms/commands",
-        headers=headers(seed_gym), json={"action": "block_test", "test_enroll_number": "98765"},
+        headers=headers(seed_gym), json={
+            "action": "essl_group_block_test",
+            "test_enroll_number": "98765",
+            "test_user_name": "Temporary Fake User",
+            "test_member_confirmed": True,
+        },
     )
     assert queued.status_code == 201
     command_id = queued.get_json()["data"]["command"]["id"]
@@ -211,7 +217,9 @@ def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_g
 
     delivered = client.get(f"{adms_path}/getrequest?SN=ELITE-X2008-CMD")
     assert delivered.status_code == 200
-    assert delivered.get_data(as_text=True) == f"C:{command_id}:DATA UPDATE USERINFO PIN=98765\tPri=1\n"
+    assert delivered.get_data(as_text=True) == (
+        f"C:{command_id}:DATA UPDATE USERINFO PIN=98765\tName=Temporary Fake User\tGrp=100\n"
+    )
     ack = client.post(f"{adms_path}/devicecmd?SN=ELITE-X2008-CMD&ID={command_id}&Return=0&CMD=DATA")
     assert ack.status_code == 200
     saved = db.session.get(RRRAdmsCommand, command_id)
