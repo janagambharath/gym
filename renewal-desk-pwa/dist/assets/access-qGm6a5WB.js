@@ -1,0 +1,181 @@
+import{a as M,B as R,t as T,b as B,f as P,g as f,G as C,j as l,k as L,i as q,w as H,s as c,F as j,n as S,Q as z,C as O}from"./index-dk1H9QdO.js";const G={async mount(m){document.getElementById("quick-assign-overlay")?.remove();let r="all",x=null,k=0;async function o(){const d=++k,s=m.querySelector("#ac-scroll");if(!s)return;const p=f("/api/mobile/v1/access/summary"),b=f(`/api/mobile/v1/access/events?per_page=25${r==="all"?"":`&type=${r}`}`),[u,a]=await Promise.all([p,b]);if(d!==k||m.dataset.screenDisposed==="true"||(!u.ok||!a.ok)&&x)return;const t=u.ok?u.data:x||{};x=t;const g=a.ok?a.data?.events||a.data?.log||[]:[];a.ok&&a.data?.members;const $=t.last_event_at?C(t.last_event_at):t.last_heartbeat?`Heartbeat: ${C(t.last_heartbeat)}`:"";s.innerHTML=`
+        <div class="scroll-content">
+          <!-- Summary Card -->
+          <div style="padding:var(--sp-lg)">
+            <div class="card card-body" style="text-align:center">
+              <div style="display:flex;align-items:center;justify-content:center;gap:var(--sp-sm);margin-bottom:var(--sp-sm)">
+                <span style="width:10px;height:10px;border-radius:50%;background:${t.device_online?"var(--success)":"var(--muted)"}"></span>
+                <span style="font-weight:var(--fw-bold);font-size:var(--fs-base)">${t.device_online?"Biometric Device Online":"Biometric Device Offline"}</span>
+                ${t.device_name?`<span style="font-size:var(--fs-xs);color:var(--muted)">· ${l(t.device_name)}</span>`:""}
+              </div>
+              ${$?`<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">Last event: ${l($)}</div>`:'<div style="margin-bottom:var(--sp-md)"></div>'}
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-lg)">
+                <div style="cursor:pointer" id="stat-entries">
+                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${L(t.entries_today||0)}</div>
+                  <div style="font-size:var(--fs-xs);color:var(--muted)">Entries</div>
+                </div>
+                <div style="cursor:pointer" id="stat-exits">
+                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--warning)">${L(t.exits_today||0)}</div>
+                  <div style="font-size:var(--fs-xs);color:var(--muted)">Exits</div>
+                </div>
+              </div>
+
+              ${t.remote_unlock_available?`
+              <!-- Remote Physical Gate Control -->
+              <div style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border);display:grid;grid-template-columns:1fr;gap:var(--sp-sm)">
+                <button class="btn" id="btn-remote-unlock" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs);font-size:var(--fs-xs);background:#16a34a;color:white;border:none">
+                  🔓 Unlock Gate
+                </button>
+              </div>
+              `:""}
+            </div>
+
+            ${t.adms_integration_id?"":`
+            <!-- Hardware Bridge Controls (only when NOT on Direct Cloud) -->
+            <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);display:flex;flex-direction:column;gap:var(--sp-sm)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px">Hardware Bridge Controls</div>
+                <span style="font-size:10px;font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${t.bridge_online?"#dcfce7":"#fee2e2"};color:${t.bridge_online?"#15803d":"#b91c1c"}">
+                  ${t.bridge_online?"BRIDGE ONLINE":"BRIDGE OFFLINE"}
+                </span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-xs)">
+                <button class="btn btn-secondary btn-sm" id="btn-reconcile-all" style="font-size:var(--fs-xs);padding:6px 10px">🔄 Re-sync Members</button>
+                <button class="btn btn-secondary btn-sm" id="btn-bridge-pairing" style="font-size:var(--fs-xs);padding:6px 10px">🔑 Pairing Code</button>
+              </div>
+            </div>
+            `}
+
+            ${t.adms_integration_id?`
+            <!-- Direct Cloud (ADMS) Status -->
+            <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);display:flex;flex-direction:column;gap:var(--sp-sm)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px">Direct Cloud Terminal</div>
+                <span style="font-size:10px;font-weight:var(--fw-bold);padding:2px 8px;border-radius:12px;background:${t.adms_online?"#dcfce7":"#fee2e2"};color:${t.adms_online?"#15803d":"#b91c1c"}">
+                  ${t.adms_online?"ONLINE":"OFFLINE"}
+                </span>
+              </div>
+              ${t.adms_device_name?`<div style="font-size:var(--fs-xs);color:var(--muted)">${l(t.adms_device_name)}</div>`:""}
+              <p style="font-size:var(--fs-xs);color:var(--muted);margin:0">${t.adms_online?t.adms_commands_enabled?"Terminal polled recently. Membership block/restore commands are enabled.":"Terminal polled recently, but automatic membership commands are not enabled yet.":`No recent terminal poll${t.adms_last_seen_at?` (last seen ${l(C(t.adms_last_seen_at))})`:""}. It cannot receive block/unblock commands until it reconnects.`}</p>
+            </div>
+            `:""}
+
+            ${t.failed_commands>0?`
+              <div class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.3);display:flex;align-items:center;justify-content:space-between">
+                <div style="font-size:var(--fs-xs);color:#B45309;display:flex;align-items:center;gap:var(--sp-xs)">
+                  ${q("alert",16,"#B45309")}
+                  <span><strong>${L(t.failed_commands)} command(s)</strong> failed to sync</span>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn btn-sm btn-primary" id="btn-retry-sync" style="font-size:var(--fs-xs);padding:4px 10px">Retry All</button>
+                  <button class="btn btn-sm" id="btn-clear-failed" style="font-size:var(--fs-xs);padding:4px 10px;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA">Clear</button>
+                </div>
+              </div>
+            `:""}
+
+            ${t.denied_today>0?`
+              <div class="card" id="banner-denied" style="margin-top:var(--sp-md);padding:var(--sp-md);background:var(--critical-surface);border-color:var(--critical-border);display:flex;align-items:center;justify-content:space-between;cursor:pointer">
+                <div style="display:flex;align-items:center;gap:var(--sp-sm)">
+                  ${q("alert",18,"var(--critical)")}
+                  <span style="font-size:var(--fs-sm);font-weight:var(--fw-semibold);color:var(--critical)">${L(t.denied_today)} access denied event${t.denied_today>1?"s":""} today</span>
+                </div>
+                ${q("forward",14,"var(--critical)")}
+              </div>
+            `:""}
+
+            ${!t.device_online&&(t.inside_now||0)===0&&(t.entries_today||0)===0?`
+              <div style="margin-top:var(--sp-md);padding:var(--sp-sm) var(--sp-md);background:var(--gray-50, #f8f9fa);border:1px dashed var(--border);border-radius:var(--r-md);font-size:var(--fs-xs);color:var(--muted);text-align:center">
+                💡 Tip: Tap <b>"+ Check In Member"</b> above to log attendance manually anytime, or connect your biometric turnstile/machine.
+              </div>
+            `:""}
+          </div>
+
+          <!-- Filter Tabs -->
+          <div style="display:flex;gap:var(--sp-xs);padding:0 var(--sp-lg) var(--sp-md);overflow-x:auto;-webkit-overflow-scrolling:touch">
+            ${[{id:"all",label:"All Events"},{id:"entry",label:"Entries"},{id:"exit",label:"Exits"},{id:"denied",label:"Denied"}].map(e=>`
+              <button class="btn btn-sm ${r===e.id?"btn-primary":"btn-secondary"}" data-tab="${e.id}" style="border-radius:var(--r-full);white-space:nowrap;padding:4px 12px;font-size:var(--fs-xs)">
+                ${e.label}
+              </button>
+            `).join("")}
+          </div>
+
+          <!-- List Section -->
+          ${`
+            ${g.length>0?`
+              <div class="card" style="margin:0 var(--sp-lg)">
+                ${g.map(e=>{const n=(e.event_type||"ENTRY").toUpperCase(),v=n==="ENTRY"||n==="ATTENDANCE",h=n==="ACCESS_DENIED",E=h?"var(--critical-surface)":v?"var(--success-surface)":"var(--gray-100)",I=h?"var(--critical)":v?"var(--success)":"var(--muted)",A=h?"alert":v?"forward":"back",D=h?"expired":v?"active":"info",N=h?"Denied":n==="ATTENDANCE"?"Check In":v?"Entry":"Exit";return`
+                    <div class="list-item" style="cursor:pointer" data-event-member-id="${e.member_id||""}" data-bio-id="${!e.member_id&&e.biometric_user_id?l(e.biometric_user_id):""}">
+                      <div style="width:34px;height:34px;border-radius:var(--r-full);background:${E};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                        ${q(A,16,I)}
+                      </div>
+                      <div class="list-item-content">
+                        <div class="list-item-title">${l(e.member_name||"Unknown")}${!e.member_id&&e.biometric_user_id?' <span style="font-size:11px;color:#3b82f6;font-weight:700">· tap to assign</span>':""}</div>
+                        <div class="list-item-subtitle">${C(e.event_timestamp||e.timestamp||e.created_at)}${e.device_name?` · ${l(e.device_name)}`:""}</div>
+                      </div>
+                      <span class="badge badge-${D}">${N}</span>
+                    </div>
+                  `}).join("")}
+              </div>
+            `:H({icon:"access",title:"No events",text:"Live access and check-in events will appear here"})}
+          `}
+        </div>
+      `,s.querySelectorAll("[data-tab]").forEach(e=>{e.addEventListener("click",()=>{r=e.dataset.tab,s.innerHTML=T(),o()})}),s.querySelector("#stat-entries")?.addEventListener("click",()=>{r="entry",o()}),s.querySelector("#stat-exits")?.addEventListener("click",()=>{r="exit",o()}),s.querySelector("#banner-denied")?.addEventListener("click",()=>{r="denied",o()});const i=s.querySelector("#btn-remote-unlock");i&&i.addEventListener("click",async()=>{if(!window.confirm("Unlock the gym gate for 5 seconds?"))return;i.disabled=!0,i.textContent="Sending unlock...";const e=await f("/api/mobile/v1/access/remote-unlock",{method:"POST",body:{delay_seconds:5,confirm:!0}});e.ok?c(e.data?.message||"Unlock command queued. Waiting for terminal acknowledgement.","success"):c(e.error?.message||"Could not unlock door","error"),i.disabled=!1,i.textContent="🔓 Unlock Gate"});const y=s.querySelector("#btn-reconcile-all");y&&y.addEventListener("click",async()=>{y.disabled=!0,y.textContent="Syncing...";const e=await f("/api/mobile/v1/access/reconcile",{method:"POST"});e.ok?(c(e.data?.message||"Re-sync queued for device","success"),await o()):c(e.error?.message||"Re-sync failed","error"),y.disabled=!1,y.textContent="🔄 Re-sync Members"});const _=s.querySelector("#btn-bridge-pairing");_&&_.addEventListener("click",async()=>{_.disabled=!0;const e=await f("/api/mobile/v1/settings/bridge/pairing-code",{method:"POST"});_.disabled=!1,e.ok&&e.data?.pairing_code?await j({title:"Bridge Pairing Code",message:`Your 6-digit pairing code is:
+
+${e.data.pairing_code}
+
+Valid for 10 minutes. Enter this code into RenewalDeskConnector.exe on your gym PC to connect.`,confirmText:"Done"}):c(e.error?.message||"Could not generate pairing code","error")}),s.querySelector("#btn-retry-sync")?.addEventListener("click",async()=>{const e=s.querySelector("#btn-retry-sync");e&&(e.disabled=!0);const n=await f("/api/mobile/v1/access/retry-sync",{method:"POST"});n.ok?(c(n.data?.message||"Commands queued for retry","success"),await o()):(c(n.error?.message||"Could not retry syncs","error"),e&&(e.disabled=!1))}),s.querySelector("#btn-clear-failed")?.addEventListener("click",async()=>{if(!confirm("Permanently delete all failed biometric commands? This cannot be undone."))return;const e=s.querySelector("#btn-clear-failed");e&&(e.disabled=!0);const n=await f("/api/mobile/v1/access/clear-failed",{method:"POST"});n.ok?(c(n.data?.message||"Failed commands cleared","success"),await o()):(c(n.error?.message||"Could not clear commands","error"),e&&(e.disabled=!1))}),s.querySelectorAll("[data-member-link]").forEach(e=>{e.addEventListener("click",()=>{const n=e.dataset.memberLink;n&&S.push("member-detail",{memberId:n})})}),s.querySelectorAll("[data-event-member-id]").forEach(e=>{e.addEventListener("click",()=>{const n=e.dataset.eventMemberId,v=e.dataset.bioId;n?S.push("member-detail",{memberId:n}):v&&F(v)})}),s.querySelectorAll("[data-checkout-id]").forEach(e=>{e.addEventListener("click",async n=>{n.stopPropagation();const v=e.dataset.checkoutId,h=e.dataset.checkoutName;e.disabled=!0,e.textContent="Checking out...";const E=await z(v,"EXIT");E.ok?(c(`${h} checked out`,"success"),await o()):(c(E.error?.message||"Check-out failed","error"),e.disabled=!1,e.textContent="Check Out")})})}function w(){const d=document.createElement("div");d.className="modal-overlay center",d.innerHTML=`
+        <div class="confirm-dialog" style="max-width:440px;width:90%;max-height:85vh;display:flex;flex-direction:column;padding:var(--sp-lg)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-md)">
+            <div style="font-weight:var(--fw-bold);font-size:var(--fs-lg)">Manual Check In</div>
+            <button id="modal-close" style="background:none;border:none;cursor:pointer;padding:4px">${q("close",20,"var(--muted)")}</button>
+          </div>
+          <div style="margin-bottom:var(--sp-md)">
+            <input type="text" id="checkin-search" class="form-input" placeholder="Search member by name or phone..." style="width:100%" autofocus />
+          </div>
+          <div id="checkin-members-list" style="overflow-y:auto;max-height:50vh;display:flex;flex-direction:column;gap:var(--sp-xs)">
+            <div style="text-align:center;padding:var(--sp-lg);color:var(--muted)">Loading active members...</div>
+          </div>
+        </div>
+      `,document.body.appendChild(d),d.querySelector("#modal-close").onclick=()=>d.remove(),d.onclick=a=>{a.target===d&&d.remove()};const s=d.querySelector("#checkin-search"),p=d.querySelector("#checkin-members-list");let b=null;async function u(a=""){const t=`/api/mobile/v1/members?page_size=20${a?`&q=${encodeURIComponent(a)}`:"&status=active"}`,g=await f(t);if(!g.ok){p.innerHTML='<div style="text-align:center;padding:var(--sp-md);color:var(--critical)">Failed to load members</div>';return}const $=g.data?.members||[];if($.length===0){p.innerHTML=`<div style="text-align:center;padding:var(--sp-lg);color:var(--muted)">No members found matching "${l(a)}"</div>`;return}p.innerHTML=$.map(i=>`
+          <div class="card card-body" style="padding:var(--sp-sm) var(--sp-md);display:flex;align-items:center;justify-content:space-between;gap:var(--sp-sm)">
+            <div style="display:flex;align-items:center;gap:var(--sp-sm);min-width:0;flex:1">
+              ${O(i.full_name||"Member","sm")}
+              <div style="min-width:0">
+                <div style="font-weight:var(--fw-semibold);font-size:var(--fs-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l(i.full_name)}</div>
+                <div style="font-size:var(--fs-xs);color:var(--muted)">${l(i.phone||"")}${i.plan?` · ${l(i.plan.name)}`:""}</div>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm btn-do-checkin" data-mid="${i.id}" data-mname="${l(i.full_name)}" style="border-radius:var(--r-full);padding:4px 12px;font-size:var(--fs-xs);flex-shrink:0">
+              Check In
+            </button>
+          </div>
+        `).join(""),p.querySelectorAll(".btn-do-checkin").forEach(i=>{i.addEventListener("click",async()=>{const y=i.dataset.mid,_=i.dataset.mname;i.disabled=!0,i.textContent="Checking in...";const e=await z(y,"ENTRY");e.ok?(c(`${_} checked in successfully!`,"success"),d.remove(),await o()):(c(e.error?.message||"Check-in failed","error"),i.disabled=!1,i.textContent="Check In")})})}s.addEventListener("input",a=>{clearTimeout(b),b=setTimeout(()=>{u(a.target.value.trim())},300)}),u()}m.innerHTML=`
+      ${M({title:"Live Access",showBack:R.depth>1,actions:[{icon:"access",label:"Check In",onClick:()=>w()},{icon:"refresh",label:"Refresh",onClick:()=>o()}]})}
+      <div class="scroll-view" id="ac-scroll">${T()}</div>
+    `,B(m,{onBack:()=>{S.pop()},actions:[{icon:"access",onClick:()=>w()},{icon:"refresh",onClick:()=>o()}]}),await o(),P(m,o,15e3),window.__refreshAccess=()=>{document.body.contains(m)&&o()}},async unmount(){window.__refreshAccess=null}};async function F(m){const r=document.createElement("div");r.id="quick-assign-overlay",r.innerHTML=`
+    <div class="qa-sheet">
+      <div class="qa-handle"></div>
+      <h3>Who is biometric ID ${l(m)}?</h3>
+      <p class="qa-sub">Pick the member — all their punches get linked.</p>
+      <input id="qa-search" type="search" placeholder="Type member name…" autocomplete="off">
+      <div id="qa-results"><div class="qa-loading">Loading members…</div></div>
+      <button id="qa-close" class="qa-close">Cancel</button>
+    </div>
+    <style>
+      #quick-assign-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; display: flex; align-items: flex-end; animation: qaFade 0.2s; }
+      @keyframes qaFade { from { opacity: 0; } }
+      .qa-sheet { background: #fff; width: 100%; border-radius: 20px 20px 0 0; padding: 12px 20px calc(20px + env(safe-area-inset-bottom)); max-height: 75vh; display: flex; flex-direction: column; animation: qaSlide 0.25s; }
+      @keyframes qaSlide { from { transform: translateY(40px); } }
+      .qa-handle { width: 40px; height: 4px; background: #e2e8f0; border-radius: 2px; margin: 0 auto 12px; }
+      .qa-sheet h3 { margin: 0 0 4px 0; font-size: 18px; font-weight: 800; }
+      .qa-sub { margin: 0 0 12px 0; font-size: 13px; color: #64748b; }
+      #qa-search { width: 100%; padding: 12px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 15px; box-sizing: border-box; margin-bottom: 8px; }
+      #qa-search:focus { outline: none; border-color: #3b82f6; }
+      #qa-results { overflow-y: auto; flex: 1; min-height: 120px; }
+      .qa-row { padding: 13px 4px; border-bottom: 1px solid #f1f5f9; font-size: 15px; cursor: pointer; }
+      .qa-row:active { background: #eff6ff; }
+      .qa-row b { font-weight: 700; }
+      .qa-row span { color: #64748b; font-size: 13px; margin-left: 6px; }
+      .qa-loading, .qa-empty { padding: 24px; text-align: center; color: #94a3b8; font-size: 14px; }
+      .qa-close { margin-top: 12px; width: 100%; padding: 13px; border: none; background: #f1f5f9; border-radius: 12px; font-weight: 700; font-size: 15px; color: #475569; cursor: pointer; }
+    </style>`,document.body.appendChild(r);const x=()=>r.remove();r.addEventListener("click",p=>{p.target===r&&x()}),r.querySelector("#qa-close").addEventListener("click",x);let k=[];const o=r.querySelector("#qa-results"),w=r.querySelector("#qa-search"),d=p=>{const b=(p||"").toLowerCase().trim(),u=b?k.filter(a=>a.full_name.toLowerCase().includes(b)||(a.phone||"").includes(b)).slice(0,30):k.slice(0,30);o.innerHTML=u.length?u.map(a=>`<div class="qa-row" data-qa-pick="${a.id}"><b>${l(a.full_name)}</b>${a.phone?`<span>${l(a.phone)}</span>`:""}</div>`).join(""):'<div class="qa-empty">No members found</div>',o.querySelectorAll("[data-qa-pick]").forEach(a=>{a.addEventListener("click",async()=>{const t=Number(a.dataset.qaPick);a.style.background="#dcfce7";const g=await f("/api/mobile/v1/rrr/mappings/bulk-resolve",{method:"POST",body:{mappings:[{external_id:m,member_id:t}]}});g.ok&&g.data.linked===1?(c(`ID ${m} linked ✓`),x(),window.__refreshAccess&&window.__refreshAccess()):(c("Link failed — try again"),a.style.background="")})})};w.addEventListener("input",()=>d(w.value));const s=await f("/api/mobile/v1/members?page=1&page_size=500");k=s.ok?s.data.members||[]:[],d(""),w.focus()}export{G as default};

@@ -1,9 +1,20 @@
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml } from '../utils.js';
 
 export default {
-  async mount(el) { await load(el); },
+  async mount(el) {
+    el.addEventListener('input', () => { el.dataset.draftEdited = 'true'; });
+    el.addEventListener('change', () => { el.dataset.draftEdited = 'true'; });
+    await load(el);
+    attachLiveRefresh(el, () => load(el, true), 15000);
+  },
+  pause() { stopPoll(); },
+  resume(el) { if (el.dataset.pendingCommand) {
+    const [integrationId, commandId] = JSON.parse(el.dataset.pendingCommand);
+    pollCommand(el, integrationId, commandId);
+  } },
   async unmount() { stopPoll(); },
 };
 
@@ -55,9 +66,10 @@ function apiMessage(response, fallback) {
   return esc(response?.error?.message || response?.data?.message || fallback);
 }
 
-async function load(el) {
-  stopPoll();
-  el.innerHTML = '<div class="rrr-loading">Preparing your connection workspace…</div>';
+async function load(el, background = false) {
+  if (background && (el.dataset.draftEdited === 'true' || pollTimer)) return;
+  if (!background) stopPoll();
+  if (!background) el.innerHTML = '<div class="rrr-loading">Preparing your connection workspace…</div>';
   const result = await apiRequest('/api/mobile/v1/rrr/integrations');
   const integrations = result.ok ? result.data.integrations || [] : [];
   const direct = integrations.find(x => x.type === 'adms_direct');
@@ -65,6 +77,10 @@ async function load(el) {
   const devices = result.ok ? result.data.devices || [] : [];
   const commandsResult = direct ? await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`) : null;
   const commands = commandsResult?.ok ? commandsResult.data.commands || [] : [];
+  if (el.dataset.screenDisposed === 'true') return;
+  if (background && (!result.ok || (commandsResult && !commandsResult.ok) || el.dataset.draftEdited === 'true'
+    || document.activeElement?.matches('input, textarea, select'))) return;
+  el.dataset.draftEdited = 'false';
   const unmapped = Math.max(direct?.unmapped_records || 0, bridge?.unmapped_records || 0);
 
   el.innerHTML = `<main class="rrr-page rrr-integrations-page">
@@ -319,9 +335,11 @@ function wireDirectPanel(el, direct, commands) {
 
 function pollCommand(el, integrationId, commandId) {
   stopPoll();
+  el.dataset.pendingCommand = JSON.stringify([integrationId, commandId]);
   const progressEl = () => el.querySelector('#rrr-cmd-progress');
   let tries = 0;
   const tick = async () => {
+    if (!el.isConnected || el.dataset.screenActive === 'false' || document.visibilityState === 'hidden') return;
     tries += 1;
     const r = await apiRequest(`/api/mobile/v1/rrr/integrations/${integrationId}/adms/commands`);
     const list = r.ok ? r.data.commands || [] : [];
@@ -329,10 +347,11 @@ function pollCommand(el, integrationId, commandId) {
     if (cmd && progressEl()) progressEl().textContent = progressText(cmd);
     if (!cmd || tries >= 24 || cmd.status === 'acked' || cmd.status === 'failed') {
       stopPoll();
+      delete el.dataset.pendingCommand;
       if (tries >= 24 && cmd && !['acked', 'failed'].includes(cmd.status) && progressEl()) {
         progressEl().textContent = 'Still waiting — the terminal may be offline. It will pick the command up when it reconnects.';
       }
-      if (cmd && ['acked', 'failed'].includes(cmd.status)) setTimeout(() => load(el), 1500);
+      if (cmd && ['acked', 'failed'].includes(cmd.status)) setTimeout(() => { if (el.isConnected && el.dataset.screenActive !== 'false') void load(el); }, 1500);
       return;
     }
   };

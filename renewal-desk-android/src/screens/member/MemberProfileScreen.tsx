@@ -4,7 +4,8 @@
  * Shows: member details, gym contact, payment info, sign out,
  * and account deletion flow.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   Alert,
@@ -42,7 +43,7 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
 
   const [revision, setRevision] = useState(0);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let active = true;
     void fetchMemberProfile().then((result) => {
       if (!active) return;

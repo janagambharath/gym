@@ -4,7 +4,8 @@
  * Shows: membership status card, days remaining, pending payment,
  * recent renewals, gym contact info, and renewal CTA.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -41,7 +42,7 @@ export function MemberHomeScreen({
 
   const [revision, setRevision] = useState(0);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let active = true;
     void fetchMemberDashboard().then((result) => {
       if (!active) return;

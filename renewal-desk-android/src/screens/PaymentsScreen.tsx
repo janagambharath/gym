@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   FlatList,
   RefreshControl,
@@ -62,7 +63,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
     amount: string;
   } | null>(null);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let cancelled = false;
     const params = new URLSearchParams({ page: String(page), page_size: '20' });
     if (statusFilter !== 'all') params.set('status', statusFilter);

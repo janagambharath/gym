@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   FlatList,
@@ -24,34 +25,48 @@ export const AttendanceScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
+  const loadedPages = useRef(1);
+  const requestId = useRef(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'ALL' | 'ENTRY' | 'EXIT' | 'DENIED'>('ALL');
 
-  const fetchAccess = useCallback(async (pageNum = 1) => {
+  const fetchAccess = useCallback(async (pageNum = 1, refreshLoaded = false) => {
+    const id = ++requestId.current;
     try {
-      const res = await apiClient.getAccess(pageNum, 20);
+      const target = refreshLoaded ? loadedPages.current : pageNum;
+      const results = refreshLoaded
+        ? await Promise.all(Array.from({ length: target }, (_, index) => apiClient.getAccess(index + 1, 20)))
+        : [await apiClient.getAccess(pageNum, 20)];
+      if (id !== requestId.current) return;
+      const res = results[results.length - 1];
+      const records = results.flatMap(result => result.events);
       setSummary(res.summary);
-      if (pageNum === 1) {
-        setEvents(res.events);
+      if (pageNum === 1 || refreshLoaded) {
+        setEvents(records);
       } else {
         setEvents((prev) => [...prev, ...res.events]);
       }
       setHasMore(res.pagination.page < res.pagination.total_pages);
-      setPage(pageNum);
+      loadedPages.current = target;
+      setPage(target);
       setError(null);
     } catch (err) {
+      if (id !== requestId.current) return;
       setError(err instanceof Error ? err.message : 'Could not load attendance.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
+      if (id === requestId.current) {
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+      }
     }
   }, []);
 
-  useEffect(() => {
-    fetchAccess(1);
+  useLiveEffect(() => {
+    void fetchAccess(1, true);
+    return () => { requestId.current += 1; };
   }, [fetchAccess]);
 
   const onRefresh = useCallback(() => {

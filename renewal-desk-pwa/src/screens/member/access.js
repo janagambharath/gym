@@ -2,10 +2,16 @@
 import { apiRequest } from '../../api.js'; import { navigate } from '../../app.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState } from '../../components.js';
 import { icon } from '../../icons.js'; import { formatDateTime } from '../../utils.js';
+import { attachLiveRefresh } from '../../live-refresh.js';
 export default { async mount(el) {
-  el.innerHTML = `${renderHeader({title:'Attendance',showBack:true})}<div class="scroll-view" id="ma-list">${renderListSkeleton()}</div>`;
-  bindHeaderEvents(el, { onBack:()=>navigate.pop() });
+  await load(el);
+  attachLiveRefresh(el, () => load(el, true));
+} };
+async function load(el, background = false) {
+  if (!background) el.innerHTML = `${renderHeader({title:'Attendance',showBack:true})}<div class="scroll-view" id="ma-list">${renderListSkeleton()}</div>`;
+  if (!background) bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   const res = await apiRequest('/api/member/v1/access');
+  if (el.dataset.screenDisposed === 'true' || (background && !res.ok)) return;
   const list = el.querySelector('#ma-list');
   const events = res.ok ? res.data.events||res.data||[] : [];
   if (!Array.isArray(events)||events.length===0) { list.innerHTML = renderEmptyState({icon:'access',title:'No attendance records',text:'Your gym visits will appear here'}); return; }
@@ -19,4 +25,4 @@ export default { async mount(el) {
         <div class="list-item-subtitle">${formatDateTime(e.timestamp||e.created_at)}</div>
       </div>
     </div>`).join('')}</div></div>`;
-}};
+}

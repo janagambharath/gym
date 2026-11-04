@@ -1,4 +1,5 @@
 /* Access Control Screen */
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest, checkInMember } from '../api.js';
 import { navigate } from '../app.js';
 import { router } from '../router.js';
@@ -12,9 +13,10 @@ export default {
     document.getElementById('quick-assign-overlay')?.remove();
     let currentTab = 'all'; // 'all' | 'entry' | 'exit' | 'denied'
     let summaryData = null;
-    let refreshTimer = null;
+    let requestId = 0;
 
     async function loadData() {
+      const id = ++requestId;
       const scroll = el.querySelector('#ac-scroll');
       if (!scroll) return;
 
@@ -23,6 +25,8 @@ export default {
       const feedPromise = apiRequest(`/api/mobile/v1/access/events?per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`);
 
       const [summaryRes, feedRes] = await Promise.all([summaryPromise, feedPromise]);
+      if (id !== requestId || el.dataset.screenDisposed === 'true') return;
+      if ((!summaryRes.ok || !feedRes.ok) && summaryData) return;
       const s = summaryRes.ok ? summaryRes.data : (summaryData || {});
       summaryData = s;
 
@@ -413,7 +417,6 @@ export default {
 
     bindHeaderEvents(el, {
       onBack: () => {
-        if (refreshTimer) clearInterval(refreshTimer);
         navigate.pop();
       },
       actions: [
@@ -424,14 +427,7 @@ export default {
 
     await loadData();
 
-    // Auto-refresh every 15s to keep live status up to date
-    refreshTimer = setInterval(() => {
-      if (document.body.contains(el)) {
-        loadData();
-      } else {
-        clearInterval(refreshTimer);
-      }
-    }, 15000);
+    attachLiveRefresh(el, loadData, 15000);
     
     // Expose refresh for quick-assign sheet and other external triggers
     window.__refreshAccess = () => { if (document.body.contains(el)) loadData(); };

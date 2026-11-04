@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   FlatList,
   RefreshControl,
@@ -62,7 +63,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, onImportM
     }, 400);
   }, []);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let cancelled = false;
 
     const params = new URLSearchParams({ page: String(page), page_size: '20' });

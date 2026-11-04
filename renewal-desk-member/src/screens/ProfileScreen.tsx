@@ -1,5 +1,6 @@
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   Alert,
@@ -39,8 +40,8 @@ export const ProfileScreen: React.FC = () => {
   const [savingDetails, setSavingDetails] = useState(false);
   const [profileForm, setProfileForm] = useState({ email: '', address: '', gender: '' });
 
-  const fetchProfile = useCallback(async () => {
-    setLoading(true);
+  const fetchProfile = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setProfileError(null);
     try {
       const data = await apiClient.getProfile();
@@ -135,9 +136,13 @@ export const ProfileScreen: React.FC = () => {
     }
   }, [profileForm]);
 
-  useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+  useLiveEffect(() => {
+    const saved = profileData?.member;
+    const dirty = saved && (profileForm.email !== (saved.email || '')
+      || profileForm.address !== (saved.address || '') || profileForm.gender !== (saved.gender || ''));
+    if (!dirty && !photoBusy && !savingDetails) void fetchProfile(true);
+    // Read the latest draft on focus/foreground; typing must not trigger a fetch.
+  }, [fetchProfile], 0);
 
   const handleCall = () => {
     const phone = theme.phone;
@@ -214,7 +219,7 @@ export const ProfileScreen: React.FC = () => {
         {profileError ? (
           <View style={styles.loadErrorCard}>
             <Text style={styles.loadErrorText}>{profileError}</Text>
-            <TouchableOpacity onPress={fetchProfile} disabled={loading} style={styles.retryProfileButton}>
+            <TouchableOpacity onPress={() => void fetchProfile()} disabled={loading} style={styles.retryProfileButton}>
               <Text style={styles.retryProfileText}>{loading ? 'Loading…' : 'Try again'}</Text>
             </TouchableOpacity>
           </View>

@@ -1,4 +1,5 @@
 /* Members List Screen */
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState } from '../components.js';
@@ -55,22 +56,29 @@ export default {
       }
     });
 
-    async function loadMembers(append = false) {
+    let requestId = 0;
+    async function loadMembers(append = false, background = false) {
+      if (background && loading) return;
+      const id = ++requestId;
       loading = true;
-      if (!append) listEl.innerHTML = renderListSkeleton();
+      if (!append && !background) listEl.innerHTML = renderListSkeleton();
       let url = `/api/mobile/v1/members?page=${page}&page_size=20`;
       if (query) url += `&q=${encodeURIComponent(query)}`;
       if (filter === 'expiring') url += `&expiring_within_days=7`;
       else if (filter === 'not_enrolled') url += `&biometric=not_enrolled`;
       else if (filter !== 'all') url += `&status=${filter}`;
-      const res = await apiRequest(url);
+      const results = background
+        ? await Promise.all(Array.from({ length: page }, (_, index) => apiRequest(url.replace(`page=${page}&`, `page=${index + 1}&`))))
+        : [await apiRequest(url)];
+      if (id !== requestId) return;
+      const res = results.find(result => !result.ok) || results[0];
       loading = false;
       if (!res.ok) {
         if (res.error.status === 401) return handleLogout();
-        listEl.innerHTML = renderErrorState(res.error.message);
+        if (!background) listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
-      const newMembers = res.data.members || [];
+      const newMembers = results.flatMap(result => result.data.members || []);
       total = res.data.pagination?.total || 0;
       members = append ? [...members, ...newMembers] : newMembers;
       if (members.length === 0) {
@@ -91,5 +99,6 @@ export default {
     }
 
     await loadMembers();
+    attachLiveRefresh(el, () => loadMembers(false, true));
   }
 };

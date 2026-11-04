@@ -1,6 +1,7 @@
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml, formatCurrency, formatInteger } from '../utils.js';
+import { attachLiveRefresh } from '../live-refresh.js';
 import { icon } from '../icons.js';
 
 const pillarMeta = {
@@ -9,16 +10,24 @@ const pillarMeta = {
   recover: { title: 'Recover', eyebrow: 'Bring people back', detail: 'Recently expired or inactive members to re-engage', color: 'red', icon: 'renewals' },
 };
 
-export default { async mount(el) { await load(el); } };
+export default { async mount(el) {
+  await load(el);
+  attachLiveRefresh(el, () => load(el, true));
+} };
 
-async function load(el) {
-  el.innerHTML = `<main class="rrr-page rrr-dashboard-page"><div class="rrr-dashboard-skeleton"><div class="skeleton" style="height:52px;border-radius:14px;margin-bottom:20px"></div><div class="skeleton skeleton-text" style="width:45%;height:14px;margin-bottom:8px"></div><div class="skeleton skeleton-text" style="width:80%;height:34px;margin-bottom:8px"></div><div class="skeleton skeleton-text short" style="width:60%;margin-bottom:22px"></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">${'<div class="skeleton" style="height:110px;border-radius:16px"></div>'.repeat(4)}</div>${'<div class="skeleton" style="height:190px;border-radius:20px;margin-bottom:14px"></div>'.repeat(3)}</div></main>`;
+async function load(el, background = false) {
+  if (!background) el.innerHTML = `<main class="rrr-page rrr-dashboard-page"><div class="rrr-dashboard-skeleton"><div class="skeleton" style="height:52px;border-radius:14px;margin-bottom:20px"></div><div class="skeleton skeleton-text" style="width:45%;height:14px;margin-bottom:8px"></div><div class="skeleton skeleton-text" style="width:80%;height:34px;margin-bottom:8px"></div><div class="skeleton skeleton-text short" style="width:60%;margin-bottom:22px"></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">${'<div class="skeleton" style="height:110px;border-radius:16px"></div>'.repeat(4)}</div>${'<div class="skeleton" style="height:190px;border-radius:20px;margin-bottom:14px"></div>'.repeat(3)}</div></main>`;
   const [result, todayResult, settingsResult] = await Promise.all([
     apiRequest('/api/mobile/v1/rrr/dashboard'),
     apiRequest('/api/mobile/v1/owner/today'),
     apiRequest('/api/mobile/v1/settings'),
   ]);
   if (!result.ok) {
+    if (background) {
+      const status = el.querySelector('[data-freshness]');
+      if (status) status.textContent = 'Update failed · showing previous data';
+      return;
+    }
     el.innerHTML = `<div class="rrr-empty"><h2>Your dashboard is temporarily unavailable</h2><p>${escapeHtml(result.error?.message || 'Please try again.')}</p><button id="rrr-retry">Retry</button></div>`;
     el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el));
     return;
@@ -43,6 +52,7 @@ async function load(el) {
     : true;
 
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page">
+    <p data-freshness style="font-size:12px;color:var(--muted);margin:0 0 12px">Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · refreshes automatically</p>
     <header class="rrr-workspace-bar">
       <button class="rrr-gym-switcher" id="rrr-members">${icon('business', 18)}<span><b>${escapeHtml(gymName)}</b><small>Owner workspace</small></span>${icon('chevronDown', 16)}</button>
       <div class="rrr-header-actions"><button class="rrr-icon-button" id="rrr-inbox" aria-label="Open inbox">${icon('inbox', 19)}</button><button class="rrr-add-button" id="rrr-add-member">${icon('add', 18, 'white')} Add member</button><button class="rrr-owner-avatar" id="rrr-avatar" aria-label="Open settings">${escapeHtml(ownerName.slice(0, 2).toUpperCase())}</button></div>

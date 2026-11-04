@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   FlatList,
@@ -23,28 +24,41 @@ export const PaymentsScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
+  const loadedPages = useRef(1);
+  const requestId = useRef(0);
   const [hasMore, setHasMore] = useState(true);
 
-  const fetchPayments = useCallback(async (pageNum = 1) => {
+  const fetchPayments = useCallback(async (pageNum = 1, refreshLoaded = false) => {
+    const id = ++requestId.current;
     try {
-      const res = await apiClient.getPayments(pageNum, 20);
-      if (pageNum === 1) {
-        setPayments(res.payments);
+      const target = refreshLoaded ? loadedPages.current : pageNum;
+      const results = refreshLoaded
+        ? await Promise.all(Array.from({ length: target }, (_, index) => apiClient.getPayments(index + 1, 20)))
+        : [await apiClient.getPayments(pageNum, 20)];
+      if (id !== requestId.current) return;
+      const res = results[results.length - 1];
+      const records = results.flatMap(result => result.payments);
+      if (pageNum === 1 || refreshLoaded) {
+        setPayments(records);
       } else {
         setPayments((prev) => [...prev, ...res.payments]);
       }
       setHasMore(res.pagination.page < res.pagination.total_pages);
-      setPage(pageNum);
+      loadedPages.current = target;
+      setPage(target);
     } catch {
       // Non-fatal
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (id === requestId.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
-  useEffect(() => {
-    fetchPayments(1);
+  useLiveEffect(() => {
+    void fetchPayments(1, true);
+    return () => { requestId.current += 1; };
   }, [fetchPayments]);
 
   const onRefresh = useCallback(() => {

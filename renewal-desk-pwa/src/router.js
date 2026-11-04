@@ -3,7 +3,9 @@
    Hash-based routing for iOS Safari PWA compatibility
    ═══════════════════════════════════════════════════════════════════════ */
 
-/** @typedef {{ mount: (container: HTMLElement, params?: Record<string,string>) => void|Promise<void>, unmount?: () => void }} Screen */
+import { activateScreen, disposeScreen } from './live-refresh.js';
+
+/** @typedef {{ mount: (container: HTMLElement, params?: Record<string,string>) => void|Promise<void>, unmount?: () => void, pause?: () => void, resume?: (container: HTMLElement) => void }} Screen */
 
 class Router {
   constructor() {
@@ -90,6 +92,9 @@ class Router {
     el.style.zIndex = String(10 + this.stack.length);
 
     const prevScreen = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
+    activateScreen(prevScreen?.element, false);
+    prevScreen?.screen?.pause?.();
+    el.dataset.screenActive = 'true';
 
     if (opts.animate && this.stack.length > 0) {
       el.classList.add('screen-enter');
@@ -107,6 +112,7 @@ class Router {
     // If replacing, remove old top
     if (opts.replace && this.stack.length > 0) {
       const old = this.stack.pop();
+      disposeScreen(old?.element);
       try { old?.screen?.unmount?.(); } catch { /* ignore */ }
       old?.element?.remove();
     }
@@ -147,9 +153,12 @@ class Router {
     if (this.stack.length <= 1) return;
 
     const top = this.stack.pop();
+    disposeScreen(top?.element);
     const prev = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
     if (prev?.element) {
       prev.element.style.visibility = 'visible';
+      activateScreen(prev.element, true);
+      prev.screen?.resume?.(prev.element);
     }
     try { top?.screen?.unmount?.(); } catch { /* ignore */ }
 
@@ -206,7 +215,8 @@ class Router {
 
     // Clear current screens from DOM
     for (const entry of this.stack) {
-      try { entry.screen?.unmount?.(); } catch { /* ignore */ }
+      activateScreen(entry.element, false);
+      try { entry.screen?.pause?.(); } catch { /* ignore */ }
       entry.element.remove();
     }
     this.stack = [];
@@ -223,6 +233,8 @@ class Router {
         this.container.appendChild(entry.element);
         this.stack.push(entry);
       }
+      activateScreen(this.current?.element, true);
+      this.current?.screen?.resume?.(this.current.element);
     } else {
       await this.push(rootScreenId, params, { animate: false });
     }
@@ -235,7 +247,9 @@ class Router {
 
   /** Clear all stacks and screens */
   clear() {
-    for (const entry of this.stack) {
+    const entries = new Set([...this.stack, ...[...this.tabStacks.values()].flat()]);
+    for (const entry of entries) {
+      disposeScreen(entry.element);
       try { entry.screen?.unmount?.(); } catch { /* ignore */ }
       entry.element.remove();
     }

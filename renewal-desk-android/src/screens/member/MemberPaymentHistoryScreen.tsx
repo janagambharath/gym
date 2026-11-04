@@ -3,7 +3,8 @@
  *
  * Shows: list of payments with verification status, amounts, dates, and references.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useLiveEffect } from '../../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   FlatList,
@@ -25,6 +26,7 @@ export function MemberPaymentHistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
+  const loadedPages = useRef(1);
   const [totalPages, setTotalPages] = useState(1);
 
   const loadPayments = useCallback(async (pageNum = 1) => {
@@ -37,6 +39,7 @@ export function MemberPaymentHistoryScreen() {
       }
       setTotalPages(result.data.pagination.total_pages);
       setPage(pageNum);
+      loadedPages.current = pageNum;
       setError(undefined);
     } else {
       setError(result.error);
@@ -47,14 +50,16 @@ export function MemberPaymentHistoryScreen() {
 
   const [revision, setRevision] = useState(0);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let active = true;
-    void fetchMemberPayments(1).then((result) => {
+    const target = loadedPages.current;
+    void Promise.all(Array.from({ length: target }, (_, index) => fetchMemberPayments(index + 1))).then((results) => {
+      const result = results.find(item => !item.ok) || results[results.length - 1];
       if (!active) return;
       if (result.ok) {
-        setPayments(result.data.payments);
+        setPayments(results.flatMap(item => item.ok ? item.data.payments : []));
         setTotalPages(result.data.pagination.total_pages);
-        setPage(1);
+        setPage(target);
         setError(undefined);
       } else {
         setError(result.error);
@@ -68,6 +73,7 @@ export function MemberPaymentHistoryScreen() {
   }, [revision]);
 
   const handleRefresh = useCallback(() => {
+    loadedPages.current = 1;
     setRefreshing(true);
     setRevision((r) => r + 1);
   }, []);

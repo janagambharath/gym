@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   FlatList,
   Linking,
@@ -36,7 +37,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
   const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let cancelled = false;
 
     const fetchData = async () => {

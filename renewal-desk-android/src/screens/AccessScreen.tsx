@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   Alert,
@@ -117,7 +118,6 @@ export function AccessScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [checkInSearch, setCheckInSearch] = useState('');
@@ -190,7 +190,7 @@ export function AccessScreen({
     setLoading(false);
   }, [fetchSummary, fetchEvents, fetchInsideMembers, activeTab]);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let cancelled = false;
     const run = async () => {
       await Promise.all([
@@ -205,23 +205,7 @@ export function AccessScreen({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, fetchEvents, fetchInsideMembers, fetchSummary, refreshToken, search]);
-
-  // ── Auto-refresh polling (15s) ───────────────────────────────────
-
-  useEffect(() => {
-    pollRef.current = setInterval(() => {
-      void fetchSummary();
-      if (activeTab === 'inside') {
-        void fetchInsideMembers();
-      } else {
-        void fetchEvents(1);
-      }
-    }, 15000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [fetchSummary, fetchEvents, fetchInsideMembers, activeTab]);
+  }, [activeTab, fetchEvents, fetchInsideMembers, fetchSummary, refreshToken, search], 15000);
 
   // ── Pull-to-refresh ──────────────────────────────────────────────
 

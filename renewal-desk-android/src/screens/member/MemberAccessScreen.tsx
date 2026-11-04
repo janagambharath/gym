@@ -4,7 +4,8 @@
  * Shows: access validity status, today's visits, current inside state,
  * and attendance log.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useLiveEffect } from '../../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   FlatList,
@@ -30,6 +31,7 @@ export function MemberAccessScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
+  const loadedPages = useRef(1);
   const [totalPages, setTotalPages] = useState(1);
 
   const loadAccessData = useCallback(async (pageNum = 1) => {
@@ -43,6 +45,7 @@ export function MemberAccessScreen() {
       }
       setTotalPages(result.data.pagination.total_pages);
       setPage(pageNum);
+      loadedPages.current = pageNum;
       setError(undefined);
     } else {
       setError(result.error);
@@ -53,15 +56,17 @@ export function MemberAccessScreen() {
 
   const [revision, setRevision] = useState(0);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let active = true;
-    void fetchMemberAccess(1).then((result) => {
+    const target = loadedPages.current;
+    void Promise.all(Array.from({ length: target }, (_, index) => fetchMemberAccess(index + 1))).then((results) => {
+      const result = results.find(item => !item.ok) || results[results.length - 1];
       if (!active) return;
       if (result.ok) {
         setSummary(result.data.summary);
-        setEvents(result.data.events);
+        setEvents(results.flatMap(item => item.ok ? item.data.events : []));
         setTotalPages(result.data.pagination.total_pages);
-        setPage(1);
+        setPage(target);
         setError(undefined);
       } else {
         setError(result.error);
@@ -75,6 +80,7 @@ export function MemberAccessScreen() {
   }, [revision]);
 
   const handleRefresh = useCallback(() => {
+    loadedPages.current = 1;
     setRefreshing(true);
     setRevision((r) => r + 1);
   }, []);

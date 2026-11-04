@@ -2,8 +2,14 @@
 import { apiRequest } from '../../api.js'; import { navigate } from '../../app.js';
 import { renderHeader, renderBadge, renderMenuItem, renderMetricCard } from '../../components.js';
 import { icon } from '../../icons.js'; import { formatDate, formatCurrency, getDaysText, escapeHtml, formatInteger } from '../../utils.js';
+import { attachLiveRefresh } from '../../live-refresh.js';
 export default { async mount(el) {
+  await load(el);
+  attachLiveRefresh(el, () => load(el, true));
+} };
+async function load(el, background = false) {
   const res = await apiRequest('/api/member/v1/dashboard');
+  if (el.dataset.screenDisposed === 'true' || (background && !res.ok)) return;
   const raw = res.ok ? res.data : {};
   // Normalize the dashboard payload into the home-screen shape.
   const mem = raw.member || {};
@@ -44,4 +50,4 @@ export default { async mount(el) {
     </div></div>`;
   el.querySelectorAll('[data-action]').forEach(i=>i.addEventListener('click',()=>navigate.push(i.dataset.action)));
   el.querySelector('#mh-renew')?.addEventListener('click',()=>navigate.push('member-renew'));
-}};
+}

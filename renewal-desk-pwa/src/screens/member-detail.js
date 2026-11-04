@@ -1,4 +1,5 @@
 /* Member Detail Screen */
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
@@ -402,5 +403,12 @@ export default {
       }
     };
     window.addEventListener('member-updated', onMemberUpdated);
+    attachLiveRefresh(el, async () => {
+      const result = await apiRequest(`/api/mobile/v1/members/${memberId}`);
+      if (result.ok && el.dataset.screenDisposed !== 'true') {
+        member = result.data;
+        render();
+      }
+    }, 30000, () => window.removeEventListener('member-updated', onMemberUpdated));
   }
 };

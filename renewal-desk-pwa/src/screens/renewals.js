@@ -1,4 +1,5 @@
 /* Renewals Screen */
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState, renderSectionHeader } from '../components.js';
@@ -13,6 +14,7 @@ export default {
 
     bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('campaigns') }] });
 
+    async function load(background = false) {
     const [upRes, expRes] = await Promise.all([
       apiRequest('/api/mobile/v1/renewals/upcoming'),
       apiRequest('/api/mobile/v1/renewals/expired'),
@@ -20,10 +22,11 @@ export default {
 
     const scroll = el.querySelector('#renewals-list');
     if (!upRes.ok && !expRes.ok) {
-      scroll.innerHTML = renderErrorState(upRes.error?.message || 'Failed to load');
+      if (!background) scroll.innerHTML = renderErrorState(upRes.error?.message || 'Failed to load');
       return;
     }
 
+    if (background && (!upRes.ok || !expRes.ok)) return;
     const upcoming = upRes.ok ? (upRes.data.members || []) : [];
     const expired = expRes.ok ? (expRes.data.members || []) : [];
     const expiringToday = upcoming.filter(m => m.days_until_expiry === 0);
@@ -75,5 +78,8 @@ export default {
     scroll.querySelectorAll('[data-member]').forEach(item => {
       item.addEventListener('click', () => navigate.push('member-detail', { member: item.dataset.member }));
     });
+    }
+    await load();
+    attachLiveRefresh(el, () => load(true));
   }
 };

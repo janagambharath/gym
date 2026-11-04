@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import { Alert, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest } from '../services/apiClient';
@@ -62,7 +63,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   };
   const directLive = isLive(direct);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (preserveDrafts = false) => {
     const [dashboard, integrationData, mappings, members, ruleData, ownerTodayData, settings] = await Promise.all([
       apiRequest<Payload>('/api/mobile/v1/rrr/dashboard'),
       apiRequest<{ integrations: Integration[]; devices: Device[] }>('/api/mobile/v1/rrr/integrations'),
@@ -88,15 +89,15 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     if (mappings.ok) setUnresolved(mappings.data.events || []);
     if (settings.ok) setShowBiometricLinkBanner(settings.data.gym?.show_biometric_link_banner !== false);
     if (members.ok) setPeople(members.data.members || []);
-    if (ruleData.ok) setRules(ruleData.data.rules || {});
+    if (ruleData.ok) setRules(current => preserveDrafts && Object.keys(current).length ? current : ruleData.data.rules || {});
     if (ownerTodayData.ok) {
       setOwnerToday(ownerTodayData.data);
     }
     setRefreshing(false);
     setLoading(false);
   }, []);
-  useEffect(() => {
-    const initialLoad = setTimeout(() => { void load(); }, 0);
+  useLiveEffect(() => {
+    const initialLoad = setTimeout(() => { void load(true); }, 0);
     return () => clearTimeout(initialLoad);
   }, [load]);
 

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -57,7 +58,7 @@ export const HomeScreen: React.FC = () => {
     }
   }, [updateMember]);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     fetchDashboard();
   }, [fetchDashboard]);
 

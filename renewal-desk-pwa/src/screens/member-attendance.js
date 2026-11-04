@@ -1,22 +1,27 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml } from '../utils.js';
+import { attachLiveRefresh } from '../live-refresh.js';
 
-export default { async mount(el, params) { await load(el, params); } };
+export default { async mount(el, params) {
+  await load(el, params);
+  attachLiveRefresh(el, () => load(el, params, true), 15000);
+} };
 
 const esc = escapeHtml;
 
-async function load(el, params) {
+async function load(el, params, background = false) {
   const memberId = params?.id;
   if (!memberId) {
     el.innerHTML = '<main class="rrr-page"><p>No member specified.</p></main>';
     return;
   }
 
-  el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>';
+  if (!background) el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>';
   
   const res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=1&per_page=50`);
   if (!res.ok) {
+    if (background) return;
     el.innerHTML = `<main class="rrr-page rrr-detail">
       <header class="rrr-header"><button id="rrr-back" class="rrr-back-btn">← Member</button></header>
       <h1>Biometric Records</h1>

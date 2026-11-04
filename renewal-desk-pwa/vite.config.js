@@ -39,11 +39,8 @@ export default defineConfig({
         runtimeCaching: [
           {
             urlPattern: /\/api\/mobile\/v1\/(dashboard|settings)/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: { maxEntries: 20, maxAgeSeconds: 300 }
-            }
+            // Authenticated live data must never appear fresh from an old cache.
+            handler: 'NetworkOnly'
           }
         ]
       }

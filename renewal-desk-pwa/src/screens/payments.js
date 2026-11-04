@@ -1,4 +1,5 @@
 /* Payments Screen */
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderPaymentCard, renderListSkeleton, renderEmptyState, renderErrorState, showToast, showConfirm } from '../components.js';
@@ -41,10 +42,13 @@ export default {
       loadPayments();
     });
 
-    async function loadPayments() {
+    let requestId = 0;
+    async function loadPayments(background = false) {
+      if (background && loading) return;
+      const id = ++requestId;
       loading = true;
       const listEl = el.querySelector('#payments-list');
-      listEl.innerHTML = renderListSkeleton();
+      if (!background) listEl.innerHTML = renderListSkeleton();
       let url = `/api/mobile/v1/payments?page=${page}&page_size=20`;
       if (filter !== 'all') url += `&status=${filter}`;
       if (search.trim()) url += `&q=${encodeURIComponent(search.trim())}`;
@@ -52,10 +56,11 @@ export default {
         apiRequest(url),
         page === 1 ? apiRequest('/api/mobile/v1/payments/summary') : Promise.resolve(null),
       ]);
+      if (id !== requestId) return;
       loading = false;
       if (!res.ok) {
         if (res.error.status === 401) return handleLogout();
-        listEl.innerHTML = renderErrorState(res.error.message);
+        if (!background) listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
       payments = res.data.payments || [];
@@ -94,5 +99,6 @@ export default {
     }
 
     await loadPayments();
+    attachLiveRefresh(el, () => loadPayments(true), 30000, () => clearTimeout(searchTimer));
   }
 };

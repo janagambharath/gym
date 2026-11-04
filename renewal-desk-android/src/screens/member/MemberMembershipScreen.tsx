@@ -4,7 +4,8 @@
  * Shows: current plan details, validity dates, days remaining,
  * full renewal history, and "Renew Now" CTA.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useLiveEffect } from '../../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -33,7 +34,7 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
 
   const [revision, setRevision] = useState(0);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let active = true;
     void fetchMemberMembership().then((result) => {
       if (!active) return;

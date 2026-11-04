@@ -2,10 +2,16 @@
 import { apiRequest } from '../../api.js'; import { navigate } from '../../app.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderBadge } from '../../components.js';
 import { formatDate, formatCurrency, escapeHtml } from '../../utils.js';
+import { attachLiveRefresh } from '../../live-refresh.js';
 export default { async mount(el) {
-  el.innerHTML = `${renderHeader({title:'My Payments',showBack:true})}<div class="scroll-view" id="mp-list">${renderListSkeleton()}</div>`;
-  bindHeaderEvents(el, { onBack:()=>navigate.pop() });
+  await load(el);
+  attachLiveRefresh(el, () => load(el, true));
+} };
+async function load(el, background = false) {
+  if (!background) el.innerHTML = `${renderHeader({title:'My Payments',showBack:true})}<div class="scroll-view" id="mp-list">${renderListSkeleton()}</div>`;
+  if (!background) bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   const res = await apiRequest('/api/member/v1/payments');
+  if (el.dataset.screenDisposed === 'true' || (background && !res.ok)) return;
   const list = el.querySelector('#mp-list');
   const payments = res.ok ? res.data.payments||res.data||[] : [];
   if (!Array.isArray(payments)||payments.length===0) { list.innerHTML = renderEmptyState({icon:'wallet',title:'No payments',text:'Your payment history will appear here'}); return; }
@@ -14,4 +20,4 @@ export default { async mount(el) {
       <div class="list-item-title">${formatCurrency(p.amount)}</div>
       <div class="list-item-subtitle">${escapeHtml(p.method||'')} · ${formatDate(p.paid_on||p.created_at)}</div>
     </div>${renderBadge(p.status||'paid')}</div>`).join('')}</div></div>`;
-}};
+}

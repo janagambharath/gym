@@ -1,6 +1,12 @@
 /* Dedicated VYNLA member PWA.  It deliberately keeps member credentials
    separate from Renewal Desk owner credentials. */
 
+import { attachLiveRefresh } from './live-refresh.js';
+
+let activePage = null, pageVersion = 0;
+let attendancePage = 1, paymentsPage = 1;
+const beginPage = name => { activePage = name; return ++pageVersion; };
+
 const SESSION_KEY = 'vynla.member-session.v1';
 const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'https://gym-production-910c.up.railway.app' : window.location.origin;
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
@@ -115,6 +121,7 @@ function memberLoadError(active, message, retry) {
 let resendTimer = null;
 
 function renderLogin(message = '') {
+  beginPage('login');
   if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
   document.title = 'VYNLA — Member App';
   shell(`<section style="max-width:430px;margin:auto;padding:48px 24px"><div style="text-align:center;margin-bottom:34px"><img src="/icons/icon-192.png" alt="VYNLA" style="width:72px;height:72px;border-radius:20px"><h1 style="margin:14px 0 6px;color:#2563eb">VYNLA</h1><p style="color:#64748b">Your gym membership, in your pocket</p></div><div id="card" style="background:white;border-radius:20px;padding:24px;box-shadow:0 8px 30px #0f172a12"><h2 id="login-title">Member sign in</h2><p id="login-copy" style="color:#64748b">Enter your registered mobile number to receive a WhatsApp verification code.</p>${message ? notice(message, 'error') : ''}<form id="phone-form"><label style="display:block;font-weight:600;margin:18px 0 6px">Mobile number</label><input id="phone" inputmode="tel" autocomplete="tel" placeholder="9876543210" required style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px"><button id="send-code-btn" style="width:100%;margin-top:18px;padding:14px;border:0;border-radius:10px;background:#2563eb;color:#fff;font-weight:700;font-size:16px;cursor:pointer">Send WhatsApp code</button></form></div><p style="text-align:center;color:#64748b;font-size:13px;margin-top:22px">Ask your gym if your mobile number is not recognised.<br><a href="/" style="color:#2563eb;text-decoration:none;display:inline-block;margin-top:10px;font-weight:600">Gym owner or staff? Go to Renewal Desk →</a></p></section>`);
@@ -342,15 +349,20 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
   });
 }
 
-async function renderHome() {
-  shell('<div style="padding:48px;text-align:center">Loading your membership…</div>');
+async function renderHome(background = false) {
+  background = background === true;
+  const version = beginPage('home');
+  if (!background) shell('<div style="padding:48px;text-align:center">Loading your membership…</div>');
   const result = await api('/api/member/v1/dashboard');
+  if (version !== pageVersion) return;
+  if (background && !result.ok && result.status !== 401) return;
   if (!result.ok) {
     if (result.status === 401) { clearSession(); return renderLogin(result.error); }
     return memberLoadError('home',result.error,renderHome);
   }
   const d = result.data, member = d.member || {}, gym = d.gym || {}, branding = d.branding || {};
   const access = await api('/api/member/v1/access?per_page=1');
+  if (version !== pageVersion) return;
   const photo = member.profile_photo_url ? `<img src="${esc(member.profile_photo_url)}" alt="${esc(member.full_name||'Member')} profile" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #ffffff99">` : `<div aria-hidden="true" style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:#ffffff30;font-size:28px;font-weight:800">${esc((member.full_name||'M').slice(0,1).toUpperCase())}</div>`;
   const days = member.days_left;
   const banners = (branding.announcements||[]).slice(0,3).map((item)=>`<article style="padding:14px 16px;background:#eff6ff;border-radius:14px;margin-top:10px"><strong>${esc(item.title||'Gym update')}</strong><p style="margin:6px 0 0;color:#475569;line-height:1.45">${esc(item.message||'')}</p></article>`).join('');
@@ -361,7 +373,9 @@ async function renderHome() {
 }
 
 async function renderProfile() {
+  const version = beginPage('profile');
   shell('<div style="padding:48px;text-align:center">Loading profile…</div>'); const result = await api('/api/member/v1/profile');
+  if (version !== pageVersion) return;
   if (!result.ok) { if(result.status===401){clearSession();return renderLogin(result.error);} return memberLoadError('profile',result.error,renderProfile); } const d = result.data, m = d.member || {}, gym = d.gym || {};
   const avatar = m.profile_photo_url ? `<img src="${esc(m.profile_photo_url)}" alt="Profile photo" style="width:104px;height:104px;border-radius:50%;object-fit:cover">` : `<div style="width:104px;height:104px;border-radius:50%;display:grid;place-items:center;background:#dbeafe;color:#1d4ed8;font-size:38px;font-weight:800">${esc((m.full_name||'M').slice(0,1).toUpperCase())}</div>`;
   memberPage('profile', `<section style="padding:22px"><h1 style="font-size:26px;margin:6px 0 18px">My profile</h1><article style="background:#fff;border-radius:18px;padding:20px;text-align:center;box-shadow:0 3px 14px #0f172a0c"><div>${avatar}</div><h2 style="margin:12px 0 4px">${esc(m.full_name||'Member')}</h2><div style="color:#64748b">${esc(m.phone||'')}</div><label for="photo" style="display:inline-block;margin-top:14px;padding:10px 14px;background:#eff6ff;color:#1d4ed8;border-radius:10px;font-weight:700;cursor:pointer">${m.profile_photo_url?'Change photo':'Add profile photo'}</label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp" style="display:none">${m.profile_photo_url?'<button id="remove-photo" style="display:block;margin:10px auto 0;border:0;background:none;color:#b91c1c">Remove photo</button>':''}<p style="font-size:12px;color:#64748b;margin:12px 0 0">JPEG, PNG, or WebP · up to 3 MB</p></article><form id="profile-form" style="background:#fff;border-radius:18px;padding:18px;margin-top:14px"><h2 style="font-size:17px;margin:0 0 14px">Contact details</h2><label style="display:block;font-size:13px;font-weight:700;margin:12px 0 6px">Email</label><input name="email" type="email" maxlength="255" value="${esc(m.email||'')}" placeholder="you@example.com" style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px"><label style="display:block;font-size:13px;font-weight:700;margin:12px 0 6px">Address</label><textarea name="address" maxlength="2000" rows="3" placeholder="Your address" style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px">${esc(m.address||'')}</textarea><label style="display:block;font-size:13px;font-weight:700;margin:12px 0 6px">Gender (optional)</label><select name="gender" style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;font-size:16px"><option value="" ${!m.gender?'selected':''}>Prefer not to say</option>${['female','male','other'].map((value)=>`<option value="${value}" ${String(m.gender||'').toLowerCase()===value?'selected':''}>${value[0].toUpperCase()+value.slice(1)}</option>`).join('')}</select><button id="save-profile" style="width:100%;margin-top:16px;padding:14px;border:0;border-radius:11px;background:#2563eb;color:#fff;font-weight:700">Save details</button><p style="font-size:12px;color:#64748b;line-height:1.45">Your name and phone are managed by your gym so your membership and access records stay matched.</p></form><article style="background:#fff;border-radius:18px;padding:18px;margin-top:14px"><h2 style="font-size:17px;margin:0 0 8px">${esc(gym.name||'Your gym')}</h2><div style="color:#64748b">${esc(gym.phone||'Phone not provided')}</div><div style="color:#64748b;margin-top:6px">${esc(gym.address||'Address not provided')}</div>${gym.phone?`<a href="tel:${esc(gym.phone)}" style="display:inline-block;margin-top:12px;color:#1d4ed8">Call the gym</a>`:''}</article><button id="signout" style="margin-top:16px;padding:12px;border:0;background:none;color:#64748b">Sign out</button></section>`);
@@ -388,17 +402,34 @@ async function renderProfile() {
   document.querySelector('#signout').onclick=()=>{clearSession();renderLogin();};
 }
 
-async function renderMembership() {
-  shell('<div style="padding:48px;text-align:center">Loading membership…</div>');
-  const result=await api('/api/member/v1/membership'); if(!result.ok){if(result.status===401){clearSession();return renderLogin(result.error);} return memberLoadError('membership',result.error,renderMembership);}
+async function renderMembership(background = false) {
+  background = background === true;
+  const version = beginPage('membership');
+  if (!background) shell('<div style="padding:48px;text-align:center">Loading membership…</div>');
+  const result=await api('/api/member/v1/membership');
+  if (version !== pageVersion || (background && !result.ok && result.status !== 401)) return;
+  if(!result.ok){if(result.status===401){clearSession();return renderLogin(result.error);} return memberLoadError('membership',result.error,renderMembership);}
   const d=result.data||{},m=d.membership||{},history=d.renewal_history||[];
   memberPage('membership',`<section style="padding:22px"><h1 style="font-size:26px">Membership</h1><article style="background:#fff;border-radius:18px;padding:20px;margin-top:14px"><div style="font-size:12px;color:#64748b;font-weight:700">CURRENT PLAN</div><h2>${esc(m.plan_name||'Membership')}</h2><div>${esc(String(m.status||'').toUpperCase())} · ${esc(m.days_left==null?'—':`${Math.max(m.days_left,0)} days left`)}</div><div style="color:#64748b;margin-top:12px">Started ${pageDate(m.membership_start)}<br>Valid through ${pageDate(m.membership_end)}</div><div style="font-weight:700;margin-top:12px">${m.plan_price?money(m.plan_price):''} ${m.plan_duration_days?`· ${m.plan_duration_days} days`:''}</div><button id="renew" style="width:100%;margin-top:18px;padding:14px;border:0;border-radius:11px;background:#2563eb;color:white;font-weight:700">Renew membership</button></article><h2 style="font-size:18px;margin:24px 0 10px">Renewal history</h2>${history.length?history.map((item)=>`<article style="background:#fff;border-radius:14px;padding:15px;margin-top:9px"><strong>${esc(item.plan_name||'Renewal')}</strong><div style="color:#64748b;margin-top:6px">${pageDate(item.new_start)} – ${pageDate(item.new_end)}</div><div style="margin-top:6px">${money(item.amount)}</div></article>`).join(''):'<p style="color:#64748b">Your confirmed renewals will appear here.</p>'}</section>`);
   document.querySelector('#renew').onclick=renderRenew;
 }
 
-async function renderAttendance(page=1,prior=[]) {
-  if(page===1)shell('<div style="padding:48px;text-align:center">Loading attendance…</div>');
-  const result=await api(`/api/member/v1/access?page=${page}&per_page=20`);
+async function renderAttendance(page=1,prior=[],background=false) {
+  const version = beginPage('attendance');
+  if(page===1 && !background)shell('<div style="padding:48px;text-align:center">Loading attendance…</div>');
+  const results = background
+    ? await Promise.all(Array.from({ length: page }, (_, index) => api(`/api/member/v1/access?page=${index + 1}&per_page=20`)))
+    : [await api(`/api/member/v1/access?page=${page}&per_page=20`)];
+  if (version !== pageVersion) return;
+  const result = results.find(item => !item.ok) || results[results.length - 1];
+  if (background && !result.ok) {
+    if (result.status === 401) { clearSession(); renderLogin(result.error); }
+    return;
+  }
+  if (background) {
+    prior = results.slice(0, -1).flatMap(item => item.data.events || []);
+  }
+  attendancePage = page;
   if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('attendance',result.error,()=>renderAttendance(page,prior));}else alert(result.error);return;}
   const data=result.data||{},summary=data.summary||{},events=[...prior,...(data.events||[])];
   const rows=events.map((event)=>{const type=String(event.event_type||'').toUpperCase();const label=type==='ENTRY'?'Gym entry':type==='EXIT'?'Gym exit':type.includes('DENIED')?'Access denied':'Attendance recorded';const color=type==='ENTRY'?'#059669':type.includes('DENIED')?'#dc2626':'#475569';return `<article style="display:flex;align-items:center;gap:12px;background:#fff;border-radius:14px;padding:14px;margin-top:9px"><div style="width:10px;height:10px;border-radius:50%;background:${color}"></div><div style="flex:1"><strong>${label}</strong><div style="margin-top:4px;color:#64748b;font-size:13px">${pageDateTime(event.timestamp)}${event.device_name?` · ${esc(event.device_name)}`:''}</div></div></article>`;}).join('');
@@ -406,9 +437,22 @@ async function renderAttendance(page=1,prior=[]) {
   document.querySelector('#older')?.addEventListener('click',()=>renderAttendance(page+1,events));
 }
 
-async function renderPayments(page=1,prior=[]) {
-  if(page===1)shell('<div style="padding:48px;text-align:center">Loading payments…</div>');
-  const result=await api(`/api/member/v1/payments?page=${page}&per_page=20`);
+async function renderPayments(page=1,prior=[],background=false) {
+  const version = beginPage('payments');
+  if(page===1 && !background)shell('<div style="padding:48px;text-align:center">Loading payments…</div>');
+  const results = background
+    ? await Promise.all(Array.from({ length: page }, (_, index) => api(`/api/member/v1/payments?page=${index + 1}&per_page=20`)))
+    : [await api(`/api/member/v1/payments?page=${page}&per_page=20`)];
+  if (version !== pageVersion) return;
+  const result = results.find(item => !item.ok) || results[results.length - 1];
+  if (background && !result.ok) {
+    if (result.status === 401) { clearSession(); renderLogin(result.error); }
+    return;
+  }
+  if (background) {
+    prior = results.slice(0, -1).flatMap(item => item.data.payments || []);
+  }
+  paymentsPage = page;
   if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('payments',result.error,()=>renderPayments(page,prior));}else alert(result.error);return;}
   const data=result.data||{},payments=[...prior,...(data.payments||[])];
   memberPage('payments',`<section style="padding:22px"><h1 style="font-size:26px">Payments</h1><p style="color:#64748b">Payment claims and confirmations from your gym.</p>${payments.length?payments.map((p)=>`<article style="background:#fff;border-radius:15px;padding:16px;margin-top:10px"><div style="display:flex;justify-content:space-between;gap:12px"><strong>${money(p.amount)}</strong><span style="font-size:12px;font-weight:700;color:${String(p.status).toLowerCase()==='verified'?'#059669':String(p.status).toLowerCase()==='pending'?'#b45309':'#475569'}">${esc(String(p.status||'unknown').replaceAll('_',' ').toUpperCase())}</span></div><div style="color:#64748b;font-size:13px;margin-top:7px">${esc(p.method||p.channel||'Payment')} · ${pageDate(p.paid_on||p.created_at)}</div>${p.reference?`<div style="color:#64748b;font-size:12px;margin-top:4px">Reference: ${esc(p.reference)}</div>`:''}${p.notes?`<div style="color:#64748b;font-size:12px;margin-top:4px">${esc(p.notes)}</div>`:''}</article>`).join(''):'<article style="background:#fff;border-radius:16px;padding:22px;text-align:center;color:#64748b">No payment records yet.</article>'}${page<data.pagination?.total_pages?'<button id="older" style="width:100%;margin-top:14px;padding:13px;border:1px solid #cbd5e1;border-radius:11px;background:#fff;font-weight:700">Load older payments</button>':''}</section>`);
@@ -416,7 +460,9 @@ async function renderPayments(page=1,prior=[]) {
 }
 
 async function renderRenew() {
+  const version = beginPage('renew');
   shell('<div style="padding:48px;text-align:center">Loading payment details…</div>'); const [plans, payment] = await Promise.all([api('/api/member/v1/plans'), api('/api/member/v1/payment-info')]);
+  if (version !== pageVersion) return;
   if (!plans.ok || !payment.ok) return renderHome(); const list = plans.data.plans || [], p = payment.data;
   shell(`<section style="max-width:600px;margin:auto;padding:24px"><button id="back" style="border:0;background:none;color:#2563eb">← Home</button><h1>Renew membership</h1><p style="color:#64748b">Choose a plan, pay using your gym's QR, then submit the payment reference.</p><div id="plans">${list.map((plan) => `<button class="plan" data-id="${plan.id}" data-name="${esc(plan.name)}" data-price="${plan.price}" style="width:100%;text-align:left;margin:10px 0;padding:16px;border:1px solid #cbd5e1;border-radius:14px;background:white"><strong>${esc(plan.name)}</strong><span style="float:right;color:#2563eb;font-weight:700">${money(plan.price)}</span><br><small>${plan.duration_days} days</small></button>`).join('') || notice('No renewal plans are available.', true)}</div><div id="pay" style="display:none;background:white;border-radius:16px;padding:18px;margin-top:16px"><h2 id="plan-name"></h2>${p.qr_public_url ? `<img src="${esc(p.qr_public_url)}" alt="Payment QR" style="width:220px;height:220px;display:block;margin:12px auto;object-fit:contain">` : `<div style="text-align:center;padding:18px;background:#fef3c7;border-radius:12px;margin:12px 0;color:#92400e"><strong>No payment QR available</strong><br>Ask your gym to upload their payment QR code.</div>`}<p><strong>UPI:</strong> ${esc(p.upi_id || 'Contact your gym')}</p><p>${esc(p.instructions || '')}</p><input id="reference" placeholder="UPI transaction reference (optional)" style="width:100%;box-sizing:border-box;padding:13px;border:1px solid #cbd5e1;border-radius:10px"><button id="claim" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:700">I've made the payment</button></div></section>`);
   document.querySelector('#app main')?.insertAdjacentHTML('beforeend',memberNav('membership')); bindMemberNav();
@@ -425,4 +471,14 @@ async function renderRenew() {
   document.querySelector('#claim').onclick = async () => { if (!selected) return; const result = await api('/api/member/v1/renew/claim', { method: 'POST', body: { plan_id: Number(selected), reference: document.querySelector('#reference').value.trim() || undefined } }); if (result.ok) { alert('Payment claim submitted. Your gym will verify it shortly.'); renderHome(); } else alert(result.error); };
 }
 
-export function bootVynla() { loadSession() ? renderHome() : renderLogin(); }
+export function bootVynla() {
+  loadSession() ? renderHome() : renderLogin();
+  attachLiveRefresh(document.getElementById('app'), async () => {
+    if (!session?.token) return;
+    if (activePage === 'home') await renderHome(true);
+    else if (activePage === 'membership') await renderMembership(true);
+    else if (activePage === 'attendance') await renderAttendance(attendancePage, [], true);
+    else if (activePage === 'payments') await renderPayments(paymentsPage, [], true);
+    // Profile and renewal are editable forms; leave their drafts intact.
+  }, 30000);
+}

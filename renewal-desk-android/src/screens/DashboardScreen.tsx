@@ -1,4 +1,5 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   Image,
   RefreshControl,
@@ -95,6 +96,7 @@ export function DashboardScreen({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState<string>();
 
   const session = getCachedSession();
   const hasAttention = Boolean(
@@ -108,7 +110,7 @@ export function DashboardScreen({
     return 'Good evening';
   };
 
-  useEffect(() => {
+  useLiveEffect(() => {
     let cancelled = false;
 
     const fetchAll = async () => {
@@ -132,6 +134,9 @@ export function DashboardScreen({
       if (upcomingRes.ok) setUpcoming(upcomingRes.data.members.slice(0, 5));
       if (paymentsRes.ok) setRecentPayments(paymentsRes.data.payments.slice(0, 5));
       if (rrrRes.ok) setRrrSummary(rrrRes.data);
+      if (dashRes.ok && upcomingRes.ok && paymentsRes.ok && rrrRes.ok) {
+        setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      }
 
       setLoading(false);
       setRefreshing(false);
@@ -148,6 +153,9 @@ export function DashboardScreen({
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {lastUpdated ? <Text style={{ color: colors.textSecondary, fontSize: 12, paddingHorizontal: 20, paddingTop: 8 }}>
+        {error ? 'Update failed · showing previous data' : `Updated ${lastUpdated} · refreshes automatically`}
+      </Text> : null}
       {/* Top Bar */}
       <View style={styles.topBar}>
         <View style={styles.brandBlock}>

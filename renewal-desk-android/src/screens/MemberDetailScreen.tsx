@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   Alert,
@@ -87,6 +88,7 @@ export function MemberDetailScreen({
   const [freezeReasonInput, setFreezeReasonInput] = useState('');
   const [freezing, setFreezing] = useState(false);
   const session = getCachedSession();
+  const biometricPages = useRef(1);
 
   const displayStatus = getMemberDisplayStatus(member);
   const daysText = getDaysText(member.days_until_expiry);
@@ -101,7 +103,14 @@ export function MemberDetailScreen({
       apiRequest<Member>(`/api/mobile/v1/members/${member.id}`),
       apiRequest<{ renewals: Renewal[] }>(`/api/mobile/v1/renewals?member_id=${member.id}&page_size=5`),
       apiRequest<{ payments: Payment[] }>(`/api/mobile/v1/payments?page_size=50`),
-      apiRequest<BiometricHistory>(`/api/mobile/v1/rrr/member/${member.id}/attendance?page=1&per_page=50`),
+      Promise.all(Array.from({ length: biometricPages.current }, (_, index) =>
+        apiRequest<BiometricHistory>(`/api/mobile/v1/rrr/member/${member.id}/attendance?page=${index + 1}&per_page=50`)))
+        .then(results => {
+          const failed = results.find(result => !result.ok);
+          if (failed) return failed;
+          const last = results[results.length - 1];
+          return last.ok ? { ...last, data: { ...last.data, events: results.flatMap(result => result.ok ? result.data.events : []) } } : last;
+        }),
     ]).then(([memberRes, renewalRes, paymentRes, biometricRes]) => {
 
     if (memberRes.ok) {
@@ -143,6 +152,7 @@ export function MemberDetailScreen({
         ...result.data,
         events: [...current.events, ...result.data.events],
       } : result.data);
+      biometricPages.current = nextPage;
     } else if (result.error.status === 401) {
       onLogout();
     } else {
@@ -168,7 +178,7 @@ export function MemberDetailScreen({
     setCheckingIn(false);
   }, [checkingIn, member.id, member.full_name, member.is_inside, fetchMemberData]);
 
-  useEffect(() => {
+  useLiveEffect(() => {
     void fetchMemberData();
   }, [fetchMemberData, refreshToken]);
 
