@@ -396,14 +396,14 @@ export function DashboardScreen({
 
                     <View style={styles.revenueHeroRow}>
                       <View style={styles.revenueHeroStat}>
-                        <Text style={styles.revenueHeroLabel}>Expiry cohort value</Text>
+                        <Text style={styles.revenueHeroLabel}>Expiry value estimate</Text>
                         <Text style={[styles.revenueHeroValue, { color: colors.critical }]}>
                           {formatCurrency(data.recovery_rate?.revenue_at_risk || data.revenue_at_risk || '0')}
                         </Text>
                       </View>
                       <View style={styles.revenueHeroDivider} />
                       <View style={styles.revenueHeroStat}>
-                        <Text style={styles.revenueHeroLabel}>Renewed in cohort</Text>
+                        <Text style={styles.revenueHeroLabel}>Renewal value recorded</Text>
                         <Text style={[styles.revenueHeroValue, { color: colors.success }]}>
                           {formatCurrency(data.recovery_rate?.revenue_recovered || '0')}
                         </Text>
@@ -416,13 +416,16 @@ export function DashboardScreen({
                         </Text>
                       </View>
                     </View>
+                    <Text style={styles.revenueHeroLabel}>
+                      Forecasts use member or plan rates. Renewal entries may be owner-recorded; verified payments are tracked separately.
+                    </Text>
 
-                    {/* Campaign attribution callout */}
+                    {/* Campaign-linked renewal callout; timing is not causal proof. */}
                     {data.latest_campaign ? (
                       <View style={styles.campaignCallout}>
                         <Icon name="target" size={14} color={colors.brand} />
                         <Text style={styles.campaignCalloutText} numberOfLines={1}>
-                          {`Last campaign "${data.latest_campaign.name}" → ${data.latest_campaign.total_renewed} renewed`}
+                          {`Last campaign "${data.latest_campaign.name}" → ${data.latest_campaign.total_renewed} renewals logged in the tracking window`}
                           {parseFloat(data.latest_campaign.total_revenue_recovered || '0') > 0
                             ? ` · ${formatCurrency(data.latest_campaign.total_revenue_recovered)}`
                             : ''}
@@ -720,7 +723,7 @@ export function DashboardScreen({
                     <Icon name="warning" size={16} color={colors.critical} />
                   </View>
                   <View style={styles.riskTextWrap}>
-                    <Text style={styles.riskLabel}>Revenue at Risk (7 Days)</Text>
+                    <Text style={styles.riskLabel}>Expiry Value Estimate (7 Days)</Text>
                     <Text style={styles.riskSubtext}>{data.expiring_soon} memberships expiring soon</Text>
                   </View>
                   <Text style={styles.riskAmount}>{formatCurrency(data.revenue_at_risk)}</Text>

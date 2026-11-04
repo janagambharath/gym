@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from app.extensions import db
-from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory, User
+from app.models import AccessEvent, Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory, User
 from app.models.campaign import Campaign, CampaignRecipient
 
 
@@ -237,3 +237,64 @@ class TestRevenueService:
             assert "recovery_rate" in result
             assert "revenue_at_risk" in result
             assert "revenue_recovered" in result
+
+
+def test_recent_access_event_protects_member_from_inactive_campaign_segment(app, gym, plan):
+    from app.services.campaign_service import _inactive_since
+
+    with app.app_context():
+        member = Member(
+            gym_id=gym.id,
+            plan_id=plan.id,
+            full_name="Recent Visitor",
+            phone="+919900001111",
+            membership_start=date.today() - timedelta(days=90),
+            membership_end=date.today() + timedelta(days=30),
+            status="active",
+            whatsapp_opted_in=True,
+        )
+        db.session.add(member)
+        db.session.flush()
+        db.session.add(AccessEvent(
+            gym_id=gym.id,
+            member_id=member.id,
+            event_type="ENTRY",
+            direction="IN",
+            event_timestamp=datetime.now(timezone.utc),
+            device_enroll_number="1101",
+            source_event_id="recent-visit-1101",
+        ))
+        db.session.commit()
+
+        assert _inactive_since(gym.id, 30, "Asia/Kolkata") == []
+
+
+def test_revenue_period_uses_collection_record_time_not_membership_start(app, gym):
+    from app.services.revenue_service import revenue_recovered
+
+    with app.app_context():
+        member = Member(
+            gym_id=gym.id,
+            full_name="Future Start Renewal",
+            phone="+919900001112",
+            membership_start=date.today(),
+            membership_end=date.today() + timedelta(days=30),
+            status="active",
+        )
+        db.session.add(member)
+        db.session.flush()
+        renewal = RenewalHistory(
+            gym_id=gym.id,
+            member_id=member.id,
+            previous_end=date.today(),
+            new_start=date.today() + timedelta(days=60),
+            new_end=date.today() + timedelta(days=90),
+            amount=Decimal("1200.00"),
+            is_test=False,
+        )
+        db.session.add(renewal)
+        db.session.commit()
+
+        result = revenue_recovered(gym.id, "Asia/Kolkata", period_days=30)
+        assert result["total_renewals"] == 1
+        assert result["total_amount"] == "1200.00"

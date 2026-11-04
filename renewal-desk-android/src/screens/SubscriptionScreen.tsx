@@ -61,7 +61,7 @@ const PLAN_DETAILS: Record<string, { tagline: string; positioning: string; featu
       'Everything in Starter, plus:',
       'Advanced expiry dashboard & daily action queues',
       'Automated WhatsApp renewal reminders & templates',
-      'Revenue recovery tracking (actual collected amounts)',
+      'Revenue tracking (payment-backed and owner-recorded amounts shown separately)',
       'Lead management & follow-up reminders',
       'AI-assisted response suggestions',
       'Staff assignments, permissions & ownership',
@@ -421,7 +421,7 @@ export function SubscriptionScreen({ onBack }: SubscriptionScreenProps) {
           <View style={styles.currentPlanHeader}>
             <View>
               <Text style={styles.currentPlanLabel}>Current Plan</Text>
-              <Text style={styles.currentPlanName}>{entitlement?.plan_name || '7-Day Free Trial'}</Text>
+              <Text style={styles.currentPlanName}>{entitlement?.plan_name || '14-Day Free Trial'}</Text>
             </View>
             <StatusBadge status={status} />
           </View>
@@ -441,7 +441,7 @@ export function SubscriptionScreen({ onBack }: SubscriptionScreenProps) {
           {isTrial && (
             <View style={styles.trialNoticeBox}>
               <Icon name="time" size={16} color={colors.brand} />
-              <Text style={styles.trialNoticeText}>7 days free • No credit card required. Upgrade anytime before trial ends.</Text>
+              <Text style={styles.trialNoticeText}>14 days free • No credit card required. Upgrade anytime before trial ends.</Text>
             </View>
           )}
           {isManual ? (
@@ -469,7 +469,7 @@ export function SubscriptionScreen({ onBack }: SubscriptionScreenProps) {
           <>
             <View style={styles.catalogHeadingRow}>
               <Text style={styles.catalogSectionTitle}>Choose the plan that fits your gym</Text>
-              <Text style={styles.catalogSectionSubtitle}>Start free for 7 days. Upgrade when you’re ready.</Text>
+              <Text style={styles.catalogSectionSubtitle}>Start free for 14 days. Upgrade when you’re ready.</Text>
             </View>
             {plans.map((plan) => {
               const detail = PLAN_DETAILS[plan.name] || { tagline: '', positioning: '', features: [] };
@@ -503,7 +503,7 @@ export function SubscriptionScreen({ onBack }: SubscriptionScreenProps) {
                   <View style={styles.autoRenewDisclosureRow}>
                     <Icon name="info" size={12} color={colors.muted} />
                     <Text style={styles.autoRenewDisclosureText}>
-                      7-day free trial, then {displayPriceText}. Auto-renews monthly until cancelled.
+                      14-day free trial, then {displayPriceText}. Auto-renews monthly until cancelled.
                     </Text>
                   </View>
                   <TouchableOpacity

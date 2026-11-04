@@ -321,13 +321,19 @@ def test_advanced_destructive_commands_require_confirmation(client, seed_gym):
 
 
 def test_remote_unlock_is_owner_only(client, seed_gym):
-    _bridge(seed_gym)
+    installation, _ = _bridge(seed_gym)
+    installation.last_heartbeat_at = datetime.now(timezone.utc)
+    db.session.commit()
     res = client.post("/api/mobile/v1/access/remote-unlock",
                       headers=_staff_headers(seed_gym), json={"delay_seconds": 5})
     assert res.status_code == 403
     res = client.post("/api/mobile/v1/access/remote-unlock",
                       headers=_owner_headers(seed_gym),
                       json={"delay_seconds": 5, "reason": "member locked out"})
+    assert res.status_code == 422  # owner must explicitly confirm the door action
+    res = client.post("/api/mobile/v1/access/remote-unlock",
+                      headers=_owner_headers(seed_gym),
+                      json={"delay_seconds": 5, "reason": "member locked out", "confirm": True})
     assert res.status_code == 201
     audit_row = AuditLog.query.filter_by(action="remote_door_unlock_dispatched").one()
     assert audit_row.metadata_json["reason"] == "member locked out"

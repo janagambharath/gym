@@ -587,7 +587,7 @@ function SuccessModal({
                   {result.upcoming_renewals_count} Upcoming Renewals Discovered
                 </Text>
                 <Text style={styles.roiBannerSub}>
-                  {formatCurrency(result.revenue_at_risk)} revenue at risk within 7 days.
+                  {formatCurrency(result.revenue_at_risk)} estimated expiry value within 7 days.
                 </Text>
               </View>
             </View>

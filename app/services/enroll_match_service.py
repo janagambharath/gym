@@ -302,24 +302,37 @@ def suggest_matches(gym_id: int) -> dict:
             continue  # already linked — nothing to do
         best: Member | None = None
         best_score = 0.0
+        tied_best: list[Member] = []
         for m in members:
             if m.id in used_member_ids:
                 continue
             score = _similarity(tname, m.full_name)
             if score > best_score:
                 best_score, best = score, m
+                tied_best = [m]
+            elif score == best_score and score > 0:
+                tied_best.append(m)
         if best is not None and best_score >= MATCH_THRESHOLD:
-            used_member_ids.add(best.id)
+            ambiguous = len(tied_best) > 1
+            if not ambiguous:
+                used_member_ids.add(best.id)
             suggestions.append({
                 "enroll_number": enroll,
                 "terminal_name": tname,
-                "member_id": best.id,
-                "member_name": best.full_name,
-                "member_phone": best.phone,
+                # Never place an arbitrary person in the confirmation slot
+                # when two member records match equally well.
+                "member_id": None if ambiguous else best.id,
+                "member_name": None if ambiguous else best.full_name,
+                "member_phone": None if ambiguous else best.phone,
                 "confidence": round(best_score * 100),
+                "ambiguous": ambiguous,
+                "candidate_members": (
+                    [{"id": m.id, "name": m.full_name, "phone": m.phone} for m in tied_best]
+                    if ambiguous else []
+                ),
                 # Review-UI flag (M5): only exact normalized matches are
-                # auto-linkable; anything lower needs an owner tap.
-                "auto_linkable": round(best_score * 100) >= 100,
+                # auto-linkable; ties always need an explicit profile mapping.
+                "auto_linkable": round(best_score * 100) >= 100 and not ambiguous,
             })
         else:
             unmatched.append({"enroll_number": enroll, "terminal_name": tname,
@@ -357,7 +370,7 @@ def auto_link_high_confidence(
     skipped = []
 
     for sugg in result["suggestions"]:
-        if sugg["confidence"] >= 100:
+        if sugg["confidence"] >= 100 and not sugg.get("ambiguous"):
             try:
                 member = confirm_match(
                     gym_id=gym_id,
@@ -387,7 +400,12 @@ def auto_link_high_confidence(
                 "terminal_name": sugg["terminal_name"],
                 "member_name": sugg["member_name"],
                 "confidence": sugg["confidence"],
-                "reason": "not an exact normalized match, needs owner confirmation",
+                "candidate_members": sugg.get("candidate_members", []),
+                "reason": (
+                    "multiple members match equally; link from the correct member profile"
+                    if sugg.get("ambiguous")
+                    else "not an exact normalized match, needs owner confirmation"
+                ),
             })
 
     return {"linked": linked, "skipped": skipped}

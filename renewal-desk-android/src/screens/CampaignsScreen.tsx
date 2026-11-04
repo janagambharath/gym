@@ -99,7 +99,7 @@ export function CampaignsScreen({ onBack, onCreateCampaign, onSelectCampaign }: 
   const showAdComingSoon = useCallback(() => {
     Alert.alert(
       'Get New Members — Coming Soon',
-      'Lead Ad acquisition is coming in the next release! It connects Meta & Instagram Ad leads straight into your WhatsApp bot and member intake pipeline.\n\nYour WhatsApp bot and attribution tracking are already configured and ad-ready.',
+      'Meta and Instagram Lead Ads are not connected yet. You can send WhatsApp campaigns to members already in Renewal Desk and track renewals recorded after a campaign.',
       [{ text: 'Got it' }],
     );
   }, []);
@@ -139,7 +139,7 @@ export function CampaignsScreen({ onBack, onCreateCampaign, onSelectCampaign }: 
               </View>
               <View style={styles.highlightPill}>
                 <Icon name="check" size={12} color={colors.success} />
-                <Text style={styles.highlightText}>Recovered revenue attribution</Text>
+                <Text style={styles.highlightText}>Campaign-linked renewal tracking</Text>
               </View>
             </View>
             <TouchableOpacity

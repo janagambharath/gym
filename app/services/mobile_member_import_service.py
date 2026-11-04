@@ -4,10 +4,12 @@ from __future__ import annotations
 import csv
 import io
 import re
+from decimal import Decimal, InvalidOperation
 from datetime import date
 from typing import Any
 
 from app.models import Member, MembershipPlan
+from app.services.bridge_service import canonical_enroll_number
 from app.services.reminder_service import today_for_gym
 
 
@@ -35,11 +37,19 @@ def validate_csv(gym_id: int, gym_timezone: str, csv_text: str) -> dict[str, Any
     if missing:
         return {"rows": [], "summary": {"total": 0, "valid": 0, "invalid": 0, "duplicates": 0}, "file_errors": [f"Missing required columns: {', '.join(missing)}."]}
 
-    plans = {plan.name.lower(): plan.id for plan in MembershipPlan.query.filter_by(gym_id=gym_id, is_active=True)}
+    plans = {plan.name.lower(): plan for plan in MembershipPlan.query.filter_by(gym_id=gym_id, is_active=True)}
     existing_phones = {
         phone for (phone,) in Member.query.with_entities(Member.phone).filter_by(gym_id=gym_id).filter(Member.deleted_at.is_(None))
     }
+    existing_enrolls = {
+        canonical_enroll_number(enroll)
+        for (enroll,) in Member.query.with_entities(Member.device_enroll_number)
+        .filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None), Member.device_enroll_number.isnot(None))
+        .all()
+    }
     seen_phones: set[str] = set()
+    seen_enrolls: set[str] = set()
     rows: list[dict[str, Any]] = []
     for row_number, raw in enumerate(reader, start=2):
         if row_number - 1 > MAX_ROWS:
@@ -62,9 +72,35 @@ def validate_csv(gym_id: int, gym_timezone: str, csv_text: str) -> dict[str, Any
         if start and end and end < start:
             errors.append("membership_end must be on or after membership_start")
         plan_name = row.get("plan", "")
-        plan_id = plans.get(plan_name.lower()) if plan_name else None
-        if plan_name and plan_id is None:
+        plan = plans.get(plan_name.lower()) if plan_name else None
+        if plan_name and plan is None:
             errors.append(f"plan '{plan_name}' does not exist for this gym")
+        plan_id = plan.id if plan else None
+
+        raw_price = row.get("price", "") or row.get("member_price", "")
+        if raw_price:
+            try:
+                parsed_price = Decimal(raw_price)
+                member_price = parsed_price.quantize(Decimal("0.01"))
+                if (not parsed_price.is_finite() or parsed_price < 0
+                        or parsed_price > Decimal("99999999.99")
+                        or parsed_price != member_price):
+                    raise InvalidOperation
+            except (InvalidOperation, ValueError):
+                errors.append("price must be a non-negative amount with up to two decimal places")
+                member_price = Decimal("0.00")
+        else:
+            member_price = Decimal(str(plan.price)) if plan else Decimal("0.00")
+
+        device_enroll_number = row.get("device_enroll_number", "").strip()
+        if device_enroll_number:
+            try:
+                device_enroll_number = canonical_enroll_number(device_enroll_number)
+                if device_enroll_number in seen_enrolls or device_enroll_number in existing_enrolls:
+                    errors.append("duplicate biometric Enroll Number")
+                seen_enrolls.add(device_enroll_number)
+            except ValueError as exc:
+                errors.append(str(exc))
         status = (row.get("status") or "active").lower()
         if status not in {"active", "expired", "paused"}:
             errors.append("status must be active, expired, or paused")
@@ -80,7 +116,9 @@ def validate_csv(gym_id: int, gym_timezone: str, csv_text: str) -> dict[str, Any
             "status": "VALID" if not errors else ("DUPLICATE" if any("duplicate" in item or "already belongs" in item for item in errors) else "INVALID"),
             "normalized": {
                 "full_name": full_name, "phone": phone, "email": row.get("email") or None,
-                "gender": gender, "plan_id": plan_id, "membership_start": start,
+                "gender": gender, "plan_id": plan_id, "price": str(member_price),
+                "device_enroll_number": device_enroll_number or None,
+                "membership_start": start,
                 "membership_end": end, "status": status, "notes": row.get("notes") or None,
             },
         })

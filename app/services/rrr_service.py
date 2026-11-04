@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
@@ -359,11 +359,38 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
     if not member_ids:
         return []
 
+    # Read the same two attendance sources used by retention nudges. Manual
+    # check-ins and legacy bridge events live in AccessEvent; ignoring them
+    # makes a member who checked in today look absent for weeks.
     last_visit = dict(
         db.session.query(RRRAttendanceEvent.member_id, func.max(RRRAttendanceEvent.punch_time))
-        .filter(RRRAttendanceEvent.gym_id == gym_id, RRRAttendanceEvent.member_id.isnot(None))
-        .group_by(RRRAttendanceEvent.member_id).all()
+        .filter(
+            RRRAttendanceEvent.gym_id == gym_id,
+            RRRAttendanceEvent.member_id.in_(member_ids),
+        )
+        .group_by(RRRAttendanceEvent.member_id)
+        .all()
     )
+    access_last_visits = (
+        db.session.query(AccessEvent.member_id, func.max(AccessEvent.event_timestamp))
+        .filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.member_id.in_(member_ids),
+            AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
+        )
+        .group_by(AccessEvent.member_id)
+        .all()
+    )
+    for member_id, access_visit in access_last_visits:
+        previous = last_visit.get(member_id)
+        candidate_cmp = access_visit
+        previous_cmp = previous
+        if candidate_cmp is not None and candidate_cmp.tzinfo is None:
+            candidate_cmp = candidate_cmp.replace(tzinfo=timezone.utc)
+        if previous_cmp is not None and previous_cmp.tzinfo is None:
+            previous_cmp = previous_cmp.replace(tzinfo=timezone.utc)
+        if previous_cmp is None or (candidate_cmp is not None and candidate_cmp > previous_cmp):
+            last_visit[member_id] = access_visit
 
     # Oldest pending payment per member (bulk).
     pending_sub = (
@@ -400,7 +427,13 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
 
     created = []
     for member in members:
-        value = member.plan.price if member.plan else Decimal("0")
+        # Member.price is pinned at signup/renewal and preserves negotiated
+        # rates. Older imported records may still have the model's zero
+        # default; use their current plan price as an estimate until an
+        # owner records the member's actual rate.
+        value = Decimal(str(member.price or 0))
+        if value <= 0 and member.plan is not None:
+            value = Decimal(str(member.plan.price or 0))
         if member.membership_end:
             days = (member.membership_end - today).days
             if member.status == "active" and 0 <= days <= rules["expiry_days"]:
@@ -426,17 +459,20 @@ def refresh_opportunities(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> li
                 existing=existing, dedupe_suffix=f":payment:{pending_payment.id}",
             ))
         visit = last_visit.get(member.id)
-        if visit is not None:
-            if visit.tzinfo is None:
-                visit = visit.replace(tzinfo=timezone.utc)
-            try:
-                last_activity_day = visit.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
-            except Exception:
-                last_activity_day = visit.astimezone(ZoneInfo("Asia/Kolkata")).date()
-        else:
-            last_activity_day = member.membership_start
-        no_visit_days = max(0, (today - last_activity_day).days)
-        if member.status == "active" and no_visit_days >= rules["no_visit_days"]:
+        if visit is not None and visit.tzinfo is None:
+            visit = visit.replace(tzinfo=timezone.utc)
+        try:
+            last_activity_day = (
+                visit.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
+                if visit is not None else None
+            )
+        except Exception:
+            last_activity_day = visit.astimezone(ZoneInfo("Asia/Kolkata")).date() if visit is not None else None
+        # Missing history is not evidence of inactivity. This is especially
+        # important on migration day, before old-system attendance has been
+        # imported or the terminal has begun sending records.
+        no_visit_days = max(0, (today - last_activity_day).days) if last_activity_day else None
+        if member.status == "active" and no_visit_days is not None and no_visit_days >= rules["no_visit_days"]:
             created.append(_upsert_opportunity(
                 gym_id=gym_id, member=member, pillar="retain", reason_code="no_recent_visit",
                 reason_text=f"No attendance recorded for {no_visit_days} day(s).",
@@ -508,16 +544,21 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     active_members = Member.query.filter_by(gym_id=gym_id, status="active").filter(Member.deleted_at.is_(None)).count()
     total_members = Member.query.filter_by(gym_id=gym_id).filter(Member.deleted_at.is_(None)).count()
     month_start = utcnow() - timedelta(days=30)
+    active_member_ids = select(Member.id).where(
+        Member.gym_id == gym_id,
+        Member.status == "active",
+        Member.deleted_at.is_(None),
+    )
     visitor_members = db.session.query(
         RRRAttendanceEvent.member_id.label("member_id")
     ).filter(
         RRRAttendanceEvent.gym_id == gym_id,
-        RRRAttendanceEvent.member_id.isnot(None),
+        RRRAttendanceEvent.member_id.in_(active_member_ids),
         RRRAttendanceEvent.punch_time >= month_start,
     ).union(
         db.session.query(AccessEvent.member_id.label("member_id")).filter(
             AccessEvent.gym_id == gym_id,
-            AccessEvent.member_id.isnot(None),
+            AccessEvent.member_id.in_(active_member_ids),
             AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
             AccessEvent.event_timestamp >= month_start,
         )
@@ -563,9 +604,18 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
         "unmapped_count": RRRAttendanceEvent.query.filter_by(gym_id=gym_id, processing_status="unmapped").count(),
         "opportunities": [_opportunity_payload(x) for x in opportunities[:12]],
         # Setup-checklist signals for new gyms (PWA dashboard).
-        "plans_count": MembershipPlan.query.filter_by(gym_id=gym_id, is_active=True).count(),
+        "plans_count": MembershipPlan.query.filter(
+            MembershipPlan.gym_id == gym_id,
+            MembershipPlan.is_active.is_(True),
+            MembershipPlan.duration_days > 0,
+            MembershipPlan.price > 0,
+        ).count(),
         "whatsapp_connected": bool((gym := db.session.get(Gym, gym_id)) and gym.whatsapp_enabled and gym.whatsapp_connection_status == "CONNECTED"),
-        "payment_setup_done": bool(QRSettings.query.filter_by(gym_id=gym_id).first()),
+        "payment_setup_done": bool(
+            (qr := QRSettings.query.filter_by(gym_id=gym_id).first())
+            and qr.is_active
+            and (qr.upi_id or qr.qr_image_path or qr.qr_public_url)
+        ),
     }
 
 

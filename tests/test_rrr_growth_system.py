@@ -19,6 +19,15 @@ def test_rrr_dashboard_uses_real_expiry_and_no_visit_data(client, seed_gym, seed
     seed_member.membership_start = date.today() - timedelta(days=30)
     seed_member.device_enroll_number = "42"
     db.session.commit()
+    normalize_attendance(
+        gym_id=seed_gym["gym"].id,
+        source="adms_direct",
+        biometric_user_id="42",
+        punch_time=datetime.now(timezone.utc) - timedelta(days=20),
+        external_event_id="old-member-visit",
+        device_serial="X2008",
+    )
+    db.session.commit()
 
     response = client.get("/api/mobile/v1/rrr/dashboard", headers=headers(seed_gym))
     assert response.status_code == 200

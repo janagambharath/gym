@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, select
@@ -13,6 +14,7 @@ from app.models import Member, MembershipPlan
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
+from app.services.bridge_service import canonical_enroll_number
 from app.services.reminder_service import today_for_gym
 from app.utils.decorators import active_gym_required, roles_required
 
@@ -84,6 +86,13 @@ def import_members():
     valid_rows: list[dict] = []
     row_errors: dict[int, list[str]] = {}
     seen_in_file_phones: set[str] = set()
+    seen_in_file_enrolls: set[str] = set()
+    existing_enrolls = {
+        canonical_enroll_number(m.device_enroll_number)
+        for m in Member.query.filter_by(gym_id=current_user.gym_id)
+        .filter(Member.deleted_at.is_(None), Member.device_enroll_number.isnot(None))
+        .all()
+    }
     duplicate_count = 0
 
     batch_id = f"IMPORT-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
@@ -114,14 +123,27 @@ def import_members():
         if membership_start and membership_end and membership_end < membership_start:
             errors.append("membership_end must be on or after membership_start")
 
-        plan_id = None
+        plan = None
         plan_name = row.get("plan", "")
         if plan_name:
             plan = plans_by_name.get(plan_name.lower())
             if not plan:
                 errors.append(f"plan '{plan_name}' does not exist for this gym")
-            else:
-                plan_id = plan.id
+
+        raw_price = row.get("price", "") or row.get("member_price", "")
+        if raw_price:
+            try:
+                parsed_price = Decimal(raw_price)
+                member_price = parsed_price.quantize(Decimal("0.01"))
+                if (not parsed_price.is_finite() or parsed_price < 0
+                        or parsed_price > Decimal("99999999.99")
+                        or parsed_price != member_price):
+                    raise InvalidOperation
+            except (InvalidOperation, ValueError):
+                errors.append("price must be a non-negative amount with up to two decimal places")
+                member_price = Decimal("0.00")
+        else:
+            member_price = Decimal(str(plan.price)) if plan else Decimal("0.00")
 
         status = row.get("status", "active") or "active"
         if status not in {"active", "expired", "paused"}:
@@ -137,6 +159,14 @@ def import_members():
             errors.append(f"gender '{gender}' must be female, male, or other")
 
         device_enroll = row.get("device_enroll_number", "") or None
+        if device_enroll:
+            try:
+                device_enroll = canonical_enroll_number(device_enroll)
+                if device_enroll in existing_enrolls or device_enroll in seen_in_file_enrolls:
+                    errors.append("duplicate biometric Enroll Number")
+                seen_in_file_enrolls.add(device_enroll)
+            except ValueError as exc:
+                errors.append(str(exc))
 
         if errors:
             row_errors[index] = errors
@@ -148,7 +178,8 @@ def import_members():
                 "phone": cleaned_phone,
                 "email": email,
                 "gender": gender,
-                "plan_id": plan_id,
+                "plan_id": plan.id if plan else None,
+                "price": member_price,
                 "membership_start": membership_start,
                 "membership_end": membership_end,
                 "status": status,

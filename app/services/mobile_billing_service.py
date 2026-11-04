@@ -51,6 +51,15 @@ DEFAULT_CATALOG: dict[str, list[dict[str, str]]] = {
     ],
 }
 
+# Keep purchase enforcement aligned with the plan presentation in
+# ``mobile_api.subscription``. Without applying the tier limit here, a paid
+# gym remained at the signup default (50 members) after Play verification.
+PLAN_MEMBER_LIMITS: dict[str, int | None] = {
+    "Starter": 150,
+    "Growth": 500,
+    "Pro": None,
+}
+
 
 def _as_utc(value: str | None) -> datetime | None:
     if not value:
@@ -324,6 +333,7 @@ def _apply_verified_purchase(
     gym.billing_source = "GOOGLE_PLAY"
     gym.billing_plan_id = product_id
     gym.billing_plan_name = product["name"]
+    gym.max_members = PLAN_MEMBER_LIMITS.get(product["name"], gym.max_members)
     gym.subscription_status = status
     gym.billing_started_at = gym.billing_started_at or utcnow()
     gym.billing_renews_at = subscription.renews_at

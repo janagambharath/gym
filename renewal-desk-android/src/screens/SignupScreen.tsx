@@ -274,7 +274,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
               <View style={styles.infoBox}>
                 <Icon name="checkmark" size={16} color={colors.success} />
                 <Text style={styles.infoBoxText}>
-                  7 days free • No credit card required. Full access to automated renewals and revenue recovery.
+                  14 days free • No credit card required. Full access to automated renewals and revenue recovery.
                 </Text>
               </View>
 
@@ -298,7 +298,7 @@ export function SignupScreen({ onSignupSuccess, onNavigateLogin }: SignupScreenP
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     <>
-                      <Text style={styles.primaryButtonText}>Start 7-Day Trial</Text>
+                      <Text style={styles.primaryButtonText}>Start 14-Day Trial</Text>
                       <Icon name="checkmark" size={18} color="#fff" />
                     </>
                   )}

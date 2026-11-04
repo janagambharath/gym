@@ -1,7 +1,9 @@
-"""Revenue service — Revenue at Risk, Revenue Recovered, and Recovery Rate.
+"""Revenue service — estimated risk and recorded renewal activity.
 
 These are the signature product metrics for Renewal Desk.
-All numbers are computed from actual recorded data — never fabricated.
+Risk values use pinned member prices or current plan prices for legacy rows;
+renewal values are amounts on the gym's renewal records. They are not all
+independently verified collections or proof of campaign causation.
 """
 from __future__ import annotations
 
@@ -11,34 +13,37 @@ from decimal import Decimal
 from sqlalchemy import func
 
 from app.extensions import db
-from app.models import Member, PaymentVerification, RenewalHistory
+from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
 from app.models.campaign import Campaign, CampaignRecipient
-from app.services.timezone_service import today_for_gym
+from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 
 def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     """Calculate the total membership revenue currently at risk.
 
-    Revenue at risk = sum of plan prices for:
+    Estimated value at risk = sum of pinned member prices, or current plan
+    prices for older rows without a pinned amount, for:
     - Members expiring within 7 days
     - Members already expired (within last 30 days)
     - Members with no recent activity (inactive)
 
-    Returns breakdown and total.
+    Returns a forecast breakdown and total, not collected cash.
     """
     today = today_for_gym(gym_timezone)
     soon = today + timedelta(days=7)
     expired_cutoff = today - timedelta(days=30)
 
-    # Expiring within 7 days. Uses the per-member pinned price (set at
-    # signup/last renewal) so plan price edits don't retroactively reprice
-    # the metric. Members without a pinned price contribute count but 0.
+    # Expiring within 7 days. Use the per-member pinned price when present.
+    # Legacy imported rows with the model's zero default use the current plan
+    # price as an estimate so missing history does not erase the pipeline.
+    risk_value = func.coalesce(func.nullif(Member.price, 0), MembershipPlan.price, 0)
     expiring_risk = (
         db.session.query(
             func.count(Member.id).label("count"),
-            func.coalesce(func.sum(Member.price), 0).label("amount"),
+            func.coalesce(func.sum(risk_value), 0).label("amount"),
         )
         .select_from(Member)
+        .outerjoin(MembershipPlan, MembershipPlan.id == Member.plan_id)
         .filter(
             Member.gym_id == gym_id,
             Member.deleted_at.is_(None),
@@ -53,9 +58,10 @@ def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     expired_risk = (
         db.session.query(
             func.count(Member.id).label("count"),
-            func.coalesce(func.sum(Member.price), 0).label("amount"),
+            func.coalesce(func.sum(risk_value), 0).label("amount"),
         )
         .select_from(Member)
+        .outerjoin(MembershipPlan, MembershipPlan.id == Member.plan_id)
         .filter(
             Member.gym_id == gym_id,
             Member.deleted_at.is_(None),
@@ -83,14 +89,15 @@ def revenue_recovered(
 ) -> dict:
     """Calculate revenue recovered through Renewal Desk.
 
-    Revenue recovered = sum of actual renewal amounts from:
+    Recorded renewal value = sum of owner-entered renewal amounts from:
     - Direct renewals (owner-confirmed)
     - Campaign-attributed renewals
     - Reactivations (expired member who renewed)
 
     Args:
         period_days: If set, only count renewals within the last N days.
-                     If None, count all-time.
+                     If None, count all-time. These records are not by
+                     themselves proof of verified payment or causal lift.
     """
     query = (
         db.session.query(
@@ -106,7 +113,8 @@ def revenue_recovered(
     if period_days is not None:
         today = today_for_gym(gym_timezone)
         cutoff_date = today - timedelta(days=period_days)
-        query = query.filter(RenewalHistory.new_start >= cutoff_date)
+        cutoff_at = utc_start_of_gym_day(gym_timezone, local_date=cutoff_date)
+        query = query.filter(RenewalHistory.created_at >= cutoff_at)
 
     result = query.one()
 
@@ -121,7 +129,8 @@ def revenue_recovered(
     if period_days is not None:
         today = today_for_gym(gym_timezone)
         cutoff_date = today - timedelta(days=period_days)
-        base_filters.append(RenewalHistory.new_start >= cutoff_date)
+        cutoff_at = utc_start_of_gym_day(gym_timezone, local_date=cutoff_date)
+        base_filters.append(RenewalHistory.created_at >= cutoff_at)
     paid = (
         db.session.query(
             func.coalesce(func.sum(RenewalHistory.amount), 0).label("amount"),
@@ -155,7 +164,8 @@ def revenue_recovered(
     if period_days is not None:
         today = today_for_gym(gym_timezone)
         cutoff_date = today - timedelta(days=period_days)
-        campaign_query = campaign_query.filter(RenewalHistory.new_start >= cutoff_date)
+        cutoff_at = utc_start_of_gym_day(gym_timezone, local_date=cutoff_date)
+        campaign_query = campaign_query.filter(RenewalHistory.created_at >= cutoff_at)
 
     campaign_result = campaign_query.one()
 

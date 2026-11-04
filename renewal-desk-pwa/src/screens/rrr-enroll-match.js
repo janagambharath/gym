@@ -69,6 +69,16 @@ function render(el, data) {
 
 function suggestionCard(s) {
   const confidence = s.confidence >= 90 ? 'High confidence' : s.confidence >= 70 ? 'Good match' : 'Possible match';
+  if (s.ambiguous) {
+    const candidates = (s.candidate_members || []).map(candidate =>
+      `<li>${esc(candidate.name)}${candidate.phone ? ` · ${esc(candidate.phone)}` : ''}</li>`
+    ).join('');
+    return `<article class="rrr-opportunity rrr-opportunity-muted" data-suggestion="${esc(s.enroll_number)}">
+      <div><h2>Terminal #${esc(s.enroll_number)} · ${esc(s.terminal_name || 'No name')}</h2>
+      <p>This name matches more than one member. Link the ID from the correct member profile.</p>
+      ${candidates ? `<ul>${candidates}</ul>` : ''}</div>
+    </article>`;
+  }
   return `<article class="rrr-opportunity" data-suggestion="${esc(s.enroll_number)}">
     <div>
       <h2>Terminal #${esc(s.enroll_number)} · ${esc(s.terminal_name || 'No name')}</h2>

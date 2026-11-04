@@ -86,6 +86,42 @@ def test_suggest_skips_already_linked(app, seed_gym, seed_member):
     assert {u["enroll_number"] for u in result["unmatched_terminal"]} == {"43"}
 
 
+def test_duplicate_exact_member_names_never_auto_link(app, seed_gym, seed_member):
+    gym = seed_gym["gym"]
+    seed_member_id = seed_member.id
+    with app.app_context():
+        duplicate = Member(
+            gym_id=gym.id,
+            plan_id=seed_gym["plan"].id,
+            full_name=seed_member.full_name,
+            phone="+919998887778",
+            status="active",
+            membership_start=date.today(),
+            membership_end=date.today() + timedelta(days=30),
+        )
+        db.session.add(duplicate)
+        db.session.commit()
+        duplicate_id = duplicate.id
+
+    _seed_bridge_and_snapshot(app, seed_gym, [{"user_id": "77", "name": "John Doe"}])
+    with app.app_context():
+        suggestion = enroll_match_service.suggest_matches(gym.id)["suggestions"][0]
+        assert suggestion["confidence"] == 100
+        assert suggestion["ambiguous"] is True
+        assert suggestion["auto_linkable"] is False
+        assert suggestion["member_id"] is None
+        assert {candidate["id"] for candidate in suggestion["candidate_members"]} == {
+            seed_member.id,
+            duplicate_id,
+        }
+
+        result = enroll_match_service.auto_link_high_confidence(gym.id)
+        assert result["linked"] == []
+        assert "multiple members" in result["skipped"][0]["reason"]
+        assert db.session.get(Member, seed_member_id).device_enroll_number is None
+        assert db.session.get(Member, duplicate_id).device_enroll_number is None
+
+
 def test_suggest_no_snapshot(app, seed_gym):
     gym = seed_gym["gym"]
     with app.app_context():

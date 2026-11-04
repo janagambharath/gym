@@ -359,11 +359,10 @@ def _scheduled_reminder_job(app: Flask) -> None:
             # scheduler sweep risked wrong-person links at 90% similarity,
             # which could queue a block for the wrong terminal PIN.
             # Manual linking remains via Unmapped Punches / enroll-match UI.
-            finally:
-                # Heartbeat: prove we are alive so the short-TTL lock survives
-                # long runs but expires quickly if this worker dies.
-                _refresh_redis_lock(redis_url, _lock_ttl(app))
-                continue
+            # Heartbeat: prove we are alive so the short-TTL lock survives
+            # long runs but expires quickly if this worker dies. Continue to
+            # the messaging jobs below; a per-gym auto-link sweep is disabled.
+            _refresh_redis_lock(redis_url, _lock_ttl(app))
 
             if not gym.whatsapp_enabled:
                 db.session.expire_all()

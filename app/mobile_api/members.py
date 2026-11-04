@@ -259,6 +259,7 @@ def register_members_routes(bp):
             normalized = dict(row["normalized"])
             normalized["membership_start"] = date.fromisoformat(normalized["membership_start"])
             normalized["membership_end"] = date.fromisoformat(normalized["membership_end"])
+            normalized["price"] = Decimal(normalized["price"])
             db.session.add(Member(gym_id=g.gym_id, joined_on=today_for_gym(gym.timezone), **normalized))
         audit(
             action="mobile_bulk_import_members",

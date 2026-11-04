@@ -15,7 +15,7 @@ from flask import current_app
 from sqlalchemy import func
 
 from app.extensions import db
-from app.models import Gym, Member, MembershipPlan, PaymentVerification, ReminderLog, RenewalHistory
+from app.models import AccessEvent, Gym, Member, MembershipPlan, PaymentVerification, ReminderLog, RenewalHistory
 from app.models.campaign import Campaign, CampaignRecipient, SEGMENT_TYPES
 from app.models.rrr import RRRAttendanceEvent
 from app.models.mixins import utcnow
@@ -386,10 +386,26 @@ def _inactive_since(gym_id: int, days: int, gym_timezone: str) -> list[Member]:
         .group_by(RRRAttendanceEvent.member_id)
         .all()
     )
+    access_attendance = (
+        db.session.query(AccessEvent.member_id, func.max(AccessEvent.event_timestamp))
+        .filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.member_id.in_(member_ids),
+            AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
+        )
+        .group_by(AccessEvent.member_id)
+        .all()
+    )
+    for member_id, punch in access_attendance:
+        previous = latest_attendance.get(member_id)
+        punch_cmp = punch.replace(tzinfo=tz.utc) if punch and punch.tzinfo is None else punch
+        previous_cmp = previous.replace(tzinfo=tz.utc) if previous and previous.tzinfo is None else previous
+        if previous_cmp is None or (punch_cmp is not None and punch_cmp > previous_cmp):
+            latest_attendance[member_id] = punch
     latest_renewal = dict(
         db.session.query(
             RenewalHistory.member_id,
-            func.max(RenewalHistory.new_start),
+            func.max(RenewalHistory.created_at),
         )
         .filter(
             RenewalHistory.gym_id == gym_id,
@@ -402,9 +418,20 @@ def _inactive_since(gym_id: int, days: int, gym_timezone: str) -> list[Member]:
 
     inactive = []
     for member in members:
-        # The current membership start is the correct baseline for new members
-        # and for legacy records without renewal history.
-        last_activity = max(member.membership_start, latest_renewal.get(member.id, member.membership_start))
+        # A migration with no visit history cannot distinguish "never
+        # attended" from "attendance was not imported/connected". Only create
+        # an inactivity segment after a real visit or renewal establishes a
+        # trustworthy activity date.
+        activity_dates = []
+        renewal_at = latest_renewal.get(member.id)
+        if renewal_at is not None:
+            if renewal_at.tzinfo is None:
+                renewal_at = renewal_at.replace(tzinfo=tz.utc)
+            try:
+                renewal_day = renewal_at.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
+            except Exception:
+                renewal_day = renewal_at.astimezone(ZoneInfo("Asia/Kolkata")).date()
+            activity_dates.append(renewal_day)
         punch = latest_attendance.get(member.id)
         if punch is not None:
             if punch.tzinfo is None:
@@ -413,7 +440,10 @@ def _inactive_since(gym_id: int, days: int, gym_timezone: str) -> list[Member]:
                 attendance_day = punch.astimezone(ZoneInfo(gym_timezone or "Asia/Kolkata")).date()
             except Exception:
                 attendance_day = punch.astimezone(ZoneInfo("Asia/Kolkata")).date()
-            last_activity = max(last_activity, attendance_day)
+            activity_dates.append(attendance_day)
+        if not activity_dates:
+            continue
+        last_activity = max(activity_dates)
         if last_activity <= cutoff:
             inactive.append(member)
     return inactive
@@ -913,12 +943,13 @@ def track_campaign_reply(gym_id: int, sender_phone: str) -> bool:
 def attribute_renewal_to_campaign(
     member_id: int, gym_id: int, renewal_id: int, renewal_amount: Decimal
 ) -> int | None:
-    """Check if this renewal should be attributed to a recent campaign.
+    """Link this renewal to a recent campaign for operational tracking.
 
     Looks for the most recent campaign recipient record for this member
     within the campaign's attribution window.
 
-    Returns the campaign_id if attributed, None otherwise.
+    This is a timing-based association, not evidence the campaign caused the
+    renewal. Returns the campaign_id when associated, None otherwise.
     """
     now = utcnow()
 
@@ -965,7 +996,7 @@ def attribute_renewal_to_campaign(
                 )
 
                 _logger.info(
-                    "Attributed renewal %s to campaign %s for member %s (₹%s)",
+                    "Linked renewal %s to campaign %s for member %s (₹%s)",
                     renewal_id, campaign.id, member_id, renewal_amount,
                 )
                 return campaign.id

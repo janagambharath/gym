@@ -738,6 +738,21 @@ def _register_cli(app: Flask) -> None:
                 )
             )
 
+            try:
+                from app.services.retention_service import run_retention_nudges_for_gym
+
+                retention_result = run_retention_nudges_for_gym(
+                    gym.id, gym.timezone or "Asia/Kolkata"
+                )
+                app.logger.info(
+                    json.dumps(
+                        {"event": "gym_retention", "gym_id": gym.id, **retention_result}
+                    )
+                )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Retention nudges failed for gym %s", gym.id)
+
             # Reset stale "Inside" members whose entry was before gym closing time
             reset_count = auto_reset_stale_inside_members(
                 gym.id, gym.timezone or "Asia/Kolkata",

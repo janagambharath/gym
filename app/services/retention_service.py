@@ -264,9 +264,12 @@ def run_retention_nudges_for_gym(gym_id: int, gym_timezone: str = "Asia/Kolkata"
     for member in active_members:
         visit = last_visit.get(member.id)
         if visit is None:
-            # A newly enrolled member should not be labelled inactive before
-            # their no-visit window has actually elapsed.
-            days_since = max(0, (local_today - member.membership_start).days)
+            # No imported/recorded visits is unknown history, not proof that
+            # the member stopped attending. Keep them out of automated
+            # inactivity messages until an attendance event establishes a
+            # trustworthy last-visit date.
+            counts["skipped"] += 1
+            continue
         else:
             if visit.tzinfo is None:
                 visit = visit.replace(tzinfo=tz.utc)

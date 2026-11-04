@@ -180,7 +180,7 @@ export function CampaignDetailScreen({ campaign, onBack, onNavigateMember }: Cam
       setRenewalModalRecipient(null);
       Alert.alert(
         'Renewal Confirmed! 🎉',
-        `Renewed ${renewalModalRecipient.member_name} for ${daysNum} days (${formatCurrency(amountNum)}). This revenue has been directly attributed to this campaign.`,
+        `Renewed ${renewalModalRecipient.member_name} for ${daysNum} days (${formatCurrency(amountNum)}). Renewal Desk linked the recorded renewal to this campaign; that link does not prove the campaign caused it.`,
       );
       // Refresh list and stats
       void fetchCampaignAndRecipients();
@@ -222,12 +222,12 @@ export function CampaignDetailScreen({ campaign, onBack, onNavigateMember }: Cam
             />
           </TouchableOpacity>
 
-          {/* If already renewed, display prominent attribution confirmation */}
+          {/* If renewed in the attribution window, explain the recorded link. */}
           {isRenewed && (
             <View style={styles.renewedBanner}>
               <Icon name="checkmark" size={16} color={colors.success} />
               <Text style={styles.renewedBannerText}>
-                Renewed {item.renewal_amount ? formatCurrency(item.renewal_amount) : ''} · Attributed to this campaign
+                Renewed {item.renewal_amount ? formatCurrency(item.renewal_amount) : ''} · Linked to this campaign
               </Text>
             </View>
           )}
@@ -450,7 +450,7 @@ export function CampaignDetailScreen({ campaign, onBack, onNavigateMember }: Cam
             </View>
 
             <Text style={styles.modalAttributionNotice}>
-              🛡️ This renewal will automatically attribute {formatCurrency(parseFloat(renewalAmount) || 0)} to campaign #{currentCampaign.id}.
+              Renewal Desk will link the recorded amount to campaign #{currentCampaign.id}. This timing-based link does not prove the campaign caused the renewal.
             </Text>
 
             <View style={styles.modalActions}>

@@ -16,7 +16,7 @@ async function load(el, pillar) {
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.pop());
   el.querySelectorAll('[data-status]').forEach(btn => btn.addEventListener('click', async () => {
     const status = btn.dataset.status;
-    const outcome = status === 'closed' ? await showPrompt({ title: 'Recovered Revenue', message: 'Verified recovered revenue amount (₹):', defaultValue: '0', inputType: 'number', confirmText: 'Confirm' }) : null;
+    const outcome = status === 'closed' ? await showPrompt({ title: 'Owner-reported recovery', message: 'Enter the amount confirmed in your payment records (₹). This is owner-reported, not independently verified.', defaultValue: '0', inputType: 'number', confirmText: 'Save' }) : null;
     if (status === 'closed' && outcome === null) return;
     const response = await apiRequest(`/api/mobile/v1/rrr/opportunities/${btn.dataset.id}`, { method: 'PATCH', body: { status, ...(status === 'closed' ? { outcome_revenue: outcome } : {}) } });
     if (response.ok) load(el, pillar);

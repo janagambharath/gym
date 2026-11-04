@@ -114,13 +114,15 @@ def test_member_import_preview_identifies_rows_and_atomic_import(client, seed_gy
     assert Member.query.filter_by(gym_id=seed_gym["gym"].id).count() == 0
 
     valid_csv = "\n".join([
-        "full_name,phone,membership_start,membership_end,plan,status",
-        "Valid One,+919876000001,2026-08-01,2026-09-01,Monthly Standard,active",
+        "full_name,phone,membership_start,membership_end,plan,status,device_enroll_number,price",
+        "Valid One,+919876000001,2026-08-01,2026-09-01,Monthly Standard,active,8842,850.50",
     ])
     imported = client.post("/api/mobile/v1/members/import", headers=headers, json={"csv_text": valid_csv})
     assert imported.status_code == 201
     assert imported.get_json()["data"]["imported"] == 1
-    assert Member.query.filter_by(gym_id=seed_gym["gym"].id).count() == 1
+    member = Member.query.filter_by(gym_id=seed_gym["gym"].id).one()
+    assert member.device_enroll_number == "8842"
+    assert str(member.price) == "850.50"
 
 
 def test_mobile_member_import_cannot_modify_another_gym(client, seed_gym):

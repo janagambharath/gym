@@ -2,12 +2,13 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.extensions import db
-from app.models import Member, NotificationTemplate, ReminderLog, RenewalHistory
+from app.models import AccessEvent, Member, NotificationTemplate, ReminderLog, RenewalHistory
+from app.models.qr_settings import QRSettings
 from app.models.rrr import RRROpportunity
 from app.services.campaign_service import get_segment_members
 from app.services.retention_service import _last_visit_map, _send_nudge, run_retention_nudges_for_gym
-from app.services.rrr_service import normalize_attendance, refresh_opportunities
-from app.services.revenue_service import recovery_rate
+from app.services.rrr_service import dashboard_for_gym, normalize_attendance, refresh_opportunities
+from app.services.revenue_service import recovery_rate, revenue_at_risk
 from app.services.timezone_service import today_for_gym
 from app.mobile_api.token_service import create_access_token
 
@@ -81,6 +82,84 @@ def test_new_member_without_punches_is_not_flagged_as_absent(seed_gym, seed_memb
     assert not any(row.member_id == seed_member.id and row.reason_code == "no_recent_visit" for row in rows)
 
 
+def test_manual_access_checkin_counts_as_a_recent_visit(seed_gym, seed_member):
+    gym = seed_gym["gym"]
+    today = today_for_gym(gym.timezone)
+    seed_member.membership_start = today - timedelta(days=25)
+    seed_member.membership_end = today + timedelta(days=30)
+    db.session.add(AccessEvent(
+        gym_id=gym.id,
+        member_id=seed_member.id,
+        event_type="ENTRY",
+        direction="IN",
+        event_timestamp=datetime.now(timezone.utc),
+        device_enroll_number="42",
+        source_event_id="manual-entry-today",
+    ))
+    db.session.commit()
+
+    rows = refresh_opportunities(gym.id, gym.timezone)
+    assert not any(
+        row.member_id == seed_member.id and row.reason_code == "no_recent_visit"
+        for row in rows
+    )
+
+
+def test_attendance_rate_only_counts_current_active_members(seed_gym, seed_member):
+    from app.models import Member
+
+    gym = seed_gym["gym"]
+    expired = Member(
+        gym_id=gym.id,
+        plan_id=seed_gym["plan"].id,
+        full_name="Expired Visitor",
+        phone="+919998887771",
+        membership_start=date.today() - timedelta(days=60),
+        membership_end=date.today() - timedelta(days=1),
+        status="expired",
+    )
+    db.session.add(expired)
+    db.session.flush()
+    now = datetime.now(timezone.utc)
+    for member, event_id in ((seed_member, "active-entry"), (expired, "expired-entry")):
+        db.session.add(AccessEvent(
+            gym_id=gym.id,
+            member_id=member.id,
+            event_type="ENTRY",
+            direction="IN",
+            event_timestamp=now,
+            device_enroll_number=str(member.id),
+            source_event_id=event_id,
+        ))
+    db.session.commit()
+
+    result = dashboard_for_gym(gym.id, gym.timezone)
+    assert result["members"]["active"] == 1
+    assert result["members"]["attendance_rate"] == 100.0
+
+
+def test_setup_checklist_does_not_count_placeholder_plan_or_blank_qr(seed_gym):
+    gym = seed_gym["gym"]
+    seed_gym["plan"].price = 0
+    db.session.add(QRSettings(gym_id=gym.id, payment_label=gym.name))
+    db.session.commit()
+
+    result = dashboard_for_gym(gym.id, gym.timezone)
+    assert result["plans_count"] == 0
+    assert result["payment_setup_done"] is False
+
+
+def test_at_risk_estimate_uses_plan_price_for_legacy_zero_price_member(seed_gym, seed_member):
+    gym = seed_gym["gym"]
+    seed_member.price = 0
+    seed_member.membership_end = today_for_gym(gym.timezone) + timedelta(days=3)
+    db.session.commit()
+
+    result = revenue_at_risk(gym.id, gym.timezone)
+    assert result["expiring_count"] == 1
+    assert result["expiring_amount"] == "1000.00"
+
+
 def test_attendance_drop_uses_distinct_local_visit_days(seed_gym, seed_member):
     from zoneinfo import ZoneInfo
 
@@ -124,6 +203,15 @@ def test_attendance_resolves_a_stale_no_visit_opportunity(seed_gym, seed_member)
     seed_member.membership_start = today - timedelta(days=20)
     seed_member.membership_end = today + timedelta(days=45)
     seed_member.device_enroll_number = "42"
+    db.session.commit()
+    normalize_attendance(
+        gym_id=gym.id,
+        source="adms_direct",
+        biometric_user_id="42",
+        punch_time=datetime.now(timezone.utc) - timedelta(days=20),
+        external_event_id="baseline-visit",
+        device_serial="X2008",
+    )
     db.session.commit()
     refresh_opportunities(gym.id, gym.timezone)
     stale = RRROpportunity.query.filter_by(
@@ -198,6 +286,7 @@ def test_inactive_campaign_segment_uses_punches_and_membership_age(seed_gym, see
         membership_end=today + timedelta(days=45),
         status="active",
         whatsapp_opted_in=True,
+        device_enroll_number="43",
     )
     new_member = Member(
         gym_id=gym.id,
@@ -227,6 +316,14 @@ def test_inactive_campaign_segment_uses_punches_and_membership_age(seed_gym, see
         biometric_user_id="42",
         punch_time=datetime.now(timezone.utc) - timedelta(days=5),
         external_event_id="recent-visit",
+        device_serial="X2008",
+    )
+    normalize_attendance(
+        gym_id=gym.id,
+        source="adms_direct",
+        biometric_user_id="43",
+        punch_time=datetime.now(timezone.utc) - timedelta(days=40),
+        external_event_id="quiet-member-old-visit",
         device_serial="X2008",
     )
     db.session.commit()
