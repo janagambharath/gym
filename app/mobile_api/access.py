@@ -1,9 +1,9 @@
 """Mobile API access endpoints for the Live Access feature.
 
-Physical unlock is deliberately not exposed here.  A former placeholder route
-only recorded an entry event and implied a door had opened, which is unsafe for
-an owner-facing access product.  Device commands remain available through the
-commissioned, acknowledged command pipeline instead.
+Physical unlock is available only as an owner-confirmed command through the
+commissioned connector. Direct ADMS takes priority over a paired legacy bridge,
+and the response reports that a command was queued rather than claiming the
+door has already opened.
 """
 from __future__ import annotations
 
@@ -86,6 +86,7 @@ def register_access_routes(bp):
             gym_id=g.gym_id, connector_type="adms_direct"
         ).first()
         if adms:
+            from app.models.rrr import RRRAdmsCommand
             from app.services.rrr_service import (
                 direct_adms_terminal_is_online,
                 direct_adms_terminal_last_seen_at,
@@ -102,6 +103,25 @@ def register_access_routes(bp):
             )
             summary["adms_commands_enabled"] = bool(adms.commands_enabled)
             summary["adms_device_name"] = adms.device_name or adms.device_serial
+            # Direct ADMS is authoritative when configured, even if a legacy
+            # bridge is still paired. Never advertise or operate its TCP path.
+            summary["remote_unlock_available"] = bool(
+                summary["adms_online"] and adms.commands_enabled
+            )
+            summary["remote_unlock_path"] = "adms"
+            summary["remote_unlock_reason"] = (
+                None if summary["remote_unlock_available"]
+                else "Complete supervised Direct ADMS setup and reconnect the terminal before remote unlock."
+            )
+            summary["device_online"] = bool(summary["adms_online"])
+            summary["device_name"] = summary["adms_device_name"]
+            summary["device_serial"] = adms.device_serial
+            # Hide stale legacy bridge queues from the ADMS-only access UI.
+            summary["pending_commands"] = RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.integration_id == adms.id,
+                RRRAdmsCommand.status.in_(["queued", "delivered"]),
+            ).count()
+            summary["failed_commands"] = 0
         else:
             summary["adms_integration_id"] = None
             summary["adms_online"] = False
@@ -211,17 +231,76 @@ def register_access_routes(bp):
     @token_required
     @roles_required("gym_owner")
     def remote_unlock():
-        """Queue a physical door relay unlock command to the biometric terminal via bridge.
+        """Queue an explicitly confirmed unlock through the gym's active connector.
 
-        H5: owner-only — staff could previously unlock the door remotely
-        with no member, no reason, and no door-identity check. Callers may
-        pass an optional ``reason`` string; it is recorded in the audit
-        entry. No confirm flag is required here (unlike the ADMS advanced
-        and bridge-settings endpoints) because the PWA unlock button
-        posts only ``delay_seconds``; the owner-role restriction is the
-        server-side control, and a PWA confirm dialog is a separate
-        client follow-up.
+        Direct ADMS always takes priority over a paired bridge. The owner
+        must confirm the physical action; success means the command was
+        queued, not that the terminal has acknowledged it yet.
         """
+        data = request.get_json(silent=True) or {}
+        from app.models.rrr import RRRAdmsCommand, RRRIntegration
+        integration = RRRIntegration.query.filter_by(
+            gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is not None:
+            from app.services.bridge_service import adms_command_text
+            from app.services.rrr_service import direct_adms_terminal_is_online
+
+            if not integration.commands_enabled:
+                return jsonify({"success": False, "error": {
+                    "code": "NOT_COMMISSIONED",
+                    "message": "Complete supervised Direct ADMS setup before remote unlock.",
+                }}), 403
+            if not direct_adms_terminal_is_online(integration):
+                return jsonify({"success": False, "error": {
+                    "code": "DEVICE_OFFLINE",
+                    "message": "The Direct ADMS terminal is not polling. No command was queued.",
+                }}), 409
+            if data.get("confirm") is not True:
+                return jsonify({"success": False, "error": {
+                    "code": "CONFIRMATION_REQUIRED",
+                    "message": "Confirm the door unlock by sending confirm=true.",
+                }}), 422
+            try:
+                delay_seconds = max(1, min(30, int(data.get("delay_seconds") or 5)))
+            except (TypeError, ValueError):
+                delay_seconds = 5
+            existing = RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.integration_id == integration.id,
+                RRRAdmsCommand.status.in_(["queued", "delivered"]),
+            ).first()
+            if existing is not None:
+                return jsonify({"success": False, "error": {
+                    "code": "COMMAND_PENDING",
+                    "message": "Wait for the current Direct ADMS command acknowledgement before unlocking.",
+                }}), 409
+            command = RRRAdmsCommand(
+                gym_id=g.gym_id,
+                integration_id=integration.id,
+                action="unlock_door",
+                command_text=adms_command_text("unlock_door", None, delay_seconds=delay_seconds),
+                requested_by_id=g.current_user.id,
+            )
+            db.session.add(command)
+            db.session.flush()
+            reason = str(data.get("reason") or "").strip()[:500] or None
+            audit(
+                action="remote_door_unlock_dispatched",
+                resource_type="rrr_adms_command",
+                resource_id=command.id,
+                gym_id=g.gym_id,
+                actor_id=g.current_user.id,
+                metadata={"delay_seconds": delay_seconds, "command_id": command.id,
+                          **({"reason": reason} if reason else {})},
+            )
+            db.session.commit()
+            return jsonify({"success": True, "data": {
+                "command_id": command.id,
+                "delay_seconds": delay_seconds,
+                "status": command.status,
+                "message": "Direct ADMS unlock command queued; waiting for the terminal acknowledgement.",
+            }}), 201
+
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
             return jsonify({
@@ -232,7 +311,19 @@ def register_access_routes(bp):
                 },
             }), 404
 
-        data = request.get_json(silent=True) or {}
+        if data.get("confirm") is not True:
+            return jsonify({"success": False, "error": {
+                "code": "CONFIRMATION_REQUIRED",
+                "message": "Confirm the door unlock by sending confirm=true.",
+            }}), 422
+        heartbeat = bridge.last_heartbeat_at
+        if heartbeat and heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        if heartbeat is None or (utcnow() - heartbeat).total_seconds() > 120:
+            return jsonify({"success": False, "error": {
+                "code": "DEVICE_OFFLINE",
+                "message": "The bridge is offline. No unlock command was queued.",
+            }}), 409
         try:
             delay_seconds = max(1, min(30, int(data.get("delay_seconds") or 5)))
         except (TypeError, ValueError):
@@ -247,6 +338,7 @@ def register_access_routes(bp):
             delay_seconds=delay_seconds,
         )
         db.session.add(cmd)
+        db.session.flush()
         audit(
             action="remote_door_unlock_dispatched",
             resource_type="bridge",
@@ -263,7 +355,7 @@ def register_access_routes(bp):
             "data": {
                 "command_id": cmd.id,
                 "delay_seconds": delay_seconds,
-                "message": f"Turnstile / Door unlocked for {delay_seconds} seconds.",
+                "message": f"Door unlock command queued for {delay_seconds} seconds.",
             },
         }), 201
 
@@ -272,6 +364,12 @@ def register_access_routes(bp):
     @roles_required("gym_owner", "staff")
     def retry_sync():
         """Retry all failed biometric commands for this gym."""
+        from app.models.rrr import RRRIntegration
+        if RRRIntegration.query.filter_by(gym_id=g.gym_id, connector_type="adms_direct").first():
+            return jsonify({"success": False, "error": {
+                "code": "DIRECT_ADMS_ACTIVE",
+                "message": "Direct ADMS is active. No TCP bridge command was retried.",
+            }}), 409
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
             return jsonify({
@@ -330,6 +428,14 @@ def register_access_routes(bp):
         Used when migrating a gym off the bridge (e.g. to ADMS direct).
         Irreversible — failed commands are undelivered and cannot be retried after.
         """
+        from app.models.rrr import RRRIntegration
+        if RRRIntegration.query.filter_by(
+            gym_id=g.gym_id, connector_type="adms_direct"
+        ).first():
+            return jsonify({"success": False, "error": {
+                "code": "DIRECT_ADMS_ACTIVE",
+                "message": "Direct ADMS is authoritative for this gym. Legacy TCP commands were left untouched.",
+            }}), 409
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
             return jsonify({
@@ -365,11 +471,21 @@ def register_access_routes(bp):
     @roles_required("gym_owner", "staff")
     def reconcile_all():
         """Re-sync all active gym members' access states to the biometric device."""
+        from app.models.rrr import RRRIntegration
+        adms = RRRIntegration.query.filter_by(
+            gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if adms is not None and not adms.commands_enabled:
+            return jsonify({"success": False, "error": {
+                "code": "NOT_COMMISSIONED",
+                "message": "Complete supervised Direct ADMS setup before reconciling access.",
+            }}), 403
         count = queue_gym_reconciliation(g.gym_id)
         db.session.commit()
         audit(
             action="reconcile_biometric_all_mobile",
-            resource_type="bridge",
+            resource_type="rrr_integration" if adms is not None else "bridge",
+            resource_id=adms.id if adms is not None else None,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
             metadata={"queued_count": count},

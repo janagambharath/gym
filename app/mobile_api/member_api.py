@@ -31,7 +31,12 @@ from flask import Blueprint, abort, current_app, g, jsonify, request, send_from_
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
-from app.mobile_api.token_service import create_access_token, decode_access_token
+from app.mobile_api.token_service import (
+    create_access_token,
+    create_member_refresh_token,
+    decode_access_token,
+    rotate_member_refresh_token,
+)
 from app.models import (
     AccessEvent,
     AuditLog,
@@ -39,6 +44,7 @@ from app.models import (
     Gym,
     Member,
     MembershipPlan,
+    MemberRefreshToken,
     OtpAttempt,
     PaymentVerification,
     QRSettings,
@@ -562,11 +568,14 @@ def verify_otp():
 
     # Generate cryptographically signed member JWT
     token = create_access_token(user_id=member.id, gym_id=gym_id or member.gym_id, role="member")
+    refresh_token = create_member_refresh_token(member.id, gym_id or member.gym_id)
+    db.session.commit()
 
     return jsonify({
         "success": True,
         "data": {
             "token": token,
+            "refresh_token": refresh_token,
             "member": {
                 "id": member.id,
                 "full_name": member.full_name,
@@ -576,6 +585,44 @@ def verify_otp():
                 "membership_end": member.membership_end.isoformat() if member.membership_end else None,
                 "plan_name": member.plan.name if member.plan else None,
             },
+        },
+    })
+
+
+@member_bp.route("/auth/refresh", methods=["POST"])
+@limiter.limit("10 per minute")
+def refresh_member_session():
+    """Rotate a member refresh token and issue a new short-lived access token."""
+    data = request.get_json(silent=True) or {}
+    raw_token = str(data.get("refresh_token") or "").strip()
+    if not raw_token:
+        return jsonify({"success": False, "error": "Refresh token is required."}), 400
+
+    result = rotate_member_refresh_token(raw_token)
+    if result is None:
+        db.session.commit()
+        return jsonify({"success": False, "error": "Member session expired. Please sign in again."}), 401
+
+    new_refresh_token, old_record = result
+    member = db.session.get(Member, old_record.member_id)
+    if (
+        member is None
+        or member.deleted_at is not None
+        or member.gym_id != old_record.gym_id
+        or member.gym is None
+        or not member.gym.is_operational()
+    ):
+        MemberRefreshToken.query.filter_by(family_id=old_record.family_id).delete()
+        db.session.commit()
+        return jsonify({"success": False, "error": "Member account is no longer active."}), 401
+
+    access_token = create_access_token(member.id, member.gym_id, "member")
+    db.session.commit()
+    return jsonify({
+        "success": True,
+        "data": {
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
         },
     })
 

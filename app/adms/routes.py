@@ -484,6 +484,12 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
             raw_payload=line,
             auth_method=getattr(g, "adms_auth_method", None),
         )
+        from app.services.access_event_service import process_rrr_attendance_to_access_event
+
+        # Keep direct ADMS punches visible in the shared owner/member feed.
+        # Calling this for duplicates also backfills old normalized punches
+        # that predate the AccessEvent projection.
+        process_rrr_attendance_to_access_event(event)
         if was_created:
             created += 1
             integration.records_synced += 1

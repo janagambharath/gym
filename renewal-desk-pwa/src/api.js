@@ -3,7 +3,7 @@
    Mirrored from renewal-desk-android/src/services/apiClient.ts
    ═══════════════════════════════════════════════════════════════════════ */
 
-import { saveSession, loadSession, clearSession, loadMemberSession } from './session.js';
+import { saveSession, loadSession, clearSession, loadMemberSession, saveMemberSession, clearMemberSession } from './session.js';
 import { configureDisplayPreferences } from './utils.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
@@ -14,6 +14,8 @@ const API_BASE_URL = 'https://gym-production-910c.up.railway.app';
 let cachedSession;
 /** @type {Promise<import('./session.js').Session|undefined>|undefined} */
 let refreshInFlight;
+/** @type {Promise<{token: string, refreshToken: string}|null|undefined>|undefined} */
+let memberRefreshInFlight;
 
 // ─── Session Management ──────────────────────────────────────────────
 
@@ -96,6 +98,42 @@ async function refreshOnce() {
   finally { refreshInFlight = undefined; }
 }
 
+async function attemptMemberRefresh() {
+  const memberSession = loadMemberSession();
+  if (!memberSession?.refreshToken) {
+    clearMemberSession();
+    return null;
+  }
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/member/v1/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ refresh_token: memberSession.refreshToken }),
+    });
+    if (response.status === 401 || response.status === 403) {
+      clearMemberSession();
+      return null;
+    }
+    if (!response.ok) return undefined;
+    const envelope = await response.json();
+    const accessToken = envelope?.data?.access_token;
+    const refreshToken = envelope?.data?.refresh_token;
+    if (!envelope?.success || !accessToken || !refreshToken) return undefined;
+    const renewed = { ...memberSession, token: accessToken, refreshToken };
+    saveMemberSession(renewed);
+    return renewed;
+  } catch {
+    return undefined;
+  }
+}
+
+async function refreshMemberOnce() {
+  if (memberRefreshInFlight) return memberRefreshInFlight;
+  memberRefreshInFlight = attemptMemberRefresh();
+  try { return await memberRefreshInFlight; }
+  finally { memberRefreshInFlight = undefined; }
+}
+
 // ─── Core Request ────────────────────────────────────────────────────
 
 /**
@@ -131,16 +169,24 @@ export async function apiRequest(path, options = {}) {
       : (isMemberPath ? loadMemberSession()?.token : cachedSession?.accessToken);
     let response = await makeRequest(token);
 
-    if (response.status === 401 && !anonymous && cachedSession) {
-      const refreshed = await refreshOnce();
-      if (refreshed) {
-        response = await makeRequest(refreshed.accessToken);
-      } else {
-        return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+    if (response.status === 401 && !anonymous) {
+      if (isMemberPath) {
+        const refreshed = await refreshMemberOnce();
+        if (refreshed) response = await makeRequest(refreshed.token);
+        else if (refreshed === null) {
+          return { ok: false, error: { message: 'Member session expired. Please sign in again.', status: 401 } };
+        } else {
+          return { ok: false, error: { message: 'Could not refresh your member session. Check your connection and retry.' } };
+        }
+      } else if (cachedSession) {
+        const refreshed = await refreshOnce();
+        if (refreshed) response = await makeRequest(refreshed.accessToken);
+        else return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
       }
     }
 
     const envelope = await response.json();
+    if (response.status === 401 && !anonymous && isMemberPath) clearMemberSession();
     if (!response.ok || !envelope.success) {
       return {
         ok: false,

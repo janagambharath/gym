@@ -47,14 +47,14 @@ export function clearSession() {
 
 const MEMBER_SESSION_KEY = 'renewal-desk.pwa-member-session.v1';
 
-/** @param {{ token: string, memberId?: number, memberName?: string }} session */
+/** @param {{ token: string, refreshToken?: string, memberId?: number, memberName?: string }} session */
 export function saveMemberSession(session) {
   try {
     localStorage.setItem(MEMBER_SESSION_KEY, JSON.stringify(session));
   } catch { /* quota exceeded — non-fatal */ }
 }
 
-/** @returns {{ token: string }|undefined} */
+/** @returns {{ token: string, refreshToken?: string }|undefined} */
 export function loadMemberSession() {
   try {
     const raw = localStorage.getItem(MEMBER_SESSION_KEY);

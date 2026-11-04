@@ -14,7 +14,9 @@ import {
 } from '../types';
 
 const TOKEN_KEY = 'vynla_member_token';
+const REFRESH_TOKEN_KEY = 'vynla_member_refresh_token';
 const API_BASE = (process.env.EXPO_PUBLIC_API_BASE_URL || 'https://gym-production-910c.up.railway.app').replace(/\/$/, '');
+let refreshInFlight: Promise<{ accessToken: string; refreshToken: string } | null | undefined> | undefined;
 
 // ── Secure Token Storage ─────────────────────────────────────────────
 
@@ -24,6 +26,51 @@ export async function saveToken(token: string): Promise<void> {
   } catch {
     // Fallback if secure store fails
   }
+}
+
+async function saveRefreshToken(token: string): Promise<void> {
+  try { await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token); } catch { /* SecureStore may be unavailable */ }
+}
+
+async function refreshMemberSession(): Promise<{ accessToken: string; refreshToken: string } | null | undefined> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+      if (!refreshToken) {
+        await clearToken();
+        return null;
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const response = await fetch(`${API_BASE}/api/member/v1/auth/refresh`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+          signal: controller.signal,
+        });
+        if (response.status === 401 || response.status === 403) {
+          await clearToken();
+          return null;
+        }
+        if (!response.ok) return undefined;
+        const envelope = await response.json();
+        const accessToken = envelope?.data?.access_token;
+        const nextRefreshToken = envelope?.data?.refresh_token;
+        if (!envelope?.success || !accessToken || !nextRefreshToken) return undefined;
+        await saveToken(accessToken);
+        await saveRefreshToken(nextRefreshToken);
+        return { accessToken, refreshToken: nextRefreshToken };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      return undefined;
+    }
+  })();
+  try { return await refreshInFlight; }
+  finally { refreshInFlight = undefined; }
 }
 
 export async function getToken(): Promise<string | null> {
@@ -36,7 +83,10 @@ export async function getToken(): Promise<string | null> {
 
 export async function clearToken(): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    await Promise.all([
+      SecureStore.deleteItemAsync(TOKEN_KEY),
+      SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
+    ]);
   } catch {
     // Fallback
   }
@@ -47,31 +97,37 @@ export async function clearToken(): Promise<void> {
 async function request<T>(
   path: string,
   options: RequestInit = {},
-  timeoutMs = 12000
+  timeoutMs = 12000,
+  authenticated = true,
 ): Promise<T> {
-  const token = await getToken();
   const isMultipart = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
     ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string>),
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
     const url = `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
-    const res = await fetch(url, {
-      ...options,
-      headers,
-      signal: controller.signal,
-    });
+    const makeRequest = async (token?: string) => {
+      const requestHeaders = { ...headers };
+      if (token) requestHeaders.Authorization = `Bearer ${token}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...options, headers: requestHeaders, signal: controller.signal });
+      } finally { clearTimeout(timer); }
+    };
 
-    clearTimeout(timer);
+    const token = authenticated ? await getToken() : null;
+    let res = await makeRequest(token || undefined);
+    if (res.status === 401 && authenticated) {
+      const renewed = await refreshMemberSession();
+      if (!renewed) {
+        if (renewed === null) throw new Error('Your session has expired. Please log in again.');
+        throw new Error('Could not refresh your session. Check your connection and retry.');
+      }
+      res = await makeRequest(renewed.accessToken);
+    }
 
     const json = await res.json().catch(() => null);
 
@@ -99,7 +155,6 @@ async function request<T>(
 
     return json as T;
   } catch (err: any) {
-    clearTimeout(timer);
     if (err.name === 'AbortError') {
       throw new Error('Request timed out. Please check your connection and try again.');
     }
@@ -118,16 +173,17 @@ export const apiClient = {
     return request('/api/member/v1/auth/request-otp', {
       method: 'POST',
       body: JSON.stringify({ phone }),
-    });
+    }, 12000, false);
   },
 
-  async verifyOtp(phone: string, otp: string, challenge: string): Promise<{ success: boolean; data: { token: string; member: any } }> {
-    const res = await request<{ success: boolean; data: { token: string; member: any } }>('/api/member/v1/auth/verify-otp', {
+  async verifyOtp(phone: string, otp: string, challenge: string): Promise<{ success: boolean; data: { token: string; refresh_token: string; member: any } }> {
+    const res = await request<{ success: boolean; data: { token: string; refresh_token: string; member: any } }>('/api/member/v1/auth/verify-otp', {
       method: 'POST',
       body: JSON.stringify({ phone, otp, challenge }),
-    });
+    }, 12000, false);
     if (res.success && res.data?.token) {
       await saveToken(res.data.token);
+      if (res.data.refresh_token) await saveRefreshToken(res.data.refresh_token);
     }
     return res;
   },

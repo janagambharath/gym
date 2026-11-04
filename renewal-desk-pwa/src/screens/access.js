@@ -193,14 +193,15 @@ export default {
       const unlockBtn = scroll.querySelector('#btn-remote-unlock');
       if (unlockBtn) {
         unlockBtn.addEventListener('click', async () => {
+          if (!window.confirm('Unlock the gym gate for 5 seconds?')) return;
           unlockBtn.disabled = true;
-          unlockBtn.textContent = 'Unlocking...';
+          unlockBtn.textContent = 'Sending unlock...';
           const res = await apiRequest('/api/mobile/v1/access/remote-unlock', {
             method: 'POST',
-            body: { delay_seconds: 5 },
+            body: { delay_seconds: 5, confirm: true },
           });
           if (res.ok) {
-            showToast('🔓 Turnstile / Door unlocked for 5s!', 'success');
+            showToast(res.data?.message || 'Unlock command queued. Waiting for terminal acknowledgement.', 'success');
           } else {
             showToast(res.error?.message || 'Could not unlock door', 'error');
           }

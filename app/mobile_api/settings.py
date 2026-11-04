@@ -608,8 +608,17 @@ def register_settings_routes(bp):
         """
         from app.models.bridge import BridgeInstallation, BridgeCommand
         from app.models.member import Member
-        from app.models.rrr import RRRIdentityMapping
+        from app.models.rrr import RRRIdentityMapping, RRRIntegration
         from app.services.bridge_service import canonical_enroll_number
+
+        if RRRIntegration.query.filter_by(
+            gym_id=g.gym_id, connector_type="adms_direct"
+        ).first():
+            return error_response(
+                "DIRECT_ADMS_ACTIVE",
+                "Direct ADMS is authoritative for this gym. No TCP bridge command was queued; use the Direct Cloud controls.",
+                409,
+            )
 
         # L2: queue only against an ACTIVE bridge — an inactive/revoked
         # bridge can never lease the command, so queueing against it was

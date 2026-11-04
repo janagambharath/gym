@@ -762,11 +762,10 @@ def register_rrr_routes(bp):
         """Owner-initiated block/unblock of one member's biometric access.
 
         Queues a ``block``/``unblock`` command for the member's terminal
-        identity.  Prefers the direct-ADMS path when the gym has a
-        commissioned terminal; otherwise falls back to the bridge (TCP)
-        path, where the .exe applies it on its next poll (deny time-zone
-        switch / restore).  Gated on the member having a bound enroll
-        number — same safety bar as the automatic path.
+        identity. If the gym has a direct-ADMS integration, this endpoint
+        uses that path exclusively and refuses when it is not commissioned.
+        Bridge-only gyms use their configured connector. Gated on the member
+        having a bound enroll number — same safety bar as the automatic path.
 
         For ``unblock`` on the bridge path, the member must be proven
         enableable (active, end date today or later) — otherwise the
@@ -787,17 +786,24 @@ def register_rrr_routes(bp):
                 "Correct the dates in Date Repair first, then unblock.",
                 409,
             )
+        direct_integration = RRRIntegration.query.filter_by(
+            gym_id=member.gym_id, connector_type="adms_direct"
+        ).first()
         command = queue_manual_adms_member_command(member, action, g.user_id)
-        if command is not None:
+        if direct_integration is not None:
+            if command is None:
+                return error_response(
+                    "DEVICE_NOT_READY",
+                    "Direct ADMS is configured but not commissioned for access commands. No bridge command was sent.",
+                    409,
+                )
             db.session.commit()
             # ADMS membership blocks now use the tested reversible Group update.
             data_out = {"command": _adms_command_payload(command)}
             if action == "block":
                 data_out["note"] = ADMS_GROUP_BLOCK_NOTE
             return jsonify({"success": True, "data": data_out}), 201
-        # Bridge (TCP) fallback — e.g. Yodha's old .exe.  The bridge .exe
-        # picks the command up on its next poll; serve-side guards
-        # (fail-safe for disables, H8 for enables) still apply.
+        # Use the bridge only when no direct-ADMS integration is configured.
         bridge_command = queue_manual_bridge_member_command(member, action, g.user_id)
         if bridge_command is None:
             return error_response(
@@ -1010,10 +1016,10 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner")
     def bulk_remove_expired():
-        """Remove all expired members from the terminal (owner requested).
+        """Block terminal access for all expired members (owner requested).
         
-        Queues DELETE commands for all expired members with enroll numbers.
-        Owner will re-add them on renewal (auto-unblock handles it).
+        Queues the connector's reversible access-block command for eligible
+        members. Renewals restore access through the same connector.
         """
         from app.models.gym import Gym
         from app.models.member import Member
@@ -1058,6 +1064,7 @@ def register_rrr_routes(bp):
         # as skipped, not silently queued for a serve-time cancel.
         queued = 0
         skipped = 0
+        skipped_not_ready = 0
         for member in all_targets:
             if not member_is_proven_blockable(member):
                 skipped += 1
@@ -1065,6 +1072,8 @@ def register_rrr_routes(bp):
             cmd = queue_membership_command(member, force=True)
             if cmd:
                 queued += 1
+            else:
+                skipped_not_ready += 1
 
         db.session.commit()
 
@@ -1075,18 +1084,22 @@ def register_rrr_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.user_id,
             metadata={"members_queued": queued, "total_expired": len(all_targets),
-                      "skipped_not_blockable": skipped},
+                      "skipped_not_blockable": skipped,
+                      "skipped_terminal_not_ready": skipped_not_ready},
         )
 
         return jsonify({"success": True, "data": {
             "queued": queued,
             "total": len(all_targets),
             "skipped_not_blockable": skipped,
+            "skipped_terminal_not_ready": skipped_not_ready,
             "message": (
                 f"Queued access blocks for {queued} expired members. The terminal will apply them on its next poll."
                 + (f" {skipped} members were skipped: they are not proven blockable "
                    "(e.g. still active) — expire them through the membership flow first."
                    if skipped else "")
+                + (f" {skipped_not_ready} members were not queued because the commissioned terminal is unavailable."
+                   if skipped_not_ready else "")
                 + " Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint."
             ),
         }})
@@ -1118,6 +1131,12 @@ def register_rrr_routes(bp):
             )}), 400
 
         cmd = queue_membership_command(member, force=True)
+        if cmd is None:
+            return error_response(
+                "DEVICE_NOT_READY",
+                "No commissioned terminal is available to receive this block command.",
+                409,
+            )
         db.session.commit()
 
         audit(

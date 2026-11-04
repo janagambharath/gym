@@ -26,6 +26,28 @@ class MobileRefreshToken(db.Model):
     gym = db.relationship("Gym")
 
 
+class MemberRefreshToken(db.Model):
+    """Server-side refresh-token family for member OTP sessions."""
+
+    __tablename__ = "member_refresh_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    member_id = db.Column(
+        db.Integer, db.ForeignKey("members.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    gym_id = db.Column(
+        db.Integer, db.ForeignKey("gyms.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    family_id = db.Column(db.String(64), nullable=False, index=True)
+    is_used = db.Column(db.Boolean, nullable=False, default=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    member = db.relationship("Member")
+    gym = db.relationship("Gym")
+
+
 class ConsumedHandshakeToken(db.Model):
     """Single-use record for handshake tokens (2026-10-13).
 

@@ -647,44 +647,45 @@ def door_blocked_state(member: Member) -> dict[str, object]:
     candidates: list[tuple[datetime, int, bool, str, str, str | None]] = []
     failures: list[tuple[datetime, int, str, str | None]] = []
 
-    bridge_cmd = db.session.execute(
-        select(BridgeCommand)
-        .where(
-            BridgeCommand.gym_id == member.gym_id,
-            BridgeCommand.member_id == member.id,
-            BridgeCommand.command_type.in_(("disable_user", "enable_user")),
-            BridgeCommand.status.in_(("pending", "leased", "acked")),
-        )
-        .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if bridge_cmd is not None:
-        candidates.append((
-            _as_utc(bridge_cmd.created_at),
-            bridge_cmd.id,
-            bridge_cmd.command_type == "disable_user",
-            bridge_cmd.status,
-            "bridge",
-            None,
-        ))
-    bridge_failure = db.session.execute(
-        select(BridgeCommand)
-        .where(
-            BridgeCommand.gym_id == member.gym_id,
-            BridgeCommand.member_id == member.id,
-            BridgeCommand.command_type.in_(("disable_user", "enable_user")),
-            BridgeCommand.status == "failed",
-        )
-        .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if bridge_failure is not None:
-        failures.append((
-            _as_utc(bridge_failure.created_at),
-            bridge_failure.id,
-            "bridge",
-            bridge_failure.last_error,
-        ))
+    if _adms_integration(member.gym_id) is None:
+        bridge_cmd = db.session.execute(
+            select(BridgeCommand)
+            .where(
+                BridgeCommand.gym_id == member.gym_id,
+                BridgeCommand.member_id == member.id,
+                BridgeCommand.command_type.in_(("disable_user", "enable_user")),
+                BridgeCommand.status.in_(("pending", "leased", "acked")),
+            )
+            .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if bridge_cmd is not None:
+            candidates.append((
+                _as_utc(bridge_cmd.created_at),
+                bridge_cmd.id,
+                bridge_cmd.command_type == "disable_user",
+                bridge_cmd.status,
+                "bridge",
+                None,
+            ))
+        bridge_failure = db.session.execute(
+            select(BridgeCommand)
+            .where(
+                BridgeCommand.gym_id == member.gym_id,
+                BridgeCommand.member_id == member.id,
+                BridgeCommand.command_type.in_(("disable_user", "enable_user")),
+                BridgeCommand.status == "failed",
+            )
+            .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if bridge_failure is not None:
+            failures.append((
+                _as_utc(bridge_failure.created_at),
+                bridge_failure.id,
+                "bridge",
+                bridge_failure.last_error,
+            ))
 
     try:
         enroll = resolve_adms_enroll_number(member)
@@ -847,23 +848,24 @@ def queue_manual_bridge_member_command(
     return command
 
 
-def queue_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
+def queue_membership_command(
+    member: Member, *, force: bool = False
+) -> BridgeCommand | RRRAdmsCommand | None:
     """Queue the latest required terminal state, without duplicating work.
 
     This function deliberately does not commit.  Call it in the same database
     transaction as the membership change, so a renewal/expiry can never be
     saved without its corresponding device command.
 
-    Every membership change fans out to both connector paths: the legacy
-    Windows-bridge installation (when present) and the direct-ADMS terminal
-    (when commissioned).  The direct-ADMS leg is a no-op unless the gym's
-    direct integration has ``commands_enabled`` set by supervised
-    commissioning.
+    A configured direct-ADMS integration is authoritative for the gym. Its
+    commands are queued only after supervised commissioning; the legacy
+    Windows bridge is never used as a fallback for that gym. Bridge-only
+    gyms continue to use their active Windows connector.
     """
 
-    bridge_command = _queue_bridge_membership_command(member, force=force)
-    queue_adms_membership_command(member, force=force)
-    return bridge_command
+    if _adms_integration(member.gym_id) is not None:
+        return queue_adms_membership_command(member, force=force)
+    return _queue_bridge_membership_command(member, force=force)
 
 
 def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
@@ -932,18 +934,29 @@ def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> 
 
 
 def queue_gym_reconciliation(gym_id: int) -> int:
-    """Queue access state for every enrolled member of one installed gym."""
+    """Queue access state for enrolled members through the gym's connector."""
 
-    if _active_installation(gym_id) is None:
+    adms = _adms_integration(gym_id)
+    if adms is None and _active_installation(gym_id) is None:
         return 0
-    members = (
-        Member.query.filter(
-            Member.gym_id == gym_id,
-            Member.device_enroll_number.is_not(None),
-        )
-        .order_by(Member.id.asc())
-        .all()
+    members_query = Member.query.filter(
+        Member.gym_id == gym_id,
+        Member.deleted_at.is_(None),
     )
+    if adms is None:
+        members_query = members_query.filter(Member.device_enroll_number.is_not(None))
+    else:
+        # Confirmed ADMS mappings are authoritative too. Older/imported member
+        # rows may have an identity mapping before device_enroll_number was
+        # backfilled, and resolve_adms_enroll_number handles both forms.
+        mapped_member_ids = select(RRRIdentityMapping.member_id).where(
+            RRRIdentityMapping.gym_id == gym_id,
+            RRRIdentityMapping.status == "confirmed",
+        )
+        members_query = members_query.filter(
+            or_(Member.device_enroll_number.is_not(None), Member.id.in_(mapped_member_ids))
+        )
+    members = members_query.order_by(Member.id.asc()).all()
     queued = 0
     for member in members:
         if queue_membership_command(member, force=True) is not None:
@@ -957,6 +970,12 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
     Commands are never removed by a GET.  If the laptop loses power or an ACK
     fails, the expired lease is delivered again with a new token.
     """
+
+    # Once a gym has configured Direct ADMS, it is the sole authority for
+    # access changes. Do not let an old paired Windows bridge lease stale
+    # commands that were queued before the gym moved to the PC-free path.
+    if _adms_integration(installation.gym_id) is not None:
+        return []
 
     now = utcnow()
     lease_seconds = max(30, int(current_app.config["BRIDGE_COMMAND_LEASE_SECONDS"]))

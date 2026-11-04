@@ -1,9 +1,9 @@
 """Access event processing pipeline.
 
-Transforms raw ``BridgeAttendance`` records into semantic ``AccessEvent``
-entries and maintains the ``MemberAccessState`` for "currently inside"
-queries.  Every operation is idempotent: re-processing the same attendance
-record produces no duplicate access events.
+Transforms bridge and normalized RRR attendance records into semantic
+``AccessEvent`` entries and maintains ``MemberAccessState`` for "currently
+inside" queries. Every projection is idempotent: re-processing the same
+attendance record produces no duplicate access events.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models.access_event import AccessEvent
@@ -168,6 +169,85 @@ def process_attendance_to_access_event(
         direction,
         attendance.device_enroll_number,
     )
+    return access_event
+
+
+def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
+    """Project a normalized direct-device punch into the member access feed.
+
+    The RRR attendance row remains the source of truth for device ingestion;
+    this projection gives the owner and member apps the same attendance feed
+    used by the bridge connector. Reprocessing and later identity linking are
+    safe and idempotent.
+    """
+    source_event_id = f"rrr-attendance-{attendance.id}"
+    existing = AccessEvent.query.filter_by(
+        gym_id=attendance.gym_id,
+        source_event_id=source_event_id,
+    ).first()
+
+    member = attendance.member
+    if member is None and attendance.member_id is not None:
+        member = db.session.get(Member, attendance.member_id)
+
+    if existing is not None:
+        # An identity may have been linked after the punch first arrived.
+        if member is not None:
+            if existing.member_id is None:
+                existing.member_id = member.id
+            existing.member_name = member.full_name
+            existing.membership_status = member.status
+            if existing.member_id == member.id and existing.event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
+                _update_member_access_state(
+                    gym_id=attendance.gym_id,
+                    member_id=member.id,
+                    access_event=existing,
+                    event_type="ENTRY" if existing.event_type == "ATTENDANCE" else existing.event_type,
+                )
+        return None
+
+    try:
+        att_state = int(attendance.direction) if attendance.direction is not None else None
+    except (TypeError, ValueError):
+        att_state = None
+    try:
+        verify_method = int(attendance.verify_method) if attendance.verify_method is not None else None
+    except (TypeError, ValueError):
+        verify_method = None
+
+    event_type, direction = _classify_event(att_state, is_invalid=False)
+    access_event = AccessEvent(
+        gym_id=attendance.gym_id,
+        member_id=member.id if member else None,
+        bridge_id=None,
+        event_type=event_type,
+        direction=direction,
+        event_timestamp=attendance.punch_time,
+        received_timestamp=attendance.received_at or utcnow(),
+        device_enroll_number=(attendance.biometric_user_id or "unknown")[:32],
+        source_event_id=source_event_id,
+        att_state=att_state,
+        verify_method=verify_method,
+        is_invalid=False,
+        member_name=member.full_name if member else None,
+        membership_status=member.status if member else None,
+        device_name=(attendance.device_serial or "Direct ADMS terminal")[:120],
+    )
+    try:
+        with db.session.begin_nested():
+            db.session.add(access_event)
+            db.session.flush()
+    except IntegrityError:
+        # Another ingestion worker projected the same RRR row first.
+        return None
+
+    if member is not None and event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
+        _update_member_access_state(
+            gym_id=attendance.gym_id,
+            member_id=member.id,
+            access_event=access_event,
+            event_type="ENTRY" if event_type == "ATTENDANCE" else event_type,
+        )
     return access_event
 
 

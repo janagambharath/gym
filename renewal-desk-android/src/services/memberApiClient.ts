@@ -13,6 +13,7 @@ import { getRuntimeConfiguration } from '../config/runtime';
 
 export type MemberSession = {
   token: string;
+  refreshToken: string;
   memberId: number;
   fullName: string;
   phone: string;
@@ -164,6 +165,7 @@ type BackendEnvelope<T> = {
 const SESSION_KEY = 'renewal-desk.member-session.v1';
 
 let cachedSession: MemberSession | undefined;
+let refreshInFlight: Promise<MemberSession | null | undefined> | undefined;
 
 export function getMemberSession(): MemberSession | undefined {
   return cachedSession;
@@ -196,6 +198,51 @@ export async function clearMemberSession(): Promise<void> {
   await SecureStore.deleteItemAsync(SESSION_KEY);
 }
 
+async function refreshMemberSession(baseUrl: string): Promise<MemberSession | null | undefined> {
+  if (refreshInFlight) return refreshInFlight;
+  const current = cachedSession;
+  if (!current?.refreshToken) {
+    await clearMemberSession();
+    return null;
+  }
+
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${baseUrl}/api/member/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: current.refreshToken }),
+      });
+      if (response.status === 401 || response.status === 403) {
+        await clearMemberSession();
+        return null;
+      }
+      if (!response.ok) return undefined;
+      const envelope = (await response.json()) as BackendEnvelope<{
+        access_token: string;
+        refresh_token: string;
+      }>;
+      if (!envelope.success || !envelope.data?.access_token || !envelope.data.refresh_token) {
+        return undefined;
+      }
+      const updated = {
+        ...current,
+        token: envelope.data.access_token,
+        refreshToken: envelope.data.refresh_token,
+      };
+      await saveMemberSession(updated);
+      return updated;
+    } catch {
+      return undefined;
+    }
+  })();
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = undefined;
+  }
+}
+
 // ── API Helpers ──────────────────────────────────────────────────────
 
 function getBaseUrl(): string {
@@ -214,30 +261,38 @@ async function memberApiRequest<T>(
   const baseUrl = getBaseUrl();
   const { method = 'GET', body, anonymous = false } = options;
 
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-  };
-  if (body) {
-    headers['Content-Type'] = 'application/json';
-  }
-  if (!anonymous && cachedSession?.token) {
-    headers['Authorization'] = `Bearer ${cachedSession.token}`;
-  }
-
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const makeRequest = async (token?: string): Promise<Response> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (body) headers['Content-Type'] = 'application/json';
+      if (token) headers.Authorization = `Bearer ${token}`;
+      try {
+        return await fetch(`${baseUrl}${path}`, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
 
-    const response = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    let response = await makeRequest(anonymous ? undefined : cachedSession?.token);
+    if (response.status === 401 && !anonymous) {
+      const refreshed = await refreshMemberSession(baseUrl);
+      if (refreshed) {
+        response = await makeRequest(refreshed.token);
+      } else if (refreshed === null) {
+        return { ok: false, error: 'Session expired. Please sign in again.' };
+      } else {
+        return { ok: false, error: 'Could not refresh your session. Check your connection and retry.' };
+      }
+    }
 
     const envelope = (await response.json()) as BackendEnvelope<T>;
-
     if (response.status === 401 && !anonymous) {
       await clearMemberSession();
       return { ok: false, error: 'Session expired. Please sign in again.' };
@@ -273,6 +328,7 @@ export async function requestOtp(phone: string): Promise<ApiResult<OtpRequestRes
 
 export type OtpVerifyResult = {
   token: string;
+  refresh_token: string;
   member: {
     id: number;
     full_name: string;
@@ -296,9 +352,10 @@ export async function verifyOtp(
   });
 
   if (result.ok && result.data) {
-    const { token, member } = result.data;
+    const { token, refresh_token, member } = result.data;
     const session: MemberSession = {
       token,
+      refreshToken: refresh_token,
       memberId: member.id,
       fullName: member.full_name,
       phone: member.phone,

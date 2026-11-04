@@ -125,6 +125,7 @@ export function AccessScreen({
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [checkingInId, setCheckingInId] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [unlocking, setUnlocking] = useState(false);
 
   // ── Fetch summary ────────────────────────────────────────────────
 
@@ -273,6 +274,34 @@ export function AccessScreen({
     setCheckingInId(null);
   }, [loadAll]);
 
+  const requestRemoteUnlock = useCallback(async () => {
+    if (unlocking) return;
+    setUnlocking(true);
+    const res = await apiRequest<{ command_id: number; message: string }>(
+      '/api/mobile/v1/access/remote-unlock',
+      { method: 'POST', body: { delay_seconds: 5, confirm: true } },
+    );
+    setUnlocking(false);
+    if (res.ok) {
+      setActionMessage(res.data.message || 'Unlock command queued; waiting for terminal acknowledgement.');
+      setTimeout(() => setActionMessage(null), 5000);
+      void fetchSummary();
+    } else {
+      Alert.alert('Unlock Not Sent', res.error.message);
+    }
+  }, [fetchSummary, unlocking]);
+
+  const handleRemoteUnlock = useCallback(() => {
+    Alert.alert(
+      'Unlock gym gate?',
+      'This sends a 5-second unlock command to the connected terminal.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Unlock', onPress: () => void requestRemoteUnlock() },
+      ],
+    );
+  }, [requestRemoteUnlock]);
+
   const [retryingSync, setRetryingSync] = useState(false);
 
   const handleRetrySync = useCallback(async () => {
@@ -338,6 +367,17 @@ export function AccessScreen({
         <Icon name="access" size={16} color={colors.textInverse} />
         <Text style={styles.checkInBtnText}>+ Check In</Text>
       </TouchableOpacity>
+      {summary?.remote_unlock_available && (
+        <TouchableOpacity
+          style={[styles.checkInBtn, { backgroundColor: colors.success }]}
+          onPress={handleRemoteUnlock}
+          disabled={unlocking}
+          activeOpacity={0.8}
+        >
+          <Icon name="lock" size={16} color={colors.textInverse} />
+          <Text style={styles.checkInBtnText}>{unlocking ? 'Sending...' : 'Unlock Gate'}</Text>
+        </TouchableOpacity>
+      )}
       </View>
       {!summary?.remote_unlock_available && (
         <Text style={styles.remoteUnlockNotice}>

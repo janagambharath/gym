@@ -53,7 +53,12 @@ export default {
           const otp = el.querySelector('#ml-otp').value.trim();
           const res = await memberVerifyOtp(phone, otp, challengeToken);
           if (res.ok && res.data?.token) {
-            saveMemberSession({ token: res.data.token, memberName: res.data?.member?.name });
+            saveMemberSession({
+              token: res.data.token,
+              refreshToken: res.data.refresh_token,
+              memberId: res.data?.member?.id,
+              memberName: res.data?.member?.full_name,
+            });
             showToast('Welcome!', 'success'); navigate.push('member-home');
           }
           else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }

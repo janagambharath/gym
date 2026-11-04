@@ -408,7 +408,9 @@ def confirm_match(
     Reuses the same guards as the bridge enrollment confirm: no silent
     reassign, no duplicates.
     """
+    from app.models.rrr import RRRIntegration
     from app.services.bridge_service import canonical_enroll_number, queue_membership_command
+    from app.services.rrr_service import remap_unresolved
 
     enroll_number = canonical_enroll_number(enroll_number)
     member = Member.query.filter_by(id=member_id, gym_id=gym_id).first()
@@ -428,7 +430,17 @@ def confirm_match(
         raise ValueError(
             f"Enroll number {enroll_number} is already linked to {duplicate.full_name}."
         )
-    member.device_enroll_number = enroll_number
+    integration = RRRIntegration.query.filter_by(
+        gym_id=gym_id, connector_type="adms_direct"
+    ).first()
+    remap_unresolved(
+        gym_id,
+        enroll_number,
+        member,
+        actor_id,
+        source=integration.connector_type if integration else None,
+        queue_command=False,
+    )
     # M4: when the link comes from a fresh OPERLOG enrollment, the terminal
     # already holds the correct state for active members — skip the redundant
     # UPDATE (which would also clobber a 90-99% matched name). Always queue

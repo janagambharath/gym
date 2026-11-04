@@ -528,6 +528,7 @@ export type AccessSummary = {
   heartbeat_age_seconds?: number | null;
   remote_unlock_available?: boolean;
   remote_unlock_reason?: string;
+  remote_unlock_path?: 'bridge' | 'adms';
 };
 
 export type AccessEvent = {

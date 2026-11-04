@@ -14,12 +14,54 @@ function loadSession() {
 function saveSession(data) { session = data; localStorage.setItem(SESSION_KEY, JSON.stringify(data)); }
 function clearSession() { session = null; localStorage.removeItem(SESSION_KEY); }
 
+let memberRefreshInFlight;
+async function refreshMemberSession() {
+  if (memberRefreshInFlight) return memberRefreshInFlight;
+  if (!session?.refreshToken) {
+    clearSession();
+    return null;
+  }
+  memberRefreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${API}/api/member/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: session.refreshToken }),
+      });
+      if (response.status === 401 || response.status === 403) {
+        clearSession();
+        return null;
+      }
+      if (!response.ok) return undefined;
+      const body = await response.json();
+      if (!body?.success || !body.data?.access_token || !body.data?.refresh_token) return undefined;
+      const renewed = { ...session, token: body.data.access_token, refreshToken: body.data.refresh_token };
+      saveSession(renewed);
+      return renewed;
+    } catch {
+      return undefined;
+    }
+  })();
+  try { return await memberRefreshInFlight; }
+  finally { memberRefreshInFlight = undefined; }
+}
+
 async function api(path, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
-  const headers = { Accept: 'application/json', ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}), ...(options.public ? {} : session?.token ? { Authorization: `Bearer ${session.token}` } : {}) };
+  const makeRequest = async (token) => {
+    const headers = { Accept: 'application/json', ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}), ...(!options.public && token ? { Authorization: `Bearer ${token}` } : {}) };
+    return fetch(`${API}${path}`, { method: options.method || 'GET', headers, body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined });
+  };
   try {
-    const response = await fetch(`${API}${path}`, { method: options.method || 'GET', headers, body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined });
-    const body = await response.json();
+    let response = await makeRequest(session?.token);
+    if (response.status === 401 && !options.public) {
+      const renewed = await refreshMemberSession();
+      if (renewed) response = await makeRequest(renewed.token);
+      else if (renewed === null) return { ok: false, status: 401, error: 'Your member session expired. Please sign in again.' };
+      else return { ok: false, error: 'Could not refresh your session. Check your connection and retry.' };
+    }
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401 && !options.public) clearSession();
     if (!response.ok || !body.success) {
       return { ok: false, status: response.status, error: typeof body.error === 'string' ? body.error : body.error?.message || body.message || 'Request failed.' };
     }
@@ -295,7 +337,7 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
       return;
     }
     if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
-    saveSession({ token: result.data.token, member: result.data.member });
+    saveSession({ token: result.data.token, refreshToken: result.data.refresh_token, member: result.data.member });
     renderHome();
   });
 }

@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from flask import current_app
 from app.extensions import db
-from app.models import Gym, Member, NotificationTemplate, ReminderLog
+from app.models import AccessEvent, Gym, Member, NotificationTemplate, ReminderLog
 from app.models.rrr import RRRAttendanceEvent
 from app.services.rrr_service import attendance_visit_counts, rules_for_gym
 from app.services.timezone_service import today_for_gym
@@ -216,7 +216,31 @@ def _last_visit_map(gym_id: int) -> dict[int, object]:
         .group_by(RRRAttendanceEvent.member_id)
         .all()
     )
-    return {r.member_id: r.last_visit for r in rows}
+    latest = {r.member_id: r.last_visit for r in rows}
+    access_rows = (
+        db.session.query(
+            AccessEvent.member_id,
+            func.max(AccessEvent.event_timestamp).label("last_visit"),
+        )
+        .filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.member_id.isnot(None),
+            AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
+        )
+        .group_by(AccessEvent.member_id)
+        .all()
+    )
+    for row in access_rows:
+        previous = latest.get(row.member_id)
+        candidate_time = row.last_visit
+        previous_time = previous
+        if candidate_time is not None and candidate_time.tzinfo is None:
+            candidate_time = candidate_time.replace(tzinfo=tz.utc)
+        if previous_time is not None and previous_time.tzinfo is None:
+            previous_time = previous_time.replace(tzinfo=tz.utc)
+        if previous_time is None or (candidate_time is not None and candidate_time > previous_time):
+            latest[row.member_id] = row.last_visit
+    return latest
 
 
 def run_retention_nudges_for_gym(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:

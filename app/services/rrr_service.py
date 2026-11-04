@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.models import Gym, Member, MembershipPlan, PaymentVerification, QRSettings
+from app.models import AccessEvent, Gym, Member, MembershipPlan, PaymentVerification, QRSettings
 from app.models.mixins import utcnow
 from app.models.rrr import (
     RRRAttendanceEvent,
@@ -71,6 +71,19 @@ def attendance_visit_counts(
             RRRAttendanceEvent.gym_id == gym_id,
             RRRAttendanceEvent.member_id.in_(member_ids),
             RRRAttendanceEvent.punch_time >= baseline_start.astimezone(timezone.utc),
+        )
+        .all()
+    )
+    # Manual check-ins and normalized device events are stored in the shared
+    # access feed. Merge them with RRR rows and deduplicate by local calendar
+    # day so either ingestion path produces the same attendance signal.
+    rows.extend(
+        db.session.query(AccessEvent.member_id, AccessEvent.event_timestamp)
+        .filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.member_id.in_(member_ids),
+            AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
+            AccessEvent.event_timestamp >= baseline_start.astimezone(timezone.utc),
         )
         .all()
     )
@@ -227,7 +240,7 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
 
 
 def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int | None,
-                   source: str | None = None) -> int:
+                   source: str | None = None, queue_command: bool = True) -> int:
     """Link a biometric ID to a member, backfilling unmapped punches.
 
     Raises ValueError on conflict (member already linked to a different ID,
@@ -280,13 +293,17 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     for event in events:
         event.member_id = member.id
         event.processing_status = "processed"
+        if event.source == "adms_direct":
+            from app.services.access_event_service import process_rrr_attendance_to_access_event
+
+            process_rrr_attendance_to_access_event(event)
     # Only queue a terminal command when the desired state differs from what
     # the terminal already has. For active members the terminal already has
     # them (they were just enrolled/linked) — queuing a redundant "enable"
     # floods the bridge with hundreds of unnecessary commands. Expired
     # members always get their block queued.
     from app.services.bridge_service import desired_command_type
-    if desired_command_type(member) != "enable_user":
+    if queue_command and desired_command_type(member) != "enable_user":
         queue_membership_command(member)
     return len(events)
 
@@ -491,18 +508,30 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
     active_members = Member.query.filter_by(gym_id=gym_id, status="active").filter(Member.deleted_at.is_(None)).count()
     total_members = Member.query.filter_by(gym_id=gym_id).filter(Member.deleted_at.is_(None)).count()
     month_start = utcnow() - timedelta(days=30)
-    active_visitors = db.session.query(func.count(func.distinct(RRRAttendanceEvent.member_id))).filter(
-        RRRAttendanceEvent.gym_id == gym_id, RRRAttendanceEvent.member_id.isnot(None),
+    visitor_members = db.session.query(
+        RRRAttendanceEvent.member_id.label("member_id")
+    ).filter(
+        RRRAttendanceEvent.gym_id == gym_id,
+        RRRAttendanceEvent.member_id.isnot(None),
         RRRAttendanceEvent.punch_time >= month_start,
-    ).scalar() or 0
-    # Direct ADMS is the preferred no-PC integration. Keep existing eBioServer
-    # installations visible as a fallback so those gyms are not disrupted.
-    # direct_bridge (TCP bridge) gyms like Yodha must also show as connected.
+    ).union(
+        db.session.query(AccessEvent.member_id.label("member_id")).filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.member_id.isnot(None),
+            AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
+            AccessEvent.event_timestamp >= month_start,
+        )
+    ).subquery()
+    active_visitors = db.session.query(func.count()).select_from(visitor_members).scalar() or 0
+    # A configured Direct ADMS integration is authoritative for attendance
+    # status and access commands, even when an old bridge remains paired.
+    # Preserve bridge/eBioServer selection only for gyms without ADMS.
     integrations = RRRIntegration.query.filter_by(gym_id=gym_id).all()
-    integration = next((row for row in integrations if row.connector_type == "adms_direct" and row.status == "connected"), None)
+    adms_integrations = [row for row in integrations if row.connector_type == "adms_direct"]
+    integration = next((row for row in adms_integrations if row.status == "connected"), None)
+    integration = integration or next(iter(adms_integrations), None)
     integration = integration or next((row for row in integrations if row.connector_type == "direct_bridge" and row.status == "connected"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "ebioserver" and row.status == "connected"), None)
-    integration = integration or next((row for row in integrations if row.connector_type == "adms_direct"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "direct_bridge"), None)
     integration = integration or next((row for row in integrations if row.connector_type == "ebioserver"), None)
     # Legacy Windows bridge (BridgeInstallation) — gyms like Yodha Fitness

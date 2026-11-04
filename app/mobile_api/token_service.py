@@ -12,7 +12,7 @@ from flask import current_app
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models.mobile_token import ConsumedHandshakeToken, MobileRefreshToken
+from app.models.mobile_token import ConsumedHandshakeToken, MemberRefreshToken, MobileRefreshToken
 
 
 # ── Access tokens (HMAC-signed JWT-like) ────────────────────────────────
@@ -226,6 +226,62 @@ def rotate_refresh_token(raw_token: str) -> tuple[str, MobileRefreshToken] | Non
     return new_raw, record
 
 
+def create_member_refresh_token(
+    member_id: int, gym_id: int, family_id: str | None = None
+) -> str:
+    """Create an opaque, server-stored refresh token for a member session."""
+    raw_token = secrets.token_urlsafe(64)
+    if family_id is None:
+        family_id = secrets.token_hex(16)
+    ttl_days = current_app.config.get("MEMBER_API_REFRESH_TOKEN_DAYS", 30)
+    record = MemberRefreshToken(
+        member_id=member_id,
+        gym_id=gym_id,
+        token_hash=_hash_token(raw_token),
+        family_id=family_id,
+        is_used=False,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=ttl_days),
+    )
+    db.session.add(record)
+    return raw_token
+
+
+def rotate_member_refresh_token(
+    raw_token: str,
+) -> tuple[str, MemberRefreshToken] | None:
+    """Consume and rotate a member refresh token; replay revokes its family."""
+    record = (
+        MemberRefreshToken.query.filter_by(token_hash=_hash_token(raw_token))
+        .with_for_update()
+        .first()
+    )
+    if record is None:
+        return None
+    if record.is_used:
+        MemberRefreshToken.query.filter_by(family_id=record.family_id).delete()
+        db.session.flush()
+        return None
+    now = datetime.now(timezone.utc)
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if now > expires_at:
+        db.session.delete(record)
+        db.session.flush()
+        return None
+    record.is_used = True
+    new_raw = create_member_refresh_token(
+        record.member_id, record.gym_id, family_id=record.family_id
+    )
+    return new_raw, record
+
+
+def revoke_member_refresh_token(raw_token: str) -> bool:
+    """Revoke a single member refresh token."""
+    deleted = MemberRefreshToken.query.filter_by(token_hash=_hash_token(raw_token)).delete()
+    return deleted > 0
+
+
 def revoke_refresh_token(raw_token: str) -> bool:
     """Revoke a single refresh token."""
     token_hash = _hash_token(raw_token)
@@ -243,4 +299,5 @@ def cleanup_expired_tokens() -> int:
     """Delete expired tokens. Run periodically."""
     now = datetime.now(timezone.utc)
     deleted = MobileRefreshToken.query.filter(MobileRefreshToken.expires_at < now).delete()
+    deleted += MemberRefreshToken.query.filter(MemberRefreshToken.expires_at < now).delete()
     return deleted

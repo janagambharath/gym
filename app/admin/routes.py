@@ -1220,8 +1220,16 @@ def run_test_biometric_sync(gym_id: int):
         db.session.flush()
 
     cmd = queue_membership_command(member)
-    dep.update_checklist_item("test_member_synced", "passed", "Test Member Biometric Sync", True, f"Command #{cmd.id} ({cmd.command_type}) queued for #{cmd.enroll_number}")
-    dep.add_timeline_event(f"Biometric test passed: command {cmd.id} queued for member {member.full_name}", actor=current_user.full_name)
+    if cmd is None:
+        db.session.rollback()
+        flash("No commissioned biometric terminal is available for this gym.", "error")
+        return redirect(request.referrer or url_for("admin.gym_detail", gym_id=gym.id, tab="biometric"))
+    if hasattr(cmd, "test_enroll_number"):
+        command_detail = f"ADMS command #{cmd.id} ({cmd.action}) queued for #{cmd.test_enroll_number}"
+    else:
+        command_detail = f"Command #{cmd.id} ({cmd.command_type}) queued for #{cmd.enroll_number}"
+    dep.update_checklist_item("test_member_synced", "passed", "Test Member Biometric Sync", True, command_detail)
+    dep.add_timeline_event(f"Biometric test passed: {command_detail} for member {member.full_name}", actor=current_user.full_name)
     db.session.commit()
 
     flash(f"✓ Biometric test command queued for member '{member.full_name}' (#{member.device_enroll_number or '101'})!", "success")
