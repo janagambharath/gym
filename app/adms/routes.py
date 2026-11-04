@@ -307,7 +307,7 @@ def _ingest_operlog(integration) -> int:
     interaction.
 
     For each enrollment found, upserts the terminal name snapshot and
-    triggers high-confidence auto-link against members.
+    lets cdata trigger high-confidence auto-link after the upload commits.
     Returns the number of enrollment records found.
     """
     import logging
@@ -337,16 +337,6 @@ def _ingest_operlog(integration) -> int:
             )
         except Exception as e:
             log.warning("OPERLOG snapshot upsert failed: %s", e)
-    if found:
-        try:
-            from app.services.enroll_match_service import auto_link_high_confidence
-            # M4: the terminal just enrolled these users, so for active
-            # members the terminal already holds the correct state — skip
-            # the redundant UPDATE. Only queue when the desired state
-            # differs (e.g. expired member -> block).
-            auto_link_high_confidence(gym_id=integration.gym_id, skip_command_for_active=True)
-        except Exception as e:
-            log.warning("OPERLOG auto-link failed: %s", e)
     return found
 
 
@@ -526,13 +516,28 @@ def cdata(path_token: str | None = None):
     if method == "serial" and request.method == "GET":
         full = False
     _touch(integration, method=method, full=full)
+    operlog_enrollments = 0
     if request.method == "POST" and table == "ATTLOG":
         _ingest_attlog(integration)
     elif request.method == "POST" and table in {"USERINFO", "USER"}:
         _ingest_userinfo(integration)
     elif request.method == "POST" and table == "OPERLOG":
-        _ingest_operlog(integration)
+        operlog_enrollments = _ingest_operlog(integration)
     db.session.commit()
+    if operlog_enrollments:
+        try:
+            from app.services.enroll_match_service import auto_link_high_confidence
+            # The terminal enrollment snapshot and device acknowledgement
+            # state are committed before this best-effort operation. A
+            # linking/audit error must not poison the session used to ack the
+            # upload or make the terminal retry the same OPERLOG forever.
+            auto_link_high_confidence(
+                gym_id=integration.gym_id,
+                skip_command_for_active=True,
+            )
+        except Exception as e:
+            db.session.rollback()
+            log.warning("OPERLOG auto-link failed after upload commit: %s", e)
     # Common ADMS clients expect a plain acknowledgement after a push and an
     # option payload on their initial GET.  Never put secrets in this response.
     if request.method == "GET":

@@ -363,7 +363,10 @@ def auto_link_high_confidence(
                     gym_id=gym_id,
                     member_id=sugg["member_id"],
                     enroll_number=sugg["enroll_number"],
-                    actor_id=actor_id or 0,
+                    # OPERLOG and attendance-driven auto-linking run without
+                    # an authenticated human actor. Keep the audit actor NULL
+                    # for system work; user id 0 violates the FK to users.
+                    actor_id=actor_id,
                     skip_command_for_active=skip_command_for_active,
                     auto_linked=True,
                     confidence=sugg["confidence"],
@@ -394,7 +397,7 @@ def confirm_match(
     gym_id: int,
     member_id: int,
     enroll_number: str,
-    actor_id: int,
+    actor_id: int | None,
     skip_command: bool = False,
     skip_command_for_active: bool = False,
     auto_linked: bool = False,
