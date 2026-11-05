@@ -80,17 +80,63 @@ def test_manual_access_device_not_ready_without_bridge_or_adms(client, seed_gym,
 def test_manual_unblock_replaces_pending_disable(client, seed_gym, seed_member):
     installation, _ = _bridge(seed_gym)
     seed_member.device_enroll_number = "101"
+    # M10: blocking an ACTIVE member now 409s up front on the bridge path,
+    # so the block leg uses a paused (proven-blockable) member.
+    seed_member.status = "paused"
     db.session.commit()
     first = client.post(_access_url(seed_member.id), headers=_owner_headers(seed_gym), json={"action": "block"})
     assert first.status_code == 201
     cmd_id = first.json["data"]["command"]["id"]
-    # The member is active, so the block was queued but would be cancelled at
-    # serve time; the owner now explicitly chooses unblock instead.
+    # The member renews between the two calls: now active, so the unblock
+    # pre-check passes and the pending disable is replaced in place.
+    seed_member.status = "active"
+    seed_member.membership_end = date.today() + timedelta(days=30)
+    db.session.commit()
     res = client.post(_access_url(seed_member.id), headers=_owner_headers(seed_gym), json={"action": "unblock"})
     assert res.status_code == 201
     assert res.json["data"]["command"]["id"] == cmd_id
     assert db.session.get(BridgeCommand, cmd_id).command_type == "enable_user"
     assert BridgeCommand.query.filter_by(member_id=seed_member.id).count() == 1
+
+
+def test_bridge_manual_block_active_member_returns_409(client, seed_gym, seed_member):
+    """M10: a bridge block of an active member 409s up front instead of
+    returning 201 for a command the lease guard would silently cancel."""
+    _bridge(seed_gym)
+    seed_member.device_enroll_number = "101"
+    db.session.commit()
+    res = client.post(_access_url(seed_member.id), headers=_owner_headers(seed_gym), json={"action": "block"})
+    assert res.status_code == 409
+    assert res.json["error"]["code"] == "BLOCK_NOT_ALLOWED"
+    assert BridgeCommand.query.count() == 0
+
+
+def test_bridge_manual_block_expired_member_still_queues(client, seed_gym, seed_member):
+    """M10: the 409 applies only to non-blockable members — a genuinely
+    expired member can still be blocked on the bridge path."""
+    _bridge(seed_gym)
+    seed_member.device_enroll_number = "101"
+    seed_member.status = "expired"
+    seed_member.membership_end = date.today() - timedelta(days=1)
+    db.session.commit()
+    res = client.post(_access_url(seed_member.id), headers=_owner_headers(seed_gym), json={"action": "block"})
+    assert res.status_code == 201
+    cmd = db.session.get(BridgeCommand, res.json["data"]["command"]["id"])
+    assert cmd.command_type == "disable_user"
+
+
+def test_bridge_manual_block_active_member_without_enroll_is_device_not_ready(
+    client, seed_gym, seed_member
+):
+    """M10 scoping: the BLOCK_NOT_ALLOWED 409 fires only when a bridge
+    command would actually have been queued. With no enroll number bound
+    there is no door to stay open, so DEVICE_NOT_READY stays the error."""
+    _bridge(seed_gym)
+    db.session.commit()
+    res = client.post(_access_url(seed_member.id), headers=_owner_headers(seed_gym), json={"action": "block"})
+    assert res.status_code == 409
+    assert res.json["error"]["code"] == "DEVICE_NOT_READY"
+    assert BridgeCommand.query.count() == 0
 
 
 def _acked_bridge_command(installation, member, command_type):

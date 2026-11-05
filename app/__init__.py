@@ -100,7 +100,10 @@ def create_app(config_name: str | None = None) -> Flask:
             html = html.replace('href="/manifest.webmanifest"', 'href="/vynla/manifest.webmanifest"')
             html = html.replace('href="/manifest.json"', 'href="/vynla/manifest.webmanifest"')
             html = re.sub(r"<title>.*?</title>", "<title>VYNLA — Member App</title>", html, count=1)
-            return Response(html, content_type="text/html; charset=utf-8")
+            # B-H11: same no-cache rule as the owner PWA entry point.
+            response = Response(html, content_type="text/html; charset=utf-8")
+            response.headers["Cache-Control"] = "no-cache"
+            return response
 
         @app.route("/vynla/manifest.webmanifest")
         def vynla_member_manifest():
@@ -121,7 +124,11 @@ def create_app(config_name: str | None = None) -> Flask:
 
         @app.route("/")
         def index():
-            return send_from_directory(str(_pwa_dist), "index.html")
+            # B-H11: index.html must never be cached — a stale cached
+            # bundle requests hashed chunks that may no longer exist.
+            response = send_from_directory(str(_pwa_dist), "index.html")
+            response.headers["Cache-Control"] = "no-cache"
+            return response
 
         @app.route("/<path:filename>")
         def pwa_static(filename):
@@ -138,8 +145,16 @@ def create_app(config_name: str | None = None) -> Flask:
             file_path = _pwa_dist / filename
             if file_path.is_file():
                 return send_from_directory(str(_pwa_dist), filename)
+            # B-H11: a missing /assets/* file is a REAL 404, never the SPA
+            # fallback. Returning index.html (200) for a missing hashed
+            # chunk makes dynamic import() throw a SyntaxError and the
+            # PWA silently dead-taps (B-C1).
+            if filename == "assets" or filename.startswith("assets/"):
+                abort(404)
             # SPA fallback — let the client-side router handle it
-            return send_from_directory(str(_pwa_dist), "index.html")
+            response = send_from_directory(str(_pwa_dist), "index.html")
+            response.headers["Cache-Control"] = "no-cache"
+            return response
     else:
         app.logger.warning("PWA dist not found at %s — falling back to legacy redirect", _pwa_dist)
 

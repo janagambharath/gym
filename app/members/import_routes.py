@@ -129,6 +129,16 @@ def import_members():
             plan = plans_by_name.get(plan_name.lower())
             if not plan:
                 errors.append(f"plan '{plan_name}' does not exist for this gym")
+        # H3: imported ends must sit on the plan grid, like the mobile
+        # API — a hand-typed end in a CSV is the same bug vector.
+        if membership_start and membership_end and plan is not None:
+            from app.mobile_api.date_rules import grid_error
+
+            _grid_err = grid_error(
+                membership_start, membership_end, plan.duration_days
+            )
+            if _grid_err is not None:
+                errors.append(_grid_err)
 
         raw_price = row.get("price", "") or row.get("member_price", "")
         if raw_price:
@@ -284,6 +294,10 @@ def undo_import(batch_id: str):
             continue
         m.deleted_at = utcnow()
         m.status = "deleted"
+        # H9: soft-delete frees the terminal ID (mapping rows deleted).
+        from app.services.rrr_service import delete_identity_mappings
+
+        delete_identity_mappings(current_user.gym_id, m.id)
         queue_membership_command(m)
         undone_count += 1
 

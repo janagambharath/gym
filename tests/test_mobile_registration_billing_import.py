@@ -98,11 +98,14 @@ def test_google_purchase_never_activates_without_provider_verification(client, s
 
 def test_member_import_preview_identifies_rows_and_atomic_import(client, seed_gym):
     headers = _headers(seed_gym)
+    # M1: fixture dates are on the 30-day plan grid (span 29). The old
+    # 2026-08-01 -> 2026-09-01 rows (span 31) encoded the bug this fix
+    # closes — validate_csv now rejects off-grid ends.
     csv_text = "\n".join([
         "full_name,phone,membership_start,membership_end,plan,status",
-        "Valid One,+919876000001,2026-08-01,2026-09-01,Monthly Standard,active",
-        "Bad Phone,not-a-phone,2026-08-01,2026-09-01,Monthly Standard,active",
-        "Duplicate,+919876000001,2026-08-01,2026-09-01,Monthly Standard,active",
+        "Valid One,+919876000001,2026-08-01,2026-08-30,Monthly Standard,active",
+        "Bad Phone,not-a-phone,2026-08-01,2026-08-30,Monthly Standard,active",
+        "Duplicate,+919876000001,2026-08-01,2026-08-30,Monthly Standard,active",
     ])
     preview = client.post("/api/mobile/v1/members/import/preview", headers=headers, json={"csv_text": csv_text})
     assert preview.status_code == 200
@@ -115,7 +118,7 @@ def test_member_import_preview_identifies_rows_and_atomic_import(client, seed_gy
 
     valid_csv = "\n".join([
         "full_name,phone,membership_start,membership_end,plan,status,device_enroll_number,price",
-        "Valid One,+919876000001,2026-08-01,2026-09-01,Monthly Standard,active,8842,850.50",
+        "Valid One,+919876000001,2026-08-01,2026-08-30,Monthly Standard,active,8842,850.50",
     ])
     imported = client.post("/api/mobile/v1/members/import", headers=headers, json={"csv_text": valid_csv})
     assert imported.status_code == 201

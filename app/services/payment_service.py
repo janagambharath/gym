@@ -14,6 +14,32 @@ from app.services.bridge_service import queue_membership_command
 from app.services.timezone_service import today_for_gym
 
 
+# M9 / B-L1: the known payment method / channel sets. Owner-supplied
+# values are validated against these on creation; anything else is a
+# typo ("cashh", "UPI ") that would silently fall into "other" in the
+# payments summary. "bank" is the legacy web form's spelling of a bank
+# transfer. Member-side server values ("member_claim",
+# "member_request") are set server-side, never user input, and are not
+# part of this set.
+PAYMENT_METHODS = {"upi", "cash", "card", "bank_transfer", "bank", "other"}
+PAYMENT_CHANNELS = {"online", "offline"}
+
+
+def verified_payment_with_reference(gym_id: int, reference: str):
+    """Return the verified payment in this gym carrying *reference* (M9).
+
+    A UTR pasted twice must not double-count collections: the creation
+    paths reject a second verified payment with the same reference.
+    Returns None when the reference is empty or unused.
+    """
+    reference = (reference or "").strip()
+    if not reference:
+        return None
+    return PaymentVerification.query.filter_by(
+        gym_id=gym_id, reference=reference, status="verified"
+    ).first()
+
+
 def _lock_payment(payment: PaymentVerification) -> PaymentVerification:
     """Re-fetch the payment row with FOR UPDATE and return the locked copy.
 
@@ -107,7 +133,11 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     if not scheduled:
         member.membership_start = new_start
         member.membership_end = new_end
-        member.status = "active"
+        # M3: a paused member stays paused through a verified payment —
+        # only the explicit unfreeze flow clears paused. The dates still
+        # extend; the door stays blocked while paused.
+        if member.status != "paused":
+            member.status = "active"
         member.price = locked_payment.amount
         if locked_payment.plan_id:
             member.plan_id = locked_payment.plan_id
@@ -191,7 +221,10 @@ def apply_due_scheduled_renewals(gym) -> int:
             continue
         member.membership_start = renewal.new_start
         member.membership_end = renewal.new_end
-        member.status = "active"
+        # M3: a paused member stays paused when a scheduled renewal
+        # activates — only the explicit unfreeze flow clears paused.
+        if member.status != "paused":
+            member.status = "active"
         member.price = renewal.amount
         if renewal.plan_id:
             member.plan_id = renewal.plan_id
@@ -230,6 +263,10 @@ def _revert_renewal(member: Member, renewal: RenewalHistory) -> None:
         member.membership_end = renewal.previous_end
         if renewal.previous_start is not None:
             member.membership_start = renewal.previous_start
+        # B-M3: a paused member stays paused through a refund/delete
+        # revert — only the explicit unfreeze flow clears paused.
+        if member.status == "paused":
+            return
         if renewal.previous_end:
             gym_tz = member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
             today = today_for_gym(gym_tz)

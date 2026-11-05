@@ -118,9 +118,33 @@ def bulk_renew():
             flash("No matching members found.", "warning")
             return redirect(url_for("members.bulk_renew"))
 
-        today = date.today()
+        today = today_for_gym(current_user.gym.timezone)
+        # H3: same date rules as the mobile API — renewal days must equal
+        # the member's plan duration unless the owner supplies an
+        # override reason. Validated for ALL members before any mutation
+        # so a rejected bulk renewal leaves nothing behind.
+        override_reason = (request.form.get("override_reason") or "").strip() or None
+        from app.mobile_api.date_rules import plan_days_error
+
+        is_owner = current_user.role == "gym_owner"
+        for member in members:
+            plan_err = plan_days_error(
+                renewal_days,
+                member.plan.duration_days if member.plan else None,
+                override_reason=override_reason,
+                is_owner=is_owner,
+            )
+            if plan_err is not None:
+                flash(
+                    f"Cannot renew {member.full_name}: {plan_err}",
+                    "danger",
+                )
+                return redirect(url_for("members.bulk_renew"))
         renewed_ids = []
         for member in members:
+            # H4-legacy: capture previous_start BEFORE any mutation —
+            # the else branch below rewrites membership_start.
+            previous_start = member.membership_start
             previous_end = member.membership_end
             if previous_end and previous_end >= today:
                 new_start = previous_end + timedelta(days=1)
@@ -129,7 +153,10 @@ def bulk_renew():
                 member.membership_start = new_start
             new_end = new_start + timedelta(days=renewal_days - 1)
             member.membership_end = new_end
-            member.status = "active"
+            # M3 family: a paused member stays paused through a renewal
+            # — only the explicit unfreeze flow clears paused.
+            if member.status != "paused":
+                member.status = "active"
             # Pin the expected renewal value for revenue-at-risk reporting.
             member.price = amount
             queue_membership_command(member)
@@ -140,7 +167,7 @@ def bulk_renew():
                     member_id=member.id,
                     plan_id=member.plan_id,
                     renewed_by_id=current_user.id,
-                    previous_start=member.membership_start,
+                    previous_start=previous_start,
                     previous_end=previous_end,
                     new_start=new_start,
                     new_end=new_end,
@@ -215,7 +242,12 @@ def create():
             )
             return redirect(url_for("members.index"))
         member = Member(gym_id=current_user.gym_id)
-        _apply_member_form(member, form)
+        try:
+            _apply_member_form(member, form)
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return render_template("members/form.html", form=form, member=None)
         db.session.add(member)
         db.session.flush()
         queue_membership_command(member)
@@ -278,7 +310,12 @@ def edit(member_id: int):
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
     form = _member_form(member)
     if form.validate_on_submit():
-        _apply_member_form(member, form)
+        try:
+            _apply_member_form(member, form)
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return render_template("members/form.html", form=form, member=member)
         queue_membership_command(member)
         audit(action="update_member", resource_type="member", resource_id=member.id)
         invalidate_dashboard_cache(current_user.gym_id)
@@ -298,6 +335,11 @@ def delete(member_id: int):
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
     member.deleted_at = utcnow()
     member.status = "deleted"
+    # H9: free the terminal ID (mapping rows deleted; see the mobile
+    # deactivate endpoint for why device_enroll_number is kept).
+    from app.services.rrr_service import delete_identity_mappings
+
+    delete_identity_mappings(current_user.gym_id, member.id)
     queue_membership_command(member)
     audit(action="soft_delete_member", resource_type="member", resource_id=member.id)
     invalidate_dashboard_cache(current_user.gym_id)
@@ -346,6 +388,11 @@ def hard_delete(member_id: int):
 
 
 def _apply_member_form(member: Member, form: MemberForm) -> None:
+    """Apply a legacy web member form. Raises ValueError on a grid
+    violation (H3) — callers flash the message and re-render the form
+    without committing."""
+    from app.mobile_api.date_rules import grid_error
+
     member.full_name = form.full_name.data.strip()
     member.phone = normalize_phone_e164(form.phone.data.strip())
     member.email = form.email.data.strip() if form.email.data else None
@@ -364,6 +411,23 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
             member.price = plan.price
     member.membership_start = form.membership_start.data
     member.membership_end = form.membership_end.data
+    # H3: free-typed ends must sit on the plan grid, like the mobile
+    # API. The same-day start == end record is the quick-add case
+    # (mirrors mobile create_member's no-date exemption) and is left
+    # alone — the renewal flow fixes its dates.
+    if member.membership_start != member.membership_end:
+        plan = (
+            MembershipPlan.query.filter_by(id=member.plan_id, gym_id=current_user.gym_id).first()
+            if member.plan_id
+            else None
+        )
+        err = grid_error(
+            member.membership_start,
+            member.membership_end,
+            plan.duration_days if plan else None,
+        )
+        if err is not None:
+            raise ValueError(err)
     member.status = form.status.data
     if member.status == "active" and member.membership_end < today_for_gym(current_user.gym.timezone):
         member.status = "expired"

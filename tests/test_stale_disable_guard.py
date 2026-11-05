@@ -454,8 +454,12 @@ def test_adms_getrequest_wire_text_delete_fallback(client, seed_gym):
     assert saved.result_code == STALE_DISABLE_MARKER
 
 
-def test_adms_getrequest_cancels_stale_enable_but_serves_active(client, seed_gym):
-    """H8: unblock/create for an expired member cancels; active serves."""
+def test_adms_getrequest_cancels_stale_enable_but_serves_active_and_create_user(client, seed_gym):
+    """H8: unblock for an expired member cancels; active serves. B-H2:
+    create_user is exempt from the enable guard (creation is its purpose),
+    so it serves even when the enroll number resolves to an expired member
+    — previously it was cancelled with CANCELLED_STALE_ENABLE and the
+    advanced endpoint could never create a new terminal user."""
     from app.services.bridge_service import STALE_ENABLE_MARKER
 
     integration = _adms_integration(
@@ -480,13 +484,16 @@ def test_adms_getrequest_cancels_stale_enable_but_serves_active(client, seed_gym
 
     response = client.get("/iclock/h8-token/getrequest?SN=H8-X2008")
     assert response.status_code == 200
+    # Queue order: the stale unblock cancels in place, then the exempt
+    # create_user is the first servable command.
     assert response.get_data(as_text=True) == (
-        f"C:{legit_unblock.id}:DATA UPDATE USERINFO PIN=105\tName=Active Enable\tPri=0\n"
+        f"C:{stale_create.id}:DATA UPDATE USERINFO PIN=104\tName=Expired Enable\tPri=0\n"
     )
-    for cmd in (stale_unblock, stale_create):
-        saved = db.session.get(RRRAdmsCommand, cmd.id)
-        assert saved.status == "failed"
-        assert saved.result_code == STALE_ENABLE_MARKER
+    saved_stale = db.session.get(RRRAdmsCommand, stale_unblock.id)
+    assert saved_stale.status == "failed"
+    assert saved_stale.result_code == STALE_ENABLE_MARKER
+    assert db.session.get(RRRAdmsCommand, stale_create.id).status == "delivered"
+    assert db.session.get(RRRAdmsCommand, legit_unblock.id).status == "queued"
 
 
 def test_bridge_lease_cancels_stale_enable_but_serves_active(seed_gym):

@@ -181,6 +181,42 @@ def revenue_recovered(
     }
 
 
+def _exclude_creation_rows(gym_id: int, rows: list) -> list:
+    """Drop signup (creation) ledger rows from a cohort.
+
+    Member creation writes its first ledger row with
+    ``previous_end == new_start == membership_start``
+    (``app/mobile_api/members.py``). Every genuine renewal path starts the
+    new period after the previous end (``earliest_start = previous_end + 1``,
+    or today when expired), so a row matching BOTH signals — the member's
+    first ledger row AND ``previous_end == new_start`` — is a signup, not
+    a recovery. Requiring both avoids misreading a backdated first renewal
+    of an imported member (who has no creation row) as a signup.
+    """
+    if not rows:
+        return []
+    member_ids = {row.member_id for row in rows}
+    first_ids = {
+        row[0]
+        for row in db.session.query(func.min(RenewalHistory.id))
+        .filter(
+            RenewalHistory.gym_id == gym_id,
+            RenewalHistory.member_id.in_(member_ids),
+        )
+        .group_by(RenewalHistory.member_id)
+        .all()
+    }
+    return [
+        row
+        for row in rows
+        if not (
+            row.id in first_ids
+            and row.previous_end is not None
+            and row.previous_end == row.new_start
+        )
+    ]
+
+
 def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     """Calculate renewal recovery for one expiry cohort.
 
@@ -189,6 +225,14 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     with the standard value of renewals already recorded for that same cohort;
     the numerator includes only those matched renewals. This avoids dividing
     all recent renewals by a current-risk snapshot from a different period.
+
+    Money truth (C1 / B-H3): signup creation rows are excluded from the
+    cohort entirely — a new signup is not a recovered renewal — and the
+    recovered breakdown splits payment-backed renewals from direct
+    (unrecorded-payment) renewals so clients can display verified-only
+    money. ``revenue_at_risk`` is the canonical at-risk total (the same
+    number the dashboard and reports return); the rate's denominator is
+    exposed separately as ``recovery_denominator``.
     """
     today = today_for_gym(gym_timezone)
     cohort_start = today - timedelta(days=30)
@@ -196,10 +240,16 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     risk = revenue_at_risk(gym_id, gym_timezone)
     cohort_rows = (
         db.session.query(
+            RenewalHistory.id,
             RenewalHistory.member_id,
             RenewalHistory.amount,
-            func.coalesce(RenewalHistory.standard_price, RenewalHistory.amount),
+            func.coalesce(RenewalHistory.standard_price, RenewalHistory.amount).label(
+                "expected_value"
+            ),
             RenewalHistory.campaign_id,
+            RenewalHistory.previous_end,
+            RenewalHistory.new_start,
+            RenewalHistory.payment_verification_id,
         )
         .filter(
             RenewalHistory.gym_id == gym_id,
@@ -209,9 +259,12 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         )
         .all()
     )
-    cohort_actual = sum((Decimal(str(row[1] or 0)) for row in cohort_rows), Decimal("0"))
-    cohort_expected = sum((Decimal(str(row[2] or 0)) for row in cohort_rows), Decimal("0"))
-    campaign_rows = [row for row in cohort_rows if row[3] is not None]
+    recovery_rows = _exclude_creation_rows(gym_id, cohort_rows)
+    cohort_actual = sum((Decimal(str(row.amount or 0)) for row in recovery_rows), Decimal("0"))
+    cohort_expected = sum((Decimal(str(row.expected_value or 0)) for row in recovery_rows), Decimal("0"))
+    paid_rows = [row for row in recovery_rows if row.payment_verification_id is not None]
+    direct_rows = [row for row in recovery_rows if row.payment_verification_id is None]
+    campaign_rows = [row for row in recovery_rows if row.campaign_id is not None]
 
     risk_total = Decimal(risk["total"]) + cohort_expected
 
@@ -221,15 +274,26 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         rate = Decimal("0.0")
 
     return {
-        "revenue_at_risk": str(risk_total),
+        "revenue_at_risk": risk["total"],
+        "recovery_denominator": str(risk_total),
         "revenue_recovered": str(cohort_actual),
         "recovery_rate": str(rate),
         "risk_breakdown": {**risk, "renewed_cohort_expected": str(cohort_expected)},
         "recovered_breakdown": {
-            "total_renewals": len(cohort_rows),
+            "total_renewals": len(recovery_rows),
             "total_amount": str(cohort_actual),
+            "payment_backed_renewals": len(paid_rows),
+            "payment_backed_amount": str(
+                sum((Decimal(str(row.amount or 0)) for row in paid_rows), Decimal("0"))
+            ),
+            "direct_renewals": len(direct_rows),
+            "direct_amount": str(
+                sum((Decimal(str(row.amount or 0)) for row in direct_rows), Decimal("0"))
+            ),
             "campaign_renewals": len(campaign_rows),
-            "campaign_amount": str(sum((Decimal(str(row[1] or 0)) for row in campaign_rows), Decimal("0"))),
+            "campaign_amount": str(
+                sum((Decimal(str(row.amount or 0)) for row in campaign_rows), Decimal("0"))
+            ),
         },
     }
 

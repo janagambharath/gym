@@ -105,6 +105,24 @@ def register_settings_routes(bp):
         gym = g.current_user.gym
 
         # Only owner can update; only safe fields allowed.
+        # B-M2: validate the timezone as a real IANA name BEFORE
+        # applying any update. An invalid value used to persist
+        # silently and every tz-sensitive path (including punch-time
+        # parsing) fell back to Asia/Kolkata — how Yodha's invalid
+        # timezone caused the +5.5h punch bug.
+        if "timezone" in data and isinstance(data.get("timezone"), str):
+            tz_val = (data.get("timezone") or "").strip()
+            if tz_val:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    ZoneInfo(tz_val)
+                except Exception:
+                    return error_response(
+                        "VALIDATION_ERROR",
+                        f"Invalid timezone: {tz_val!r}. Use an IANA timezone name such as 'Asia/Kolkata'.",
+                        400,
+                    )
         allowed = {"name", "email", "phone", "address", "timezone"}
         updates = {}
         for key in allowed:

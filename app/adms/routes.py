@@ -262,6 +262,16 @@ def _parse_userinfo_line(line: str) -> dict | None:
     pin = fields.get("PIN", "").strip()
     if not pin:
         return None
+    # H7: canonicalize once at the ingest boundary ("042" -> "42") so
+    # stored IDs, snapshots and mappings all agree. Non-numeric IDs
+    # (M16) keep their raw form — they can never link, but the punch
+    # must still be stored, not dropped.
+    try:
+        from app.services.bridge_service import canonical_enroll_number
+
+        pin = canonical_enroll_number(pin)
+    except ValueError:
+        pass
     return {"enroll_number": pin, "name": fields.get("NAME", "").strip()}
 
 
@@ -300,6 +310,13 @@ def _parse_operlog_enrollment(line: str) -> dict | None:
     name = fields.get("NAME", "").strip()
     if not pin or not name:
         return None
+    # H7: canonicalize once at the ingest boundary (see _parse_userinfo_line).
+    try:
+        from app.services.bridge_service import canonical_enroll_number
+
+        pin = canonical_enroll_number(pin)
+    except ValueError:
+        pass
     return {"enroll_number": pin, "name": name}
 
 
@@ -474,6 +491,14 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
         punch_time = _parse_device_time(cells[1], gym_timezone)
         if not person_id or punch_time is None:
             continue
+        # H7: canonicalize the enroll number at ingest ("042" -> "42").
+        # Non-numeric IDs keep their raw form (M16) — stored, never dropped.
+        try:
+            from app.services.bridge_service import canonical_enroll_number
+
+            person_id = canonical_enroll_number(person_id)
+        except ValueError:
+            pass
         direction = cells[2].strip()[:16] if len(cells) > 2 else None
         verify = cells[3].strip()[:32] if len(cells) > 3 else None
         event, was_created = normalize_attendance(
@@ -648,7 +673,6 @@ def getrequest(path_token: str | None = None):
     from app.services.bridge_service import (
         ADMS_DISABLE_ACTIONS,
         ADMS_ENABLE_ACTIONS,
-        ADMS_GROUP_TEST_ACTIONS,
         ADMS_TEST_ACTIONS,
         STALE_ENABLE_ERROR,
         STALE_ENABLE_MARKER,
@@ -676,11 +700,13 @@ def getrequest(path_token: str | None = None):
                 error="Destructive ADMS delete commands are disabled. Use the reversible Grp=100/Grp=1 access update.",
             )
             continue
-        # Test path: terminal-local IDs are served when unresolved. The
-        # non-destructive Grp tests may also target an explicitly confirmed
-        # fake member, but only when the owner entered that member's current
-        # terminal name and the same member row still resolves here. All
-        # other test actions retain the no-member-only guard.
+        # Test path: group tests serve ONLY for terminal-local IDs that
+        # resolve to no member row. H6 serve-time fail-safe: a Grp test
+        # whose enroll number resolves to a real member is refused even
+        # when the owner confirmed the name at queue time — the queue-time
+        # name match and checkbox are owner self-attestation, and a
+        # mistyped ID with the right name would otherwise Grp=100-block a
+        # paying member. Use a terminal-only fake test account instead.
         if candidate.action in ADMS_TEST_ACTIONS:
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if member is None and candidate.test_member_id is not None:
@@ -689,21 +715,11 @@ def getrequest(path_token: str | None = None):
                     error="Test refused: the confirmed test member no longer matches this ID. Queue the test again.",
                 )
                 continue
-            confirmed_group_test = (
-                candidate.action in ADMS_GROUP_TEST_ACTIONS
-                and member is not None
-                and candidate.test_member_id == member.id
-            )
-            if member is not None and not confirmed_group_test:
-                if candidate.action in ADMS_ENABLE_ACTIONS:
-                    cancel_adms_command(
-                        candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
-                    )
-                else:
-                    cancel_adms_command(
-                        candidate,
-                        error="Test refused: that ID belongs to a member. Only the explicitly confirmed fake account can use the eSSL Grp test.",
-                    )
+            if member is not None:
+                cancel_adms_command(
+                    candidate,
+                    error="Test refused: that ID belongs to a member. Group tests run only against a terminal-only fake account — the explicitly confirmed fake account must have no Renewal Desk member row.",
+                )
                 continue
             command = candidate
             break
@@ -734,12 +750,15 @@ def getrequest(path_token: str | None = None):
                     error="The member no longer resolves to this terminal ID. Confirm the biometric mapping and queue the access change again.",
                 )
                 continue
-        # Mirror guard for enables (H8): an unblock/create/restore is
-        # served only when the resolved member is proven enableable —
-        # active with an end date today or in the future.  A stale enable
-        # for a paused/expired/unresolvable member cancels instead of
-        # re-opening the door; serving continues with the next command.
-        if candidate.action in ADMS_ENABLE_ACTIONS:
+        # Mirror guard for enables (H8): an unblock/restore is served only
+        # when the resolved member is proven enableable — active with an end
+        # date today or in the future.  A stale enable for a
+        # paused/expired/unresolvable member cancels instead of re-opening
+        # the door; serving continues with the next command.
+        # B-H2: create_user is exempt — it is the command that CREATES the
+        # terminal user, so a new enroll number can never resolve to a
+        # member row and the guard would cancel every creation.
+        if candidate.action in ADMS_ENABLE_ACTIONS and candidate.action != "create_user":
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if enable_must_be_cancelled(member):
                 # A dropped unblock used to be silent: log the exact reason

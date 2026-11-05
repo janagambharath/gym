@@ -75,6 +75,15 @@ def validate_csv(gym_id: int, gym_timezone: str, csv_text: str) -> dict[str, Any
         plan = plans.get(plan_name.lower()) if plan_name else None
         if plan_name and plan is None:
             errors.append(f"plan '{plan_name}' does not exist for this gym")
+        # M1: imported ends must sit on the plan grid, like single
+        # create_member — an off-grid CSV row is invalid, not silently
+        # imported (the dates are always explicit in a CSV row).
+        if start and end and plan is not None:
+            from app.mobile_api.date_rules import grid_error
+
+            _grid_err = grid_error(start, end, plan.duration_days)
+            if _grid_err is not None:
+                errors.append(_grid_err)
         plan_id = plan.id if plan else None
 
         raw_price = row.get("price", "") or row.get("member_price", "")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from decimal import Decimal
 
 from flask import current_app
 from sqlalchemy import case, func
@@ -83,26 +84,17 @@ def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
         .one()
     )
 
-    risk_stats = (
-        db.session.query(
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            (Member.membership_end >= today)
-                            & (Member.membership_end <= soon)
-                            & (Member.status == "active"),
-                            Member.price,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("revenue_at_risk")
+    # H1: one canonical at-risk definition (revenue_service): active members
+    # expiring within 7 days PLUS members expired in the last 30 days,
+    # pinned member price falling back to plan price. The dashboard must
+    # not show a different "at risk" number than the recovery-rate and
+    # reports views, so this delegates instead of running its own query.
+    from app.services.revenue_service import revenue_at_risk as _canonical_at_risk
+
+    risk_total = Decimal(
+        str(
+            _canonical_at_risk(gym_id, _timezone_for_gym(gym_id, gym_timezone))["total"]
         )
-        .select_from(Member)
-        .filter(Member.gym_id == gym_id, Member.deleted_at.is_(None))
-        .one()
     )
 
     return {
@@ -113,7 +105,7 @@ def _fetch_stats(gym_id: int, gym_timezone: str | None = None) -> dict:
         "sent_reminders": int(reminder_stats.sent or 0),
         "failed_reminders": int(reminder_stats.failed or 0),
         "collected": payment_stats.collected,
-        "revenue_at_risk": risk_stats.revenue_at_risk,
+        "revenue_at_risk": risk_total,
     }
 
 

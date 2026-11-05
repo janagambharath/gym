@@ -145,6 +145,16 @@ def register_members_routes(bp):
             if start_d and end_d and end_d < start_d:
                 item_errors.append("membership_end must be on or after membership_start")
 
+            # M1: an explicitly supplied end date must sit on the plan
+            # grid, like single create_member. No plan (or no explicit
+            # end — it defaults to today) means nothing to check.
+            if raw_end and start_d and end_d and plan_id in active_plans:
+                _grid_err = grid_error(
+                    start_d, end_d, active_plans[plan_id].duration_days
+                )
+                if _grid_err is not None:
+                    item_errors.append(_grid_err)
+
             if plan_id and plan_id not in active_plans:
                 item_errors.append(f"Plan ID {plan_id} is not valid for this gym")
 
@@ -671,6 +681,15 @@ def register_members_routes(bp):
 
         member.deleted_at = utcnow()
         member.status = "deleted"
+        # H9: free the terminal ID — delete the identity mapping rows so
+        # the enroll number can be reused. The member's own
+        # device_enroll_number is intentionally KEPT: Guard 2 still
+        # reports it as held by a deleted member (explicit error), and
+        # clearing it would defeat the hard-delete fingerprint tombstone
+        # guard. Mapping-only members are fully freed by this.
+        from app.services.rrr_service import delete_identity_mappings
+
+        delete_identity_mappings(g.gym_id, member.id)
         queue_membership_command(member)
         audit(action="soft_delete_member", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id)
@@ -848,6 +867,11 @@ def register_members_routes(bp):
             return error_response("NOT_ENROLLED", "Member is not enrolled on any device.", 400)
 
         member.device_enroll_number = None
+        # H9: free the terminal ID — delete the identity mapping rows so
+        # the enroll number can be reused for another member.
+        from app.services.rrr_service import delete_identity_mappings
+
+        delete_identity_mappings(g.gym_id, member.id)
         audit(action="biometric_unenroll", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
               metadata={"old_enroll_number": old_enroll})

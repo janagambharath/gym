@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from flask import g, jsonify, request
 from sqlalchemy import case, func
@@ -39,7 +40,6 @@ def register_reports_routes(bp):
             period_start_date = today - timedelta(days=30)
         else:
             period_start_date = today
-        soon = today + timedelta(days=7)
         gym_id = g.gym_id
 
         # Members
@@ -104,28 +104,14 @@ def register_reports_routes(bp):
             .scalar()
         )
 
-        # Revenue at risk (active members expiring in next 7 days)
-        revenue_at_risk = (
-            db.session.query(
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (
-                                (Member.membership_end >= today)
-                                & (Member.membership_end <= soon)
-                                & (Member.status == "active"),
-                                Member.price,
-                            ),
-                            else_=0,
-                        )
-                    ),
-                    0,
-                )
-            )
-            .select_from(Member)
-            .filter(Member.gym_id == gym_id, Member.deleted_at.is_(None))
-            .scalar() or 0
-        )
+        # Revenue at risk — H1 canonical definition (revenue_service):
+        # active members expiring within 7 days PLUS members expired in the
+        # last 30 days, pinned member price falling back to plan price.
+        # Must match the dashboard and recovery-rate numbers, not a third
+        # definition.
+        from app.services.revenue_service import revenue_at_risk as _canonical_at_risk
+
+        revenue_at_risk = Decimal(str(_canonical_at_risk(gym_id, gym_timezone)["total"]))
 
         # Renewals
         renewals_completed = (

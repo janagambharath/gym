@@ -210,6 +210,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.services.bridge_service import queue_membership_command
                 from app.models import Member
                 from app.models.rrr import RRRAdmsCommand, RRRIntegration
+                from sqlalchemy import or_, select
                 from app.services.bridge_service import (
                     member_is_proven_blockable,
                     resolve_adms_enroll_number,
@@ -220,13 +221,28 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     gym_id=gym.id, connector_type="adms_direct"
                 ).first()
                 if integration and integration.commands_enabled:
+                    # M12 residual: mapping-only members (a confirmed
+                    # RRR identity mapping but no device_enroll_number
+                    # on the member row) must be covered too — their
+                    # failed blocks were never re-queued. resolve_adms_
+                    # enroll_number prefers the mapping, so the loop
+                    # below resolves both kinds.
+                    from app.models.rrr import RRRIdentityMapping
+
+                    mapping_member_ids = select(RRRIdentityMapping.member_id).where(
+                        RRRIdentityMapping.gym_id == gym.id,
+                        RRRIdentityMapping.status == "confirmed",
+                    )
                     expired_linked = (
                         Member.query.filter(
                             Member.gym_id == gym.id,
                             Member.status == "expired",
                             Member.membership_end < today_for_gym(gym.timezone),
                             Member.deleted_at.is_(None),
-                            Member.device_enroll_number.isnot(None),
+                            or_(
+                                Member.device_enroll_number.isnot(None),
+                                Member.id.in_(mapping_member_ids),
+                            ),
                         ).all()
                     )
                     requeued = 0

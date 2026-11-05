@@ -444,7 +444,14 @@ def test_recovery_rate_uses_matching_expiry_cohort(seed_gym, seed_member):
     db.session.commit()
 
     result = recovery_rate(gym.id, gym.timezone)
-    assert result["revenue_at_risk"] == "2000.00"
+    # H1: revenue_at_risk is the canonical at-risk total (expired member's
+    # 1000), the same number the dashboard and reports return — not the
+    # rate denominator (at-risk + renewed cohort expected), which lives in
+    # recovery_denominator. The genuine renewal still counts: its row is
+    # the member's first ledger row but new_start is previous_end + 1, so
+    # it is not a signup creation row (B-H3).
+    assert result["revenue_at_risk"] == "1000.00"
+    assert result["recovery_denominator"] == "2000.00"
     assert result["revenue_recovered"] == "800.00"
     assert result["recovery_rate"] == "40.0"
 

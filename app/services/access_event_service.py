@@ -400,6 +400,8 @@ def get_access_events(
     date_filter: str | None = None,
 ) -> dict:
     """Return paginated access events for the feed."""
+    page = max(page, 1)
+    per_page = max(per_page, 1)
     query = AccessEvent.query.filter_by(gym_id=gym_id)
 
     # Filter by event type
@@ -426,66 +428,133 @@ def get_access_events(
         search_term = f"%{search.strip()}%"
         query = query.filter(AccessEvent.member_name.ilike(search_term))
 
-    # Order by most recent first
-    pagination = (
+    # Merged-feed pagination: a row's overall rank can sit ahead of its
+    # own leg's page-N window (the other leg may contribute many newer
+    # rows), so BOTH legs are fetched from the top through this page and
+    # the merged, re-sorted list is sliced. per_page is capped at 100 by
+    # the endpoint; the per-leg fetch is capped at 500 rows.
+    fetch_limit = min(max(page, 1) * max(per_page, 1), 500)
+    access_total = query.count()
+    access_rows = (
         query.order_by(AccessEvent.event_timestamp.desc())
-        .paginate(page=page, per_page=per_page, error_out=False)
+        .limit(fetch_limit)
+        .all()
     )
-
-    events = []
-    for evt in pagination.items:
-        events.append(_serialize_access_event(evt))
+    events = [_serialize_access_event(evt) for evt in access_rows]
 
     # Also include ADMS attendance events (from direct-cloud terminals).
-    # These live in RRRAttendanceEvent, not AccessEvent.
-    # NO date filter — just show the most recent punches. The user wants to see data.
-    from app.models.rrr import RRRAttendanceEvent
-    adms_query = RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
-    
-    # Apply event type filter (ADMS punches are entries)
-    if event_type == "exit" or event_type == "denied":
-        adms_events = []  # ADMS doesn't track exits/denied separately
-    else:
-        adms_events = adms_query.order_by(
-            RRRAttendanceEvent.punch_time.desc()
-        ).limit(per_page * 2).all()  # Get extra to merge
-    
-    # Apply search filter
-    if search and search.strip():
-        search_lower = search.strip().lower()
-    
-    for evt in adms_events:
-        # Skip if search doesn't match
-        if search and search.strip():
-            member_name = evt.member.full_name if evt.member else ""
-            bio_id = evt.biometric_user_id or ""
-            if search_lower not in member_name.lower() and search_lower not in bio_id.lower():
-                continue
-        
-        events.append({
-            "id": f"adms-{evt.id}",
-            "event_type": "ENTRY",
-            "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
-            "member_id": evt.member_id,
-            "member_name": evt.member.full_name if evt.member else f"User {evt.biometric_user_id}",
-            "biometric_user_id": evt.biometric_user_id,
-            "device_name": evt.device_serial,
-            "verify_method": evt.verify_method,
-            "source": "adms_direct",
-        })
-    
-    # Re-sort merged events by timestamp (most recent first)
-    events.sort(key=lambda e: e.get("event_timestamp") or "", reverse=True)
-    # Trim to per_page
-    events = events[:per_page]
+    # These live in RRRAttendanceEvent, not AccessEvent — but most of them
+    # are ALREADY projected into AccessEvent (source_event_id
+    # "rrr-attendance-<id>"), so this leg only backfills the unprojected
+    # remainder. M13: the ADMS leg gets the SAME date filter as the
+    # AccessEvent leg, true offset/limit pagination, and dedup against
+    # projected rows — "Today" no longer shows all-time punches, page 2+
+    # no longer repeats page 1, and total/total_pages count real rows.
+    from datetime import timedelta
 
+    from sqlalchemy import or_
+
+    from app.models.mixins import utcnow as _utcnow
+    from app.models.rrr import RRRAttendanceEvent
+
+    if date_filter == "today":
+        adms_since = utc_start_of_gym_day(gym_timezone)
+    elif date_filter == "all" or date_filter is None:
+        adms_since = _utcnow() - timedelta(days=7)
+    else:
+        adms_since = None
+
+    adms_events: list[dict] = []
+    adms_total = 0
+    # ADMS punches have no exit/denied direction (entry-only feed).
+    if event_type not in ("exit", "denied"):
+        adms_query = RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
+        if adms_since is not None:
+            adms_query = adms_query.filter(
+                RRRAttendanceEvent.punch_time >= adms_since
+            )
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            adms_query = adms_query.outerjoin(
+                Member, RRRAttendanceEvent.member_id == Member.id
+            ).filter(
+                or_(
+                    Member.full_name.ilike(term),
+                    RRRAttendanceEvent.biometric_user_id.ilike(term),
+                )
+            )
+        # Total = ADMS rows in the window that have NO AccessEvent
+        # projection. A correlated EXISTS on source_event_id keeps the
+        # count exact under every filter (date/search/type) — counting
+        # projected rows separately would drift whenever the two legs'
+        # search predicates differ (name vs name-or-biometric-ID).
+        from sqlalchemy import String, cast, exists as _exists
+
+        _projected = (
+            db.session.query(AccessEvent.id)
+            .filter(
+                AccessEvent.gym_id == gym_id,
+                AccessEvent.source_event_id
+                == "rrr-attendance-" + cast(RRRAttendanceEvent.id, String),
+            )
+            .exists()
+        )
+        adms_total = adms_query.filter(~_projected).count()
+
+        # fetch_limit (both legs, from the top) is defined above.
+        adms_rows = (
+            adms_query.order_by(RRRAttendanceEvent.punch_time.desc())
+            .limit(fetch_limit)
+            .all()
+        )
+        if adms_rows:
+            projected_ids = {
+                row[0]
+                for row in db.session.query(AccessEvent.source_event_id)
+                .filter(
+                    AccessEvent.gym_id == gym_id,
+                    AccessEvent.source_event_id.in_(
+                        [f"rrr-attendance-{row.id}" for row in adms_rows]
+                    ),
+                )
+                .all()
+            }
+        else:
+            projected_ids = set()
+        for evt in adms_rows:
+            if f"rrr-attendance-{evt.id}" in projected_ids:
+                continue
+            adms_events.append({
+                "id": f"adms-{evt.id}",
+                "event_type": "ENTRY",
+                "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
+                "member_id": evt.member_id,
+                "member_name": evt.member.full_name if evt.member else f"User {evt.biometric_user_id}",
+                "biometric_user_id": evt.biometric_user_id,
+                "device_name": evt.device_serial,
+                "verify_method": evt.verify_method,
+                "source": "adms_direct",
+            })
+
+    # Re-sort merged events by timestamp (most recent first) and take
+    # this page's slice. Both legs were fetched from the top through
+    # this page, so the slice is exact (up to the 500-row fetch cap).
+    merged = sorted(
+        events + adms_events,
+        key=lambda e: e.get("event_timestamp") or "",
+        reverse=True,
+    )
+    start = (page - 1) * per_page
+    page_events = merged[start:start + per_page]
+
+    total = access_total + adms_total
     return {
-        "events": events,
+        "events": page_events,
         "pagination": {
-            "page": pagination.page,
-            "per_page": pagination.per_page,
-            "total": pagination.total + len(adms_events),
-            "total_pages": pagination.pages,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": (total + per_page - 1) // per_page if per_page else 0,
         },
     }
 

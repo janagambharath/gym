@@ -19,6 +19,7 @@ from app.services.bridge_service import (
     ADMS_GROUP_BLOCK_NOTE,
     ADMS_DELIVERED_TIMEOUT_MINUTES,
     adms_command_text,
+    disable_must_be_cancelled,
     member_is_proven_enableable,
     queue_manual_adms_member_command,
     queue_manual_bridge_member_command,
@@ -667,11 +668,94 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def unresolved_mappings():
-        rows = RRRAttendanceEvent.query.filter_by(gym_id=g.gym_id, processing_status="unmapped").order_by(RRRAttendanceEvent.punch_time.desc()).all()
-        return jsonify({"success": True, "data": {"events": [
-            {"id": x.id, "biometric_user_id": x.biometric_user_id, "punch_time": x.punch_time.isoformat(),
-             "source": x.source, "device_serial": x.device_serial} for x in rows
-        ]}})
+        """Unmapped biometric IDs, grouped by distinct terminal ID.
+
+        Paginated form — pass ``?page=N&per_page=M`` (default per_page
+        50). Response ``data``::
+
+            {"groups": [{"biometric_user_id": "42",
+                         "punch_count": 5,
+                         "latest_punch_time": "2026-11-05T10:00:00",
+                         "first_punch_time": "2026-11-01T09:00:00",
+                         "latest_event_id": 123,
+                         "source": "adms_direct",
+                         "device_serial": "CUB7262300144"}, ...],
+             "pagination": {"page": 1, "per_page": 50,
+                            "total": <distinct IDs>, "total_pages": 1}}
+
+        ``total`` counts distinct terminal IDs, not punches. Legacy
+        form — no ``page``/``per_page`` params: the previous shape is
+        preserved (``{"events": [...], "total": <unmapped events>}``)
+        but capped at 500 events so the response stays bounded.
+        """
+        from sqlalchemy import func as _func
+
+        page_param_given = (
+            request.args.get("page") is not None
+            or request.args.get("per_page") is not None
+        )
+        if not page_param_given:
+            total_events = RRRAttendanceEvent.query.filter_by(
+                gym_id=g.gym_id, processing_status="unmapped"
+            ).count()
+            rows = (
+                RRRAttendanceEvent.query.filter_by(
+                    gym_id=g.gym_id, processing_status="unmapped"
+                )
+                .order_by(RRRAttendanceEvent.punch_time.desc())
+                .limit(500)
+                .all()
+            )
+            return jsonify({"success": True, "data": {"events": [
+                {"id": x.id, "biometric_user_id": x.biometric_user_id, "punch_time": x.punch_time.isoformat(),
+                 "source": x.source, "device_serial": x.device_serial} for x in rows
+            ], "total": total_events}})
+
+        page = max(request.args.get("page", 1, type=int), 1)
+        per_page = min(max(request.args.get("per_page", 50, type=int), 1), 100)
+        grouped = (
+            db.session.query(
+                RRRAttendanceEvent.biometric_user_id,
+                _func.count(RRRAttendanceEvent.id).label("punch_count"),
+                _func.max(RRRAttendanceEvent.punch_time).label("latest_punch_time"),
+                _func.min(RRRAttendanceEvent.punch_time).label("first_punch_time"),
+            )
+            .filter_by(gym_id=g.gym_id, processing_status="unmapped")
+            .group_by(RRRAttendanceEvent.biometric_user_id)
+            .order_by(_func.max(RRRAttendanceEvent.punch_time).desc())
+        )
+        total = grouped.count()
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        page_groups = grouped.offset((page - 1) * per_page).limit(per_page).all()
+        groups = []
+        for bio_id, punch_count, latest_punch, first_punch in page_groups:
+            latest = (
+                RRRAttendanceEvent.query.filter_by(
+                    gym_id=g.gym_id,
+                    biometric_user_id=bio_id,
+                    processing_status="unmapped",
+                )
+                .order_by(RRRAttendanceEvent.punch_time.desc())
+                .first()
+            )
+            groups.append({
+                "biometric_user_id": bio_id,
+                "punch_count": punch_count,
+                "latest_punch_time": latest_punch.isoformat() if latest_punch else None,
+                "first_punch_time": first_punch.isoformat() if first_punch else None,
+                "latest_event_id": latest.id if latest else None,
+                "source": latest.source if latest else None,
+                "device_serial": latest.device_serial if latest else None,
+            })
+        return jsonify({"success": True, "data": {
+            "groups": groups,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": total_pages,
+            },
+        }})
 
     @bp.post("/rrr/mappings/bulk-resolve")
     @token_required
@@ -789,6 +873,36 @@ def register_rrr_routes(bp):
         direct_integration = RRRIntegration.query.filter_by(
             gym_id=member.gym_id, connector_type="adms_direct"
         ).first()
+        if (
+            action == "block"
+            and direct_integration is None
+            and disable_must_be_cancelled(member)
+        ):
+            # M10 (bridge only): the bridge lease guard cancels any disable
+            # for a non-blockable member, so queueing here would return 201
+            # while the door stays open. Fail up front with a clear 409 —
+            # but only when a bridge command would actually have been
+            # queued: with no bridge / no enroll number the endpoint
+            # already 409s DEVICE_NOT_READY below, which stays the right
+            # error there. ADMS gyms are deliberately excluded: the
+            # owner-override on that path (B-H1) awaits Bharath's explicit
+            # decision and this endpoint must not pre-empt it.
+            from app.models.bridge import BridgeInstallation
+
+            bridge_ready = (
+                BridgeInstallation.query.filter_by(
+                    gym_id=member.gym_id, is_active=True
+                ).first()
+                is not None
+                and bool(member.device_enroll_number)
+            )
+            if bridge_ready:
+                return error_response(
+                    "BLOCK_NOT_ALLOWED",
+                    "This member cannot be blocked: active members are never blocked. "
+                    "Pause or expire the membership first, then block.",
+                    409,
+                )
         command = queue_manual_adms_member_command(member, action, g.user_id)
         if direct_integration is not None:
             if command is None:
@@ -1162,6 +1276,7 @@ def register_rrr_routes(bp):
         """Restore all soft-deleted members for this gym (undo bulk delete)."""
         from app.models.member import Member
         from app.services.audit_service import audit
+        from app.services.bridge_service import queue_membership_command
         from app.services.reminder_service import today_for_gym
         from app.models.gym import Gym
 
@@ -1174,6 +1289,7 @@ def register_rrr_routes(bp):
         ).all()
 
         restored = 0
+        unblocks_queued = 0
         for m in members:
             m.deleted_at = None
             # Set correct status based on membership end date
@@ -1182,6 +1298,24 @@ def register_rrr_routes(bp):
             elif m.status == "deleted":
                 m.status = "active"
             restored += 1
+            # H5: a restored active member was Grp=100-blocked on the
+            # terminal while deleted; queue the unblock now or the paying
+            # member stays locked out with no self-healing (the scheduler
+            # only re-queues blocks). Expired/paused restores keep the door
+            # closed, so only active restores with a known end date queue.
+            # force=True: a stale acked unblock must not stand in for a
+            # fresh command after the member was deleted and restored.
+            if m.status == "active" and m.membership_end is not None:
+                try:
+                    if queue_membership_command(m, force=True) is not None:
+                        unblocks_queued += 1
+                except Exception:
+                    # One bad terminal identity must not fail the restore
+                    # of every member; the member is restored and the
+                    # unblock can be queued from the member screen instead.
+                    current_app.logger.exception(
+                        "restore: could not queue unblock for member %s", m.id
+                    )
 
         db.session.commit()
 
@@ -1191,11 +1325,12 @@ def register_rrr_routes(bp):
             resource_id=g.gym_id,
             gym_id=g.gym_id,
             actor_id=g.user_id,
-            metadata={"restored": restored},
+            metadata={"restored": restored, "unblocks_queued": unblocks_queued},
         )
 
         return jsonify({"success": True, "data": {
             "restored": restored,
+            "unblocks_queued": unblocks_queued,
             "message": f"Restored {restored} members.",
         }})
 

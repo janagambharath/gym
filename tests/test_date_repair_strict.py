@@ -164,9 +164,11 @@ def test_date_repair_confirm_historyless_only_with_confirmation(
 ):
     today = date.today()
     start = today - timedelta(days=100)
-    # 30-day plan, period span 31: period containing today ends at
-    # start + 3*31 + 30 = today + 23. Stored end today + 100 is past it.
-    expected_end = start + timedelta(days=123)
+    # 30-day plan, period span 30: period containing today ends at
+    # start + 3*30 + 29 = today + 19. Stored end today + 100 is past it.
+    # (M4: the old comment said span 31 / start + 3*31 + 30 — that was
+    # the +1-day convention bug.)
+    expected_end = start + timedelta(days=119)
     m = Member(
         gym_id=seed_gym["gym"].id,
         plan_id=seed_gym["plan"].id,

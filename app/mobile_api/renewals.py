@@ -242,6 +242,17 @@ def register_renewals_routes(bp):
             discount = Decimal("0.00")
 
         channel = str(data.get("channel", "offline")).strip().lower()
+        # B-L1: channel is an enum, not free text — a typo would land in
+        # reports as an unknown channel. (Payments validate the same set.)
+        from app.services.payment_service import PAYMENT_CHANNELS
+
+        if channel not in PAYMENT_CHANNELS:
+            db.session.rollback()
+            return error_response(
+                "VALIDATION_ERROR",
+                f"channel must be one of: {', '.join(sorted(PAYMENT_CHANNELS))}.",
+                400,
+            )
 
         previous_start = member.membership_start
         previous_end = member.membership_end
@@ -297,7 +308,10 @@ def register_renewals_routes(bp):
         else:
             member.membership_start = new_start
             member.membership_end = new_end
-            member.status = "active"
+            # M3: a paused member stays paused through a renewal — only
+            # the explicit unfreeze flow clears paused.
+            if member.status != "paused":
+                member.status = "active"
             member.plan_id = target_plan_id
             # Pin the renewal amount as the expected value for reporting.
             member.price = amount

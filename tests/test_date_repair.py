@@ -74,7 +74,10 @@ def test_span_mismatch_flagged_and_repaired(client, seed_gym):
     flagged = res.get_json()["data"]["flagged"]
     assert len(flagged) == 1
     assert flagged[0]["classification"] == "span_mismatch"
-    assert flagged[0]["proposed_end"] == (START + timedelta(days=30)).isoformat()
+    # M4: the proposal is start + duration - 1 (the renewal convention:
+    # a 30-day period spans 29 days between start and end), not
+    # start + duration. The old start+30 expectation encoded the bug.
+    assert flagged[0]["proposed_end"] == (START + timedelta(days=29)).isoformat()
 
     res = client.post(
         "/api/mobile/v1/date-repair/apply",
@@ -84,7 +87,7 @@ def test_span_mismatch_flagged_and_repaired(client, seed_gym):
     assert res.status_code == 200
     assert res.get_json()["data"]["results"][0]["applied"] is True
     db.session.refresh(m)
-    assert m.membership_end == START + timedelta(days=30)
+    assert m.membership_end == START + timedelta(days=29)
 
 
 def test_ledger_mismatch_uses_ledger_end(client, seed_gym):

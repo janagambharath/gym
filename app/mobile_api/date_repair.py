@@ -8,8 +8,8 @@ implied by their plan and their renewal ledger (RenewalHistory):
   (manual edit, freeze, import). Proposal: the ledger's latest new_end.
 - ``span_mismatch``: no usable ledger, and the member is still in
   their first period, but the stored span is longer than one plan
-  period. Proposal: start + plan duration (the creation convention
-  used when a member is added).
+  period. Proposal: start + plan duration - 1 (the renewal
+  convention: a 30-day period spans 29 days between start and end).
 - ``historyless_pushed_end``: no usable ledger, and the member is past
   their first period (the owner renewed by hand-editing end dates, so
   no renewal history exists). The scan steps from the start by plan
@@ -66,7 +66,8 @@ instead of guessing.
 Members whose notes carry freeze markers are reported with
 ``confidence="review"`` because a freeze legitimately extends the end
 beyond the ledger; the UI leaves those unselected by default. Paused
-and deleted members are excluded entirely.
+members are scanned too (their freeze markers make their findings
+review-confidence); deleted members are excluded entirely.
 
 Apply recomputes the proposal server-side for each requested member
 and only writes when the member is still flagged with that proposal,
@@ -146,17 +147,15 @@ def _expected_current_end(
 ) -> _date:
     """End of the period containing *today*, stepping from *start*.
 
-    Periods follow the renewal chain's own chaining: period ``k`` spans
-    ``[start + k * (duration + 1), start + k * (duration + 1) + duration]``
-    — each period starts the day after the previous period ends, the
-    same rule the renewal flows use (see ``_overlapping_pair``). The
-    chain convention is used deliberately: it is the latest end any
-    correctly kept member could have, so a member kept by either
-    convention is never flagged for excess.
+    Periods follow the renewal convention: one plan period spans
+    ``duration`` days inclusive, ``[start, start + duration - 1]``,
+    and the next period starts the day after the previous one ends
+    (``new_start = previous new_end + 1``). So period ``k`` spans
+    ``[start + k * duration, start + k * duration + duration - 1]``.
     """
-    period_span = duration + 1
+    period_span = duration
     k = (today - start).days // period_span
-    return start + timedelta(days=k * period_span + duration)
+    return start + timedelta(days=k * period_span + duration - 1)
 
 
 def _overlapping_pair(rows: list[RenewalHistory]) -> tuple | None:
@@ -274,6 +273,19 @@ def classify_member(
     has_restart = any(_is_restart_row(r) for r in renewals)
     last_end = rows[-1].new_end if rows else None
     chain_start = _chain_start_row(rows)
+    # M5: the ledger checks below are scoped to the CURRENT chain (from
+    # its recorded start row onward). Rows before the last restart belong
+    # to an old chain and no longer determine the stored end — but a
+    # restart no longer blinds the checks entirely.
+    if chain_start is not None:
+        chain_idx = next(
+            (i for i, r in enumerate(rows) if r is chain_start), 0
+        )
+        chain_rows = rows[chain_idx:]
+    else:
+        chain_rows = rows
+    chain_last_end = chain_rows[-1].new_end if chain_rows else None
+    chain_renewals = [r for r in chain_rows if not _is_creation_row(r)]
 
     # S1) The stored start is after the stored end: the period is
     #     incoherent. When the ledger determines the coherent pair and
@@ -358,24 +370,30 @@ def classify_member(
             ),
         }
 
-    # 1) The stored end disagrees with the payment ledger.
-    if rows and last_end is not None and last_end != end and not has_restart:
+    # 1) The stored end disagrees with the payment ledger (current
+    #    chain). A restart no longer skips this: the chain's latest
+    #    new_end is still the latest recorded period end, so a stored
+    #    end that disagrees with it was changed outside a renewal.
+    if chain_rows and chain_last_end is not None and chain_last_end != end:
         return {
             **base,
             "classification": "ledger_mismatch",
-            "proposed_end": last_end.isoformat(),
+            "proposed_end": chain_last_end.isoformat(),
             "reason": (
-                f"Renewal history ends at {last_end.isoformat()} but the "
+                f"Renewal history ends at {chain_last_end.isoformat()} but the "
                 f"member's end date is {end.isoformat()} — it was changed "
                 "outside a payment/renewal."
             ),
         }
 
     # 2) The ledger agrees, but a renewal applied more days than the
-    #    plan allows — the excess is inside the ledger.
-    if rows and last_end == end and not has_restart:
+    #    plan allows — the excess is inside the ledger. Scoped to the
+    #    current chain: excess from a pre-restart chain no longer
+    #    affects the stored end, but excess inside the current chain
+    #    does, restart or not.
+    if chain_rows and chain_last_end == end:
         excess = 0
-        for row in renewals:
+        for row in chain_renewals:
             applied = _applied_days(row)
             if applied is None:
                 continue
@@ -415,7 +433,7 @@ def classify_member(
         if (
             today is not None
             and duration > 0
-            and start + timedelta(days=duration) < today
+            and start + timedelta(days=duration - 1) < today
         ):
             expected_end = _expected_current_end(start, duration, today)
             if end > expected_end + timedelta(days=_TOLERANCE_DAYS):
@@ -438,7 +456,7 @@ def classify_member(
                 }
             return None
         if span_days > duration + _TOLERANCE_DAYS:
-            proposed = start + timedelta(days=duration)
+            proposed = start + timedelta(days=duration - 1)
             return {
                 **base,
                 "classification": "span_mismatch",
@@ -471,8 +489,8 @@ def classify_member(
         )
         paid_periods = paid_days // duration if duration else 0
         # Stored span in whole plan periods, rounded to the nearest:
-        # the chain convention adds ~1 day per period, so a stored
-        # span of 61 days on a 30-day plan is 2 periods, not 3.
+        # periods count inclusively, so a stored span of 59 days on a
+        # 30-day plan is 2 periods, not 3.
         expected_periods = (span_days + duration // 2) // duration
         short_periods = 0
         if payments and paid_periods < expected_periods:
@@ -523,7 +541,10 @@ def _scan_gym(gym_id: int) -> list[dict]:
             .where(
                 Member.gym_id == gym_id,
                 Member.deleted_at.is_(None),
-                Member.status != "paused",
+                # M5: paused members ARE scanned — a freeze legitimately
+                # extends the end, so their findings carry review
+                # confidence via the freeze marker instead of being
+                # silently skipped. Deleted members stay excluded.
             )
             .order_by(Member.full_name.asc())
         )

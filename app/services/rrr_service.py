@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -32,6 +33,43 @@ DEFAULT_RULES = {
     "attendance_drop_percent": 50,
     "recent_expiry_days": 30,
 }
+
+
+def _canonical_or_raw(value: object) -> str:
+    """Canonical enroll number ("042" -> "42"); raw value when the ID is
+    non-numeric (M16 — such IDs can never link, but must keep their
+    stored form so punches are not dropped)."""
+    try:
+        from app.services.bridge_service import canonical_enroll_number
+
+        return canonical_enroll_number(value)
+    except ValueError:
+        return str(value or "").strip()
+
+
+# H11: ingest-hot-path throttle for the auto-link fuzzy scan. The scan is
+# snapshot x unlinked-members SequenceMatcher work; at Yodha scale
+# (2,855 IDs) running it on EVERY unmapped punch burns the batch. At most
+# one run per gym per interval, and only when the punch's own ID is in
+# the terminal snapshot (otherwise the scan cannot link this punch).
+_AUTO_LINK_MIN_INTERVAL_SECONDS = 300
+_AUTO_LINK_LAST_RUN: dict[int, float] = {}
+
+
+def delete_identity_mappings(gym_id: int, member_id: int) -> int:
+    """Delete every RRR identity mapping pointing at *member_id* (H9).
+
+    Called on unenroll + soft-delete so the terminal ID is freed for
+    reuse: the mapping branch of ``_mapped_member`` and Guard 3 of
+    ``remap_unresolved`` both only see ``status="confirmed"`` rows, so
+    removing the rows unblocks the ID. Returns the rows deleted.
+    """
+    rows = RRRIdentityMapping.query.filter_by(
+        gym_id=gym_id, member_id=member_id
+    ).all()
+    for row in rows:
+        db.session.delete(row)
+    return len(rows)
 
 
 def rules_for_gym(gym_id: int) -> dict[str, int]:
@@ -167,14 +205,24 @@ def _mapped_member(gym_id: int, biometric_user_id: str) -> Member | None:
     # be verified too — a cross-gym member reference must never be returned
     # for this gym.  On mismatch, fall through to the gym-scoped enroll
     # query (which can only return a member of this gym) or None.
+    # M11: a soft-deleted member must never resolve — neither via the
+    # mapping branch nor via the enroll fallback.
     mapping = RRRIdentityMapping.query.filter_by(
         gym_id=gym_id, external_id=biometric_user_id, status="confirmed"
     ).first()
     if mapping and mapping.member_id:
         member = mapping.member
-        if member is not None and member.gym_id == gym_id:
+        if (
+            member is not None
+            and member.gym_id == gym_id
+            and member.deleted_at is None
+        ):
             return member
-    return Member.query.filter_by(gym_id=gym_id, device_enroll_number=biometric_user_id).first()
+    return (
+        Member.query.filter_by(gym_id=gym_id, device_enroll_number=biometric_user_id)
+        .filter(Member.deleted_at.is_(None))
+        .first()
+    )
 
 
 def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, punch_time,
@@ -188,12 +236,16 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     "token_prev", "serial", or None for non-ADMS sources). The
     commissioning gate reads it: see H1 in the ADMS auth hardening.
     """
+    # H7: canonicalize once at the ingest boundary ("042" -> "42") so
+    # stored IDs, dedupe keys and mappings all agree. Non-numeric IDs
+    # keep their raw form (M16).
+    biometric_user_id = _canonical_or_raw(biometric_user_id)
     key = _dedupe_key(source, device_serial, external_event_id, biometric_user_id, punch_time, raw_payload)
     existing = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
     if existing:
         return existing, False
     member = _mapped_member(gym_id, biometric_user_id)
-    
+
     # Auto-link: if no direct enroll-number match, try high-confidence name matching
     # This runs automatically on every unmapped punch — no button needed.
     # Savepoint: auto-link mutates member rows, and a failed flush (e.g. a
@@ -202,18 +254,44 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     # IntegrityError, so it escapes and 500s the entire ATTLOG batch.
     # The terminal retries that batch forever (sync stall, polls green).
     # Rolling back to this savepoint keeps the punch ingestable as unmapped.
+    # H11: throttled OFF the ingest hot path — at most one fuzzy scan per
+    # gym per interval, and only when this punch's own ID is in the
+    # terminal snapshot (otherwise the scan cannot link this punch at
+    # all). The OPERLOG post-upload path and the manual scan still run
+    # unthrottled; ingest just stops paying the full scan per punch.
     if not member:
-        try:
-            with db.session.begin_nested():
-                from app.services.enroll_match_service import auto_link_high_confidence
-                result = auto_link_high_confidence(gym_id=gym_id)
-                # If this specific ID got linked, fetch the member
-                for linked in result.get("linked", []):
-                    if str(linked.get("enroll_number")) == str(biometric_user_id):
-                        member = _mapped_member(gym_id, biometric_user_id)
-                        break
-        except Exception:
-            pass  # Auto-link is best-effort; don't break punch ingestion
+        now_mono = time.monotonic()
+        last_run = _AUTO_LINK_LAST_RUN.get(gym_id, 0.0)
+        if now_mono - last_run >= _AUTO_LINK_MIN_INTERVAL_SECONDS:
+            snapshot_ids: set[str] = set()
+            try:
+                from app.services.enroll_match_service import (
+                    get_adms_snapshot,
+                    get_terminal_snapshot,
+                )
+
+                snapshot = get_terminal_snapshot(gym_id) or get_adms_snapshot(gym_id)
+                if snapshot:
+                    snapshot_ids = {
+                        _canonical_or_raw(u.get("enroll_number"))
+                        for u in snapshot.get("users", [])
+                        if u.get("enroll_number")
+                    }
+            except Exception:
+                snapshot_ids = set()
+            if biometric_user_id in snapshot_ids:
+                _AUTO_LINK_LAST_RUN[gym_id] = now_mono
+                try:
+                    with db.session.begin_nested():
+                        from app.services.enroll_match_service import auto_link_high_confidence
+                        result = auto_link_high_confidence(gym_id=gym_id)
+                        # If this specific ID got linked, fetch the member
+                        for linked in result.get("linked", []):
+                            if str(linked.get("enroll_number")) == str(biometric_user_id):
+                                member = _mapped_member(gym_id, biometric_user_id)
+                                break
+                except Exception:
+                    pass  # Auto-link is best-effort; don't break punch ingestion
     
     event = RRRAttendanceEvent(
         gym_id=gym_id,
@@ -302,9 +380,22 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
         mapping.status = "confirmed"
         mapping.confirmed_by_id = user_id
     member.device_enroll_number = external_id
-    events = RRRAttendanceEvent.query.filter_by(
-        gym_id=gym_id, biometric_user_id=external_id, processing_status="unmapped"
+    # Backfill unmapped punches for this ID — including rows stored
+    # before the H7 ingest canonicalization under a non-canonical form
+    # ("042" vs "42"), which an exact-match query would never replay.
+    # The LIKE pre-filter bounds the scan to IDs ending in these digits
+    # (external_id is canonical digits-only here); the Python filter
+    # then keeps only true canonical matches ("142" is not "42").
+    candidates = RRRAttendanceEvent.query.filter(
+        RRRAttendanceEvent.gym_id == gym_id,
+        RRRAttendanceEvent.processing_status == "unmapped",
+        RRRAttendanceEvent.biometric_user_id.like(f"%{external_id}"),
     ).all()
+    events = [
+        event
+        for event in candidates
+        if _canonical_or_raw(event.biometric_user_id) == external_id
+    ]
     for event in events:
         event.member_id = member.id
         event.processing_status = "processed"

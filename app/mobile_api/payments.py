@@ -354,8 +354,38 @@ def register_payments_routes(bp):
             discount = Decimal("0.00")
 
         channel = str(data.get("channel", "offline")).strip().lower()
-        if channel not in ("online", "offline"):
-            channel = "offline"
+        # B-L1: channel is an enum, not free text.
+        from app.services.payment_service import PAYMENT_CHANNELS, PAYMENT_METHODS
+
+        if channel not in PAYMENT_CHANNELS:
+            return error_response(
+                "VALIDATION_ERROR",
+                f"channel must be one of: {', '.join(sorted(PAYMENT_CHANNELS))}.",
+                400,
+            )
+
+        # B-L1: method is an enum, not free text.
+        method = str(data.get("method", "upi") or "upi").strip().lower()
+        if method not in PAYMENT_METHODS:
+            return error_response(
+                "VALIDATION_ERROR",
+                f"method must be one of: {', '.join(sorted(PAYMENT_METHODS))}.",
+                400,
+            )
+
+        # M9: the same UPI reference pasted twice must not double-count
+        # collections — reject when this gym already has a VERIFIED
+        # payment with the same reference.
+        reference = (data.get("reference") or "").strip() or None
+        if reference is not None:
+            from app.services.payment_service import verified_payment_with_reference
+
+            if verified_payment_with_reference(g.gym_id, reference) is not None:
+                return error_response(
+                    "DUPLICATE_REFERENCE",
+                    "A verified payment with this reference already exists for this gym.",
+                    409,
+                )
 
         auto_verify = bool(data.get("auto_verify", False))
 
@@ -410,9 +440,9 @@ def register_payments_routes(bp):
             amount=amount,
             paid_on=paid_on,
             renewal_start_date=renewal_start_date,
-            method=data.get("method", "upi"),
+            method=method,
             channel=channel,
-            reference=(data.get("reference") or "").strip() or None,
+            reference=reference,
             status="pending",
             renewal_days=renewal_days,
             notes=(data.get("notes") or "").strip() or None,

@@ -921,6 +921,17 @@ def claim_payment():
 
     # Optional reference ID from member
     reference = (data.get("reference") or "").strip() or None
+    # M9: the same UPI reference must not be claimed twice once the
+    # first payment is verified — a second verified claim would
+    # double-count the collection.
+    if reference:
+        from app.services.payment_service import verified_payment_with_reference
+
+        if verified_payment_with_reference(member.gym_id, reference) is not None:
+            return jsonify({
+                "success": False,
+                "error": "A verified payment with this reference already exists.",
+            }), 409
     notes_parts = [f"Self-service payment claim from {member.full_name}"]
     if plan:
         notes_parts.append(f"Plan: {plan.name}")
