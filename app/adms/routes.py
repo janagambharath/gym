@@ -742,6 +742,18 @@ def getrequest(path_token: str | None = None):
         if candidate.action in ADMS_ENABLE_ACTIONS:
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if enable_must_be_cancelled(member):
+                # A dropped unblock used to be silent: log the exact reason
+                # (unresolved member vs wrong status vs past end date) so a
+                # renewal that never reaches the door is diagnosable from
+                # the server logs instead of looking like a dead terminal.
+                log.warning(
+                    "ADMS enable cancelled at serve: gym=%s enroll=%s member=%s status=%s end=%s",
+                    integration.gym_id,
+                    candidate.test_enroll_number,
+                    member.id if member else None,
+                    member.status if member else None,
+                    member.membership_end if member else None,
+                )
                 cancel_adms_command(
                     candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
                 )

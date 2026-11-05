@@ -299,9 +299,28 @@ def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None
         member = db.session.get(Member, mapping.member_id)
         if member is not None and member.gym_id == gym_id:
             return member
-    return Member.query.filter_by(
+    member = Member.query.filter_by(
         gym_id=gym_id, device_enroll_number=canonical
     ).first()
+    if member is not None:
+        return member
+    # Legacy fallback: a stored enroll number may carry leading zeros
+    # ("042") from before canonicalization, while commands carry the
+    # canonical form ("42"). An exact-match miss here silently cancels a
+    # renewal unblock at serve time, so compare canonical forms before
+    # giving up. This only runs when the exact lookups above already
+    # missed, so it never shadows a correct match.
+    for candidate in (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.device_enroll_number.isnot(None))
+        .all()
+    ):
+        try:
+            if canonical_enroll_number(candidate.device_enroll_number) == canonical:
+                return candidate
+        except ValueError:
+            continue
+    return None
 
 
 def cancel_adms_command(
