@@ -439,12 +439,23 @@ def confirm_match(
             f"This member already has enroll number {member.device_enroll_number}. "
             "Remove it first to reassign."
         )
+    # The unique constraint uq_members_gym_device_enroll covers ALL rows,
+    # including soft-deleted ones — so the duplicate check must too.
+    # Filtering deleted_at out here lets a soft-deleted holder slip past,
+    # then the flush throws UniqueViolation and poisons the whole session
+    # (see normalize_attendance: the ATTLOG batch 500s and the terminal
+    # retries it forever).
     duplicate = (
         Member.query.filter_by(gym_id=gym_id, device_enroll_number=enroll_number)
-        .filter(Member.id != member.id, Member.deleted_at.is_(None))
+        .filter(Member.id != member.id)
         .first()
     )
     if duplicate is not None:
+        if duplicate.deleted_at is not None:
+            raise ValueError(
+                f"Enroll number {enroll_number} is held by a deleted member. "
+                "Clear it from the deleted record before reusing it."
+            )
         raise ValueError(
             f"Enroll number {enroll_number} is already linked to {duplicate.full_name}."
         )

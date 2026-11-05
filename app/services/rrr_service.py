@@ -196,15 +196,22 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     
     # Auto-link: if no direct enroll-number match, try high-confidence name matching
     # This runs automatically on every unmapped punch — no button needed.
+    # Savepoint: auto-link mutates member rows, and a failed flush (e.g. a
+    # duplicate enroll number) poisons the whole session — the next
+    # begin_nested() then raises PendingRollbackError, which is NOT an
+    # IntegrityError, so it escapes and 500s the entire ATTLOG batch.
+    # The terminal retries that batch forever (sync stall, polls green).
+    # Rolling back to this savepoint keeps the punch ingestable as unmapped.
     if not member:
         try:
-            from app.services.enroll_match_service import auto_link_high_confidence
-            result = auto_link_high_confidence(gym_id=gym_id)
-            # If this specific ID got linked, fetch the member
-            for linked in result.get("linked", []):
-                if str(linked.get("enroll_number")) == str(biometric_user_id):
-                    member = _mapped_member(gym_id, biometric_user_id)
-                    break
+            with db.session.begin_nested():
+                from app.services.enroll_match_service import auto_link_high_confidence
+                result = auto_link_high_confidence(gym_id=gym_id)
+                # If this specific ID got linked, fetch the member
+                for linked in result.get("linked", []):
+                    if str(linked.get("enroll_number")) == str(biometric_user_id):
+                        member = _mapped_member(gym_id, biometric_user_id)
+                        break
         except Exception:
             pass  # Auto-link is best-effort; don't break punch ingestion
     
@@ -256,13 +263,21 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
             f"This member already has enroll number {member.device_enroll_number}. "
             "Remove it first to reassign."
         )
-    # Guard 2: enroll number already linked to a different member
+    # Guard 2: enroll number already linked to a different member.
+    # NOTE: the unique constraint covers soft-deleted rows too, so this
+    # check must not filter them out — otherwise the flush throws
+    # UniqueViolation and poisons the caller's session.
     duplicate = (
         Member.query.filter_by(gym_id=gym_id, device_enroll_number=external_id)
-        .filter(Member.id != member.id, Member.deleted_at.is_(None))
+        .filter(Member.id != member.id)
         .first()
     )
     if duplicate is not None:
+        if duplicate.deleted_at is not None:
+            raise ValueError(
+                f"Enroll number {external_id} is held by a deleted member. "
+                "Clear it from the deleted record before reusing it."
+            )
         raise ValueError(
             f"Enroll number {external_id} is already linked to {duplicate.full_name}."
         )
