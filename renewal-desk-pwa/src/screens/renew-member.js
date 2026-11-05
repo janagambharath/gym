@@ -4,9 +4,20 @@ import { renderHeader, bindHeaderEvents, renderFormField, renderAvatar, renderBa
 import { icon } from '../icons.js'; import { escapeHtml, formatCurrency, formatDate, uuid, getMemberDisplayStatus } from '../utils.js';
 
 function dateKeyInTimezone(value, timezone) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
-  const part = (type) => parts.find((item) => item.type === type)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
+    const part = (type) => parts.find((item) => item.type === type)?.value || '';
+    const key = `${part('year')}-${part('month')}-${part('day')}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return key;
+  } catch { /* invalid timezone — fall through to local date */ }
+  const d = new Date(value);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function parseMemberParam(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 function addDays(value, days) {
@@ -16,9 +27,22 @@ function addDays(value, days) {
 }
 
 export default { async mount(el, params) {
+  try {
+    await mountRenew(el, params);
+  } catch (err) {
+    console.error('[renew-member] mount failed', err);
+    el.innerHTML = `<div class="empty-state"><div class="empty-state-title">Renew couldn't open</div><div class="empty-state-text">${escapeHtml(err?.message || 'Something went wrong. Go back and try again.')}</div></div>`;
+  }
+} };
+
+async function mountRenew(el, params) {
     const idempotencyKey = uuid(); // one key per form mount, reused across retries
-  const member = params?.member ? JSON.parse(params.member) : null;
-  if (!member) { el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No member selected</div></div>'; return; }
+  let member = parseMemberParam(params?.member);
+  if (!member && params?.memberId) {
+    const res = await apiRequest(`/api/mobile/v1/members/${params.memberId}`);
+    if (res.ok) member = res.data;
+  }
+  if (!member) { el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No member selected</div><div class="empty-state-text">Go back to the member list and tap Renew again.</div></div>'; return; }
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
   const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
   const timezone = settingsRes.ok ? settingsRes.data.gym?.timezone || 'Asia/Kolkata' : 'Asia/Kolkata';
@@ -83,4 +107,4 @@ export default { async mount(el, params) {
     }
     else { showToast(res.error.message, 'error'); btn.disabled = false; btn.textContent = 'Renew & Record Payment'; }
   });
-}};
+}

@@ -44,7 +44,7 @@ export default {
       return `${renderSectionHeader(`${title} (${members.length})`)}
         <div class="card" style="margin:0 var(--sp-lg) var(--sp-lg)">
           ${members.map(m => `
-            <div class="list-item" data-member='${escapeHtml(JSON.stringify(m))}'>
+            <div class="list-item" data-member-id="${m.id}">
               <div class="list-item-content">
                 <div class="list-item-title">${escapeHtml(m.full_name)}</div>
                 <div class="list-item-subtitle">${escapeHtml(m.phone)} · ${escapeHtml(m.plan?.name || '—')}</div>
@@ -52,7 +52,7 @@ export default {
               <div style="display:flex;gap:6px;align-items:center">
                 <a href="tel:${escapeHtml(m.phone)}" class="btn btn-secondary btn-sm" style="text-decoration:none" data-stop="1" aria-label="Call">${icon('phone', 15)}</a>
                 <a href="https://wa.me/${escapeHtml(String(m.phone).replace(/\D/g, ''))}" target="_blank" rel="noopener" class="btn btn-whatsapp btn-sm" style="text-decoration:none" data-stop="1" aria-label="WhatsApp">${icon('whatsapp', 15, 'white')}</a>
-                <button class="btn btn-primary btn-sm" data-renew='${escapeHtml(JSON.stringify(m))}'>Renew</button>
+                <button class="btn btn-primary btn-sm" data-renew="${m.id}">Renew</button>
               </div>
             </div>
           `).join('')}
@@ -69,14 +69,14 @@ export default {
     scroll.querySelectorAll('[data-renew]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        navigate.push('renew-member', { member: btn.dataset.renew });
+        navigate.push('renew-member', { memberId: String(btn.dataset.renew) });
       });
     });
     scroll.querySelectorAll('[data-stop]').forEach(link => {
       link.addEventListener('click', (e) => e.stopPropagation());
     });
-    scroll.querySelectorAll('[data-member]').forEach(item => {
-      item.addEventListener('click', () => navigate.push('member-detail', { member: item.dataset.member }));
+    scroll.querySelectorAll('[data-member-id]').forEach(item => {
+      item.addEventListener('click', () => navigate.push('member-detail', { memberId: String(item.dataset.memberId) }));
     });
     }
     await load();

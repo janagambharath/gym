@@ -1,0 +1,5 @@
+import{f as d,a as o,t as l,b as c,n as m,g as v,w as p,o as y,j as u,K as f,D as h}from"./index-8vE_Qb-N.js";const $={async mount(t){await n(t),d(t,()=>n(t,!0))}};async function n(t,s=!1){s||(t.innerHTML=`${o({title:"My Payments",showBack:!0})}<div class="scroll-view" id="mp-list">${l()}</div>`),s||c(t,{onBack:()=>m.pop()});const e=await v("/api/member/v1/payments");if(t.dataset.screenDisposed==="true"||s&&!e.ok)return;const r=t.querySelector("#mp-list"),i=e.ok?e.data.payments||e.data||[]:[];if(!Array.isArray(i)||i.length===0){r.innerHTML=p({icon:"wallet",title:"No payments",text:"Your payment history will appear here"});return}r.innerHTML=`<div class="scroll-content"><div class="card" style="margin:var(--sp-lg)">${i.map(a=>`
+    <div class="list-item"><div class="list-item-content">
+      <div class="list-item-title">${y(a.amount)}</div>
+      <div class="list-item-subtitle">${u(a.method||"")} · ${f(a.paid_on||a.created_at)}</div>
+    </div>${h(a.status||"paid")}</div>`).join("")}</div></div>`}export{$ as default};

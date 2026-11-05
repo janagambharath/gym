@@ -129,8 +129,13 @@ class Router {
       } catch { /* ignore */ }
     }
 
-    // Mount the screen
-    await screen.mount(el, params);
+    // Mount the screen — a throwing mount must never leave a blank screen.
+    try {
+      await screen.mount(el, params);
+    } catch (err) {
+      console.error(`[Router] mount failed for ${screenId}`, err);
+      el.innerHTML = `<div style="padding:48px 24px;text-align:center"><div style="font-weight:700;font-size:18px;margin-bottom:8px">Something went wrong</div><div style="color:var(--text-secondary);font-size:14px">This page couldn't open. Go back and try again.</div></div>`;
+    }
 
     // Save stack to current tab
     if (this.currentTab) {
