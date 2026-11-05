@@ -10,6 +10,10 @@ export default { async mount(el, params) {
 
 const esc = escapeHtml;
 
+let attPage = 1;
+let attTotalPages = 1;
+let attPunches = [];
+
 async function load(el, params, background = false) {
   const memberId = params?.id;
   if (!memberId) {
@@ -17,9 +21,21 @@ async function load(el, params, background = false) {
     return;
   }
 
-  if (!background) el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>';
-  
-  const res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=1&per_page=50`);
+  if (!background) { attPage = 1; attPunches = []; el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>'; }
+
+  let res;
+  if (background) {
+    // Re-fetch every loaded page and rebuild (never append the same page twice).
+    const pages = await Promise.all(Array.from({ length: attPage }, (_, i) =>
+      apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=${i + 1}&per_page=50`)));
+    res = pages.find(r => !r.ok) || pages[pages.length - 1];
+    if (res.ok) {
+      attPunches = pages.flatMap(r => r.data.events || []);
+      attTotalPages = res.data.pagination?.total_pages ?? attTotalPages;
+    }
+  } else {
+    res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=${attPage}&per_page=50`);
+  }
   if (!res.ok) {
     if (background) return;
     el.innerHTML = `<main class="rrr-page rrr-detail">
@@ -33,8 +49,13 @@ async function load(el, params, background = false) {
 
   const data = res.data;
   const member = data.member || {};
-  const punches = data.events || [];
+  if (!background) {
+    attTotalPages = data.pagination?.total_pages ?? 1;
+    attPunches = [...attPunches, ...(data.events || [])];
+  }
+  const punches = attPunches;
   const stats = data.stats || {};
+  const totalPunches = stats.total_punches ?? punches.length;
 
   el.innerHTML = `<main class="rrr-page rrr-detail">
     <header class="rrr-header">
@@ -47,7 +68,7 @@ async function load(el, params, background = false) {
       <p class="rrr-att-sub">Biometric ID ${esc(member.enroll_number || '—')}</p>
       <div class="rrr-att-stats">
         <div class="rrr-stat">
-          <span class="rrr-stat-num">${stats.total_punches || punches.length}</span>
+          <span class="rrr-stat-num">${totalPunches}</span>
           <span class="rrr-stat-label">Total punches</span>
         </div>
         <div class="rrr-stat">
@@ -72,6 +93,10 @@ async function load(el, params, background = false) {
           <span class="rrr-att-badge">${esc(p.direction === "exit" ? "Exit" : "Entry")}</span>
         </div>`;
       }).join('')}
+    </div>
+    <div style="text-align:center;padding:var(--sp-md)">
+      <div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-sm)">Showing ${punches.length} of ${totalPunches} punches</div>
+      ${attPage < attTotalPages ? `<button class="btn btn-secondary" id="rrr-att-more">Load more</button>` : ''}
     </div>` : `
     <div class="rrr-empty-state">
       <div class="rrr-empty-icon">⌁</div>
@@ -103,4 +128,5 @@ async function load(el, params, background = false) {
   </style>`;
 
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
+  el.querySelector('#rrr-att-more')?.addEventListener('click', () => { attPage++; load(el, params); });
 }

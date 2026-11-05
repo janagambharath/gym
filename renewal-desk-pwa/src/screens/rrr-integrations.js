@@ -11,10 +11,16 @@ export default {
     attachLiveRefresh(el, () => load(el, true), 15000);
   },
   pause() { stopPoll(); },
-  resume(el) { if (el.dataset.pendingCommand) {
-    const [integrationId, commandId] = JSON.parse(el.dataset.pendingCommand);
-    pollCommand(el, integrationId, commandId);
-  } },
+  resume(el) {
+    if (!el.dataset.pendingCommand) return;
+    try {
+      const [integrationId, commandId] = JSON.parse(el.dataset.pendingCommand);
+      pollCommand(el, integrationId, commandId);
+    } catch {
+      // Corrupt dataset value must never throw mid-pop (B-L7).
+      delete el.dataset.pendingCommand;
+    }
+  },
   async unmount() { stopPoll(); },
 };
 
@@ -116,7 +122,8 @@ async function load(el, background = false) {
         <li class="${(direct?.records_synced || 0) > 0 ? 'done' : ''}"><b>3</b><div><strong>Make one real punch</strong><span>RRR confirms the event, then you map any unknown member once.</span></div></li>
       </ol>
       ${(direct || bridge) ? `<button class="rrr-link-button" id="rrr-mappings">Review unknown punches (${unmapped}) →</button>
-    <button class="rrr-link-button" id="rrr-enroll-match">Match terminal users to members →</button>` : ''}
+    <button class="rrr-link-button" id="rrr-enroll-match">Match terminal users to members →</button>
+    <button class="rrr-link-button" id="rrr-delete-members">Manage terminal members (deactivate) →</button>` : ''}
     </section>
     <aside class="rrr-safety-note"><span>ⓘ</span><p><b>Access-control safety:</b> attendance flows as soon as the terminal connects. Automatic door block/unblock for expired members switches on only after the supervised commissioning below — a real punch, a verified test command, and a physical door test you confirm in person.</p></aside>
 
@@ -125,6 +132,7 @@ async function load(el, background = false) {
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
   el.querySelector('#rrr-mappings')?.addEventListener('click', () => navigate.push('rrr-mappings'));
   el.querySelector('#rrr-enroll-match')?.addEventListener('click', () => navigate.push('rrr-enroll-match'));
+  el.querySelector('#rrr-delete-members')?.addEventListener('click', () => navigate.push('rrr-delete-members'));
   wireDirectForm(el);
   wireBridge(el, bridge, devices);
   if (direct) wireDirectPanel(el, direct, commands);

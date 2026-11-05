@@ -6,6 +6,8 @@ import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, r
 import { icon } from '../icons.js';
 import { escapeHtml, formatInteger } from '../utils.js';
 
+let expiredShown = 20;
+
 export default {
   async mount(el) {
     el.innerHTML = `
@@ -14,7 +16,8 @@ export default {
 
     bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('campaigns') }] });
 
-    async function load(background = false) {
+    async function load(background = false, keepExpiredCount = false) {
+    if (!background && !keepExpiredCount) expiredShown = 20;
     const [upRes, expRes] = await Promise.all([
       apiRequest('/api/mobile/v1/renewals/upcoming'),
       apiRequest('/api/mobile/v1/renewals/expired'),
@@ -62,10 +65,16 @@ export default {
     html += renderSection('Expiring Today', expiringToday);
     html += renderSection('Next 7 Days', expiringWeek);
     html += renderSection('Upcoming', expiringLater);
-    html += renderSection('Expired', expired.slice(0, 20));
+    html += renderSection('Expired', expired.slice(0, expiredShown));
+    if (expired.length > expiredShown) {
+      html += `<div style="padding:0 var(--sp-lg) var(--sp-lg);text-align:center"><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-sm)">Showing ${expiredShown} of ${expired.length} expired members</div><button class="btn btn-secondary" id="exp-more">Show more expired</button></div>`;
+    } else if (expired.length) {
+      html += `<div style="padding:0 var(--sp-lg) var(--sp-lg);text-align:center;font-size:var(--fs-sm);color:var(--muted)">Showing ${expired.length} of ${expired.length} expired members</div>`;
+    }
     html += '</div>';
     scroll.innerHTML = html;
 
+    scroll.querySelector('#exp-more')?.addEventListener('click', () => { expiredShown = expired.length; load(false, true); });
     scroll.querySelectorAll('[data-renew]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();

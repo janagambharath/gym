@@ -5,16 +5,23 @@ import { icon } from '../icons.js'; import { formatDate, formatCurrency, escapeH
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Subscription',showBack:true})}<div class="scroll-view" id="sub-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  const res = await apiRequest('/api/mobile/v1/subscription/status');
+  const [res, membersRes] = await Promise.all([
+    apiRequest('/api/mobile/v1/subscription/status'),
+    apiRequest('/api/mobile/v1/members?page=1&page_size=1'),
+  ]);
   const scroll = el.querySelector('#sub-scroll');
   if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load subscription</div></div>`; return; }
   const raw = res.data || {};
+  // The subscription endpoint carries no member count (L11) — the members
+  // list pagination total is the authoritative "members used" figure.
+  const membersUsed = membersRes.ok ? membersRes.data.pagination?.total : null;
   // Normalize the subscription/status payload into the screen's shape.
   const s = {
     plan_name: raw.plan_name || raw.plan?.name,
     status: (raw.subscription_status || raw.status || 'active').toLowerCase(),
     current_period_end: raw.renews_at || raw.expires_at,
     member_limit: raw.max_members,
+    members_used: raw.members_used ?? membersUsed ?? null,
     amount: raw.plan?.price ? Number(raw.plan.price) : null,
   };
   scroll.innerHTML = `<div class="scroll-content">

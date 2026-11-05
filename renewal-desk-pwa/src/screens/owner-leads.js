@@ -10,6 +10,9 @@ const statusLabel = {
   booked: 'Trial booked', converted: 'Joined', lost: 'Lost', closed: 'Closed',
 };
 
+// Filter survives load(el) reloads (lead actions / form submits re-load).
+let savedFilter = 'open';
+
 export default { async mount(el) { await load(el); } };
 
 async function load(el) {
@@ -21,6 +24,7 @@ async function load(el) {
     return;
   }
   const leads = result.data?.leads || [];
+  let filter = savedFilter;
   const active = leads.filter(lead => OPEN.has(lead.status));
   const booked = leads.filter(lead => lead.status === 'booked');
   const newLeads = leads.filter(lead => lead.status === 'new');
@@ -41,11 +45,10 @@ async function load(el) {
         <button class="rrr-add-button" type="submit">Save lead</button>
       </form>
     </section>
-    <section class="owner-lead-toolbar"><div class="owner-segmented" id="lead-filter"><button data-filter="open" class="is-active">Open (${active.length})</button><button data-filter="booked">Trials (${booked.length})</button><button data-filter="all">All (${leads.length})</button></div><span>Follow up before the lead goes cold.</span></section>
+    <section class="owner-lead-toolbar"><div class="owner-segmented" id="lead-filter"><button data-filter="open" class="${filter === 'open' ? 'is-active' : ''}">Open (${active.length})</button><button data-filter="booked" class="${filter === 'booked' ? 'is-active' : ''}">Trials (${booked.length})</button><button data-filter="all" class="${filter === 'all' ? 'is-active' : ''}">All (${leads.length})</button></div><span>Follow up before the lead goes cold.</span></section>
     <section class="owner-lead-list" id="lead-list"></section>
   </main>`;
 
-  let filter = 'open';
   const list = el.querySelector('#lead-list');
   function renderList() {
     const visible = filter === 'open' ? leads.filter(lead => OPEN.has(lead.status)) : filter === 'booked' ? booked : leads;
@@ -60,6 +63,7 @@ async function load(el) {
     const button = event.target.closest('[data-filter]');
     if (!button) return;
     filter = button.dataset.filter;
+    savedFilter = filter;
     el.querySelectorAll('[data-filter]').forEach(item => item.classList.toggle('is-active', item === button));
     renderList();
   });

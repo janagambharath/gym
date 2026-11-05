@@ -3,7 +3,7 @@
    renewal period (from the renewal ledger), and every payment. */
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderBadge, renderInfoRow, renderListSkeleton, renderEmptyState, renderErrorState } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderBadge, renderInfoRow, renderInfoRowHtml, renderListSkeleton, renderEmptyState, renderErrorState } from '../components.js';
 import { escapeHtml, formatDate, formatCurrency, getMemberDisplayStatus, getDaysText } from '../utils.js';
 
 export default {
@@ -111,7 +111,7 @@ async function load(el, params) {
             <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">${escapeHtml(member.full_name)}</div>
             ${renderInfoRow('Plan', member.plan?.name || '—')}
             ${renderInfoRow('Period', `${formatDate(member.membership_start)} → ${formatDate(member.membership_end)}`)}
-            ${renderInfoRow('Status', renderBadge(status))}
+            ${renderInfoRowHtml('Status', renderBadge(status))}
             ${daysText ? renderInfoRow('Days Left', daysText) : ''}
           </div>
         </div>

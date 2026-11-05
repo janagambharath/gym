@@ -3,8 +3,18 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatRelativeTime } from '../utils.js';
 export default { async mount(el) {
-  el.innerHTML = `${renderHeader({title:'Notifications',showBack:true})}<div class="scroll-view" id="nf-list">${renderListSkeleton()}</div>`;
+  el.innerHTML = `${renderHeader({title:'Notifications',showBack:true})}
+    <div style="padding:var(--sp-sm) var(--sp-lg);text-align:right"><button class="btn btn-sm btn-secondary" id="nf-read-all">Mark all read</button></div>
+    <div class="scroll-view" id="nf-list">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
+  el.querySelector('#nf-read-all')?.addEventListener('click', async () => {
+    const btn = el.querySelector('#nf-read-all');
+    btn.disabled = true;
+    await apiRequest('/api/mobile/v1/notifications/read-all', { method: 'POST' });
+    btn.disabled = false;
+    // Re-render without the unread highlight.
+    el.querySelectorAll('#nf-list .list-item').forEach(row => { row.style.background = ''; row.querySelector('.list-item-title').style.fontWeight = 'var(--fw-normal)'; });
+  });
   const res = await apiRequest('/api/mobile/v1/notifications');
   const list = el.querySelector('#nf-list');
   const notifs = res.ok ? res.data.notifications||res.data||[] : [];
@@ -24,6 +34,13 @@ export default { async mount(el) {
     row.addEventListener('click', () => {
       const n = notifs[Number(row.dataset.idx)];
       if (!n) return;
+      // Tapping marks the notification read (B-L5) and clears its highlight.
+      if (n.id && !n.read) {
+        n.read = true;
+        row.style.background = '';
+        row.querySelector('.list-item-title').style.fontWeight = 'var(--fw-normal)';
+        apiRequest(`/api/mobile/v1/notifications/${n.id}/read`, { method: 'POST' });
+      }
       if (n.member_id) navigate.push('member-detail', { memberId: String(n.member_id) });
       else if (n.payment_id) navigate.push('payment-detail', { paymentId: String(n.payment_id) });
       else if (n.conversation_id) navigate.push('bot-conversation-detail', { conversationId: String(n.conversation_id) });

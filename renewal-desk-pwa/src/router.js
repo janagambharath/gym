@@ -29,6 +29,12 @@ class Router {
     this.isAuthenticated = null;
     /** @type {((tabId: string) => void)|null} */
     this.onSwitchTab = null;
+    /** @type {((depth: number) => void)|null} */
+    this.onDepthChange = null;
+  }
+
+  _notifyDepth() {
+    try { this.onDepthChange?.(this.stack.length); } catch { /* ignore */ }
   }
 
   get depth() {
@@ -81,8 +87,30 @@ class Router {
       return;
     }
 
-    // Load the screen module
-    const module = await loader();
+    // Load the screen module — a rejected import (e.g. a stale cached
+    // bundle requesting a pruned chunk) must never leave a blank screen.
+    let module;
+    try {
+      module = await loader();
+    } catch (err) {
+      console.error(`[Router] chunk load failed for ${screenId}`, err);
+      const el = document.createElement('div');
+      el.className = 'screen';
+      el.dataset.screenId = screenId;
+      el.style.zIndex = String(10 + this.stack.length);
+      el.innerHTML = `<div style="padding:48px 24px;text-align:center"><div style="font-weight:700;font-size:18px;margin-bottom:8px">Something went wrong</div><div style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">This page couldn't load. Your app may be on an older version — try again.</div><button class="btn btn-primary" id="router-retry">Try Again</button></div>`;
+      this.container.appendChild(el);
+      this.stack.push({ screenId, params, element: el, screen: null });
+      if (typeof window !== 'undefined' && window.history) {
+        try { window.history.pushState({ rdDepth: this.stack.length }, ''); } catch { /* ignore */ }
+      }
+      el.querySelector('#router-retry')?.addEventListener('click', () => {
+        this.push(screenId, params, { replace: true, animate: false }).catch((e) => console.error('[Router] retry failed', e));
+      });
+      if (this.currentTab) this.tabStacks.set(this.currentTab, [...this.stack]);
+      this._notifyDepth();
+      return;
+    }
     const screen = module.default;
 
     // Create screen container
@@ -134,8 +162,12 @@ class Router {
       await screen.mount(el, params);
     } catch (err) {
       console.error(`[Router] mount failed for ${screenId}`, err);
-      el.innerHTML = `<div style="padding:48px 24px;text-align:center"><div style="font-weight:700;font-size:18px;margin-bottom:8px">Something went wrong</div><div style="color:var(--text-secondary);font-size:14px">This page couldn't open. Go back and try again.</div></div>`;
+      el.innerHTML = `<div style="padding:48px 24px;text-align:center"><div style="font-weight:700;font-size:18px;margin-bottom:8px">Something went wrong</div><div style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">This page couldn't open. Go back and try again.</div><button class="btn btn-primary" id="router-retry">Try Again</button></div>`;
+      el.querySelector('#router-retry')?.addEventListener('click', () => {
+        this.push(screenId, params, { replace: true, animate: false }).catch((e) => console.error('[Router] retry failed', e));
+      });
     }
+    this._notifyDepth();
 
     // Save stack to current tab
     if (this.currentTab) {
@@ -163,8 +195,9 @@ class Router {
     if (prev?.element) {
       prev.element.style.visibility = 'visible';
       activateScreen(prev.element, true);
-      prev.screen?.resume?.(prev.element);
+      try { prev.screen?.resume?.(prev.element); } catch (err) { console.error('[Router] resume failed', err); }
     }
+    this._notifyDepth();
     try { top?.screen?.unmount?.(); } catch { /* ignore */ }
 
     if (top) {
@@ -248,6 +281,7 @@ class Router {
     if (typeof window !== 'undefined' && window.history) {
       try { window.history.replaceState({ rdDepth: this.stack.length }, ''); } catch { /* ignore */ }
     }
+    this._notifyDepth();
   }
 
   /** Clear all stacks and screens */
@@ -264,6 +298,7 @@ class Router {
     if (typeof window !== 'undefined' && window.history) {
       try { window.history.replaceState({ rdDepth: 0 }, ''); } catch { /* ignore */ }
     }
+    this._notifyDepth();
   }
 }
 

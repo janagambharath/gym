@@ -21,8 +21,19 @@ export default { async mount(el, params) {
       ${renderInfoRow('Created', formatDateTime(c.created_at))}
       ${c.sent_at ? renderInfoRow('Sent At', formatDateTime(c.sent_at)) : ''}
     </div></div>
-    ${c.recipients && c.recipients.length ? `<div style="padding:0 var(--sp-lg) var(--sp-lg)"><div class="card">
+    ${c.recipients && c.recipients.length ? `<div style="padding:0 var(--sp-lg) var(--sp-lg)">
+      <div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-sm)" id="cd-recip-note">Showing ${Math.min(20, c.recipients.length)} of ${formatInteger(c.recipient_count || c.recipients.length)} recipients</div>
+      <div class="card" id="cd-recips">
       ${c.recipients.slice(0,20).map(r=>`<div class="list-item"><div class="list-item-content"><div class="list-item-title">${escapeHtml(r.name||r.phone||'')}</div></div>${renderBadge(r.status||'sent')}</div>`).join('')}
-    </div></div>` : ''}
+      </div>
+      ${c.recipients.length > 20 ? `<div style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="cd-more">Show more</button></div>` : ''}
+    </div>` : ''}
   </div>`;
+  let shown = 20;
+  el.querySelector('#cd-more')?.addEventListener('click', () => {
+    shown = Math.min(c.recipients.length, shown + 20);
+    el.querySelector('#cd-recips').innerHTML = c.recipients.slice(0, shown).map(r=>`<div class="list-item"><div class="list-item-content"><div class="list-item-title">${escapeHtml(r.name||r.phone||'')}</div></div>${renderBadge(r.status||'sent')}</div>`).join('');
+    el.querySelector('#cd-recip-note').textContent = `Showing ${shown} of ${formatInteger(c.recipient_count || c.recipients.length)} recipients`;
+    if (shown >= c.recipients.length) el.querySelector('#cd-more')?.remove();
+  });
 }};

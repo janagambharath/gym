@@ -145,13 +145,24 @@ export function renderAvatar(name, size = 'md') {
 
 // ─── Status Badge ────────────────────────────────────────────────────
 
-export function renderBadge(status) {
-  const displayStatus = status.toLowerCase().replace(/\s+/g, '-');
-  let badgeClass = 'badge-info';
-  if (['active', 'paid', 'verified', 'connected'].includes(displayStatus)) badgeClass = 'badge-active';
-  else if (['expiring', 'pending'].includes(displayStatus)) badgeClass = 'badge-pending';
-  else if (['expired', 'failed', 'rejected'].includes(displayStatus)) badgeClass = 'badge-expired';
+// style: explicit style hint ('primary' | 'neutral' | 'critical' | 'info' |
+// 'success' | 'danger' | 'warning') — overrides the status-derived class.
+const BADGE_STYLE_MAP = {
+  primary: 'badge-active', success: 'badge-active', info: 'badge-info',
+  neutral: 'badge-info', warning: 'badge-pending', critical: 'badge-expired',
+  danger: 'badge-expired',
+};
+
+export function renderBadge(status, style) {
+  const displayStatus = String(status ?? '').toLowerCase().replace(/\s+/g, '-');
+  let badgeClass;
+  if (style && BADGE_STYLE_MAP[style]) badgeClass = BADGE_STYLE_MAP[style];
+  else if (['active', 'paid', 'verified', 'connected'].includes(displayStatus)) badgeClass = 'badge-active';
   else if (displayStatus === 'expiring') badgeClass = 'badge-expiring';
+  else if (displayStatus === 'paused') badgeClass = 'badge-paused';
+  else if (displayStatus === 'pending') badgeClass = 'badge-pending';
+  else if (['expired', 'failed', 'rejected'].includes(displayStatus)) badgeClass = 'badge-expired';
+  else badgeClass = 'badge-info';
   return `<span class="badge ${badgeClass}">${escapeHtml(status)}</span>`;
 }
 
@@ -313,6 +324,16 @@ export function renderInfoRow(label, value) {
     <div class="info-row">
       <span class="info-row-label">${escapeHtml(label)}</span>
       <span class="info-row-value">${escapeHtml(String(value ?? '—'))}</span>
+    </div>`;
+}
+
+/** Like renderInfoRow, but the value is trusted HTML (e.g. renderBadge output).
+ *  Only pass HTML this app generated — never raw user input. */
+export function renderInfoRowHtml(label, htmlValue) {
+  return `
+    <div class="info-row">
+      <span class="info-row-label">${escapeHtml(label)}</span>
+      <span class="info-row-value">${htmlValue ?? '—'}</span>
     </div>`;
 }
 

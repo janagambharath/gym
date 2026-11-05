@@ -10,8 +10,8 @@ export default { async mount(el) {
   const s = res.ok ? (res.data.settings || res.data) : {};
   wrap.innerHTML = `
     <form id="gp-form" style="display:flex;flex-direction:column;gap:var(--sp-md);padding:var(--sp-lg)">
-      ${renderFormField({id:'gp-name',label:'Gym Name',value:escapeHtml(s.name||''),required:true})}
-      ${renderFormField({id:'gp-email',label:'Email',type:'email',value:escapeHtml(s.email||'')})}
+      ${renderFormField({id:'gp-name',label:'Gym Name',value:s.name||'',required:true})}
+      ${renderFormField({id:'gp-email',label:'Email',type:'email',value:s.email||''})}
       ${renderFormField({id:'gp-phone',label:'Phone',type:'tel',value:s.phone||''})}
       ${renderFormField({id:'gp-address',label:'Address',type:'textarea',value:s.address||''})}
       ${renderFormField({id:'gp-timezone',label:'Timezone',value:s.timezone||'Asia/Kolkata'})}

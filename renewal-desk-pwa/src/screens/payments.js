@@ -43,17 +43,27 @@ export default {
     });
 
     let requestId = 0;
-    async function loadPayments(background = false) {
+    async function loadPayments(background = false, append = false) {
       if (background && loading) return;
+      if (append && (loading || payments.length >= total)) return;
       const id = ++requestId;
       loading = true;
       const listEl = el.querySelector('#payments-list');
-      if (!background) listEl.innerHTML = renderListSkeleton();
+      if (!background && !append) listEl.innerHTML = renderListSkeleton();
       let url = `/api/mobile/v1/payments?page=${page}&page_size=20`;
       if (filter !== 'all') url += `&status=${filter}`;
       if (search.trim()) url += `&q=${encodeURIComponent(search.trim())}`;
+      // Background refresh re-fetches every page loaded so far (like
+      // members.js) — refetching only page 1 would drop pages 2+.
+      const pageUrls = background
+        ? Array.from({ length: page }, (_, i) => url.replace(`page=${page}&`, `page=${i + 1}&`))
+        : [url];
       const [res, sumRes] = await Promise.all([
-        apiRequest(url),
+        Promise.all(pageUrls.map(u => apiRequest(u))).then(results => {
+          const first = results.find(r => !r.ok) || results[0];
+          if (!first.ok) return first;
+          return { ok: true, data: { payments: results.flatMap(r => r.data.payments || []), pagination: results[0].data.pagination } };
+        }),
         page === 1 ? apiRequest('/api/mobile/v1/payments/summary') : Promise.resolve(null),
       ]);
       if (id !== requestId) return;
@@ -63,8 +73,9 @@ export default {
         if (!background) listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
-      payments = res.data.payments || [];
-      total = res.data.pagination?.total || 0;
+      const newPayments = res.data.payments || [];
+      payments = append ? [...payments, ...newPayments] : newPayments;
+      total = res.data.pagination?.total ?? payments.length;
 
       if (sumRes?.ok) {
         const s = sumRes.data;
@@ -89,14 +100,26 @@ export default {
         listEl.innerHTML = renderEmptyState({ icon: 'payments', title: 'No payments', text: filter !== 'all' ? `No ${filter} payments found` : 'Record your first payment' });
         return;
       }
+      const showingAll = payments.length >= total;
       listEl.innerHTML = `<div class="scroll-content">
-        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">${formatInteger(total)} payment${total !== 1 ? 's' : ''}</div>
+        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">Showing ${formatInteger(payments.length)} of ${formatInteger(total)} payment${total !== 1 ? 's' : ''}</div>
         <div class="card" style="margin:0 var(--sp-lg)">${payments.map(p => renderPaymentCard(p)).join('')}</div>
+        ${showingAll ? '' : `<div style="padding:var(--sp-lg);text-align:center"><button class="btn btn-secondary" id="pay-more">Load more</button></div>`}
       </div>`;
       listEl.querySelectorAll('[data-payment-id]').forEach(card => {
         card.addEventListener('click', () => navigate.push('payment-detail', { paymentId: card.dataset.paymentId }));
       });
+      listEl.querySelector('#pay-more')?.addEventListener('click', () => { page++; loadPayments(false, true); });
     }
+
+    // Infinite scroll: load the next server page as the owner reaches the end.
+    el.querySelector('#payments-list').addEventListener('scroll', (e) => {
+      const listEl = e.currentTarget;
+      if (loading || payments.length >= total) return;
+      if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 200) {
+        page++; loadPayments(false, true);
+      }
+    });
 
     await loadPayments();
     attachLiveRefresh(el, () => loadPayments(true), 30000, () => clearTimeout(searchTimer));

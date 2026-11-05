@@ -3,10 +3,17 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js'; import { debounce, uuid, escapeHtml, formatDate } from '../utils.js';
 
+// Same guarded version as renew-member.js: an invalid stored gym timezone
+// must never throw during mount and block recording payments (B-M9).
 function dateKeyInTimezone(value, timezone) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
-  const part = (type) => parts.find((item) => item.type === type)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
+    const part = (type) => parts.find((item) => item.type === type)?.value || '';
+    const key = `${part('year')}-${part('month')}-${part('day')}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return key;
+  } catch { /* invalid timezone — fall through to local date */ }
+  const d = new Date(value);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function addDays(value, days) {
@@ -23,7 +30,21 @@ export default { async mount(el, params) {
   const timezone = settingsRes.ok ? settingsRes.data.gym?.timezone || 'Asia/Kolkata' : 'Asia/Kolkata';
   const today = dateKeyInTimezone(new Date(), timezone);
   if (preId) { const r = await apiRequest(`/api/mobile/v1/members/${preId}`); if (r.ok) selectedMember = r.data; }
+  // Draft typed values survive re-render (member pick / "Change") — M24.
+  let draft = {};
+  const captureDraft = () => {
+    if (!el.querySelector('#rp-form')) return;
+    draft = {
+      plan: el.querySelector('#rp-plan')?.value || '',
+      startDate: el.querySelector('#rp-start-date')?.value || '',
+      amount: el.querySelector('#rp-amount')?.value || '',
+      method: el.querySelector('#rp-method')?.value || '',
+      ref: el.querySelector('#rp-ref')?.value || '',
+      notes: el.querySelector('#rp-notes')?.value || '',
+    };
+  };
   const render = () => {
+    captureDraft();
     const minStartDate = selectedMember?.membership_end && selectedMember.membership_end >= today
       ? addDays(selectedMember.membership_end, 1)
       : today;
@@ -35,13 +56,14 @@ export default { async mount(el, params) {
           `<div class="form-group"><label class="form-label">Search Member *</label>
             <div class="search-bar"><span class="search-icon">${icon('search',16)}</span><input type="text" placeholder="Search by name or phone..." id="rp-search"></div>
             <div id="rp-results"></div></div>`}
-        ${renderFormField({ id: 'rp-plan', label: 'Plan', value: selectedMember?.plan?.id || '', options: plans.map(p=>({value:p.id,label:`${p.name} — ${p.duration_days}d`})) })}
-        ${renderFormField({ id: 'rp-start-date', label: 'Membership start date', type: 'date', value: minStartDate, required: true, hint: selectedMember?.membership_end && selectedMember.membership_end >= today ? `Next available date: ${formatDate(minStartDate)}. The current paid period stays intact.` : 'Choose the date this renewal should begin.' })}
+        ${plans.length === 0 ? `<div class="form-hint">No plans yet — create one in Plans to renew with a plan.</div>` : ''}
+        ${renderFormField({ id: 'rp-plan', label: 'Plan', value: draft.plan || selectedMember?.plan?.id || '', options: plans.map(p=>({value:p.id,label:`${p.name} — ${p.duration_days}d`})) })}
+        ${renderFormField({ id: 'rp-start-date', label: 'Membership start date', type: 'date', value: draft.startDate || minStartDate, required: true, hint: selectedMember?.membership_end && selectedMember.membership_end >= today ? `Next available date: ${formatDate(minStartDate)}. The current paid period stays intact.` : 'Choose the date this renewal should begin.' })}
         <div class="form-hint" id="rp-end-preview" style="margin-top:-var(--sp-md)"></div>
-        ${renderFormField({ id: 'rp-amount', label: 'Amount', type: 'number', value: selectedMember?.plan?.price || '', required: true })}
-        ${renderFormField({ id: 'rp-method', label: 'Method', value: 'cash', options: [{value:'cash',label:'Cash'},{value:'upi',label:'UPI'},{value:'card',label:'Card'},{value:'online',label:'Online'},{value:'other',label:'Other'}], required: true })}
-        ${renderFormField({ id: 'rp-ref', label: 'Reference', placeholder: 'Transaction ID (optional)' })}
-        ${renderFormField({ id: 'rp-notes', label: 'Notes', type: 'textarea', placeholder: 'Optional' })}
+        ${renderFormField({ id: 'rp-amount', label: 'Amount', type: 'number', value: draft.amount || selectedMember?.plan?.price || '', required: true })}
+        ${renderFormField({ id: 'rp-method', label: 'Method', value: draft.method || 'cash', options: [{value:'cash',label:'Cash'},{value:'upi',label:'UPI'},{value:'card',label:'Card'},{value:'online',label:'Online'},{value:'other',label:'Other'}], required: true })}
+        ${renderFormField({ id: 'rp-ref', label: 'Reference', placeholder: 'Transaction ID (optional)', value: draft.ref || '' })}
+        ${renderFormField({ id: 'rp-notes', label: 'Notes', type: 'textarea', placeholder: 'Optional', value: draft.notes || '' })}
         <button type="submit" class="btn btn-primary btn-lg btn-full" id="rp-submit">${icon('wallet',18,'white')} Record Payment</button>
       </form></div></div>`;
     bindHeaderEvents(el, { onBack: () => navigate.pop() });

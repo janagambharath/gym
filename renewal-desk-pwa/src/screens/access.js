@@ -506,9 +506,18 @@ async function openQuickAssign(bioId) {
     });
   };
   
-  searchEl.addEventListener('input', () => renderResults(searchEl.value));
-  
-  const res = await apiRequest('/api/mobile/v1/members?page=1&page_size=500');
+  let memberSearchTimer;
+  searchEl.addEventListener('input', () => {
+    clearTimeout(memberSearchTimer);
+    memberSearchTimer = setTimeout(async () => {
+      const q = searchEl.value.trim();
+      const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=30${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+      members = res.ok ? (res.data.members || []) : [];
+      renderResults(searchEl.value);
+    }, 300);
+  });
+
+  const res = await apiRequest('/api/mobile/v1/members?page=1&page_size=30');
   members = res.ok ? (res.data.members || []) : [];
   renderResults('');
   // Focus synchronously (no setTimeout) so iOS opens the keyboard —

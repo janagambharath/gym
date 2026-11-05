@@ -4,15 +4,19 @@ import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js';
 export default { mount(el) {
   el.innerHTML = `${renderHeader({title:'Upload CSV',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
-    <div style="border:2px dashed var(--border);border-radius:var(--r-xl);padding:var(--sp-4xl);margin-bottom:var(--sp-xl)">
+    <div id="mi-dropzone" style="position:relative;border:2px dashed var(--border);border-radius:var(--r-xl);padding:var(--sp-4xl);margin-bottom:var(--sp-xl)">
       ${icon('upload',40,'var(--muted)')}
       <p style="margin-top:var(--sp-lg);color:var(--text-secondary)">Tap to select a CSV file</p>
       <input type="file" accept=".csv,.xlsx" id="mi-file" style="position:absolute;opacity:0;width:100%;height:100%;top:0;left:0;cursor:pointer">
     </div>
+    <button class="btn btn-secondary btn-full" id="mi-pick" style="margin-bottom:var(--sp-xl)">${icon('upload',16)} Choose CSV file</button>
+    <button class="btn btn-secondary btn-full" id="mi-scan" style="margin-bottom:var(--sp-xl)">${icon('camera',16)} Scan a register page instead</button>
     <div id="mi-preview" class="hidden"></div>
     <button class="btn btn-primary btn-full hidden" id="mi-submit">${icon('upload',18,'white')} Import Members</button>
   </div></div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
+  el.querySelector('#mi-pick').addEventListener('click', () => el.querySelector('#mi-file').click());
+  el.querySelector('#mi-scan').addEventListener('click', () => navigate.push('member-scan'));
   el.querySelector('#mi-file').addEventListener('change',async(e)=>{
     const file = e.target.files[0]; if (!file) return;
     const formData = new FormData(); formData.append('file', file);

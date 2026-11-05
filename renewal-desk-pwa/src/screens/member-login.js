@@ -42,16 +42,24 @@ export default {
       if (step === 'phone') {
         el.querySelector('#phone-form').addEventListener('submit', async (e) => {
           e.preventDefault();
+          const btn = el.querySelector('#phone-form button[type="submit"]');
+          if (btn.disabled) return;
+          btn.disabled = true;
           phone = el.querySelector('#ml-phone').value.trim();
           const res = await memberRequestOtp(phone);
+          btn.disabled = false;
           if (res.ok) { challengeToken = res.data.challenge || res.data.challenge_token; step = 'otp'; render(); }
           else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }
         });
       } else {
         el.querySelector('#otp-form').addEventListener('submit', async (e) => {
           e.preventDefault();
+          const btn = el.querySelector('#otp-form button[type="submit"]');
+          if (btn.disabled) return;
+          btn.disabled = true;
           const otp = el.querySelector('#ml-otp').value.trim();
           const res = await memberVerifyOtp(phone, otp, challengeToken);
+          btn.disabled = false;
           if (res.ok && res.data?.token) {
             saveMemberSession({
               token: res.data.token,
@@ -64,8 +72,12 @@ export default {
           else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }
         });
         el.querySelector('#otp-back')?.addEventListener('click', () => { step = 'phone'; render(); });
-        el.querySelector('#otp-resend')?.addEventListener('click', async () => {
+        el.querySelector('#otp-resend')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
+          btn.disabled = true;
           const res = await memberRequestOtp(phone);
+          btn.disabled = false;
           if (res.ok) { challengeToken = res.data.challenge || res.data.challenge_token; showToast('Code resent', 'success'); }
           else { el.querySelector('#otp-error-text').textContent = res.error.message; el.querySelector('#otp-error').classList.remove('hidden'); }
         });

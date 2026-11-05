@@ -11,7 +11,7 @@ export default {
     let members = [], total = 0, page = 1, loading = false, filter = 'all', query = '';
 
     el.innerHTML = `
-      ${renderHeader({ title: 'Members', showBack: true, actions: [{ icon: 'add', label: 'Add' }, { icon: 'upload', label: 'Import' }] })}
+      ${renderHeader({ title: 'Members', showBack: true, actions: [{ icon: 'add', label: 'Add' }, { icon: 'upload', label: 'Import' }, { icon: 'camera', label: 'Scan' }] })}
       <div style="padding:var(--sp-sm) var(--sp-lg)">
         <div class="search-bar">
           <span class="search-icon">${icon('search', 18)}</span>
@@ -28,7 +28,7 @@ export default {
       <div class="scroll-view" id="members-list">${renderListSkeleton()}</div>
       <button class="fab" id="fab-add">${icon('add', 24, 'white')}</button>`;
 
-    bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('add-member') }, { onClick: () => navigate.push('member-import') }] });
+    bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('add-member') }, { onClick: () => navigate.push('member-import') }, { onClick: () => navigate.push('member-scan') }] });
     el.querySelector('#fab-add').addEventListener('click', () => navigate.push('add-member'));
 
     // Filter chips
@@ -86,7 +86,7 @@ export default {
         listEl.querySelector('#add-empty')?.addEventListener('click', () => navigate.push('add-member'));
       } else {
         listEl.innerHTML = `<div class="scroll-content">
-          <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">${formatInteger(filter === 'expiring' ? members.length : total)} member${total !== 1 ? 's' : ''}</div>
+          <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">${formatInteger(total)} member${total !== 1 ? 's' : ''}</div>
           <div class="card" style="margin:0 var(--sp-lg)">${members.map(m => renderMemberCard(m)).join('')}</div>
         </div>`;
         listEl.querySelectorAll('[data-member-id]').forEach(card => {

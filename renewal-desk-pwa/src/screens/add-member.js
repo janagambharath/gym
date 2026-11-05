@@ -6,7 +6,13 @@ import { formatCurrency, getGymTodayISO, escapeHtml } from '../utils.js';
 import { icon } from '../icons.js';
 
 export default {
-  async mount(el) {
+  async mount(el, params) {
+    // Convert-to-member prefill from a bot lead (bot-lead-detail pushes
+    // {prefill: JSON.stringify({name, phone})}). Tolerate bad JSON.
+    let prefill = {};
+    try {
+      if (params?.prefill) prefill = typeof params.prefill === 'string' ? JSON.parse(params.prefill) : params.prefill;
+    } catch { prefill = {}; }
     const settingsRes = await apiRequest('/api/mobile/v1/settings');
     const plans = settingsRes.ok ? (settingsRes.data.plans || []) : [];
     const defaultPlan = plans[0];
@@ -15,8 +21,8 @@ export default {
       ${renderHeader({ title: 'Add Member', showBack: true })}
       <div class="scroll-view"><div class="scroll-content form-scroll-content">
         <form id="add-form" style="display:flex;flex-direction:column;gap:var(--sp-lg)">
-          ${renderFormField({ id: 'am-name', label: 'Full Name', placeholder: 'Member name', required: true })}
-          ${renderFormField({ id: 'am-phone', label: 'Phone', type: 'tel', placeholder: '9876543210', required: true })}
+          ${renderFormField({ id: 'am-name', label: 'Full Name', placeholder: 'Member name', required: true, value: prefill.name || '' })}
+          ${renderFormField({ id: 'am-phone', label: 'Phone', type: 'tel', placeholder: '9876543210', required: true, value: prefill.phone || '' })}
           <div id="am-dup-warn" style="display:none" class="card card-body"></div>
           ${renderFormField({ id: 'am-email', label: 'Email', type: 'email', placeholder: 'member@example.com' })}
           ${renderFormField({ id: 'am-gender', label: 'Gender', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}

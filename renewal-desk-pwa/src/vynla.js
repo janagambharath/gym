@@ -10,7 +10,18 @@ const beginPage = name => { activePage = name; return ++pageVersion; };
 const SESSION_KEY = 'vynla.member-session.v1';
 const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'https://gym-production-910c.up.railway.app' : window.location.origin;
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
-const money = (value) => `₹${Number(value || 0).toLocaleString('en-IN')}`;
+// Gym display prefs, filled from the member dashboard payload when known;
+// INR / Asia-Kolkata are only the fallback, never a hardcoded assumption.
+let gymCurrency = 'INR';
+let gymTimezone = 'Asia/Kolkata';
+const money = (value) => {
+  const amount = Number(value || 0);
+  try {
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: gymCurrency }).format(amount);
+  } catch {
+    return `${gymCurrency} ${amount.toLocaleString('en-IN')}`;
+  }
+};
 let session;
 
 function loadSession() {
@@ -92,12 +103,22 @@ function notice(message, type = 'error') {
 const pageDate = (value) => {
   if (!value) return '—';
   const parsed = new Date(String(value).length === 10 ? `${value}T00:00:00` : value);
-  return Number.isNaN(parsed.getTime()) ? esc(value) : parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (Number.isNaN(parsed.getTime())) return esc(value);
+  try {
+    return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: gymTimezone }).format(parsed);
+  } catch {
+    return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
 };
 const pageDateTime = (value) => {
   if (!value) return '—';
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? esc(value) : parsed.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  if (Number.isNaN(parsed.getTime())) return esc(value);
+  try {
+    return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: gymTimezone }).format(parsed);
+  } catch {
+    return parsed.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  }
 };
 function memberNav(active) {
   const tabs = [['home','Home'],['membership','Plan'],['attendance','Visits'],['payments','Payments'],['profile','Profile']];
@@ -361,6 +382,8 @@ async function renderHome(background = false) {
     return memberLoadError('home',result.error,renderHome);
   }
   const d = result.data, member = d.member || {}, gym = d.gym || {}, branding = d.branding || {};
+  if (gym.currency) gymCurrency = String(gym.currency).toUpperCase();
+  if (gym.timezone) gymTimezone = gym.timezone;
   const access = await api('/api/member/v1/access?per_page=1');
   if (version !== pageVersion) return;
   const photo = member.profile_photo_url ? `<img src="${esc(member.profile_photo_url)}" alt="${esc(member.full_name||'Member')} profile" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #ffffff99">` : `<div aria-hidden="true" style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:#ffffff30;font-size:28px;font-weight:800">${esc((member.full_name||'M').slice(0,1).toUpperCase())}</div>`;
@@ -468,7 +491,15 @@ async function renderRenew() {
   document.querySelector('#app main')?.insertAdjacentHTML('beforeend',memberNav('membership')); bindMemberNav();
   document.querySelector('#back').onclick = renderHome; let selected;
   document.querySelectorAll('.plan').forEach((button) => button.onclick = () => { selected = button.dataset.id; document.querySelector('#plan-name').textContent = `${button.dataset.name} — ${money(button.dataset.price)}`; document.querySelector('#pay').style.display = 'block'; window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); });
-  document.querySelector('#claim').onclick = async () => { if (!selected) return; const result = await api('/api/member/v1/renew/claim', { method: 'POST', body: { plan_id: Number(selected), reference: document.querySelector('#reference').value.trim() || undefined } }); if (result.ok) { alert('Payment claim submitted. Your gym will verify it shortly.'); renderHome(); } else alert(result.error); };
+  document.querySelector('#claim').onclick = async () => {
+    if (!selected) return;
+    const btn = document.querySelector('#claim');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const result = await api('/api/member/v1/renew/claim', { method: 'POST', body: { plan_id: Number(selected), reference: document.querySelector('#reference').value.trim() || undefined } });
+    if (result.ok) { alert('Payment claim submitted. Your gym will verify it shortly.'); renderHome(); }
+    else { alert(result.error); btn.disabled = false; }
+  };
 }
 
 export function bootVynla() {

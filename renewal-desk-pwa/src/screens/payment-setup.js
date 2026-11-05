@@ -1,7 +1,7 @@
 /* Payment Setup Screen */
 import { apiRequest, uploadPaymentQrImage } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm } from '../components.js';
 
 export default {
   async mount(el) {
@@ -15,7 +15,7 @@ export default {
           ${renderFormField({ id: 'ps-upi', label: 'UPI ID / VPA *', value: ps.upi_id || '', placeholder: 'e.g. yourgym@okhdfcbank', required: true })}
           ${renderFormField({ id: 'ps-label', label: 'Payment Label', value: ps.payment_label || '', placeholder: 'Displayed to members (e.g. Gym Name)' })}
           ${renderFormField({ id: 'ps-inst', label: 'Instructions', type: 'textarea', value: ps.instructions || '', placeholder: 'Payment instructions for members' })}
-          <div class="form-group"><label class="form-label" for="ps-qr">Payment QR image</label><p class="form-hint">Upload a PNG, JPG, or WebP image. Members will see it in VYNLA.</p><input id="ps-qr" class="form-input" type="file" accept="image/png,image/jpeg,image/webp">${ps.qr_public_url ? `<img src="${ps.qr_public_url}" alt="Current payment QR" style="display:block;width:180px;height:180px;object-fit:contain;margin-top:12px;border:1px solid var(--border);border-radius:var(--r-md)">` : ''}</div>
+          <div class="form-group"><label class="form-label" for="ps-qr">Payment QR image</label><p class="form-hint">Upload a PNG, JPG, or WebP image. Members will see it in VYNLA.</p><input id="ps-qr" class="form-input" type="file" accept="image/png,image/jpeg,image/webp">${ps.qr_public_url ? `<img id="ps-qr-current" src="${ps.qr_public_url}" alt="Current payment QR" style="display:block;width:180px;height:180px;object-fit:contain;margin-top:12px;border:1px solid var(--border);border-radius:var(--r-md)">` : ''}${ps.qr_public_url ? `<button type="button" class="btn btn-secondary btn-sm" id="ps-qr-remove" style="margin-top:var(--sp-sm)">Remove QR</button>` : ''}</div>
           <button type="submit" class="btn btn-primary btn-lg btn-full" id="ps-submit">Save Settings</button>
         </form>
       </div></div>`;
@@ -29,13 +29,43 @@ export default {
       if (upload.ok) {
         showToast('QR image uploaded. Members can scan it in VYNLA.', 'success');
         if (upload.data.qr_public_url) {
-          const preview = document.createElement('img');
-          preview.src = upload.data.qr_public_url; preview.alt = 'Payment QR';
-          preview.style.cssText = 'display:block;width:180px;height:180px;object-fit:contain;margin-top:12px;border:1px solid var(--border);border-radius:var(--r-md)';
-          event.target.insertAdjacentElement('afterend', preview);
+          // Replace the existing preview instead of stacking a new <img>
+          // on every upload (L19).
+          el.querySelector('#ps-qr-preview')?.remove();
+          const current = el.querySelector('#ps-qr-current');
+          if (current) { current.src = upload.data.qr_public_url; }
+          else {
+            const preview = document.createElement('img');
+            preview.id = 'ps-qr-preview';
+            preview.src = upload.data.qr_public_url; preview.alt = 'Payment QR';
+            preview.style.cssText = 'display:block;width:180px;height:180px;object-fit:contain;margin-top:12px;border:1px solid var(--border);border-radius:var(--r-md)';
+            event.target.insertAdjacentElement('afterend', preview);
+          }
+          if (!el.querySelector('#ps-qr-remove')) {
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button'; removeBtn.id = 'ps-qr-remove';
+            removeBtn.className = 'btn btn-secondary btn-sm';
+            removeBtn.style.marginTop = 'var(--sp-sm)';
+            removeBtn.textContent = 'Remove QR';
+            removeBtn.addEventListener('click', removeQr);
+            (el.querySelector('#ps-qr-preview') || el.querySelector('#ps-qr-current'))?.after(removeBtn);
+          }
         }
       } else showToast(upload.error.message, 'error');
     });
+
+    async function removeQr() {
+      const yes = await showConfirm({ title: 'Remove payment QR?', message: 'Members will no longer see a QR code for payments until you upload a new one.', confirmText: 'Remove QR', destructive: true });
+      if (!yes) return;
+      const r = await apiRequest('/api/mobile/v1/settings/payment/qr', { method: 'DELETE' });
+      if (r.ok) {
+        el.querySelector('#ps-qr-current')?.remove();
+        el.querySelector('#ps-qr-preview')?.remove();
+        el.querySelector('#ps-qr-remove')?.remove();
+        showToast('Payment QR removed.', 'success');
+      } else showToast(r.error?.message || 'Could not remove the QR.', 'error');
+    }
+    el.querySelector('#ps-qr-remove')?.addEventListener('click', removeQr);
 
     el.querySelector('#ps-form').addEventListener('submit', async (e) => {
       e.preventDefault();

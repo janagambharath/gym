@@ -3,7 +3,10 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml } from '../utils.js';
 export default { mount(el, params) {
-  const members = params?.members ? JSON.parse(params.members) : [];
+  let members = [];
+  try { members = params?.members ? JSON.parse(params.members) : []; }
+  catch { members = []; }
+  if (!Array.isArray(members)) members = [];
   el.innerHTML = `${renderHeader({title:`Review (${members.length})`,showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content">
     <div class="card" style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:var(--fs-sm)">

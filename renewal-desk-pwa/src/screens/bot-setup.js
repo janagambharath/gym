@@ -12,12 +12,15 @@ export default { async mount(el) {
       ${renderFormField({id:'bs-reg',label:'Registration Link',value:c.registration_link||'',placeholder:'https://…'})}
       ${renderFormField({id:'bs-trial-price',label:'Trial Price (₹)',value:c.trial_price||'',placeholder:'0.00'})}
       ${renderFormField({id:'bs-trial-days',label:'Trial Duration (days)',value:c.trial_duration_days||'',placeholder:'1'})}
-      <button type="submit" class="btn btn-primary btn-full">Save Configuration</button>
+      <button type="submit" class="btn btn-primary btn-full" id="bs-save">Save Configuration</button>
     </form>
   </div></div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   el.querySelector('#bs-form').addEventListener('submit',async(e)=>{
     e.preventDefault();
+    const btn = el.querySelector('#bs-save');
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = 'Saving…';
     const r = await apiRequest('/api/mobile/v1/bot/config',{method:'PATCH',body:{
       greeting_message:el.querySelector('#bs-greet').value.trim()||null,
       opening_hours:el.querySelector('#bs-hours').value.trim()||null,
@@ -26,5 +29,6 @@ export default { async mount(el) {
       trial_price:el.querySelector('#bs-trial-price').value.trim()||null,
       trial_duration_days:el.querySelector('#bs-trial-days').value.trim()||null }});
     showToast(r.ok?'Saved!':r.error.message, r.ok?'success':'error');
+    btn.disabled = false; btn.textContent = 'Save Configuration';
   });
 }};

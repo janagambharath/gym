@@ -29,7 +29,7 @@ export default {
           <div class="form-group">
             <label class="form-label">End Date (auto-calculated)</label>
             <div id="em-end-display" class="form-input" style="background:var(--bg-muted,#f1f5f9);color:var(--muted);">—</div>
-            <span class="form-hint">Calculated from Plan + Start Date. To grant extra days, use the owner override.</span>
+            <span class="form-hint">Calculated from Plan + Start Date. If dates don't match payments, fix them in <button type="button" id="em-date-repair" style="color:var(--brand);text-decoration:underline;padding:0">Date Repair</button>.</span>
           </div>
           ${renderFormField({ id: 'em-notes', label: 'Notes', type: 'textarea', value: m.notes || '' })}
           <button type="submit" class="btn btn-primary btn-lg btn-full" id="em-submit">Save Changes</button>
@@ -37,6 +37,7 @@ export default {
       </div></div>`;
 
     bindHeaderEvents(el, { onBack: () => navigate.pop() });
+    el.querySelector('#em-date-repair')?.addEventListener('click', () => navigate.push('date-repair'));
 
     // End date is auto-calculated from Plan + Start (never hand-typed).
     // Uses the renewal convention: end = start + duration - 1.

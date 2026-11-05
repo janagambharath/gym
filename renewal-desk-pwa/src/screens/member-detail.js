@@ -2,7 +2,7 @@
 import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderInfoRowHtml, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml, formatDate, formatDateTime, formatCurrency, getMemberDisplayStatus, getMemberStatusColor, getDaysText, getInitials, getAvatarColor } from '../utils.js';
 
@@ -92,7 +92,7 @@ export default {
             <div style="padding:0 var(--sp-lg) var(--sp-lg)">
               <div class="card card-body">
                 <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">Activity & Access</div>
-                ${renderInfoRow('Access Status', member.is_inside ? '<span style="color:var(--success);font-weight:var(--fw-bold)">● Inside Gym Now</span>' : 'Outside')}
+                ${renderInfoRowHtml('Access Status', member.is_inside ? '<span style="color:var(--success);font-weight:var(--fw-bold)">● Inside Gym Now</span>' : 'Outside')}
                 ${member.is_inside && member.last_entry_at ? renderInfoRow('Entered At', formatDateTime(member.last_entry_at)) : ''}
                 ${renderInfoRow('WhatsApp', member.whatsapp_opted_in ? 'Opted In' : 'Not opted in')}
                 ${renderInfoRow('Biometric', member.has_biometric ? `Enrolled (ID #${escapeHtml(member.device_enroll_number || 'Enrolled')})` : 'Not enrolled')}

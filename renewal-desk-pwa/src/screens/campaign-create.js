@@ -27,7 +27,16 @@ export default { async mount(el) {
     if (!seg) { showToast('Select a segment first','error'); return; }
     const r = await apiRequest(`/api/mobile/v1/campaigns/segments/preview?type=${seg}`);
     const prev = el.querySelector('#cc-preview');
-    if (r.ok) { prev.classList.remove('hidden'); el.querySelector('#cc-preview-count').textContent = `${formatInteger(r.data.total||0)} recipients will receive this message`; }
+    if (r.ok) {
+      prev.classList.remove('hidden');
+      el.querySelector('#cc-preview-count').textContent = `${formatInteger(r.data.total||0)} recipients will receive this message`;
+      // The message itself: the chosen template's body, else the typed message.
+      const templId = el.querySelector('#cc-templ')?.value;
+      const templ = templates.find(t => String(t.id ?? t.name) === String(templId));
+      const msg = templ?.body || templ?.message || templ?.text || templ?.content
+        || el.querySelector('#cc-msg')?.value.trim() || '';
+      el.querySelector('#cc-preview-text').textContent = msg || 'No message entered yet — pick a template or type a message above.';
+    }
   });
   el.querySelector('#cc-form').addEventListener('submit',async(e)=>{
     e.preventDefault();

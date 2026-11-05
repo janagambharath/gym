@@ -2,21 +2,36 @@ import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml } from '../utils.js';
 
+let delPage = 1;
+let delTotal = 0;
+let delTotalPages = 1;
+let delQuery = '';
+let delMembers = [];
+
 export default { async mount(el) { await load(el); } };
 
 const esc = escapeHtml;
 
-async function load(el) {
-  el.innerHTML = '<div class="rrr-loading">Loading members…</div>';
-  
-  // Get members with enroll numbers
-  const res = await apiRequest('/api/mobile/v1/members?page=1&page_size=500');
+async function load(el, append = false) {
+  if (!append) {
+    delPage = 1;
+    delMembers = [];
+    el.innerHTML = '<div class="rrr-loading">Loading members…</div>';
+  }
+
+  // Server-paginated + searchable (M31): the old page_size=500 fetch capped
+  // the list silently at 500 members.
+  const res = await apiRequest(`/api/mobile/v1/members?page=${delPage}&page_size=50${delQuery ? `&q=${encodeURIComponent(delQuery)}` : ''}`);
   if (!res.ok) {
+    if (append) return;
     el.innerHTML = '<main class="rrr-page"><h1>Failed to load</h1><button onclick="history.back()">Back</button></main>';
     return;
   }
-  
-  const members = (res.data.members || []);
+
+  delTotal = res.data.pagination?.total ?? 0;
+  delTotalPages = res.data.pagination?.total_pages ?? 1;
+  delMembers = append ? [...delMembers, ...(res.data.members || [])] : (res.data.members || []);
+  const members = delMembers;
   
   el.innerHTML = `<main class="rrr-page rrr-detail">
     <header class="rrr-header">
@@ -25,9 +40,11 @@ async function load(el) {
     </header>
     
     <div class="rrr-del-hero">
-      <h1>Delete Members</h1>
-      <p>Select members to permanently delete from Renewal Desk. This removes them from the app. They'll also be removed from the terminal.</p>
+      <h1>Deactivate Members</h1>
+      <p>Select members to deactivate in Renewal Desk. Deactivation ends their membership and blocks terminal access — their records are kept, not permanently deleted. To permanently erase a member, use the admin panel.</p>
     </div>
+    <div style="margin-bottom:var(--sp-md)"><input class="form-input" id="rrr-del-search" type="search" placeholder="Search by name or phone…" value="${esc(delQuery)}" style="width:100%"></div>
+    <div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-sm)">Showing ${members.length} of ${delTotal} members</div>
     
     <div class="rrr-del-toolbar">
       <label class="rrr-select-all">
@@ -51,8 +68,9 @@ async function load(el) {
     </div>
     
     <div class="rrr-del-footer">
-      <button id="rrr-delete-btn" class="rrr-delete-btn" disabled>🗑️ Delete Selected</button>
+      <button id="rrr-delete-btn" class="rrr-delete-btn" disabled>🗑️ Deactivate Selected</button>
     </div>
+    ${delPage < delTotalPages ? `<div style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="rrr-del-more">Load more members</button></div>` : ''}
     <div id="rrr-del-result"></div>
   </main>
   <style>
@@ -77,6 +95,12 @@ async function load(el) {
   </style>`;
   
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
+  let delSearchTimer;
+  el.querySelector('#rrr-del-search')?.addEventListener('input', (e) => {
+    clearTimeout(delSearchTimer);
+    delSearchTimer = setTimeout(() => { delQuery = e.target.value.trim(); load(el); }, 400);
+  });
+  el.querySelector('#rrr-del-more')?.addEventListener('click', () => { delPage++; load(el, true); });
   
   const selectAll = el.querySelector('#rrr-select-all');
   const checkboxes = el.querySelectorAll('.rrr-del-check');
@@ -87,7 +111,7 @@ async function load(el) {
     const checked = el.querySelectorAll('.rrr-del-check:checked').length;
     countEl.textContent = `${checked} selected`;
     deleteBtn.disabled = checked === 0;
-    deleteBtn.textContent = checked ? `🗑️ Delete ${checked} from Terminal` : '🗑️ Delete Selected';
+    deleteBtn.textContent = checked ? `🗑️ Deactivate ${checked} member${checked === 1 ? '' : 's'}` : '🗑️ Deactivate Selected';
     selectAll.checked = checked === checkboxes.length && checked > 0;
     selectAll.indeterminate = checked > 0 && checked < checkboxes.length;
   }
@@ -102,10 +126,10 @@ async function load(el) {
   deleteBtn?.addEventListener('click', async () => {
     const selected = [...el.querySelectorAll('.rrr-del-check:checked')].map(cb => cb.value);
     if (!selected.length) return;
-    if (!confirm(`Permanently delete ${selected.length} member(s) from Renewal Desk? This cannot be undone.`)) return;
-    
+    if (!confirm(`Deactivate ${selected.length} member(s)? Their membership ends and terminal access is blocked. Records are kept.`)) return;
+
     deleteBtn.disabled = true;
-    deleteBtn.textContent = 'Deleting...';
+    deleteBtn.textContent = 'Deactivating...';
     const resultEl = el.querySelector('#rrr-del-result');
     
     let success = 0, failed = 0;
@@ -118,7 +142,7 @@ async function load(el) {
     }
     
     resultEl.innerHTML = `<p style="padding:16px;text-align:center;font-weight:600;color:${failed ? '#d97706' : '#16a34a'};">
-      ${failed ? `✓ ${success} deleted, ⚠ ${failed} failed` : `✓ All ${success} deleted`}
+      ${failed ? `✓ ${success} deactivated, ⚠ ${failed} failed` : `✓ All ${success} deactivated`}
     </p>`;
     setTimeout(() => load(el), 2000);
   });

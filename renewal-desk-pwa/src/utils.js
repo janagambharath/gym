@@ -118,6 +118,7 @@ export function getCurrencySymbol() {
 // ─── Member Helpers ──────────────────────────────────────────────────
 
 export function getMemberDisplayStatus(member) {
+  if (member.status === 'paused') return 'paused';
   if (member.status === 'expired') return 'expired';
   if (member.days_until_expiry != null && member.days_until_expiry <= 7 && member.days_until_expiry >= 0) {
     return 'expiring';
@@ -130,6 +131,7 @@ export function getMemberStatusColor(status) {
     case 'active': return { text: 'var(--status-active)', bg: 'var(--status-active-surface)', border: 'var(--success-border)' };
     case 'expiring': return { text: 'var(--status-expiring)', bg: 'var(--status-expiring-surface)', border: 'var(--warning-border)' };
     case 'expired': return { text: 'var(--status-expired)', bg: 'var(--status-expired-surface)', border: 'var(--critical-border)' };
+    case 'paused': return { text: 'var(--warning)', bg: 'var(--warning-surface)', border: 'var(--warning-border)' };
     default: return { text: 'var(--muted)', bg: 'var(--gray-100)', border: 'var(--border)' };
   }
 }
@@ -206,10 +208,17 @@ export const SEGMENT_LABELS = {
 
 /** Safely escape HTML to prevent XSS */
 export function escapeHtml(str) {
-  if (!str) return '';
+  if (str == null) return '';
   const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  div.textContent = String(str);
+  // textContent→innerHTML escapes only &<> — quotes must be escaped too,
+  // or value="..." interpolations break (and truncate) on names like John "JD".
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** Escape for use inside a double-quoted HTML attribute value. */
+export function escapeAttr(str) {
+  return escapeHtml(str);
 }
 
 /** Generate a UUID v4 for idempotency keys */

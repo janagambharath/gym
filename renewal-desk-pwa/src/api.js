@@ -202,6 +202,11 @@ export async function apiRequest(path, options = {}) {
     if (error instanceof Error && error.name === 'AbortError') {
       return { ok: false, error: { message: 'Request timed out. Please try again.' } };
     }
+    if (error instanceof SyntaxError) {
+      // e.g. a 500 HTML error page where JSON was expected — a server error,
+      // not an offline device.
+      return { ok: false, error: { message: 'The server returned an unexpected response. Please try again.' } };
+    }
     return { ok: false, error: { message: 'Could not reach the server. Check your connection.' } };
   }
 }
@@ -276,12 +281,14 @@ export async function logout() {
 }
 
 export async function deleteAccount() {
-  try {
-    return await apiRequest('/api/mobile/v1/auth/account', { method: 'DELETE' });
-  } finally {
+  // Only clear the session when the delete actually succeeded — a failed
+  // delete must not sign the owner out believing their data is gone (M30).
+  const res = await apiRequest('/api/mobile/v1/auth/account', { method: 'DELETE' });
+  if (res.ok) {
     clearSession();
     cachedSession = undefined;
   }
+  return res;
 }
 
 // ─── Member Auth ─────────────────────────────────────────────────────
@@ -299,26 +306,13 @@ export async function memberVerifyOtp(phone, otp, challengeToken) {
   });
 }
 
-/** Upload an owner-selected payment QR image without setting a JSON content type. */
+/** Upload an owner-selected payment QR image. Routes through the shared
+ *  FormData upload path so an expired token is refreshed and retried (M28),
+ *  instead of forcing a re-login like the old hand-rolled fetch did. */
 export async function uploadPaymentQrImage(file, timeoutMs = 15000) {
   const form = new FormData();
   form.append('qr_image', file);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/mobile/v1/settings/payment/qr`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', ...(cachedSession?.accessToken ? { Authorization: `Bearer ${cachedSession.accessToken}` } : {}) },
-      body: form,
-      signal: controller.signal,
-    });
-    const envelope = await response.json();
-    if (!response.ok || !envelope.success) return { ok: false, error: { message: envelope.error?.message || envelope.error || 'QR upload failed.' } };
-    return { ok: true, data: envelope.data };
-  } catch (err) {
-    if (err?.name === 'AbortError') return { ok: false, error: { message: 'QR upload timed out. Check your connection and retry.' } };
-    return { ok: false, error: { message: 'Could not upload the QR image. Check your connection.' } };
-  } finally { clearTimeout(timeout); }
+  return uploadFormData('/api/mobile/v1/settings/payment/qr', form, timeoutMs);
 }
 
 /** POST a FormData body (file uploads) with auth + token refresh, no hardcoded host. */

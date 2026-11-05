@@ -159,6 +159,15 @@ function hideTabBar() {
   if (tabBarEl) tabBarEl.style.display = 'none';
 }
 
+// B-H10: the tab bar belongs to tab roots only. Pushed screens (depth > 1)
+// hide it, which also un-covers fixed footers (H12), the FAB (H18) and
+// bottom-sheet modals (H19) that sit under its z-50 layer.
+function syncTabBarVisibility(depth) {
+  if (!tabBarEl) return;
+  if (depth > 1) { hideTabBar(); return; }
+  if (getCachedSession()) showTabBar(activeTab);
+}
+
 async function switchTab(tabId, recordHistory = true) {
   const config = TAB_CONFIG[tabId];
   if (!config) return;
@@ -244,6 +253,7 @@ export async function boot() {
   router.isAuthenticated = () => !!getCachedSession();
   router.onAuthRequired = () => showAuthFlow();
   router.onSwitchTab = (tabId) => switchTab(tabId, false);
+  router.onDepthChange = (depth) => syncTabBarVisibility(depth);
 
   // Restore session
   const session = restoreSession();

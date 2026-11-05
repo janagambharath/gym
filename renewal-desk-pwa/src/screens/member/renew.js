@@ -69,11 +69,14 @@ export default { async mount(el) {
     
     el.querySelector('#paid-btn')?.addEventListener('click', async()=>{
       if (!selectedPlan && !customAmount) return;
+      const btn = el.querySelector('#paid-btn');
+      if (btn.disabled) return;
+      btn.disabled = true;
       const body = selectedPlan ? {plan_id:selectedPlan.id} : {};
       if (customAmount) body.custom_amount = parseFloat(customAmount);
       const r = await apiRequest('/api/member/v1/renew',{method:'POST',body});
       if (r.ok) { showToast('Payment notified! Gym will verify soon.','success'); navigate.pop(); }
-      else showToast(r.error?.message||'Failed','error');
+      else { showToast(r.error?.message||'Failed','error'); btn.disabled = false; }
     });
   }
   render();

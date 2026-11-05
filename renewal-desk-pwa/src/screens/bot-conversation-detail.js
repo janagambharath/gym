@@ -20,16 +20,24 @@ export default { async mount(el, params) {
       <div class="chat-bubble-time">${formatDateTime(m.created_at)}</div>
     </div>`).join('')}</div>`;
   scroll.scrollTop = scroll.scrollHeight;
-  // Actions
-  el.querySelector('#bcd-send')?.addEventListener('click', async () => {
+  // Actions — same disable-while-submitting guard as payment-detail.js.
+  let sending = false;
+  const sendReply = async () => {
+    if (sending) return;
     const input = el.querySelector('#bcd-input'); const text = input.value.trim();
-    if (!text) return; input.value = '';
+    if (!text) return;
+    sending = true;
+    const btn = el.querySelector('#bcd-send'); btn.disabled = true;
+    input.value = '';
     const r = await apiRequest(`/api/mobile/v1/bot/conversations/${cid}/message`, { method:'POST', body:{body:text} });
+    sending = false; btn.disabled = false;
     showToast(r.ok?'Sent!':r.error.message, r.ok?'success':'error');
     if (r.ok) { // Re-render
       const chat = scroll.querySelector('.chat-container');
       chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble outgoing">${escapeHtml(text)}<div class="chat-bubble-time">Just now</div></div>`);
       scroll.scrollTop = scroll.scrollHeight;
-    }
-  });
+    } else { input.value = text; }
+  };
+  el.querySelector('#bcd-send')?.addEventListener('click', sendReply);
+  el.querySelector('#bcd-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendReply(); } });
 }};

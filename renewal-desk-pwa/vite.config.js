@@ -6,22 +6,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['icons/*.png', 'splash/*.png'],
-      manifest: {
-        name: 'Renewal Desk',
-        short_name: 'Renewal Desk',
-        description: 'Gym management command center',
-        theme_color: '#2563EB',
-        background_color: '#F8F9FB',
-        display: 'standalone',
-        orientation: 'portrait',
-        scope: '/',
-        start_url: '/',
-        icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
-        ]
-      },
+      // Single manifest: public/manifest.json ("Renewal Desk") is the one
+      // manifest file. The plugin must not also emit manifest.webmanifest.
+      manifest: false,
       workbox: {
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [
@@ -52,6 +39,9 @@ export default defineConfig({
   },
   build: {
     target: 'es2020',
-    outDir: 'dist'
+    outDir: 'dist',
+    // Never prune hashed chunks: devices on a cached bundle still request
+    // old chunk URLs. The build only ADDS new hashed files.
+    emptyOutDir: false
   }
 });

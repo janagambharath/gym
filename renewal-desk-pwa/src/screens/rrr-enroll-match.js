@@ -2,7 +2,12 @@ import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml } from '../utils.js';
 
-export default { async mount(el) { await load(el); } };
+export default {
+  async mount(el) { await load(el); },
+  // Stop the 3s scan poll when the router pauses/unmounts this screen (M21).
+  pause() { stopPoll(); },
+  unmount() { stopPoll(); },
+};
 
 const esc = escapeHtml;
 let pollTimer = null;

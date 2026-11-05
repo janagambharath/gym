@@ -6,6 +6,7 @@ export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Connect WhatsApp',showBack:true})}<div class="scroll-view" id="ws-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   const scroll = el.querySelector('#ws-scroll');
+  async function renderStatus() {
   const statusRes = await apiRequest('/api/mobile/v1/whatsapp/connection-status');
   const st = statusRes.ok ? statusRes.data : {};
   const connected = st.status === 'CONNECTED';
@@ -14,6 +15,7 @@ export default { async mount(el) {
       <div style="width:64px;height:64px;border-radius:var(--r-full);background:${connected?'var(--success-surface)':'var(--warning-surface)'};display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-md)">${icon('whatsapp',32, connected?'var(--success)':'var(--warning)')}</div>
       <h3 style="margin-bottom:var(--sp-sm)">${connected?'WhatsApp Connected':'Connect WhatsApp'}</h3>
       <p style="font-size:var(--fs-sm);color:var(--text-secondary);margin-bottom:var(--sp-lg)">${escapeHtml(st.status_description||'Connect your WhatsApp Business number to send automated renewal reminders.')}</p>
+      <button class="btn btn-secondary btn-full" id="ws-check" style="margin-bottom:var(--sp-md)">Check status</button>
       ${!connected?`<button class="btn btn-whatsapp btn-lg btn-full" id="ws-start">${icon('whatsapp',18,'white')} Start Setup</button>
       <div style="margin-top:var(--sp-lg);text-align:left">
         <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-sm)">How it works</div>
@@ -35,4 +37,15 @@ export default { async mount(el) {
     showToast('Complete the Meta setup in the new tab, then return here.','success');
     btn.disabled = false; btn.innerHTML = `${icon('whatsapp',18,'white')} Start Setup`;
   });
+  // After returning from Meta, the owner can re-check instead of trusting
+  // the stale "not connected" state (M32).
+  el.querySelector('#ws-check')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = 'Checking…';
+    await renderStatus();
+  });
+  }
+  await renderStatus();
+  // Refetch when the tab becomes visible again (returning from Meta).
+  const onVisible = () => { if (!document.hidden && el.isConnected) renderStatus(); };
+  document.addEventListener('visibilitychange', onVisible);
 }};

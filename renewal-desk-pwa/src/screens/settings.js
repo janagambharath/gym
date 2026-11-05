@@ -1,4 +1,5 @@
 /* Settings / More Screen */
+import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest, getCachedSession, logout as apiLogout } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { router } from '../router.js';
@@ -21,9 +22,9 @@ export default {
           <div class="card-body" style="display:flex;align-items:center;gap:var(--sp-lg)">
             ${renderAvatar(session?.userName || 'User', 'lg')}
             <div style="flex:1;min-width:0">
-              <div style="font-size:var(--fs-xl);font-weight:var(--fw-bold)">${escapeHtml(session?.userName || '')}</div>
-              <div style="font-size:var(--fs-sm);color:var(--text-secondary)">${escapeHtml(session?.tenantName || '')}</div>
-              <div style="margin-top:var(--sp-xs)">${renderBadge(session?.userRole || 'owner')}</div>
+              <div id="settings-user-name" style="font-size:var(--fs-xl);font-weight:var(--fw-bold)">${escapeHtml(session?.userName || '')}</div>
+              <div id="settings-tenant-name" style="font-size:var(--fs-sm);color:var(--text-secondary)">${escapeHtml(session?.tenantName || '')}</div>
+              <div id="settings-role-badge" style="margin-top:var(--sp-xs)">${renderBadge(session?.userRole || 'owner')}</div>
             </div>
           </div>
         </div>
@@ -111,8 +112,26 @@ export default {
       const yes = await showConfirm({ title: 'Delete Account', message: 'This will permanently delete your account and all gym data. This cannot be undone.', confirmText: 'Delete Permanently', destructive: true });
       if (!yes) return;
       const { deleteAccount } = await import('../api.js');
-      await deleteAccount();
-      handleLogout();
+      const result = await deleteAccount();
+      if (result.ok) handleLogout();
+      else showToast(result.error?.message || 'Could not delete the account. You are still signed in.', 'error');
     });
+
+    // H16 remainder: refresh the profile card when returning from Gym
+    // Profile / Plans so Settings never shows a stale name/role.
+    attachLiveRefresh(el, async () => {
+      const fresh = await apiRequest('/api/mobile/v1/settings');
+      if (!fresh.ok || el.dataset.screenDisposed === 'true') return;
+      const gymName = fresh.data.gym?.name || fresh.data.settings?.name || fresh.data.name;
+      if (gymName) {
+        const nameEl = el.querySelector('#settings-tenant-name');
+        if (nameEl) nameEl.textContent = gymName;
+      }
+      const sess = getCachedSession();
+      const userEl = el.querySelector('#settings-user-name');
+      if (sess?.userName && userEl) userEl.textContent = sess.userName;
+      const roleEl = el.querySelector('#settings-role-badge');
+      if (sess?.userRole && roleEl) roleEl.innerHTML = renderBadge(sess.userRole);
+    }, 30000);
   }
 };

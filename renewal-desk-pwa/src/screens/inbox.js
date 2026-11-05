@@ -9,8 +9,9 @@ export default { async mount(el) {
   const list = el.querySelector('#ib-list');
   const messages = res.ok ? res.data.messages||res.data||[] : [];
   if (!Array.isArray(messages)||messages.length===0) { list.innerHTML = renderEmptyState({icon:'inbox',title:'Inbox empty',text:'No messages yet'}); return; }
+  const hasTarget = (m) => Boolean(m.conversation_id || m.member_id || m.payment_id || m.lead_id);
   list.innerHTML = `<div class="scroll-content"><div class="card" style="margin:var(--sp-lg)">${messages.map((m,i)=>`
-    <div class="list-item" data-idx="${i}" style="cursor:pointer">
+    <div class="list-item" data-idx="${i}" style="cursor:${hasTarget(m) ? 'pointer' : 'default'}">
       ${renderAvatar(m.sender_name||m.from||'?')}
       <div class="list-item-content">
         <div class="list-item-title">${escapeHtml(m.sender_name||m.from||'Unknown')}</div>
@@ -27,6 +28,17 @@ export default { async mount(el) {
       else if (m.member_id) navigate.push('member-detail', { memberId: String(m.member_id) });
       else if (m.payment_id) navigate.push('payment-detail', { paymentId: String(m.payment_id) });
       else if (m.lead_id) navigate.push('bot-lead-detail', { leadId: String(m.lead_id) });
+      else {
+        // No link target: tapping expands the full message instead of
+        // doing nothing (B-L10).
+        let body = row.querySelector('.ib-full-body');
+        if (body) { body.remove(); return; }
+        body = document.createElement('div');
+        body.className = 'ib-full-body';
+        body.style.cssText = 'padding:var(--sp-sm) var(--sp-lg);font-size:var(--fs-sm);color:var(--text-secondary);white-space:pre-wrap';
+        body.textContent = m.text || m.message || m.preview || '';
+        row.after(body);
+      }
     });
   });
 }};

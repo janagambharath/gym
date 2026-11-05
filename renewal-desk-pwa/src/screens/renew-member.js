@@ -45,6 +45,11 @@ async function mountRenew(el, params) {
   if (!member) { el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No member selected</div><div class="empty-state-text">Go back to the member list and tap Renew again.</div></div>'; return; }
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
   const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
+  if (plans.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-state-title">No membership plans yet</div><div class="empty-state-text">Create a plan first, then renew this member.</div><button class="btn btn-primary" id="rn-create-plan">Create a plan</button></div>`;
+    el.querySelector('#rn-create-plan')?.addEventListener('click', () => navigate.push('plans'));
+    return;
+  }
   const timezone = settingsRes.ok ? settingsRes.data.gym?.timezone || 'Asia/Kolkata' : 'Asia/Kolkata';
   const today = dateKeyInTimezone(new Date(), timezone);
   const minStartDate = member.membership_end && member.membership_end >= today

@@ -1,35 +1,66 @@
-import { apiRequest } from '../api.js';
+import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml } from '../utils.js';
+import { escapeHtml, formatDate } from '../utils.js';
 
 export default { async mount(el) { await load(el); } };
 
 const esc = escapeHtml;
 
-// Local state
+// Local state — scoped to the current gym session. Module state survives
+// logout/login, so selections keyed by biometric ID must be dropped when
+// the tenant changes, or they leak into another gym's session (B-L13).
 let groups = [];
 let allMembers = [];
 let selections = new Map(); // biometric_id -> member object
 let openPicker = null; // biometric_id with open picker
+let seenTenantId = null;
+let page = 1;
+let totalGroups = 0;
+let totalPages = 1;
+
+function resetForTenant() {
+  const tenantId = getCachedSession()?.tenantId ?? null;
+  if (tenantId !== seenTenantId) {
+    seenTenantId = tenantId;
+    groups = [];
+    allMembers = [];
+    selections = new Map();
+    openPicker = null;
+    page = 1;
+    totalGroups = 0;
+    totalPages = 1;
+  }
+}
 
 async function load(el) {
+  resetForTenant();
   // Don't clear selections on re-mount — user may be mid-task on 26 IDs
   openPicker = null;
+  page = 1;
   el.innerHTML = '<div class="rrr-loading">Loading unmapped punches…</div>';
-  
+
   const [unresolved, membersRes] = await Promise.all([
-    apiRequest('/api/mobile/v1/rrr/mappings/unresolved'),
-    apiRequest('/api/mobile/v1/members?page=1&page_size=500'),
+    apiRequest('/api/mobile/v1/rrr/mappings/unresolved?page=1&per_page=50'),
+    apiRequest('/api/mobile/v1/members?page=1&page_size=50'),
   ]);
-  
+
   if (!unresolved.ok) {
     el.innerHTML = `<main class="rrr-page"><h1>Couldn't load</h1><p>Check your connection and retry.</p><button id="rrr-retry" class="rrr-btn">Retry</button></main>`;
     el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el));
     return;
   }
-  
+
   allMembers = membersRes.ok ? (membersRes.data.members || []) : [];
-  groups = groupById(unresolved.data.events || []);
+  // Paginated shape: data.groups already grouped server-side.
+  const pg = unresolved.data.pagination || {};
+  totalGroups = pg.total ?? 0;
+  totalPages = pg.total_pages ?? 1;
+  page = pg.page ?? 1;
+  groups = (unresolved.data.groups || []).map(g => ({
+    id: String(g.biometric_user_id),
+    count: g.punch_count || 0,
+    latest: g.latest_punch_time,
+  }));
   // Prune selections for IDs that are no longer unmapped (already linked)
   const groupIds = new Set(groups.map(g => g.id));
   for (const bid of selections.keys()) {
@@ -38,16 +69,33 @@ async function load(el) {
   render(el);
 }
 
-function groupById(events) {
-  const map = new Map();
-  for (const e of events) {
-    const key = e.biometric_user_id;
-    if (!map.has(key)) map.set(key, { id: key, count: 0, latest: e.punch_time });
-    const g = map.get(key);
-    g.count += 1;
-    if (e.punch_time > g.latest) g.latest = e.punch_time;
-  }
-  return [...map.values()].sort((a, b) => b.count - a.count);
+async function loadMore(el) {
+  if (page >= totalPages) return;
+  const res = await apiRequest(`/api/mobile/v1/rrr/mappings/unresolved?page=${page + 1}&per_page=50`);
+  if (!res.ok) return;
+  page = res.data.pagination?.page ?? page + 1;
+  totalPages = res.data.pagination?.total_pages ?? totalPages;
+  const more = (res.data.groups || []).map(g => ({
+    id: String(g.biometric_user_id),
+    count: g.punch_count || 0,
+    latest: g.latest_punch_time,
+  }));
+  groups = [...groups, ...more];
+  render(el);
+}
+
+// Server-side member search for the picker (M31): the member list is
+// paginated, so client-side filtering over the first page can never find
+// members beyond it.
+let memberSearchTimer;
+async function searchMembers(query, bid, el) {
+  const results = el.querySelector(`[data-results="${CSS.escape(bid)}"]`);
+  if (!results) return;
+  const q = (query || '').trim();
+  const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=20${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+  const members = res.ok ? (res.data.members || []) : [];
+  results.innerHTML = resultsHtml(members);
+  wirePicks(el);
 }
 
 function render(el) {
@@ -58,7 +106,7 @@ function render(el) {
       <button id="bm-back" class="bm-back">‹</button>
       <div class="bm-title">
         <h1>Link biometric IDs</h1>
-        <p>${groups.length} IDs · ${totalPunches} punches need a member</p>
+        <p>${totalGroups || groups.length} IDs · ${totalPunches} punches need a member</p>
       </div>
     </header>
     
@@ -70,6 +118,8 @@ function render(el) {
     <div class="bm-list" id="bm-list">
       ${groups.map(cardHtml).join('')}
     </div>
+    <div style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${groups.length} of ${totalGroups} unmapped IDs</div>
+    ${page < totalPages ? `<div style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="bm-more">Load more IDs</button></div>` : ''}
     
     <div class="bm-footer" id="bm-footer" style="display:none">
       <div class="bm-footer-info"><span id="bm-count">0</span> ready to link</div>
@@ -135,6 +185,7 @@ function render(el) {
   </style>`;
 
   el.querySelector('#bm-back')?.addEventListener('click', () => navigate.back());
+  el.querySelector('#bm-more')?.addEventListener('click', () => loadMore(el));
   el.querySelector('#bm-link-all')?.addEventListener('click', () => linkAll(el));
   el.querySelector('#bm-clear-all')?.addEventListener('click', async () => {
     if (!confirm('Delete ALL unmapped punch entries?\n\nThis cannot be undone. Mapped punches and members are safe.')) return;
@@ -189,8 +240,7 @@ function wireSaveButtons(el) {
 function cardHtml(g) {
   const sel = selections.get(g.id);
   const isOpen = openPicker === g.id;
-  const latest = new Date(g.latest);
-  const dateStr = latest.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const dateStr = g.latest ? formatDate(g.latest) : '';
   
   return `<div class="bm-card ${sel ? 'ready' : ''}" data-bid="${esc(g.id)}">
     <div class="bm-card-top">
@@ -247,15 +297,9 @@ function refreshCards(el) {
   
   el.querySelectorAll('[data-search]').forEach(input => {
     input.addEventListener('input', () => {
-      const q = input.value.toLowerCase().trim();
       const bid = input.dataset.search;
-      const results = el.querySelector(`[data-results="${CSS.escape(bid)}"]`);
-      if (!results) return;
-      const filtered = q
-        ? allMembers.filter(m => m.full_name.toLowerCase().includes(q) || (m.phone || '').includes(q)).slice(0, 20)
-        : allMembers.slice(0, 20);
-      results.innerHTML = resultsHtml(filtered);
-      wirePicks(el);
+      clearTimeout(memberSearchTimer);
+      memberSearchTimer = setTimeout(() => searchMembers(input.value, bid, el), 300);
     });
     // Focus and prevent card toggle
     input.addEventListener('click', e => e.stopPropagation());
