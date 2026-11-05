@@ -215,13 +215,18 @@ def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
     for format_string in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
         try:
             local = datetime.strptime(value, format_string)
-            try:
-                from zoneinfo import ZoneInfo
-                return local.replace(tzinfo=ZoneInfo(gym_timezone or "Asia/Kolkata")).astimezone(timezone.utc)
-            except Exception:
-                return local.replace(tzinfo=timezone.utc)
         except ValueError:
-            pass
+            continue
+        # The device sends its local wall-clock time. Never treat it as UTC:
+        # an invalid gym timezone must fall back to Asia/Kolkata, otherwise
+        # every punch lands 5.5h ahead in the feed.
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(gym_timezone or "Asia/Kolkata")
+        except Exception:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Kolkata")
+        return local.replace(tzinfo=tz).astimezone(timezone.utc)
     return None
 
 
