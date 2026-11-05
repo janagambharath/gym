@@ -488,8 +488,20 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
 
         # Keep direct ADMS punches visible in the shared owner/member feed.
         # Calling this for duplicates also backfills old normalized punches
-        # that predate the AccessEvent projection.
-        process_rrr_attendance_to_access_event(event)
+        # that predate the AccessEvent projection. Best-effort only: a
+        # projection failure must never poison the upload ack — the terminal
+        # treats any non-OK response as "not received" and retries the same
+        # batch forever (sync stall with polls still green).
+        try:
+            with db.session.begin_nested():
+                process_rrr_attendance_to_access_event(event)
+        except Exception:
+            log.warning(
+                "ADMS access-event projection failed for rrr event %s; "
+                "upload ack preserved",
+                getattr(event, "id", None),
+                exc_info=True,
+            )
         if was_created:
             created += 1
             integration.records_synced += 1
