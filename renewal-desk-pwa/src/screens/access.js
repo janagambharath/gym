@@ -159,14 +159,23 @@ export default {
                   const iconName = isDenied ? 'alert' : (isEntry ? 'forward' : 'back');
                   const badgeType = isDenied ? 'expired' : (isEntry ? 'active' : 'info');
                   const badgeText = isDenied ? 'Denied' : (type === 'ATTENDANCE' ? 'Check In' : (isEntry ? 'Entry' : 'Exit'));
+                  // Terminal ID for unmapped punches — the ADMS leg sends
+                  // biometric_user_id, the AccessEvent leg sends
+                  // device_enroll_number (now also aliased). Without it
+                  // staff only see "Unknown" and can't tell IDs apart.
+                  const bioId = l.biometric_user_id || l.device_enroll_number;
+                  const isUnknown = !l.member_id && bioId;
+                  const title = l.member_id
+                    ? escapeHtml(l.member_name || 'Unknown')
+                    : (bioId ? `Unknown · ID ${escapeHtml(bioId)}` : 'Unknown');
 
                   return `
-                    <div class="list-item" style="cursor:pointer" data-event-member-id="${l.member_id || ''}" data-bio-id="${(!l.member_id && l.biometric_user_id) ? escapeHtml(l.biometric_user_id) : ''}">
+                    <div class="list-item" style="cursor:pointer" data-event-member-id="${l.member_id || ''}" data-bio-id="${(!l.member_id && bioId) ? escapeHtml(bioId) : ''}">
                       <div style="width:34px;height:34px;border-radius:var(--r-full);background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
                         ${icon(iconName, 16, iconColor)}
                       </div>
                       <div class="list-item-content">
-                        <div class="list-item-title">${escapeHtml(l.member_name || 'Unknown')}${(!l.member_id && l.biometric_user_id) ? ' <span style="font-size:11px;color:#3b82f6;font-weight:700">· tap to assign</span>' : ''}</div>
+                        <div class="list-item-title">${title}${isUnknown ? ' <span style="font-size:11px;color:#3b82f6;font-weight:700">· tap to assign</span>' : ''}</div>
                         <div class="list-item-subtitle">${formatDateTime(l.event_timestamp || l.timestamp || l.created_at)}${l.device_name ? ` · ${escapeHtml(l.device_name)}` : ''}</div>
                       </div>
                       <span class="badge badge-${badgeType}">${badgeText}</span>

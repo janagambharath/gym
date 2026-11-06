@@ -624,6 +624,10 @@ def _serialize_access_event(evt: AccessEvent) -> dict:
         "membership_status": evt.membership_status,
         "device_name": evt.device_name,
         "device_enroll_number": evt.device_enroll_number,
+        # Alias so both feed legs expose the terminal ID under one key —
+        # the ADMS leg already sends biometric_user_id; without this the
+        # PWA/Android could not show the ID for unmapped AccessEvent rows.
+        "biometric_user_id": evt.device_enroll_number,
         "is_invalid": evt.is_invalid,
         "verify_method": evt.verify_method,
     }

@@ -27,6 +27,7 @@ import type {
   Member,
   Pagination,
 } from '../types';
+import { formatDate, formatShortDate, formatTime } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -41,17 +42,23 @@ type AccessScreenProps = {
 
 // ─── Helper ──────────────────────────────────────────────────────────
 
+/** Punch/event times in the gym's timezone (never the device timezone). */
 function formatAccessTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const isToday =
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear();
-
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const isToday = formatDate(isoString) === formatDate(new Date().toISOString());
+  const timeStr = formatTime(isoString);
   if (isToday) return `Today, ${timeStr}`;
-  return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
+  return `${formatShortDate(isoString)}, ${timeStr}`;
+}
+
+/** Defence against duplicate feed rows: same member + same punch instant. */
+function dedupeEvents(events: AccessEvent[]): AccessEvent[] {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    const key = `${event.member_id ?? event.device_enroll_number}:${event.event_timestamp}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function getEventTypeStyle(eventType: string) {
@@ -151,9 +158,9 @@ export function AccessScreen({
       const res = await apiRequest<AccessEventsResponse>(url);
       if (res.ok) {
         if (append) {
-          setEvents((prev) => [...prev, ...res.data.events]);
+          setEvents((prev) => dedupeEvents([...prev, ...res.data.events]));
         } else {
-          setEvents(res.data.events);
+          setEvents(dedupeEvents(res.data.events));
         }
         setPagination(res.data.pagination);
         setError(undefined);
@@ -232,7 +239,7 @@ export function AccessScreen({
 
   const fetchCandidateMembers = useCallback(async (q: string) => {
     setLoadingCandidates(true);
-    const url = `/api/mobile/v1/members?per_page=20${q.trim() ? `&search=${encodeURIComponent(q.trim())}` : '&status=active'}`;
+    const url = `/api/mobile/v1/members?per_page=20${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : '&status=active'}`;
     const res = await apiRequest<{ members: Member[] }>(url);
     if (res.ok) {
       setCandidateMembers(res.data.members || []);
@@ -482,6 +489,11 @@ export function AccessScreen({
 
   const renderEventItem = ({ item }: { item: AccessEvent }) => {
     const style = getEventTypeStyle(item.event_type);
+    // Terminal ID for unmapped punches — the ADMS leg sends
+    // biometric_user_id, the AccessEvent leg sends device_enroll_number.
+    // Without it staff only see "Unknown Member" and can't tell IDs apart.
+    const bioId = item.biometric_user_id || item.device_enroll_number;
+    const isUnknown = !item.member_id && !!bioId;
     return (
       <View style={styles.eventCard}>
         <View style={styles.eventLeft}>
@@ -489,7 +501,7 @@ export function AccessScreen({
         </View>
         <View style={styles.eventCenter}>
           <Text style={styles.eventName} numberOfLines={1}>
-            {item.member_name || 'Unknown Member'}
+            {item.member_id ? (item.member_name || 'Unknown Member') : (bioId ? `Unknown Member · ID ${bioId}` : 'Unknown Member')}
           </Text>
           <View style={styles.eventMeta}>
             <View style={[styles.eventBadge, { backgroundColor: style.bgColor, borderColor: style.borderColor }]}>

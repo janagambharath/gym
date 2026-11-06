@@ -364,8 +364,9 @@ export type NotificationsResponse = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-/** Derive the display status for a member (active/expiring/expired). */
-export function getMemberDisplayStatus(member: Member): 'active' | 'expiring' | 'expired' {
+/** Derive the display status for a member (active/expiring/expired/paused). */
+export function getMemberDisplayStatus(member: Member): 'active' | 'expiring' | 'expired' | 'paused' {
+  if (member.status === 'paused') return 'paused';
   if (member.status === 'expired') return 'expired';
   if (
     member.days_until_expiry !== null &&
@@ -446,6 +447,58 @@ export function formatDateTime(dateStr: string | null | undefined): string {
   } catch {
     return date.toLocaleString(displayLocale());
   }
+}
+
+/** Format just the time-of-day in the gym's timezone (for punch/event times). */
+export function formatTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat(displayLocale(), {
+      hour: 'numeric', minute: '2-digit',
+      timeZone: displayPreferences.timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleTimeString(displayLocale(), { hour: 'numeric', minute: '2-digit' });
+  }
+}
+
+/** Map a gym timezone to the phone country prefix for that gym's country.
+ * Derived from the gym's own timezone — never a hardcoded +91. Falls back
+ * to +91 only when the timezone is unknown (the gym default). */
+export function getPhoneCountryPrefix(timezone?: string): string {
+  if (!timezone) return '+91';
+  const tz = timezone.toLowerCase();
+  if (tz.startsWith('asia/kolkata') || tz.startsWith('asia/calcutta') || tz === 'ist') return '+91';
+  if (tz.startsWith('america/')) return '+1';
+  if (tz.startsWith('europe/london')) return '+44';
+  if (tz.startsWith('asia/dubai')) return '+971';
+  if (tz.startsWith('asia/singapore')) return '+65';
+  if (tz.startsWith('australia/')) return '+61';
+  return '+91';
+}
+
+/** Best-effort locale guess from an E.164 phone number.
+ * No member endpoint exposes the gym's country/currency/timezone, so the
+ * member app derives display prefs from the member's own phone prefix
+ * (a gym's members overwhelmingly share its country). A backend
+ * gym-branding locale field would be the proper fix. */
+export function localeFromPhonePrefix(phone: string | undefined): Partial<DisplayPreferences> {
+  const digits = (phone || '').replace(/[^\d]/g, '');
+  // E.164 prefixes, longest first.
+  const table: [string, Partial<DisplayPreferences>][] = [
+    ['971', { country: 'AE', currency: 'AED', timezone: 'Asia/Dubai' }],
+    ['44', { country: 'GB', currency: 'GBP', timezone: 'Europe/London' }],
+    ['65', { country: 'SG', currency: 'SGD', timezone: 'Asia/Singapore' }],
+    ['61', { country: 'AU', currency: 'AUD', timezone: 'Australia/Sydney' }],
+    ['1', { country: 'US', currency: 'USD', timezone: 'America/New_York' }],
+    ['91', { country: 'IN', currency: 'INR', timezone: 'Asia/Kolkata' }],
+  ];
+  for (const [prefix, prefs] of table) {
+    if (digits.startsWith(prefix)) return prefs;
+  }
+  return {};
 }
 
 export function formatShortDate(dateStr: string | null | undefined): string {
@@ -541,6 +594,7 @@ export type AccessEvent = {
   membership_status: string | null;
   device_name: string | null;
   device_enroll_number: string;
+  biometric_user_id?: string | null;
   is_invalid: boolean;
   verify_method: number | null;
 };
@@ -710,6 +764,12 @@ export type RevenueRecovered = {
   total_amount: string;
   campaign_renewals: number;
   campaign_amount: string;
+  /** Verified-only money: renewals backed by a verified payment. */
+  payment_backed_renewals?: number;
+  payment_backed_amount?: string;
+  /** Owner-recorded renewals with no verified payment on file. */
+  direct_renewals?: number;
+  direct_amount?: string;
 };
 
 export type RecoveryRate = {
