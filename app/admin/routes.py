@@ -772,6 +772,15 @@ def onboard_step(gym_id: int, step_num: int):
                 flash("Gym name is required.", "danger")
                 return render_template("admin/onboarding_wizard.html", step=1, gym=gym, dep=dep, country_defaults=COUNTRY_DEFAULTS)
 
+            # V5-L19: validate the timezone before it is stored — the
+            # mobile settings endpoint already rejects invalid IANA
+            # names; the admin onboarding form took free text.
+            from app.services.timezone_service import is_valid_timezone
+
+            if not is_valid_timezone(timezone_val):
+                flash(f"Invalid timezone: {timezone_val!r}. Use an IANA timezone name such as 'Asia/Kolkata'.", "danger")
+                return render_template("admin/onboarding_wizard.html", step=1, gym=gym, dep=dep, country_defaults=COUNTRY_DEFAULTS)
+
             if not gym:
                 slug_base = slugify(gym_name)
                 slug = slug_base
@@ -1243,17 +1252,29 @@ def run_test_payment_renewal(gym_id: int):
     gym = Gym.query.get_or_404(gym_id)
     dep = _get_or_create_deployment(gym)
 
-    # Pick or create a member
-    member = Member.query.filter_by(gym_id=gym.id, deleted_at=None).first()
-    if not member:
+    # V6-M2: NEVER mutate a real member for a test. The old code took
+    # the gym's first non-deleted member and extended them 30 days,
+    # overwrote their price to Rs.1500 and unblocked their door, with
+    # no audit and no restore. Use a dedicated synthetic test member
+    # instead — clearly named, on a reserved test phone, with no
+    # terminal enroll number (so no door command can ever target a
+    # real terminal user). Reused across runs for the same gym.
+    member = (
+        Member.query.filter_by(
+            gym_id=gym.id, phone="+919999900001", deleted_at=None
+        )
+        .order_by(Member.id.asc())
+        .first()
+    )
+    if member is None:
         member = Member(
             gym_id=gym.id,
-            full_name="Test Payment Member",
+            full_name="REvorax Test Member",
             phone="+919999900001",
             membership_start=date.today() - timedelta(days=30),
             membership_end=date.today() - timedelta(days=1),
             status="expired",
-            device_enroll_number="998",
+            notes="Synthetic test member for the admin test-payment flow — never a real member.",
         )
         db.session.add(member)
         db.session.flush()
@@ -1278,6 +1299,22 @@ def run_test_payment_renewal(gym_id: int):
     # Verify test payment & renew
     renewal = verify_payment(payment, verified_by_id=current_user.id, renewal_days=30)
     renewal.is_test = True
+
+    # V6-M2: audit the test run — who ran it, against which
+    # (synthetic) member, and the test reference.
+    audit(
+        action="test_payment_renewal",
+        resource_type="member",
+        resource_id=member.id,
+        gym_id=gym.id,
+        actor_id=current_user.id,
+        metadata={
+            "test_reference": test_ref,
+            "synthetic_member": True,
+            "synthetic_member_id": member.id,
+            "new_end": member.membership_end.isoformat() if member.membership_end else None,
+        },
+    )
 
     dep.update_checklist_item("test_payment_completed", "passed", "Controlled Test Payment Verified", True, f"Verified ref: {test_ref}")
     dep.update_checklist_item("test_renewal_completed", "passed", "Controlled Test Renewal Executed", True, f"Member {member.full_name} renewed to {member.membership_end}")
@@ -1673,9 +1710,35 @@ def suspend_gym(gym_id: int):
 @roles_required("super_admin")
 def resume_gym(gym_id: int):
     gym = Gym.query.get_or_404(gym_id)
+    was_suspended = gym.status != "active"
     gym.status = "active"
     gym.onboarding_status = "live"
     audit(action="resume_gym", resource_type="gym", resource_id=gym.id, gym_id=gym.id)
+    if was_suspended:
+        # V6-L20: catch-up pass on reactivation. Rows whose window
+        # passed while the gym was suspended never activated (the
+        # scheduler only iterates active gyms). Run them now, in a
+        # savepoint so a catch-up failure cannot roll back the
+        # reactivation itself.
+        try:
+            from app.services.payment_service import apply_due_scheduled_renewals
+
+            with db.session.begin_nested():
+                _caught_up = apply_due_scheduled_renewals(gym)
+            if _caught_up:
+                from flask import current_app
+
+                current_app.logger.info(
+                    "Reactivation catch-up activated %s scheduled renewals for gym %s",
+                    _caught_up,
+                    gym.id,
+                )
+        except Exception:
+            from flask import current_app
+
+            current_app.logger.exception(
+                "Scheduled renewal catch-up failed for gym %s", gym.id
+            )
     db.session.commit()
     flash(f"Gym '{gym.name}' has been reactivated.", "success")
     return redirect(request.referrer or url_for("admin.gym_detail", gym_id=gym.id))
@@ -1716,7 +1779,16 @@ def update_gym_settings(gym_id: int):
     gym.address = (request.form.get("address") or "").strip() or None
     gym.country = (request.form.get("country") or gym.country).strip()
     gym.business_category = (request.form.get("business_category") or gym.business_category).strip()
-    gym.timezone = (request.form.get("timezone") or gym.timezone).strip()
+    # V5-L19: validate the timezone before it is stored (same rule as
+    # the mobile settings endpoint).
+    _tz_raw = (request.form.get("timezone") or "").strip()
+    if _tz_raw:
+        from app.services.timezone_service import is_valid_timezone
+
+        if not is_valid_timezone(_tz_raw):
+            flash(f"Invalid timezone: {_tz_raw!r}. Use an IANA timezone name such as 'Asia/Kolkata'.", "danger")
+            return redirect(request.referrer or url_for("admin.gym_detail", gym_id=gym.id))
+        gym.timezone = _tz_raw
     gym.currency = (request.form.get("currency") or gym.currency).strip()
     gym.subscription_status = (request.form.get("subscription_status") or gym.subscription_status).strip()
 
@@ -1889,8 +1961,30 @@ def toggle_gym(gym_id: int):
     gym = db.session.execute(select(Gym).where(Gym.id == gym_id).with_for_update()).scalar_one_or_none()
     if gym is None:
         abort(404)
+    was_active = gym.status == "active"
     gym.status = "suspended" if gym.status == "active" else "active"
     audit(action="toggle_gym_status", resource_type="gym", resource_id=gym.id, gym_id=gym.id)
+    if not was_active and gym.status == "active":
+        # V6-L20: same reactivation catch-up as resume_gym.
+        try:
+            from app.services.payment_service import apply_due_scheduled_renewals
+
+            with db.session.begin_nested():
+                _caught_up = apply_due_scheduled_renewals(gym)
+            if _caught_up:
+                from flask import current_app
+
+                current_app.logger.info(
+                    "Reactivation catch-up activated %s scheduled renewals for gym %s",
+                    _caught_up,
+                    gym.id,
+                )
+        except Exception:
+            from flask import current_app
+
+            current_app.logger.exception(
+                "Scheduled renewal catch-up failed for gym %s", gym.id
+            )
     db.session.commit()
     flash(f"{gym.name} is now {gym.status}.", "success")
     return redirect(url_for("admin.gyms"))

@@ -213,7 +213,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from sqlalchemy import and_, or_, select
                 from app.services.bridge_service import (
                     adms_command_intended_member_id,
-                    member_is_proven_blockable,
+                    member_is_proven_blockable_including_deleted,
                     resolve_adms_enroll_number,
                 )
                 from app.services.timezone_service import today_for_gym
@@ -250,10 +250,21 @@ def _scheduled_reminder_job(app: Flask) -> None:
                                 and_(
                                     Member.status == "expired",
                                     Member.membership_end < today_for_gym(gym.timezone),
+                                    Member.deleted_at.is_(None),
                                 ),
-                                Member.status == "paused",
+                                and_(
+                                    Member.status == "paused",
+                                    Member.deleted_at.is_(None),
+                                ),
+                                # V5-M5: a delete-time block that failed
+                                # once was never re-driven — include
+                                # soft-deleted members in the block scan
+                                # (judged by the including-deleted guard
+                                # below), or an ex-member keeps door
+                                # access indefinitely after one transient
+                                # failure.
+                                Member.deleted_at.isnot(None),
                             ),
-                            Member.deleted_at.is_(None),
                             or_(
                                 Member.device_enroll_number.isnot(None),
                                 Member.id.in_(mapping_member_ids),
@@ -266,7 +277,9 @@ def _scheduled_reminder_job(app: Flask) -> None:
                         # expired+past filter above already implies
                         # proven-blockable, but never requeue on the
                         # filter alone — re-check the guard predicate.
-                        if not member_is_proven_blockable(m):
+                        # V5-M5: including-deleted variant, so a deleted
+                        # member's failed block is re-driven too.
+                        if not member_is_proven_blockable_including_deleted(m):
                             continue
                         try:
                             enroll = resolve_adms_enroll_number(m)
@@ -315,7 +328,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.services.bridge_service import (
                     _active_installation,
                     desired_command_type,
-                    member_is_proven_blockable,
+                    member_is_proven_blockable_including_deleted,
                     queue_membership_command,
                 )
                 from app.services.timezone_service import today_for_gym
@@ -325,6 +338,10 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     # V3-M8: same widening as the ADMS branch above —
                     # paused members are proven blockable, so a failed
                     # freeze block must be re-driven here too.
+                    # V5-M5: soft-deleted members included, judged by the
+                    # including-deleted guard below — a delete-time
+                    # bridge block that failed once is re-driven instead
+                    # of leaving the ex-member with access forever.
                     expired_linked = (
                         Member.query.filter(
                             Member.gym_id == gym.id,
@@ -332,10 +349,14 @@ def _scheduled_reminder_job(app: Flask) -> None:
                                 and_(
                                     Member.status == "expired",
                                     Member.membership_end < today_for_gym(gym.timezone),
+                                    Member.deleted_at.is_(None),
                                 ),
-                                Member.status == "paused",
+                                and_(
+                                    Member.status == "paused",
+                                    Member.deleted_at.is_(None),
+                                ),
+                                Member.deleted_at.isnot(None),
                             ),
-                            Member.deleted_at.is_(None),
                             Member.device_enroll_number.is_not(None),
                         ).all()
                     )
@@ -348,7 +369,8 @@ def _scheduled_reminder_job(app: Flask) -> None:
                         # disable the lease guard would cancel (e.g. an
                         # active member with a past end date, which the
                         # desired-state check alone would disable).
-                        if not member_is_proven_blockable(m):
+                        # V5-M5: including-deleted variant.
+                        if not member_is_proven_blockable_including_deleted(m):
                             continue
                         latest = (
                             BridgeCommand.query.filter_by(

@@ -1,5 +1,7 @@
 import logging
 from logging.config import fileConfig
+import os
+import sys
 
 from flask import current_app
 
@@ -13,6 +15,59 @@ config = context.config
 # This line sets up loggers basically.
 fileConfig(config.config_file_name)
 logger = logging.getLogger('alembic.env')
+
+
+# --- V6-M18: SQLite is not a migration target -------------------------
+# The chain contains Postgres-only SQL (INTERVAL / ANY in
+# 71e470eb6cb6_correct_yodha_punch_times, the ~ regex operator in
+# c4a9012b3d4e_canonicalize_stored_enroll_numbers), so a fresh SQLite
+# `flask db upgrade` dies mid-chain after ~50 migrations. Refuse early
+# with a clear message instead. The default dev DB is SQLite
+# (app/config.py) and the test suite builds its schema with
+# db.create_all(), NOT migrations — neither is affected: this guard
+# only fires for the `flask db upgrade|downgrade|migrate` verbs, so
+# read-only commands (`current`, `stamp`, `heads`, `history`) keep
+# working on SQLite.
+#
+# Escape hatch (scratch-testing a single SQLite-safe repair migration
+# only — a full-chain SQLite upgrade will still fail mid-chain):
+# ALLOW_SQLITE_MIGRATIONS=1 flask db upgrade <revision>
+#
+# Limitation: the verb is read from sys.argv, which is how every real
+# invocation reaches here (`flask db ...` / `alembic ...`). A
+# programmatic alembic call (none exists in this codebase) bypasses
+# the guard and fails mid-chain as before.
+_SQLITE_BLOCKED_VERBS = ("upgrade", "downgrade", "migrate")
+
+_SQLITE_REFUSAL = (
+    "SQLite is not supported for migrations (V6-M18). The chain "
+    "contains Postgres-only SQL (INTERVAL / ANY in 71e470eb6cb6, the ~ "
+    "regex operator in c4a9012b3d4e), so a SQLite upgrade fails "
+    "mid-chain. Run migrations against Postgres (set DATABASE_URL). "
+    "Tests and dev schema use db.create_all(), not migrations. "
+    "Scratch-testing one SQLite-safe repair migration: "
+    "ALLOW_SQLITE_MIGRATIONS=1 flask db upgrade <revision>."
+)
+
+
+def _migration_command_verb(argv):
+    """The alembic verb for `flask db <verb> ...` / `alembic <verb> ...`."""
+    argv = list(argv or [])
+    if "db" in argv:
+        idx = argv.index("db")
+        if idx + 1 < len(argv):
+            return argv[idx + 1]
+        return None
+    if len(argv) > 1:
+        return argv[1]
+    return None
+
+
+def _refuse_sqlite_migrations_if_cli_upgrade():
+    if os.environ.get("ALLOW_SQLITE_MIGRATIONS") == "1":
+        return
+    if _migration_command_verb(sys.argv) in _SQLITE_BLOCKED_VERBS:
+        raise RuntimeError(_SQLITE_REFUSAL)
 
 
 def get_engine():
@@ -64,6 +119,8 @@ def run_migrations_offline():
 
     """
     url = config.get_main_option("sqlalchemy.url")
+    if url and url.split(":", 1)[0].lower() in ("sqlite", "sqlite+pysqlite"):
+        _refuse_sqlite_migrations_if_cli_upgrade()
     context.configure(
         url=url, target_metadata=get_metadata(), literal_binds=True
     )
@@ -95,6 +152,10 @@ def run_migrations_online():
         conf_args["process_revision_directives"] = process_revision_directives
 
     connectable = get_engine()
+
+    # V6-M18: refuse a SQLite migration run early (see header comment).
+    if connectable.dialect.name == "sqlite":
+        _refuse_sqlite_migrations_if_cli_upgrade()
 
     with connectable.connect() as connection:
         context.configure(

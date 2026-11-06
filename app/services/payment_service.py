@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from decimal import Decimal
 
@@ -96,15 +97,40 @@ def canonical_payment_reference(reference: str | None) -> str | None:
 def _reference_norm_expr():
     """SQL expression for the canonical form of the stored reference.
 
-    Only spaces are stripped in SQL (``upper(replace(trim(reference),
-    ' ', ''))``) — tabs/newlines inside a legacy reference are not
-    reachable here, but every write path canonicalises in Python
-    first, so new rows never carry them. Both Postgres and SQLite
-    provide upper/replace/trim.
+    V5-L4: strips ALL whitespace, matching
+    ``canonical_payment_reference`` (which uses ``str.split()``).
+    The whitespace characters are bound as parameters, so the same
+    expression runs on Postgres and SQLite: space, tab, newline,
+    carriage return, vertical tab and form feed — the full ASCII set
+    Python's ``split()`` removes. (The v4m19 expression index still
+    strips spaces only; it is a backstop, and this lookup is what
+    decides duplicates, so legacy rows carrying a tab/newline are now
+    caught here.)
     """
     from sqlalchemy import func as _func
 
-    return _func.upper(_func.replace(_func.trim(PaymentVerification.reference), " ", ""))
+    expr = _func.trim(PaymentVerification.reference)
+    for _ws in (" ", "\t", "\n", "\r", "\x0b", "\x0c"):
+        expr = _func.replace(expr, _ws, "")
+    return _func.upper(expr)
+
+
+def is_duplicate_reference_error(exc: Exception) -> bool:
+    """True when an IntegrityError is the verified-UTR unique index.
+
+    V5-L3: callers must not map *any* IntegrityError to
+    DUPLICATE_REFERENCE. Postgres names the index in the message
+    (``uq_payments_gym_reference_verified[_norm]``); SQLite names no
+    index, so match its column list instead — that (gym, reference)
+    pair is unique to this index.
+    """
+    text_ = str(getattr(exc, "orig", exc) or "")
+    if "uq_payments_gym_reference_verified" in text_:
+        return True
+    return (
+        "payment_verifications.gym_id" in text_
+        and "payment_verifications.reference" in text_
+    )
 
 
 def verified_payment_with_reference(gym_id: int, reference: str):
@@ -213,6 +239,39 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     if new_start <= today and new_end < today:
         raise ValueError("This renewal would already be expired. Choose a later start date.")
 
+    # V5-L17: re-validate the plan-days rule at verify time. Create
+    # paths enforce it, but a legacy / pre-strict payment (or one
+    # created via a path that skipped the check) used to verify with
+    # arbitrary days and write an oversized ledger row. An override
+    # the owner already granted at creation (stored on the payment)
+    # still honours the exception; a fresh override cannot be granted
+    # here — the payment must be created with one.
+    _target_plan_id = locked_payment.plan_id or member.plan_id
+    _target_plan = (
+        db.session.get(MembershipPlan, _target_plan_id)
+        if _target_plan_id is not None
+        else None
+    )
+    _stored_override = (
+        (getattr(locked_payment, "override_reason", None) or "").strip() or None
+    )
+    _verifier_is_owner = False
+    if verified_by_id is not None:
+        from app.models import User
+
+        _verifier = db.session.get(User, verified_by_id)
+        _verifier_is_owner = bool(_verifier and _verifier.role == "gym_owner")
+    from app.mobile_api.date_rules import plan_days_error
+
+    _plan_err = plan_days_error(
+        renewal_days,
+        _target_plan.duration_days if _target_plan is not None else None,
+        override_reason=_stored_override,
+        is_owner=_verifier_is_owner or _stored_override is not None,
+    )
+    if _plan_err is not None:
+        raise ValueError(_plan_err)
+
     # A verified future renewal is stored now but only becomes the member's
     # current access period on its start date. This lets an existing paid
     # period run to expiry and prevents a selected gap from keeping the door
@@ -220,12 +279,17 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     # V3-M16: mirror the direct path — a direct scheduled renewal
     # (payment_verification_id IS NULL) counts too, and stale rows
     # that can never activate do not block.
+    # V6-M3: the live-scheduled check is NOT gated on this renewal
+    # being scheduled. When the current period already expired and a
+    # live scheduled renewal waits in the future, an immediate renewal
+    # used to take the else branch, rewrite membership_end, and orphan
+    # the paid future period (its previous_end no longer matched).
+    # Bulk renew checks unconditionally — verify must too.
     scheduled = new_start > today
-    if scheduled:
-        if active_scheduled_renewals(
-            member, today, exclude_payment_verification_id=locked_payment.id
-        ):
-            raise ValueError("This member already has a verified future renewal scheduled.")
+    if active_scheduled_renewals(
+        member, today, exclude_payment_verification_id=locked_payment.id
+    ):
+        raise ValueError("This member already has a verified future renewal scheduled.")
 
     locked_payment.renewal_start_date = new_start
 
@@ -278,6 +342,9 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         amount=locked_payment.amount,
         channel=locked_payment.channel or "offline",
         notes=locked_payment.notes,
+        # V5-L16: carry the owner-approved override onto the ledger
+        # row so Date Repair skips it instead of stripping it.
+        override_reason=_stored_override,
     )
     db.session.add(renewal)
     db.session.flush()
@@ -301,6 +368,191 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
 
     invalidate_dashboard_cache(locked_payment.gym_id)
     return renewal
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _activate_scheduled_row(gym, renewal: RenewalHistory, member: Member, today, *, force: bool = False) -> str:
+    """Activate one due scheduled row against its (locked) member.
+
+    Returns ``"activated"``, ``"already_applied"`` or ``"stale"``.
+    Raises ValueError when the row is past its window and this is not
+    a force activation — the caller decides how to surface that.
+
+    ``force`` (V6-L20, owner-triggered) activates even a row whose
+    ``new_end`` already passed; the member lands ``expired`` with the
+    paid period on record instead of the row silently dying.
+    """
+    if member.membership_start == renewal.new_start and member.membership_end == renewal.new_end:
+        # V6-L22: dates already match — the period IS live, but the
+        # row was never consumed as an activation: no price/plan was
+        # pinned, no status re-derived, no audit written. Pin them
+        # now — but only when something actually differs. A row whose
+        # price/plan/status already agree is a no-op: auditing and
+        # counting it on EVERY scheduler run would spam the audit log
+        # and break apply_due's idempotency (a second call must return
+        # 0 once the row is fully consumed).
+        _changed = False
+        if member.price != renewal.amount:
+            member.price = renewal.amount
+            _changed = True
+        if renewal.plan_id and member.plan_id != renewal.plan_id:
+            member.plan_id = renewal.plan_id
+            _changed = True
+        if member.status != "paused":
+            _status = "active" if renewal.new_end >= today else "expired"
+            if member.status != _status:
+                member.status = _status
+                _changed = True
+        if not _changed:
+            return "already_applied_noop"
+        audit(
+            action="scheduled_renewal_activated",
+            resource_type="renewal_history",
+            resource_id=renewal.id,
+            gym_id=gym.id,
+            actor_id=None,
+            metadata={
+                "member_id": member.id,
+                "start_date": renewal.new_start.isoformat(),
+                "already_applied": True,
+                "force": force,
+            },
+        )
+        return "already_applied"
+    if member.membership_end != renewal.previous_end:
+        return "stale"
+    if renewal.new_end < today and not force:
+        raise ValueError(
+            f"Scheduled renewal {renewal.id} for member {member.id} "
+            f"ended {renewal.new_end.isoformat()} before today "
+            f"({today.isoformat()}); it never activated."
+        )
+    member.membership_start = renewal.new_start
+    member.membership_end = renewal.new_end
+    # M3: a paused member stays paused when a scheduled renewal
+    # activates — only the explicit unfreeze flow clears paused.
+    if member.status != "paused":
+        member.status = "active" if renewal.new_end >= today else "expired"
+    member.price = renewal.amount
+    if renewal.plan_id:
+        member.plan_id = renewal.plan_id
+    queue_membership_command(member)
+    audit(
+        action="scheduled_renewal_activated",
+        resource_type="renewal_history",
+        resource_id=renewal.id,
+        gym_id=gym.id,
+        actor_id=None,
+        metadata={
+            "member_id": member.id,
+            "start_date": renewal.new_start.isoformat(),
+            "force": force,
+        },
+    )
+    return "activated"
+
+
+def force_activate_scheduled_renewal(renewal: RenewalHistory, *, actor_id: int | None = None) -> str:
+    """Owner-triggered manual activation of one due scheduled renewal
+    (V6-L20) — the lever V5-M10's expired-row surfacing pairs with.
+    The caller commits. Raises ValueError when the row is not due
+    yet, or its chain is stale (the member's end no longer matches
+    the row's previous_end, so the period it was chained to is gone).
+    Returns ``"activated"`` or ``"already_applied"``.
+    """
+    gym_id = renewal.gym_id
+    member = (
+        db.session.execute(
+            select(Member).where(Member.id == renewal.member_id).with_for_update()
+        ).scalar_one_or_none()
+    )
+    if member is None or member.gym_id != gym_id or member.deleted_at is not None:
+        raise ValueError("Member not found for this scheduled renewal.")
+    gym_tz = member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
+    today = today_for_gym(gym_tz)
+    if renewal.new_start > today:
+        raise ValueError(
+            f"Scheduled renewal starts {renewal.new_start.isoformat()} "
+            "and is not due yet."
+        )
+    # The shared helper audits with actor_id=None (system); rewrite
+    # the audit's actor to the forcing owner when one is given.
+    outcome = _activate_scheduled_row(
+        member.gym, renewal, member, today, force=True
+    )
+    if outcome == "stale":
+        raise ValueError(
+            "This scheduled renewal can no longer activate: the "
+            "member's current end no longer matches the renewal's "
+            "previous end (the period was changed after scheduling)."
+        )
+    # A fully-consumed row reports as already applied to the caller.
+    if outcome == "already_applied_noop":
+        outcome = "already_applied"
+    if actor_id is not None:
+        audit(
+            action="scheduled_renewal_force_activated",
+            resource_type="renewal_history",
+            resource_id=renewal.id,
+            gym_id=gym_id,
+            actor_id=actor_id,
+            metadata={
+                "member_id": member.id,
+                "start_date": renewal.new_start.isoformat(),
+                "outcome": outcome,
+            },
+        )
+    return outcome
+
+
+def rechain_scheduled_renewals(member: Member, *, old_end, today, actor_id: int | None = None) -> list[RenewalHistory]:
+    """Re-point scheduled rows chained to ``old_end`` at the member's
+    (just-edited) current end (V5-M9). Call AFTER the member's
+    membership_end has been updated: a manual date edit moves the end
+    a scheduled row was chained to, and without this the row can never
+    activate. The row's own new_start/new_end (the paid future
+    period) are preserved. Rows chained to any other end are left
+    alone — they were already stale before this edit. Returns the
+    re-chained rows.
+    """
+    if old_end is None:
+        return []
+    chained = (
+        RenewalHistory.query.filter(
+            RenewalHistory.member_id == member.id,
+            # >= today: a row starting today is due but not yet
+            # activated — it still needs re-chaining. Rows already
+            # applied (member dates already equal the row's dates)
+            # are history, not live, and are skipped below.
+            RenewalHistory.new_start >= today,
+            RenewalHistory.previous_end == old_end,
+        )
+        .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())
+        .all()
+    )
+    for row in chained:
+        if (
+            member.membership_start == row.new_start
+            and member.membership_end == row.new_end
+        ):
+            continue
+        row.previous_end = member.membership_end
+        audit(
+            action="scheduled_renewal_rechained",
+            resource_type="renewal_history",
+            resource_id=row.id,
+            gym_id=member.gym_id,
+            actor_id=actor_id,
+            metadata={
+                "member_id": member.id,
+                "old_previous_end": old_end.isoformat() if old_end else None,
+                "new_previous_end": member.membership_end.isoformat() if member.membership_end else None,
+                "reason": "manual_date_edit",
+            },
+        )
+    return chained
 
 
 def apply_due_scheduled_renewals(gym) -> int:
@@ -330,34 +582,65 @@ def apply_due_scheduled_renewals(gym) -> int:
     )
     activated = 0
     for renewal in rows:
-        member = db.session.execute(
-            select(Member).where(Member.id == renewal.member_id).with_for_update()
-        ).scalar_one_or_none()
-        if member is None or member.gym_id != gym.id or member.deleted_at is not None:
+        # V6-L19: per-row containment — one member's error (a failing
+        # terminal command, a bad row) must not roll back the gym's
+        # whole activation batch. Each row runs in its own savepoint;
+        # failures are logged + audited and the rest still activate.
+        try:
+            with db.session.begin_nested():
+                member = db.session.execute(
+                    select(Member).where(Member.id == renewal.member_id).with_for_update()
+                ).scalar_one_or_none()
+                if member is None or member.gym_id != gym.id or member.deleted_at is not None:
+                    continue
+                try:
+                    outcome = _activate_scheduled_row(gym, renewal, member, today)
+                except ValueError as exc:
+                    # V5-M10: a paid row whose window already passed
+                    # (scheduler missed it — gym suspended, outage,
+                    # deploy gap) is no longer silently dropped. It is
+                    # audited + logged so the owner can refund,
+                    # re-schedule, or force-activate it (V6-L20).
+                    _logger.warning(
+                        "Scheduled renewal %s for member %s skipped: %s",
+                        renewal.id,
+                        member.id,
+                        exc,
+                    )
+                    audit(
+                        action="scheduled_renewal_expired_unactivated",
+                        resource_type="renewal_history",
+                        resource_id=renewal.id,
+                        gym_id=gym.id,
+                        actor_id=None,
+                        metadata={
+                            "member_id": member.id,
+                            "new_start": renewal.new_start.isoformat(),
+                            "new_end": renewal.new_end.isoformat(),
+                            "reason": str(exc),
+                        },
+                    )
+                    continue
+                if outcome in ("activated", "already_applied"):
+                    activated += 1
+                # "stale" rows are inert history by design (V3-M16):
+                # they can never activate and must not block anything.
+        except Exception:
+            _logger.exception(
+                "Scheduled renewal activation failed for renewal %s (member %s, gym %s)",
+                renewal.id,
+                renewal.member_id,
+                gym.id,
+            )
+            audit(
+                action="scheduled_renewal_activation_failed",
+                resource_type="renewal_history",
+                resource_id=renewal.id,
+                gym_id=gym.id,
+                actor_id=None,
+                metadata={"member_id": renewal.member_id},
+            )
             continue
-        if member.membership_start == renewal.new_start and member.membership_end == renewal.new_end:
-            continue
-        if member.membership_end != renewal.previous_end or renewal.new_end < today:
-            continue
-        member.membership_start = renewal.new_start
-        member.membership_end = renewal.new_end
-        # M3: a paused member stays paused when a scheduled renewal
-        # activates — only the explicit unfreeze flow clears paused.
-        if member.status != "paused":
-            member.status = "active"
-        member.price = renewal.amount
-        if renewal.plan_id:
-            member.plan_id = renewal.plan_id
-        queue_membership_command(member)
-        audit(
-            action="scheduled_renewal_activated",
-            resource_type="renewal_history",
-            resource_id=renewal.id,
-            gym_id=gym.id,
-            actor_id=None,
-            metadata={"member_id": member.id, "start_date": renewal.new_start.isoformat()},
-        )
-        activated += 1
     if activated:
         invalidate_dashboard_cache(gym.id)
     return activated
@@ -400,6 +683,48 @@ def _revert_renewal(member: Member, renewal: RenewalHistory) -> None:
             member.plan_id = renewal.previous_plan_id
         if renewal.previous_price is not None:
             member.price = renewal.previous_price
+        # V5-M8: a live scheduled renewal was chained to the refunded
+        # row's new_end (its previous_end). Re-point it at the
+        # reverted end so the paid future period can still activate
+        # instead of being orphaned forever; its own new_start (the
+        # paid start date) is preserved. Queried directly — the
+        # shared live-scheduled check would call these rows stale,
+        # because their previous_end still points at the pre-revert
+        # end.
+        _gym_tz = member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
+        _today = today_for_gym(_gym_tz)
+        _chained = (
+            RenewalHistory.query.filter(
+                RenewalHistory.member_id == member.id,
+                # >= today: a row starting today is due but not yet
+                # activated — it still needs re-chaining.
+                RenewalHistory.new_start >= _today,
+                RenewalHistory.previous_end == renewal.new_end,
+            )
+            .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())
+            .all()
+        )
+        for _scheduled in _chained:
+            if (
+                member.membership_start == _scheduled.new_start
+                and member.membership_end == _scheduled.new_end
+            ):
+                continue
+            _scheduled.previous_end = renewal.previous_end
+            audit(
+                action="scheduled_renewal_rechained",
+                resource_type="renewal_history",
+                resource_id=_scheduled.id,
+                gym_id=member.gym_id,
+                actor_id=None,
+                metadata={
+                    "member_id": member.id,
+                    "old_previous_end": renewal.new_end.isoformat() if renewal.new_end else None,
+                    "new_previous_end": renewal.previous_end.isoformat() if renewal.previous_end else None,
+                    "reason": "refund_revert",
+                    "reverted_renewal_id": renewal.id,
+                },
+            )
         # B-M3: a paused member stays paused through a refund/delete
         # revert — only the explicit unfreeze flow clears paused.
         if member.status == "paused":

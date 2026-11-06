@@ -76,7 +76,15 @@ def _parse_timestamp(value: object, gym_timezone: str) -> datetime:
             result = result.replace(tzinfo=zoneinfo.ZoneInfo(gym_timezone or "Asia/Kolkata"))
         except Exception:
             result = result.replace(tzinfo=zoneinfo.ZoneInfo("Asia/Kolkata"))
-    return result.astimezone(timezone.utc)
+    result = result.astimezone(timezone.utc)
+    # V6-M11: same 15-min future bound as the ADMS path
+    # (app/adms/routes.py) — a terminal clock ahead stores future
+    # punches that pin the member INSIDE and bury new punches.
+    from datetime import timedelta as _timedelta
+
+    if result > utcnow() + _timedelta(minutes=15):
+        raise ValueError("eventTime is more than 15 minutes in the future.")
+    return result
 
 
 def _authenticated_bridge() -> BridgeInstallation:
@@ -295,16 +303,6 @@ def attendance():
         except (TypeError, ValueError):
             pass  # Ignore invalid att_state silently — old bridges won't send it.
 
-    event_id = _payload_value(payload, "eventId", "EventId")
-    if not isinstance(event_id, str) or not event_id.strip():
-        # Compatibility with the first bridge build.  The upgraded bridge
-        # always persists and sends a UUID, which is preferred for retries.
-        legacy = f"{enroll_number}|{event_time.isoformat()}|{verify_method}|{raw_invalid}"
-        event_id = "legacy-" + hashlib.sha256(legacy.encode("utf-8")).hexdigest()
-    event_id = event_id.strip()
-    if len(event_id) > 128:
-        return _json_error(422, "invalid_attendance", "eventId is too long.")
-
     event_device_serial = installation.device_serial
     if installation.connector_type == "ebioserver":
         candidate_serial = _payload_value(payload, "deviceSerial", "DeviceSerial")
@@ -315,6 +313,23 @@ def attendance():
             ).first()
             if known_device is not None:
                 event_device_serial = candidate_serial
+
+    event_id = _payload_value(payload, "eventId", "EventId")
+    if not isinstance(event_id, str) or not event_id.strip():
+        # Compatibility with the first bridge build.  The upgraded bridge
+        # always persists and sends a UUID, which is preferred for retries.
+        # V6-L10: the legacy key must include att_state AND the device
+        # serial — without them an entry+exit in the same second (same
+        # enroll/time/verify/invalid) collapsed to one punch, and two
+        # terminals sharing an enroll number collided too.
+        legacy = (
+            f"{enroll_number}|{event_time.isoformat()}|{verify_method}|{raw_invalid}"
+            f"|{att_state if att_state is not None else ''}|{event_device_serial}"
+        )
+        event_id = "legacy-" + hashlib.sha256(legacy.encode("utf-8")).hexdigest()
+    event_id = event_id.strip()
+    if len(event_id) > 128:
+        return _json_error(422, "invalid_attendance", "eventId is too long.")
 
     # V4-M5: route through find_member_by_enroll_number — an exact query
     # misses a member stored pre-fix as "042" when the punch carries
@@ -643,6 +658,27 @@ def confirm_enrollment():
     from app.services.bridge_service import invalidate_adms_enroll_index
 
     invalidate_adms_enroll_index(installation.gym_id)
+    # V5-L7: the enroll just changed hands — cancel any queued/delivered
+    # ADMS commands and pending bridge commands intended for a previous
+    # holder before the new holder's command is queued (and let the
+    # V5-M4 corrective unblock fire when the last acked state is a block
+    # for the previous holder). NOTE: an already-LEASED bridge command
+    # cannot be displaced here — the lease-time holder-mismatch check
+    # cancels it when it is (re-)leased, so the leased window (~120 s)
+    # is narrowed by this call, not closed; it self-heals via the new
+    # holder's enable on the next poll.
+    from app.services.bridge_service import displace_stale_enroll_commands
+
+    displace_stale_enroll_commands(
+        installation.gym_id, enroll_number, new_member_id=member.id
+    )
+    # V6-M12: this link path used to bypass remap_unresolved, so
+    # punches that arrived before the link stayed unmapped forever.
+    # Backfill them (RRR rows + BridgeAttendance + AccessEvent
+    # identity) the same way remap does.
+    from app.services.rrr_service import backfill_unmapped_punches
+
+    backfill_unmapped_punches(installation.gym_id, enroll_number, member)
     command = queue_membership_command(member)
     audit(
         action="bridge_enrollment_confirmed",

@@ -393,6 +393,18 @@ def register_members_routes(bp):
         data["door_access_pending_action"] = access["pending_action"]
         data["door_access_connector"] = access["connector"]
         data["door_access_error"] = access["detail"]
+        # V6-M8: a failure newer than the latest candidate is a distinct
+        # state — the UI shows "failed — tap to retry" (re-tapping the
+        # toggle queues a fresh command) instead of the stale previous
+        # state. V6-M9: a queued command the terminal never picked up is
+        # stale — the UI shows "queued — terminal hasn't checked in since
+        # <terminal_last_seen_at>" and must not present blocked as fact.
+        data["door_access_failed"] = access["failed"]
+        data["door_access_failed_action"] = access["failed_action"]
+        data["door_access_failed_at"] = access["failed_at"]
+        data["door_access_stale_queued"] = access["stale_queued"]
+        data["door_access_queued_since"] = access["queued_since"]
+        data["door_access_terminal_last_seen_at"] = access["terminal_last_seen_at"]
 
         # Security: never disclose a member's live OTP to staff clients.
         # Revealing it lets any staff credential impersonate the member and
@@ -483,6 +495,18 @@ def register_members_routes(bp):
             # leaves nothing behind.
             _initial_method = None
             _raw_amount = data.get("amount")
+            # V5-M3: a negative initial amount is a 400 up front, same
+            # as create_payment — the old code silently dropped the
+            # payment (``if amt >= 0``) and created a payment-less
+            # member with no creation ledger row.
+            _initial_amt = None
+            if _raw_amount is not None and str(_raw_amount).strip() != "" and data.get("paid", True):
+                try:
+                    _initial_amt = Decimal(str(_raw_amount).strip())
+                except InvalidOperation:
+                    return error_response("VALIDATION_ERROR", "Invalid amount.", 400)
+                if _initial_amt < 0:
+                    return error_response("VALIDATION_ERROR", "Amount cannot be negative.", 400)
             if _raw_amount is not None and str(_raw_amount).strip() != "" and data.get("paid", True):
                 _initial_method = str(data.get("payment_method") or data.get("method") or "cash").strip().lower()
                 if _initial_method not in PAYMENT_METHODS:
@@ -536,7 +560,9 @@ def register_members_routes(bp):
                         409,
                     )
                 try:
-                    amt = Decimal(str(raw_amount).strip())
+                    # V5-M3: _initial_amt was parsed + validated up
+                    # front; a negative amount never reaches here.
+                    amt = _initial_amt if _initial_amt is not None else Decimal(str(raw_amount).strip())
                     if amt >= 0:
                         method = _initial_method or "cash"
                         standard_price = plan.price if plan else amt
@@ -578,6 +604,15 @@ def register_members_routes(bp):
                         db.session.add(payment)
                         db.session.flush()
 
+                        # V6-L3: pin the amount actually paid as the
+                        # member's expected value — every other money
+                        # path pins the paid amount (verify_payment,
+                        # direct/bulk renew, scheduled activation).
+                        # A discounted signup otherwise overstates
+                        # revenue-at-risk at the full plan price until
+                        # its first renewal re-pins it.
+                        member.price = amt
+
                         renewal = RenewalHistory(
                             gym_id=g.gym_id,
                             member_id=member.id,
@@ -612,15 +647,26 @@ def register_members_routes(bp):
                             notes=payment.notes,
                         )
                         db.session.add(renewal)
-                except IntegrityError:
+                except IntegrityError as exc:
                     # V4-M1: a payment-insert failure must fail the
                     # WHOLE create_member — the old code swallowed it
                     # and left a payment-less member with no creation
                     # ledger row, so a paid signup vanished from the
-                    # money trail. A duplicate UTR racing past the
-                    # pre-check surfaces as its own 409; anything else
-                    # re-raises to the outer handler (rollback + 400).
+                    # money trail. V5-L3: a duplicate UTR racing past
+                    # the pre-check surfaces as its own 409 — decided
+                    # from the constraint in the IntegrityError, not
+                    # from a re-check that can miss a winner that has
+                    # not committed yet. Anything else re-raises to
+                    # the outer handler (rollback + 400).
+                    from app.services.payment_service import is_duplicate_reference_error
+
                     db.session.rollback()
+                    if is_duplicate_reference_error(exc):
+                        return error_response(
+                            "DUPLICATE_REFERENCE",
+                            "A verified payment with this reference already exists for this gym.",
+                            409,
+                        )
                     if _initial_ref is not None and verified_payment_with_reference(
                         g.gym_id, _initial_ref
                     ) is not None:
@@ -780,6 +826,20 @@ def register_members_routes(bp):
         elif member.status == "expired" and member.membership_end >= today_for_gym(tz):
             member.status = "active"
 
+        # V5-M9: a legitimate manual date edit moves the end a live
+        # scheduled renewal was chained to — re-chain it at the new
+        # end so the paid future period can still activate, instead
+        # of silently orphaning it.
+        if _old_end is not None and member.membership_end != _old_end:
+            from app.services.payment_service import rechain_scheduled_renewals
+
+            rechain_scheduled_renewals(
+                member,
+                old_end=_old_end,
+                today=today_for_gym(tz),
+                actor_id=g.current_user.id,
+            )
+
         queue_membership_command(member)
         audit(action="update_member", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
@@ -801,6 +861,38 @@ def register_members_routes(bp):
     @roles_required("gym_owner")
     def deactivate_member(member_id: int):
         from app.models.mixins import utcnow
+
+        data = request.get_json(silent=True) or {}
+        # V5-L34: honour Idempotency-Key like create_member — the
+        # Android BulkDeactivate screen sends a stable per-member key
+        # (bulk-deactivate-<ts>-<memberId>) and retries on timeout.
+        # Without replay a retry 404s (the member is already
+        # soft-deleted) and the client cannot tell success from
+        # failure. The replay check runs BEFORE the member lookup so
+        # an already-deleted member replays its stored 200.
+        idempotency_key = valid_key(request.headers.get("Idempotency-Key"))
+        if idempotency_key == "":
+            return error_response("VALIDATION_ERROR", "Idempotency-Key is too long.", 400)
+        # The body is empty for this endpoint, so bind the key to THIS
+        # member in the fingerprint — otherwise a key accidentally
+        # reused for another member would replay the wrong success.
+        request_hash = request_fingerprint({**data, "member_id": member_id})
+        if idempotency_key:
+            existing, matches_request = find_replay(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="deactivate_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if existing:
+                if not matches_request:
+                    return error_response(
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "This idempotency key was already used for a different deactivate request.",
+                        409,
+                    )
+                return jsonify(existing.response_body), existing.status_code
 
         member = (
             Member.query.filter_by(id=member_id, gym_id=g.gym_id)
@@ -825,6 +917,12 @@ def register_members_routes(bp):
         # guard. Mapping-only members are fully freed by this.
         from app.services.rrr_service import delete_identity_mappings
 
+        # V5-M6: queue the delete-time block BEFORE the mappings are
+        # deleted — a mapping-only member (confirmed mapping, no
+        # device_enroll_number) has no other terminal identity, so
+        # deleting the mappings first leaves nothing to address the
+        # block to and it silently never queues.
+        queue_membership_command(member)
         delete_identity_mappings(g.gym_id, member.id)
         # V4-M10: expire the Live Access state row — a member deleted
         # while INSIDE must stop showing as currently inside immediately,
@@ -837,13 +935,47 @@ def register_members_routes(bp):
         if _inside_state is not None and _inside_state.current_state == "INSIDE":
             _inside_state.current_state = "OUTSIDE"
             _inside_state.last_exit_at = utcnow()
-        queue_membership_command(member)
         audit(action="soft_delete_member", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
               metadata={"previous_status": prev_status})
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        return jsonify({"success": True, "data": {"message": "Member deactivated."}})
+        response_body = {"success": True, "data": {"message": "Member deactivated."}}
+        if idempotency_key:
+            db.session.add(
+                MobileIdempotencyKey(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="deactivate_member",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                    status_code=200,
+                    response_body=response_body,
+                )
+            )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            # A concurrent retry may have won the unique-key race.
+            # Replay its stored response instead of a second delete.
+            if idempotency_key:
+                existing, matches_request = find_replay(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="deactivate_member",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if existing:
+                    if not matches_request:
+                        return error_response(
+                            "IDEMPOTENCY_KEY_REUSED",
+                            "This idempotency key was already used for a different deactivate request.",
+                            409,
+                        )
+                    return jsonify(existing.response_body), existing.status_code
+            raise
+        return jsonify(response_body)
 
     @bp.route("/members/<int:member_id>/freeze", methods=["POST"])
     @token_required
@@ -872,6 +1004,31 @@ def register_members_routes(bp):
 
         tz = g.current_user.gym.timezone or "Asia/Kolkata"
         today = today_for_gym(tz)
+
+        # V6-L18: freezing an already-expired member extends a past
+        # end (buys nothing) yet plants a freeze marker that shields
+        # the member from Date Repair Apply. Refuse outright.
+        if not member.membership_end or member.membership_end < today:
+            return error_response(
+                "VALIDATION_ERROR",
+                "Cannot pause a membership that has already ended.",
+                400,
+            )
+
+        # V5-M9: a freeze moves membership_end, which orphans a live
+        # scheduled renewal (its previous_end no longer matches, so
+        # the paid future period never activates). Refuse with a clear
+        # error, like bulk renew's guard — the owner can let the
+        # scheduled renewal run first.
+        from app.services.payment_service import active_scheduled_renewals
+
+        if active_scheduled_renewals(member, today):
+            return error_response(
+                "CONFLICT",
+                "This member has a future renewal scheduled. Let that "
+                "renewal run (or cancel it) before pausing the membership.",
+                409,
+            )
 
         # Extend membership end date by the paused days
         if member.membership_end:
@@ -1060,6 +1217,13 @@ def register_members_routes(bp):
         from app.services.bridge_service import invalidate_adms_enroll_index
 
         invalidate_adms_enroll_index(g.gym_id)
+        # V6-M12: this link path used to bypass remap_unresolved, so
+        # punches that arrived before the link stayed unmapped forever.
+        # Backfill them (RRR rows + BridgeAttendance + AccessEvent
+        # identity) the same way remap does.
+        from app.services.rrr_service import backfill_unmapped_punches
+
+        backfill_unmapped_punches(g.gym_id, enroll_number, member)
         # V4-M3: the enroll just changed hands — cancel any queued/delivered
         # commands for this ID intended for a previous holder before the
         # new holder's command is queued (dedup alone cannot displace a

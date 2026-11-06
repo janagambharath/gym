@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -17,12 +19,14 @@ from app.models import (
     Gym,
     Member,
     MembershipPlan,
+    MobileIdempotencyKey,
     PaymentVerification,
     RenewalHistory,
 )
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
 from app.services.payment_service import active_scheduled_renewals
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.bridge_service import queue_membership_command
@@ -209,6 +213,43 @@ def bulk_renew():
                     "danger",
                 )
                 return redirect(url_for("members.bulk_renew"))
+        # V6-M1: one-time form token for this batch. A double-submit
+        # (double-click / browser retry) with the same token replays
+        # the first renewal instead of renewing every member a second
+        # time and double-counting revenue. The check runs AFTER all
+        # validation above, so a rejected batch never consumes its
+        # token, and the key row is written in the SAME transaction as
+        # the renewals below — a concurrent duplicate POST blocks on
+        # the key's unique constraint and replays at commit time. A
+        # POST without a token (legacy callers) still works, with no
+        # replay protection.
+        _bulk_payload = {
+            "member_ids": sorted(member_ids),
+            "renewal_days": renewal_days,
+            "amount": str(amount),
+            "notes": notes,
+            "override_reason": override_reason,
+            "requested_starts": {
+                str(mid): (requested_starts[mid].isoformat() if requested_starts[mid] else None)
+                for mid in sorted(requested_starts)
+            },
+        }
+        _bulk_key = valid_key(request.form.get("bulk_renew_token"))
+        _bulk_hash = request_fingerprint(_bulk_payload)
+        if _bulk_key:
+            _existing, _matches = find_replay(
+                gym_id=current_user.gym_id,
+                user_id=current_user.id,
+                scope="web_bulk_renew",
+                key=_bulk_key,
+                request_hash=_bulk_hash,
+            )
+            if _existing:
+                if not _matches:
+                    flash("This form was already submitted with different details.", "danger")
+                else:
+                    flash("This bulk renewal was already submitted — members were not renewed twice.", "info")
+                return redirect(url_for("members.bulk_renew", status="expired"))
         renewed_ids = []
         for member in members:
             # H4-legacy: capture previous_start BEFORE any mutation —
@@ -264,6 +305,9 @@ def bulk_renew():
                     new_end=new_end,
                     amount=amount,
                     notes=notes or f"Bulk renewed for {renewal_days} days.",
+                    # V5-L16: carry the owner-approved override onto
+                    # the row so Date Repair skips it.
+                    override_reason=override_reason,
                 )
             )
 
@@ -277,7 +321,37 @@ def bulk_renew():
             },
         )
         invalidate_dashboard_cache(current_user.gym_id)
-        db.session.commit()
+        if _bulk_key:
+            db.session.add(
+                MobileIdempotencyKey(
+                    gym_id=current_user.gym_id,
+                    user_id=current_user.id,
+                    scope="web_bulk_renew",
+                    key=_bulk_key,
+                    request_hash=_bulk_hash,
+                    status_code=302,
+                    response_body={"redirect": url_for("members.bulk_renew", status="expired"), "message": f"Renewed {len(renewed_ids)} members."},
+                )
+            )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # A concurrent duplicate POST with the same token won the
+            # key race — replay it instead of a second renewal.
+            db.session.rollback()
+            if _bulk_key:
+                _existing, _matches = find_replay(
+                    gym_id=current_user.gym_id,
+                    user_id=current_user.id,
+                    scope="web_bulk_renew",
+                    key=_bulk_key,
+                    request_hash=_bulk_hash,
+                )
+                if _existing and _matches:
+                    flash("This bulk renewal was already submitted — members were not renewed twice.", "info")
+                    return redirect(url_for("members.bulk_renew", status="expired"))
+            flash("Could not complete the bulk renewal — please try again.", "danger")
+            return redirect(url_for("members.bulk_renew"))
         flash(f"Renewed {len(renewed_ids)} members.", "success")
         return redirect(url_for("members.bulk_renew", status="expired"))
 
@@ -302,6 +376,8 @@ def bulk_renew():
         search=search,
         default_renewal_days=30,
         default_amount=0,
+        # V6-M1: fresh one-time token for the POST form below.
+        bulk_renew_token=uuid.uuid4().hex,
     )
 
 
@@ -435,8 +511,13 @@ def delete(member_id: int):
     # deactivate endpoint for why device_enroll_number is kept).
     from app.services.rrr_service import delete_identity_mappings
 
-    delete_identity_mappings(current_user.gym_id, member.id)
+    # V5-M6: queue the delete-time block BEFORE the mappings are deleted
+    # — a mapping-only member (confirmed mapping, no
+    # device_enroll_number) has no other terminal identity, so deleting
+    # the mappings first leaves nothing to address the block to and it
+    # silently never queues.
     queue_membership_command(member)
+    delete_identity_mappings(current_user.gym_id, member.id)
     audit(action="soft_delete_member", resource_type="member", resource_id=member.id,
           metadata={"previous_status": prev_status})
     invalidate_dashboard_cache(current_user.gym_id)
@@ -490,6 +571,7 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     without committing."""
     from app.mobile_api.date_rules import grid_error
 
+    _old_end = member.membership_end
     member.full_name = form.full_name.data.strip()
     member.phone = normalize_phone_e164(form.phone.data.strip())
     member.email = form.email.data.strip() if form.email.data else None
@@ -528,6 +610,18 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.status = form.status.data
     if member.status == "active" and member.membership_end < today_for_gym(current_user.gym.timezone):
         member.status = "expired"
+    # V5-M9: a legitimate manual date edit moves the end a live
+    # scheduled renewal was chained to — re-chain it at the new end
+    # so the paid future period can still activate.
+    if _old_end is not None and member.membership_end != _old_end:
+        from app.services.payment_service import rechain_scheduled_renewals
+
+        rechain_scheduled_renewals(
+            member,
+            old_end=_old_end,
+            today=today_for_gym(current_user.gym.timezone),
+            actor_id=current_user.id,
+        )
     member.notes = form.notes.data
 
 

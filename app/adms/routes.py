@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, unquote_plus
 
 from flask import Blueprint, Response, current_app, g, request
@@ -217,9 +217,19 @@ def _touch(integration: RRRIntegration, *, method: str | None = None, full: bool
 _UNPARSEABLE_TIME_LAST_LOG = 0.0
 _UNPARSEABLE_TIME_LOG_INTERVAL_SECONDS = 60.0
 
+# V6-M11: a punch more than this far ahead of server time is a
+# terminal-clock fault, not a real punch (the exact class that
+# required the Yodha punch-time migration) — it would sit on top of
+# the feed, pin the member INSIDE indefinitely, and suppress the
+# no-visit Retain signal. Rejected at ingest, like a malformed line.
+# Same bound in the bridge path (app/bridge/routes.py).
+MAX_FUTURE_PUNCH_SKEW = timedelta(minutes=15)
+_FUTURE_TIME_LAST_LOG = 0.0
+_FUTURE_TIME_LOG_INTERVAL_SECONDS = 60.0
+
 
 def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
-    global _UNPARSEABLE_TIME_LAST_LOG
+    global _UNPARSEABLE_TIME_LAST_LOG, _FUTURE_TIME_LAST_LOG
     value = value.strip()
     for format_string in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
         try:
@@ -235,7 +245,20 @@ def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
         except Exception:
             from zoneinfo import ZoneInfo
             tz = ZoneInfo("Asia/Kolkata")
-        return local.replace(tzinfo=tz).astimezone(timezone.utc)
+        parsed = local.replace(tzinfo=tz).astimezone(timezone.utc)
+        # V6-M11: future bound — a terminal clock days ahead stores
+        # future punches that bury new ones. Reject (return None, so
+        # the caller counts it as a skipped line) rather than storing.
+        if parsed > utcnow() + MAX_FUTURE_PUNCH_SKEW:
+            now_mono = time.monotonic()
+            if now_mono - _FUTURE_TIME_LAST_LOG >= _FUTURE_TIME_LOG_INTERVAL_SECONDS:
+                _FUTURE_TIME_LAST_LOG = now_mono
+                log.warning(
+                    "Future device time %r (>15 min ahead of server); punch row skipped",
+                    value[:64],
+                )
+            return None
+        return parsed
     # V3-L9: a row that falls through here used to be silently skipped —
     # the punch was lost with no log. Warn (rate-limited) so a new
     # firmware format surfaces instead of vanishing.
@@ -514,6 +537,24 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
     cmd.result_data = payload
     cmd.status = "acked"
     cmd.acknowledged_at = utcnow()
+    # V6-L11: this USERINFO upload is the terminal's full user table —
+    # drop OPERLOG-snapshot entries absent from it (users deleted on
+    # the terminal), so stale names stop being suggested/auto-linked.
+    # V5-L11: the snapshot changed — drop the cached suggestions too.
+    try:
+        from app.services.enroll_match_service import (
+            invalidate_suggest_cache,
+            prune_operlog_snapshot,
+        )
+
+        pruned = prune_operlog_snapshot(
+            integration.gym_id, [u["enroll_number"] for u in users]
+        )
+        if pruned:
+            log.info("USERINFO prune dropped %d OPERLOG entry(ies)", pruned)
+        invalidate_suggest_cache(integration.gym_id)
+    except Exception as exc:  # noqa: BLE001 — snapshot hygiene is best-effort
+        log.warning("USERINFO snapshot hygiene failed: %s", exc)
     return len(users)
 
 
@@ -545,19 +586,36 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
             pass
         direction = cells[2].strip()[:16] if len(cells) > 2 else None
         verify = cells[3].strip()[:32] if len(cells) > 3 else None
-        event, was_created = normalize_attendance(
-            gym_id=integration.gym_id,
-            integration_id=integration.id,
-            source="adms_direct",
-            device_serial=integration.device_serial,
-            biometric_user_id=person_id,
-            punch_time=punch_time,
-            external_event_id=None,
-            direction=direction or None,
-            verify_method=verify or None,
-            raw_payload=line,
-            auth_method=getattr(g, "adms_auth_method", None),
-        )
+        # V5-L10: per-line containment — one bad line (a normalize
+        # failure, an auto-link conflict, a transient DB error) used to
+        # 500 the whole cdata POST and the terminal re-sent the entire
+        # batch. Each line runs in its own savepoint; a failure skips
+        # just that line (counted + logged like a malformed line) and
+        # the rest of the batch still commits.
+        try:
+            with db.session.begin_nested():
+                event, was_created = normalize_attendance(
+                    gym_id=integration.gym_id,
+                    integration_id=integration.id,
+                    source="adms_direct",
+                    device_serial=integration.device_serial,
+                    biometric_user_id=person_id,
+                    punch_time=punch_time,
+                    external_event_id=None,
+                    direction=direction or None,
+                    verify_method=verify or None,
+                    raw_payload=line,
+                    auth_method=getattr(g, "adms_auth_method", None),
+                )
+        except Exception:
+            skipped += 1
+            log.warning(
+                "ATTLOG line failed to normalize (gym %s, enroll %s); "
+                "skipping line, rest of batch continues (V5-L10)",
+                integration.gym_id, person_id,
+                exc_info=True,
+            )
+            continue
         from app.services.access_event_service import process_rrr_attendance_to_access_event
 
         # Keep direct ADMS punches visible in the shared owner/member feed.
@@ -738,8 +796,10 @@ def getrequest(path_token: str | None = None):
         ADMS_DISABLE_ACTIONS,
         ADMS_ENABLE_ACTIONS,
         ADMS_TEST_ACTIONS,
+        STALE_COMMAND_SUPERSEDED_MARKER,
         STALE_ENABLE_ERROR,
         STALE_ENABLE_MARKER,
+        adms_command_intended_member_id,
         adms_command_is_forbidden,
         cancel_adms_command,
         disable_must_be_cancelled,
@@ -814,11 +874,28 @@ def getrequest(path_token: str | None = None):
         elif candidate.action in ADMS_DISABLE_ACTIONS:
             # Owners may deliberately block an active member, but a stale or
             # reassigned terminal ID must never be applied to an unknown user.
+            # B-H1 (the owner-override carve-out itself) is untouched: an
+            # owner block for the member it was queued for still serves.
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if member is None:
                 cancel_adms_command(
                     candidate,
                     error="The member no longer resolves to this terminal ID. Confirm the biometric mapping and queue the access change again.",
+                )
+                continue
+            # V6-M6: serve-time intended-member guard — if this owner block
+            # was queued for a different member than the one who now holds
+            # the enroll, cancel it instead of serving it against the new
+            # holder (a recycled ID after a bridge enroll-confirm that
+            # missed displace). Unknown intent (no queue audit survives)
+            # still serves: the owner branch is B-H1's domain and the
+            # resolved member is the only holder on record.
+            intended_member_id = adms_command_intended_member_id(candidate)
+            if intended_member_id is not None and intended_member_id != member.id:
+                cancel_adms_command(
+                    candidate,
+                    marker=STALE_COMMAND_SUPERSEDED_MARKER,
+                    error="Superseded: terminal ID remapped to another member; queue the access change again if still needed.",
                 )
                 continue
         # Mirror guard for enables (H8): an unblock/restore is served only
@@ -923,8 +1000,31 @@ def devicecmd(path_token: str | None = None):
         return _plain("OK")
     result = field("Return")[:32]
     detail = (field("Content") or field("CMD"))[:500]
-    command.acknowledged_at = utcnow()
     from app.services.audit_service import audit
+
+    # V6-L8: acks for guard-cancelled commands must never flip the row back
+    # to acked — a cancelled row's result_code is a CANCELLED_*/STALE_*
+    # marker (stale-state, stale-enable, superseded). A late ack from the
+    # terminal (e.g. it executed the command before the cancel landed)
+    # is acknowledged on the wire but leaves the durable state alone; the
+    # owner re-queues if the change is still wanted.
+    if (command.result_code or "").startswith(("CANCELLED_", "STALE_")):
+        audit(
+            action="adms_command_ack_ignored",
+            resource_type="rrr_adms_command",
+            resource_id=command.id,
+            gym_id=integration.gym_id,
+            metadata={
+                "action": command.action,
+                "enroll_number": command.test_enroll_number,
+                "session": "token" if path_token else "serial",
+                "result_code": command.result_code,
+                "ignored_return": result,
+            },
+        )
+        db.session.commit()
+        return _plain("OK")
+    command.acknowledged_at = utcnow()
     from app.services.bridge_service import (
         adms_command_is_forbidden,
     )

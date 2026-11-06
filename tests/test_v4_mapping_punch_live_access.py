@@ -556,7 +556,9 @@ def test_m22_bridge_punch_counted_once_in_summary_and_feed(seed_gym):
 
 
 def test_m22_adms_exit_row_not_counted_as_entry(seed_gym):
-    """An unprojected ADMS exit-direction punch is not an entry."""
+    """An unprojected ADMS exit-direction punch is not an entry — but
+    (V5-L12) it IS visible in the feed as an EXIT and counts in
+    exits_today; before the L12 fix it was invisible everywhere."""
     gym_id = seed_gym["gym"].id
     normalize_attendance(
         gym_id=gym_id, source="adms_direct", biometric_user_id="7",
@@ -565,8 +567,19 @@ def test_m22_adms_exit_row_not_counted_as_entry(seed_gym):
     db.session.commit()
     summary = get_access_summary(gym_id, "Asia/Kolkata")
     assert summary["entries_today"] == 0
+    assert summary["exits_today"] == 1
     feed = get_access_events(gym_id, "Asia/Kolkata", date_filter="today")
-    assert feed["pagination"]["total"] == 0
+    assert feed["pagination"]["total"] == 1
+    assert feed["events"][0]["event_type"] == "EXIT"
+    assert feed["events"][0]["direction"] == "OUT"
+    exits = get_access_events(
+        gym_id, "Asia/Kolkata", date_filter="today", event_type="exit"
+    )
+    assert exits["pagination"]["total"] == 1
+    entries = get_access_events(
+        gym_id, "Asia/Kolkata", date_filter="today", event_type="entry"
+    )
+    assert entries["pagination"]["total"] == 0
 
 
 # ── V4-L9: second holder of the same canonical ID ───────────────────────

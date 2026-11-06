@@ -59,6 +59,11 @@ ADMS_GROUP_BLOCK_NOTE = (
 # is failed after this long without an ack; the same value bounds getrequest
 # re-sends (L6) — a delivered command is re-served only inside this window.
 ADMS_DELIVERED_TIMEOUT_MINUTES = 10
+# V6-M9: a queued (never delivered) ADMS command is stale after this long.
+# The terminal polls getrequest every 30 s (Delay=30 in cdata), so 10 min
+# without delivery means it is offline/misconfigured — the member page
+# must stop reporting the queued block as fact past this point.
+ADMS_QUEUED_STALE_MINUTES = 10
 # Bridge JSON ingestion cap (M12), matching the 256 KB ADMS body cap.
 BRIDGE_MAX_JSON_BYTES = 262144
 
@@ -842,7 +847,61 @@ def displace_stale_enroll_commands(
             error=f"{STALE_COMMAND_SUPERSEDED_MARKER}: Terminal ID remapped to another member; queue the access change again if still needed.",
         )
         cancelled += 1
+    # V5-M4: displace can only cancel queued/delivered rows — it cannot
+    # undo an ACKED block the terminal already applied for the previous
+    # holder. If the enroll's latest acked state is a block and the new
+    # holder is proven enableable, queue a corrective unblock for them
+    # even on the active-skip link paths (remap only queues when desired
+    # != enable, and confirm_match skips commands for active members, so
+    # without this the new active holder stays door-denied until the
+    # daily reconcile). The corrective queue's own dedupe returns an
+    # already-queued unblock instead of stacking a second one.
+    _queue_corrective_unblock_for_recycled_enroll(gym_id, canonical, new_member_id)
     return cancelled
+
+
+def _queue_corrective_unblock_for_recycled_enroll(
+    gym_id: int, canonical_enroll: str, new_member_id: int
+) -> RRRAdmsCommand | BridgeCommand | None:
+    """Queue an unblock when a recycled enroll's last acked state is a block
+    for a previous holder and the new holder is proven enableable (V5-M4).
+
+    Returns the corrective command, or ``None`` when none is needed (new
+    holder not enableable, no acked block on record, or the latest acked
+    state is already an unblock). Does not commit.
+    """
+    new_member = db.session.get(Member, new_member_id)
+    if new_member is None or not member_is_proven_enableable(new_member):
+        return None
+    acked_block = False
+    latest_adms = (
+        RRRAdmsCommand.query.filter(
+            RRRAdmsCommand.gym_id == gym_id,
+            RRRAdmsCommand.test_enroll_number == canonical_enroll,
+            RRRAdmsCommand.action.in_(["block", "unblock"]),
+            RRRAdmsCommand.status == "acked",
+        )
+        .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
+        .first()
+    )
+    if latest_adms is not None and latest_adms.action == "block":
+        acked_block = True
+    if not acked_block:
+        latest_bridge = (
+            BridgeCommand.query.filter(
+                BridgeCommand.gym_id == gym_id,
+                BridgeCommand.enroll_number == canonical_enroll,
+                BridgeCommand.command_type.in_(["disable_user", "enable_user"]),
+                BridgeCommand.status == "acked",
+            )
+            .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+            .first()
+        )
+        if latest_bridge is not None and latest_bridge.command_type == "disable_user":
+            acked_block = True
+    if not acked_block:
+        return None
+    return queue_membership_command(new_member)
 
 
 def _active_installation(gym_id: int) -> BridgeInstallation | None:
@@ -1102,79 +1161,12 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
     return command
 
 
-def _queue_template_restore_commands(member: Member, integration, enroll_number: str) -> int:
-    """Queue BIODATA restore commands for backed-up fingerprint templates.
-
-    Returns the number of restore commands queued.
-    """
-    from app.models.rrr import RRRBiometricTemplate
-
-    # V3-L10: templates are stored under the canonical PIN (see the
-    # upload-time canonicalization in _ingest_userinfo + the backfill
-    # migration), so look the restore up under the canonical form too.
-    try:
-        enroll_number = canonical_enroll_number(enroll_number)
-    except ValueError:
-        pass
-
-    templates = RRRBiometricTemplate.query.filter_by(
-        gym_id=member.gym_id,
-        integration_id=integration.id,
-        enroll_number=enroll_number,
-    ).all()
-    count = 0
-    for tmpl in templates:
-        # Classic ADMS dialect (X2008/ZAM180_TFT) FINGERTMP restore format.
-        # Verified Return=0 by khaledbinamir/biometric_integration.
-        # Critical: Size must be the DECODED byte length, not base64 length.
-        #   DATA UPDATE FINGERTMP\tPIN=<pin>\tFID=<n>\tSize=<decoded_len>\tValid=1\tTMP=<base64>
-        # H2: templates are stored encrypted; decrypt here (the only read
-        # site) so the terminal receives the plaintext TMP it requires. A
-        # row that cannot be decrypted (key rotation without re-encryption)
-        # is skipped, never shipped as ciphertext.
-        import base64
-        import logging
-
-        try:
-            from app.services.template_crypto import decrypt_template
-
-            template_plaintext = decrypt_template(tmpl.template_data)
-        except ValueError:
-            logging.getLogger(__name__).warning(
-                "Skipping undecryptable fingerprint template for enroll %s "
-                "(key rotation without re-encryption?)",
-                enroll_number,
-            )
-            continue
-        try:
-            decoded_len = len(base64.b64decode(template_plaintext))
-        except Exception:
-            decoded_len = 0
-        restore_text = (
-            f"DATA UPDATE FINGERTMP\tPIN={enroll_number}\t"
-            f"FID={tmpl.finger_id}\tSize={decoded_len}\tValid=1\t"
-            f"TMP={template_plaintext}"
-        )
-        cmd = RRRAdmsCommand(
-            gym_id=member.gym_id,
-            integration_id=integration.id,
-            action="restore_template",
-            test_enroll_number=enroll_number,
-            command_text=restore_text,
-            requested_by_id=None,
-        )
-        db.session.add(cmd)
-        count += 1
-    if count:
-        db.session.flush()
-        audit(
-            action="adms_template_restore_queued",
-            resource_type="rrr_adms_command",
-            resource_id=None,
-            gym_id=member.gym_id,
-            metadata={"member_id": member.id, "enroll_number": enroll_number, "templates": count},
-        )
-    return count
+# V6-L9 (2026-11-06): _queue_template_restore_commands was DELETED here.
+# It was dead code — no caller ever queued a fingerprint-template restore —
+# so its presence implied a restore happens on unblock/re-enroll when none
+# does. Wiring it in was rejected as the riskier option: an untested restore
+# could re-enroll a previous holder's fingerprint onto a recycled enroll
+# number. Template backup on USERINFO upload is unaffected.
 
 
 def queue_manual_adms_member_command(
@@ -1189,6 +1181,15 @@ def queue_manual_adms_member_command(
     like the automatic path.  Returns ``None`` when there is no commissioned
     direct-ADMS terminal or the member has no terminal identity.
     Does not commit.
+
+    V6-M5: mirrors the automatic path's dedupe — the latest block/unblock
+    command for this enroll is locked; a queued command of the same action
+    is returned (rewritten for this member when it was queued for a
+    previous holder), a queued command of the opposite action is replaced
+    in place, a delivered/acked command of the same action for this member
+    is returned, and anything else queues a fresh command. Repeated taps
+    therefore never stack duplicate commands, and block→unblock converges
+    on the owner's latest intent instead of serving both in FIFO order.
     """
     if action not in {"block", "unblock"}:
         raise ValueError(f"Unknown manual ADMS action: {action!r}")
@@ -1205,6 +1206,81 @@ def queue_manual_adms_member_command(
         return None
 
     command_text = adms_command_text(action, enroll_number, member_name=member.full_name)
+    # Lock the latest manual-membership command for this terminal identity
+    # so a concurrent tap cannot reorder or duplicate the terminal's final
+    # state. create_user/delete_user rows are out of scope here: a manual
+    # block must never silently replace a queued enrollment.
+    latest = db.session.execute(
+        select(RRRAdmsCommand)
+        .where(
+            RRRAdmsCommand.integration_id == integration.id,
+            RRRAdmsCommand.test_enroll_number == enroll_number,
+            RRRAdmsCommand.action.in_(["block", "unblock"]),
+        )
+        .order_by(RRRAdmsCommand.id.desc())
+        .limit(1)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if latest is not None:
+        if latest.status == "queued":
+            if latest.action == action:
+                if adms_command_intended_member_id(latest) not in (None, member.id):
+                    # V4-L8: the queued command was intended for a previous
+                    # holder of this enroll — rewrite it for this member
+                    # (name + owner) instead of returning it as theirs.
+                    latest.command_text = command_text
+                    latest.result_code = None
+                    latest.result_message = None
+                    latest.requested_by_id = actor_id
+                    audit(
+                        action=f"adms_manual_{action}_queued",
+                        resource_type="rrr_adms_command",
+                        resource_id=latest.id,
+                        gym_id=member.gym_id,
+                        actor_id=actor_id,
+                        metadata={"member_id": member.id, "enroll_number": enroll_number,
+                                  "replaced": True,
+                                  **({"method": "essl_userinfo_group", "group": "100"}
+                                     if action == "block" else {})},
+                    )
+                return latest
+            # A not-yet-delivered command is replaced by the owner's newest
+            # explicit choice (block→unblock or unblock→block).
+            latest.action = action
+            latest.command_text = command_text
+            latest.result_code = None
+            latest.result_message = None
+            latest.requested_by_id = actor_id
+            audit(
+                action=f"adms_manual_{action}_queued",
+                resource_type="rrr_adms_command",
+                resource_id=latest.id,
+                gym_id=member.gym_id,
+                actor_id=actor_id,
+                metadata={"member_id": member.id, "enroll_number": enroll_number,
+                          "replaced": True,
+                          **({"method": "essl_userinfo_group", "group": "100"}
+                             if action == "block" else {})},
+            )
+            return latest
+        if latest.status == "delivered" and latest.action == action:
+            if adms_command_intended_member_id(latest) == member.id:
+                # The terminal holds it and getrequest re-sends until acked.
+                return latest
+            # Delivered for a different holder: fall through and queue a
+            # fresh command for this member.
+        elif latest.status == "acked" and latest.action == action:
+            if adms_command_intended_member_id(latest) == member.id:
+                # The terminal already holds the requested state.
+                return latest
+            # Acked for a different holder (recycled ID): fall through and
+            # queue a fresh command — unknown intent also re-queues, since
+            # a redundant Grp=100 block is idempotent but a missing
+            # unblock is not.
+        # "failed" (or a delivered/acked command for a different member or
+        # the opposite action) always queues a fresh command below.
+
     command = RRRAdmsCommand(
         gym_id=member.gym_id,
         integration_id=integration.id,
@@ -1236,9 +1312,20 @@ def door_blocked_state(member: Member) -> dict[str, object]:
     unrelated INFO, sync, and enrollment commands must not reset the toggle.
     The terminal identity may come from a confirmed ADMS mapping even when
     ``members.device_enroll_number`` has not been populated.
+
+    V6-M8: a failure newer than the latest candidate is surfaced as a
+    distinct ``failed`` state (``failed_action`` / ``failed_at``) instead
+    of silently reverting to the previous acked state — the member page
+    can show "failed — tap to retry" (re-tapping the toggle queues a
+    fresh command; failed rows never dedupe). V6-M9: a queued/pending
+    command older than ``ADMS_QUEUED_STALE_MINUTES`` (the terminal polls
+    every 30 s, so 10 min without delivery means offline/misconfigured)
+    is ``stale_queued`` and no longer reports ``blocked=True`` as fact;
+    ``queued_since`` / ``terminal_last_seen_at`` tell the owner how stale
+    the request is.
     """
     candidates: list[tuple[datetime, int, bool, str, str, str | None]] = []
-    failures: list[tuple[datetime, int, str, str | None]] = []
+    failures: list[tuple[datetime, int, str, str | None, str | None]] = []
 
     if _adms_integration(member.gym_id) is None:
         bridge_cmd = db.session.execute(
@@ -1278,6 +1365,7 @@ def door_blocked_state(member: Member) -> dict[str, object]:
                 bridge_failure.id,
                 "bridge",
                 bridge_failure.last_error,
+                "block" if bridge_failure.command_type == "disable_user" else "unblock",
             ))
 
     try:
@@ -1327,10 +1415,17 @@ def door_blocked_state(member: Member) -> dict[str, object]:
                 adms_failure.id,
                 "adms_direct",
                 adms_failure.result_message,
+                adms_failure.action if adms_failure.action in ("block", "unblock") else None,
             ))
 
     latest = max(candidates, key=lambda item: (item[0], item[1])) if candidates else None
     latest_failure = max(failures, key=lambda item: (item[0], item[1])) if failures else None
+    # V6-M8: the newest event is a failure — the door's real state is
+    # unknown (the terminal may have applied it and lost the ack), so
+    # report the failure distinctly instead of the stale previous state.
+    failed = bool(latest_failure and (latest is None or latest_failure[:2] > latest[:2]))
+    failed_action = latest_failure[4] if failed else None
+    failed_at = latest_failure[0].isoformat() if failed else None
     if latest is None:
         blocked = False
         status = ""
@@ -1338,6 +1433,23 @@ def door_blocked_state(member: Member) -> dict[str, object]:
     else:
         _, _, blocked, status, connector, _ = latest
     pending = status in {"pending", "leased", "queued", "delivered"}
+    # The pending action is what was requested, even when a stale queued
+    # block no longer counts as blocked=True below (V6-M9).
+    requested_blocked = blocked
+    # V6-M9: a queued/pending command the terminal never picked up is
+    # stale, not a fact — stop asserting blocked and say since when.
+    stale_queued = False
+    queued_since = None
+    if latest is not None and status in {"queued", "pending"}:
+        created_at = latest[0]
+        if utcnow() - created_at > timedelta(minutes=ADMS_QUEUED_STALE_MINUTES):
+            stale_queued = True
+            queued_since = created_at.isoformat()
+            blocked = False
+    terminal_last_seen_at = None
+    integration = _adms_integration(member.gym_id)
+    if integration is not None and integration.last_success_at is not None:
+        terminal_last_seen_at = _as_utc(integration.last_success_at).isoformat()
     detail = None
     if latest_failure and (latest is None or latest_failure[:2] > latest[:2]):
         detail = latest_failure[3]
@@ -1345,9 +1457,15 @@ def door_blocked_state(member: Member) -> dict[str, object]:
     return {
         "blocked": blocked,
         "pending": pending,
-        "pending_action": ("block" if blocked else "unblock") if pending else None,
+        "pending_action": ("block" if requested_blocked else "unblock") if pending else None,
         "connector": connector,
         "detail": detail,
+        "failed": failed,
+        "failed_action": failed_action,
+        "failed_at": failed_at,
+        "stale_queued": stale_queued,
+        "queued_since": queued_since,
+        "terminal_last_seen_at": terminal_last_seen_at,
     }
 
 
@@ -1526,8 +1644,88 @@ def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> 
     return command
 
 
+def _has_newer_manual_block(member: Member) -> bool:
+    """True when the member's latest acked state is an owner (manual) block
+    queued after the member's last membership change (V6-M7).
+
+    An owner blocking an active member for misconduct is a deliberate
+    override of the membership-derived desired state (B-H1). A routine
+    Re-sync must not silently undo it by re-asserting "active → unblock".
+    The block only protects while it is newer than the last membership
+    change (``member.updated_at``): a renewal/edit after the block means
+    the owner has since touched the membership, so reconcile may proceed.
+    ADMS manual blocks carry ``requested_by_id`` on the command row;
+    bridge manual blocks are identified through their queue-time audit
+    row (bridge rows carry no actor). A missing audit row (legacy/purged)
+    fails open — documented limitation, not a silent undo: the audit is
+    the only record that a bridge block was manual.
+    """
+    updated_at = member.updated_at
+    if updated_at is not None:
+        updated_at = _as_utc(updated_at)
+    try:
+        enroll = resolve_adms_enroll_number(member)
+    except ValueError:
+        enroll = None
+    if enroll:
+        ids = {enroll}
+        try:
+            ids.add(canonical_enroll_number(enroll))
+        except ValueError:
+            pass
+        manual_block = (
+            RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.gym_id == member.gym_id,
+                RRRAdmsCommand.test_enroll_number.in_(ids),
+                RRRAdmsCommand.action == "block",
+                RRRAdmsCommand.status == "acked",
+                RRRAdmsCommand.requested_by_id.isnot(None),
+            )
+            .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
+            .first()
+        )
+        if manual_block is not None and (
+            updated_at is None or _as_utc(manual_block.created_at) > updated_at
+        ):
+            return True
+    latest_bridge = (
+        BridgeCommand.query.filter(
+            BridgeCommand.gym_id == member.gym_id,
+            BridgeCommand.member_id == member.id,
+            BridgeCommand.command_type == "disable_user",
+            BridgeCommand.status == "acked",
+        )
+        .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
+        .first()
+    )
+    if latest_bridge is not None:
+        from app.models.audit_log import AuditLog
+
+        manual_audit = (
+            AuditLog.query.filter_by(
+                resource_type="bridge_command",
+                resource_id=str(latest_bridge.id),
+                action="bridge_manual_block_queued",
+            )
+            .order_by(AuditLog.id.desc())
+            .first()
+        )
+        if manual_audit is not None and (
+            updated_at is None or _as_utc(manual_audit.created_at) > updated_at
+        ):
+            return True
+    return False
+
+
 def queue_gym_reconciliation(gym_id: int) -> int:
-    """Queue access state for enrolled members through the gym's connector."""
+    """Queue access state for enrolled members through the gym's connector.
+
+    V6-M7: an active member whose latest acked state is a manual block
+    newer than their last membership change is SKIPPED — reconcile must
+    not silently undo an owner's misconduct block. (The daily scheduler
+    job does not call this function; it has its own expired/paused-only
+    reconcile, so this skip only affects the owner-triggered Re-sync.)
+    """
 
     adms = _adms_integration(gym_id)
     if adms is None and _active_installation(gym_id) is None:
@@ -1552,6 +1750,11 @@ def queue_gym_reconciliation(gym_id: int) -> int:
     members = members_query.order_by(Member.id.asc()).all()
     queued = 0
     for member in members:
+        if (
+            desired_command_type(member) == "enable_user"
+            and _has_newer_manual_block(member)
+        ):
+            continue
         if queue_membership_command(member, force=True) is not None:
             queued += 1
     return queued
@@ -1652,23 +1855,44 @@ def schedule_retry_after_failed_command(command: BridgeCommand) -> BridgeCommand
         return None
     if (
         command.command_type in BRIDGE_DISABLE_COMMAND_TYPES
-        and disable_must_be_cancelled(member)
+        and disable_must_be_cancelled_including_deleted(member)
     ):
         # Fail-safe: never schedule a retry disable for a member who is not
         # proven blockable, even if the plain desired-state check agrees.
+        # V5-M5: the including-deleted guard (not the strict one) — a
+        # soft-deleted member's delete-time block must be re-driven after
+        # a transient failure, or the ex-member keeps door access forever.
         return None
     if (
         command.command_type in BRIDGE_ENABLE_COMMAND_TYPES
-        and enable_must_be_cancelled(member)
+        and bridge_enable_must_be_cancelled(command)
     ):
         # H8 mirror: never schedule a retry enable for a member who is not
-        # proven enableable.
+        # proven enableable. V5-L8: use the bridge-aware guard, not the
+        # plain member guard — a past-window set_valid_date is a DISABLE
+        # intent (V4-M4) and must be judged by the including-deleted
+        # disable guard, or its retry is wrongly refused for every
+        # expired/deleted member.
         return None
-    if (
-        desired_command_type(member) != command.command_type
-        or canonical_enroll_number(member.device_enroll_number) != command.enroll_number
-    ):
+    if command.command_type in ("create_user", "set_valid_date"):
+        # V5-L8: desired_command_type only ever returns enable/disable, so
+        # comparing a create_user / set_valid_date retry against it could
+        # never match and these commands were never retried. Judge them on
+        # their own intent instead: a past-window set_valid_date closes
+        # the door (disable-like), anything else opens it (enable-like).
+        intent = (
+            "disable_user"
+            if bridge_set_valid_date_is_disable(command)
+            else "enable_user"
+        )
+        if desired_command_type(member) != intent:
+            # A later membership transaction will queue the correct
+            # current state.
+            return None
+    elif desired_command_type(member) != command.command_type:
         # A later membership transaction will queue the correct current state.
+        return None
+    if canonical_enroll_number(member.device_enroll_number) != command.enroll_number:
         return None
 
     base_delay = max(30, int(current_app.config["BRIDGE_COMMAND_RETRY_SECONDS"]))

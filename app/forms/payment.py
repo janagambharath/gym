@@ -18,5 +18,13 @@ class PaymentVerificationForm(FlaskForm):
     renewal_days = DecimalField(
         "Renewal days", places=0, validators=[DataRequired(), NumberRange(min=1, max=730)]
     )
+    # V6-M4: owner override reason for off-plan renewal days, mirroring
+    # the mobile create / direct-renew / bulk-renew rule. Staff cannot
+    # override; the reason is stored on the payment and carried onto
+    # the renewal row so Date Repair skips approved extra days.
+    override_reason = StringField(
+        "Override reason (owner only, when days differ from the plan)",
+        validators=[Optional(), Length(max=500)],
+    )
     notes = TextAreaField("Notes", validators=[Optional(), Length(max=2000)])
     submit = SubmitField("Save payment")

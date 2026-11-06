@@ -68,6 +68,10 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     channel = db.Column(db.String(32), nullable=False, default="offline")
     notes = db.Column(db.Text, nullable=True)
+    # V5-L16: owner-approved extra-days override reason. Rows carrying
+    # one are deliberately oversized and must be skipped by the Date
+    # Repair oversized check/corrector, not stripped by Apply.
+    override_reason = db.Column(db.String(500), nullable=True)
     is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="renewals")

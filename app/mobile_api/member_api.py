@@ -28,6 +28,7 @@ from datetime import date, timedelta, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, current_app, g, jsonify, request, send_from_directory, url_for
+from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
@@ -251,6 +252,25 @@ def member_token_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def _locked_current_member() -> Member:
+    """Re-fetch the authenticated member with FOR UPDATE.
+
+    V6-L1: the self-service claim endpoints were check-then-insert
+    with no lock — two concurrent/double-tapped "I've Paid"
+    submissions both saw no pending payment and both inserted, and
+    verifying both stacked two renewal periods. Holding the member
+    row lock across the pending-check + insert serialises the
+    second claim behind the first, which then sees the pending row
+    and replays it. (SQLite ignores FOR UPDATE; the lock bites on
+    Postgres, and the replay check is correct on both.)
+    """
+    return (
+        db.session.execute(
+            select(Member).where(Member.id == g.current_member.id).with_for_update()
+        ).scalar_one()
+    )
 
 
 # ── Auth ──────────────────────────────────────────────────────────────
@@ -888,7 +908,7 @@ def claim_payment():
     4. A PAYMENT_CLAIMED (pending) record is created
     5. Gym owner verifies and confirms the renewal
     """
-    member = g.current_member
+    member = _locked_current_member()
     data = request.get_json(silent=True) or {}
 
     # Check for existing pending or processing payment to prevent duplicates
@@ -989,7 +1009,7 @@ def request_renewal():
 
     This is the legacy endpoint. New clients should use /renew/claim instead.
     """
-    member = g.current_member
+    member = _locked_current_member()
 
     # Check if there's already a pending or processing payment
     existing = PaymentVerification.query.filter(
@@ -1036,18 +1056,27 @@ def member_renew_with_plan():
     ``/renew/request`` (which reuses the member's current plan), this lets the
     member pick any active plan from the gym's catalog.
     """
-    member = g.current_member
+    member = _locked_current_member()
     data = request.get_json(silent=True) or {}
-    
-    # Support custom amount (member enters what they paid)
+
+    # Support custom amount (member enters what they paid). V6-L7:
+    # parsed with Decimal, not float (floats lose paise and fail the
+    # 2-decimal invariant), and capped — a member must not be able to
+    # self-declare an unbounded amount against a plan. The cap is the
+    # chosen plan's price (the claim is for one period of that plan),
+    # else the member's current plan price, else ₹1,00,000.
     custom_amount = data.get("custom_amount")
     try:
-        custom_amount = float(custom_amount) if custom_amount else None
+        custom_amount = (
+            Decimal(str(custom_amount).strip())
+            if custom_amount is not None and str(custom_amount).strip() != ""
+            else None
+        )
         if custom_amount is not None and custom_amount <= 0:
             custom_amount = None
-    except (TypeError, ValueError):
+    except (InvalidOperation, TypeError, AttributeError):
         custom_amount = None
-    
+
     plan = None
     plan_id = data.get("plan_id")
     if plan_id:
@@ -1066,7 +1095,22 @@ def member_renew_with_plan():
                 "success": False,
                 "error": {"code": "NOT_FOUND", "message": "That plan is not available."},
             }), 404
-    
+
+    if custom_amount is not None:
+        _cap = (
+            plan.price
+            if plan is not None
+            else (member.plan.price if member.plan else Decimal("100000.00"))
+        )
+        if custom_amount > _cap:
+            return jsonify({
+                "success": False,
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": f"Custom amount cannot exceed the plan price (₹{_cap}).",
+                },
+            }), 422
+
     if plan is None and custom_amount is None:
         return jsonify({
             "success": False,
@@ -1085,13 +1129,22 @@ def member_renew_with_plan():
             "data": {"payment_id": existing.id},
         })
 
-    amount = custom_amount if custom_amount else plan.price
+    amount = custom_amount if custom_amount is not None else plan.price
     plan_name = plan.name if plan else "Custom amount"
     renewal_days = plan.duration_days if plan else 30
+    # V6-L7: the claim carries its plan linkage so staff can reconcile
+    # it — plan_id, standard_price, discount and paid_on=today — instead
+    # of a bare amount the verify path cannot tie to any plan.
+    standard_price = plan.price if plan else amount
+    discount = standard_price - amount if standard_price > amount else Decimal("0.00")
     payment = PaymentVerification(
         gym_id=member.gym_id,
         member_id=member.id,
+        plan_id=plan.id if plan else None,
+        standard_price=standard_price,
+        discount=discount,
         amount=amount,
+        paid_on=today_for_gym(member.gym.timezone if member.gym else "Asia/Kolkata"),
         method="member_request",
         notes=f"Self-service renewal request from {member.full_name} (plan: {plan_name}, amount: {amount})",
         status="pending",
@@ -1104,7 +1157,7 @@ def member_renew_with_plan():
         resource_id=payment.id,
         gym_id=member.gym_id,
         actor_id=None,
-        metadata={"member_id": member.id, "plan_id": plan.id if plan else None, "custom_amount": custom_amount},
+        metadata={"member_id": member.id, "plan_id": plan.id if plan else None, "custom_amount": str(custom_amount) if custom_amount is not None else None},
     )
     db.session.commit()
 
@@ -1291,6 +1344,18 @@ def confirm_upi_payment():
         })
 
     if client_ref:
+        # V5-L1: a member-supplied UTR that collides with an
+        # already-verified one must be rejected here — otherwise the
+        # reference is overwritten, the payment can never verify, and
+        # the only fix is delete + recreate.
+        from app.services.payment_service import verified_payment_with_reference
+
+        _clash = verified_payment_with_reference(g.gym_id, client_ref)
+        if _clash is not None and _clash.id != payment.id:
+            return jsonify({
+                "success": False,
+                "error": "A verified payment with this reference already exists.",
+            }), 409
         payment.reference = client_ref
 
     # Check verification mode:
@@ -1313,7 +1378,12 @@ def confirm_upi_payment():
 
     if is_testing or is_gateway_verified:
         from app.services.payment_service import verify_payment
-        renewal_days = payment.renewal_days or 30
+
+        # V6-L21: fall back to the member's plan duration, like the
+        # other two verify callers — not a hardcoded 30 days.
+        renewal_days = payment.renewal_days or (
+            payment.member.plan.duration_days if payment.member.plan else 30
+        )
         try:
             verify_payment(payment, verified_by_id=None, renewal_days=renewal_days)
             db.session.commit()

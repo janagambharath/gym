@@ -62,6 +62,10 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     status = db.Column(db.String(32), nullable=False, default="pending", index=True)
     renewal_days = db.Column(db.Integer, nullable=False, default=30)
     notes = db.Column(db.Text, nullable=True)
+    # V5-L16/V5-L17: owner-approved extra-days override reason, carried
+    # from create time through verify time so verify_payment can honour
+    # an override the owner already granted at creation.
+    override_reason = db.Column(db.String(500), nullable=True)
     verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     # V3-L2: refund audit trail — verified_at/verified_by_id are immutable
     # once set; a refund records its own time/actor here instead of

@@ -277,19 +277,44 @@ def _m20_fixture(seed_gym):
         new_end=today + timedelta(days=45), amount=1000, standard_price=1000,
         payment_id=paid_signup.id, is_creation=True,
     )
+    # V5-M1: the signup member has since RENEWED — their current
+    # membership_start moved to the new period (today+46). The old
+    # v4m20 repair anchored on that current start, so it un-flags
+    # this genuine signup too: the live regression. The renewal row
+    # below is a direct renewal (no backing payment) so it never
+    # touches the payment-backed headline.
+    signup.membership_start = today + timedelta(days=46)
+    signup.membership_end = today + timedelta(days=75)
+    db.session.commit()
+    _history(
+        gym.id, signup.id, plan_id,
+        previous_start=today - timedelta(days=5),
+        previous_end=today + timedelta(days=45), new_start=today + timedelta(days=46),
+        new_end=today + timedelta(days=75), amount=1000, standard_price=1000,
+        is_creation=False,
+    )
     return gym, misflagged, genuine
 
 
 def test_m20_repair_unflags_genuine_first_renewal(seed_gym):
     gym, misflagged, genuine = _m20_fixture(seed_gym)
     result = _v4m20._repair_is_creation_backfill(db.session.connection())
-    assert result["misflagged"] == 1
-    assert result["unflagged"] == 1
+    # V5-M1: the old repair over-corrects — with the genuine signup's
+    # member renewed, BOTH rows satisfy its predicate (paid_on != the
+    # member's CURRENT membership_start). The imported renewal is
+    # correctly un-flagged; the genuine signup is wrongly un-flagged
+    # too. The flag corruption is the durable defect (flag-first
+    # consumers trust it); the live overcount came from the OLD
+    # runtime heuristic using the same current-start anchor — with
+    # the fixed runtime (paid_on vs the row's own new_start) the row
+    # is still excluded here, so payment_backed stays 1000. The
+    # corrected v5v6 repair (tests/test_v5v6_money_backend) re-flags
+    # the signup.
+    assert result["misflagged"] == 2
+    assert result["unflagged"] == 2
     db.session.expire_all()
     assert db.session.get(RenewalHistory, misflagged.id).is_creation is False
-    assert db.session.get(RenewalHistory, genuine.id).is_creation is True
-    # And the recovery now counts: the genuine renewal is no longer
-    # excluded as a signup.
+    assert db.session.get(RenewalHistory, genuine.id).is_creation is False
     recovered = revenue_recovered(gym.id, gym.timezone)
     assert recovered["payment_backed_amount"] == "1000.00"
 
@@ -297,7 +322,7 @@ def test_m20_repair_unflags_genuine_first_renewal(seed_gym):
 def test_m20_repair_is_idempotent(seed_gym):
     _m20_fixture(seed_gym)
     first = _v4m20._repair_is_creation_backfill(db.session.connection())
-    assert first["unflagged"] == 1
+    assert first["unflagged"] == 2
     second = _v4m20._repair_is_creation_backfill(db.session.connection())
     assert second["misflagged"] == 0
     assert second["unflagged"] == 0

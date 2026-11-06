@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from flask import g, jsonify, request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
+from app.models import MobileIdempotencyKey
 from app.models.campaign import Campaign, CampaignRecipient, SEGMENT_TYPES
 from app.services.campaign_service import (
     check_cooldown_recipients,
@@ -17,6 +19,7 @@ from app.services.campaign_service import (
     send_campaign,
     validate_imported_contacts,
 )
+from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
 
 
 def _serialize_campaign(c: Campaign) -> dict:
@@ -135,6 +138,32 @@ def register_campaign_routes(bp):
     def create_campaign_endpoint():
         data = request.get_json(silent=True) or {}
 
+        # V6-M16: campaign create -> send has no idempotency — a retry
+        # after a send failure created a SECOND campaign over the same
+        # segment and double-messaged members. A stable Idempotency-Key
+        # replays the first campaign instead of creating a duplicate
+        # (same mechanism as create_payment / direct_renewal).
+        idempotency_key = valid_key(request.headers.get("Idempotency-Key"))
+        if idempotency_key == "":
+            return error_response("VALIDATION_ERROR", "Idempotency-Key is too long.", 400)
+        request_hash = request_fingerprint(data)
+        if idempotency_key:
+            existing, matches_request = find_replay(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_campaign",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if existing:
+                if not matches_request:
+                    return error_response(
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "This idempotency key was already used for a different campaign request.",
+                        409,
+                    )
+                return jsonify(existing.response_body), existing.status_code
+
         name = (data.get("name") or "").strip()
         campaign_type = (data.get("campaign_type") or "recovery").strip()
         promo_preset = (data.get("promo_preset") or "").strip() or None
@@ -166,9 +195,44 @@ def register_campaign_routes(bp):
             exclude_recent=exclude_recent,
             gym_timezone=gym_timezone,
         )
-        db.session.commit()
+        response_body = {"success": True, "data": _serialize_campaign(campaign)}
+        if idempotency_key:
+            db.session.add(
+                MobileIdempotencyKey(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="create_campaign",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                    status_code=201,
+                    response_body=response_body,
+                )
+            )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            # A concurrent create with the same key won the race —
+            # replay its stored campaign instead of a duplicate.
+            db.session.rollback()
+            if idempotency_key:
+                existing, matches_request = find_replay(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="create_campaign",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if existing:
+                    if not matches_request:
+                        return error_response(
+                            "IDEMPOTENCY_KEY_REUSED",
+                            "This idempotency key was already used for a different campaign request.",
+                            409,
+                        )
+                    return jsonify(existing.response_body), existing.status_code
+            raise
 
-        return jsonify({"success": True, "data": _serialize_campaign(campaign)}), 201
+        return jsonify(response_body), 201
 
     @bp.route("/campaigns/<int:campaign_id>/send", methods=["POST"])
     @token_required

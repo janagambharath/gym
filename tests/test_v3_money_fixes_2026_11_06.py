@@ -146,11 +146,15 @@ def test_recovery_rate_headline_is_payment_backed_only(seed_gym):
     result = recovery_rate(gym.id, gym.timezone)
     assert result["revenue_recovered"] == "800.00"
     assert result["recorded_amount"] == "1300.00"
-    # V4-M2: the denominator is outstanding risk + PAID expected value
-    # only (1000 here) — the ₹500 direct renewal no longer counts as
-    # unrecovered risk, so the rate is 800/1000 = 80.0, not 800/2000.
-    assert result["recovery_denominator"] == "1000.00"
-    assert result["recovery_rate"] == "80.0"
+    # V5-L5 (supersedes V4-M2's denominator): the denominator is
+    # outstanding risk + the ACTUAL amount collected on paid renewals
+    # (800) — not the standard-price expected value (1000). The paid
+    # renewal was discounted (800 of 1000), so the rate is 800/800 =
+    # 100.0. The direct renewal still counts as neither recovered
+    # nor unrecovered risk.
+    assert result["recovery_denominator"] == "800.00"
+    assert result["recovery_rate"] == "100.0"
+    assert result["risk_breakdown"]["renewed_cohort_expected"] == "1000.00"
     assert result["recovered_breakdown"]["payment_backed_amount"] == "800.00"
     assert result["recovered_breakdown"]["direct_amount"] == "500.00"
 

@@ -212,10 +212,15 @@ def _row_is_creation(row, first_ids: set) -> bool:
     2. The legacy heuristic — the member's first ledger row with
        ``previous_end == new_start`` — but only when the backing
        payment cannot prove otherwise: a creation row's backing payment
-       has ``paid_on == membership_start`` (create_member writes exactly
-       that), while a genuine first renewal of an imported member is
-       backed by a payment dated after the member's start. When the
-       payment dates are absent (legacy/test rows) the heuristic stands.
+       has ``paid_on == new_start`` — the row's OWN start (create_member
+       writes exactly that) — while a genuine first renewal of an
+       imported member is backed by a payment dated after the row's
+       start. V5-M2: the old code compared ``paid_on`` to the member's
+       *current* ``membership_start``, which moves to the new period on
+       every renewal, so a renewed member's genuine signup read as a
+       recovery. The anchor is the row, never the member's live dates.
+       When the payment dates are absent (legacy/test rows) the
+       heuristic stands.
     3. (V4-L5) The create_member-era shape: create_member also writes
        ``previous_start == new_start`` (the pre-signup state). A
        genuine first renewal carries ``previous_start`` = the member's
@@ -242,10 +247,11 @@ def _row_is_creation(row, first_ids: set) -> bool:
     if previous_start is not None and previous_start != row.new_start:
         return False
     paid_on = getattr(row, "paid_on", None)
-    member_start = getattr(row, "membership_start", None)
-    if paid_on is None or member_start is None:
+    if paid_on is None:
         return True
-    return paid_on == member_start
+    # V5-M2: compare to the ROW's own new_start, not the member's
+    # current membership_start (which moves on every renewal).
+    return paid_on == row.new_start
 
 
 def _creation_row_ids(gym_id: int) -> set:
@@ -260,7 +266,10 @@ def _creation_row_ids(gym_id: int) -> set:
     dashboard call. The SQL predicate mirrors ``_row_is_creation``
     exactly: flag first, else first row + ``previous_end == new_start``
     + (``previous_start`` NULL or ``== new_start``) + (``paid_on``
-    NULL or ``membership_start`` NULL or ``paid_on == membership_start``).
+    NULL or ``paid_on ==`` the row's own ``new_start``). V5-M2: the
+    old SQL compared ``paid_on`` to ``Member.membership_start`` — the
+    member's current start, which moves on every renewal — so the
+    Member join is gone and the anchor is the row itself.
     """
     first_ids_sq = (
         db.session.query(func.min(RenewalHistory.id).label("first_id"))
@@ -274,7 +283,6 @@ def _creation_row_ids(gym_id: int) -> set:
             PaymentVerification,
             PaymentVerification.id == RenewalHistory.payment_verification_id,
         )
-        .join(Member, Member.id == RenewalHistory.member_id)
         .filter(
             RenewalHistory.gym_id == gym_id,
             RenewalHistory.id.in_(
@@ -291,8 +299,7 @@ def _creation_row_ids(gym_id: int) -> set:
                     ),
                     or_(
                         PaymentVerification.paid_on.is_(None),
-                        Member.membership_start.is_(None),
-                        PaymentVerification.paid_on == Member.membership_start,
+                        PaymentVerification.paid_on == RenewalHistory.new_start,
                     ),
                 ),
             ),
@@ -313,8 +320,8 @@ def _exclude_creation_rows(gym_id: int, rows: list) -> list:
     first ledger row AND ``previous_end == new_start`` — is a signup, not
     a recovery. Rows carrying the explicit ``is_creation`` flag (V3-M5)
     are dropped outright; for unflagged rows the heuristic additionally
-    requires the backing payment's ``paid_on`` to equal the member's
-    start (see ``_row_is_creation``) so a backdated first renewal of an
+    requires the backing payment's ``paid_on`` to equal the row's own
+    ``new_start`` (see ``_row_is_creation``) so a backdated first renewal of an
     imported member is no longer mis-excluded.
     """
     if not rows:
@@ -338,9 +345,10 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
 
     The cohort includes expiries from the prior 30 days and upcoming expiries
     in the next 7 days. The denominator combines currently outstanding risk
-    with the standard value of renewals already recorded for that same cohort;
-    the numerator includes only those matched renewals. This avoids dividing
-    all recent renewals by a current-risk snapshot from a different period.
+    with the actual amount collected on renewals already recorded for that
+    same cohort; the numerator includes only those matched renewals. This
+    avoids dividing all recent renewals by a current-risk snapshot from a
+    different period.
 
     Money truth (C1 / B-H3, V3-H2): signup creation rows are excluded from
     the cohort entirely — a new signup is not a recovered renewal — and
@@ -353,16 +361,14 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     number the dashboard and reports return); the rate's denominator is
     exposed separately as ``recovery_denominator``.
 
-    V4-M2: the denominator is outstanding risk + the expected value
-    of PAID renewals only. Direct renewals used to sit in the
-    denominator as unrecovered risk, so a gym that renewed its whole
-    cohort directly scored 0% despite 100% renewal. The rate is
-    labelled payment-backed-only (``recovery_rate_basis``); direct
-    expected value is still exposed in the breakdown so the excluded
-    amount stays visible. Degenerate case: with no outstanding risk
-    and no paid renewals the denominator is 0 and the rate is 0.0
-    by convention — a direct-only gym has no payment-backed recovery
-    to measure, it is not a 0% failure.
+    V5-L5: numerator and denominator use ACTUAL amounts on the
+    recovered side. The denominator is outstanding expected value
+    (pinned prices — the unrenewed have no actual yet) + the actual
+    amount collected on paid renewals, and the numerator is that same
+    actual collected amount. The old denominator used
+    ``paid_expected`` (standard price), so a cohort renewed entirely
+    at a discount scored <100% despite 100% recovery. ``paid_expected``
+    is still exposed in the breakdown for reconciliation.
     """
     today = today_for_gym(gym_timezone)
     cohort_start = today - timedelta(days=30)
@@ -406,11 +412,14 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     campaign_rows = [row for row in recovery_rows if row.campaign_id is not None]
     paid_amount = sum((Decimal(str(row.amount or 0)) for row in paid_rows), Decimal("0.00"))
     # V4-M2: denominator counts PAID expected value only — direct
-    # renewals are renewals, not unrecovered risk.
+    # renewals are renewals, not unrecovered risk. V5-L5: the
+    # denominator's recovered leg uses the ACTUAL collected amount
+    # (same as the numerator), not the standard-price expected value,
+    # so a fully-renewed-but-discounted cohort scores 100%.
     paid_expected = sum((Decimal(str(row.expected_value or 0)) for row in paid_rows), Decimal("0.00"))
     direct_expected = cohort_expected - paid_expected
 
-    risk_total = Decimal(risk["total"]) + paid_expected
+    risk_total = Decimal(risk["total"]) + paid_amount
 
     if risk_total > 0:
         rate = (paid_amount / risk_total * 100).quantize(Decimal("0.1"))
@@ -423,7 +432,7 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         "revenue_recovered": str(paid_amount),
         "recorded_amount": str(cohort_actual),
         "recovery_rate": str(rate),
-        "recovery_rate_basis": "payment-backed only — direct renewals excluded from numerator and denominator",
+        "recovery_rate_basis": "payment-backed only — direct renewals excluded from numerator and denominator; actual collected amounts on both sides, so discounted renewals count at what was collected",
         "risk_breakdown": {**risk, "renewed_cohort_expected": str(paid_expected), "renewed_cohort_expected_all": str(cohort_expected), "direct_cohort_expected": str(direct_expected)},
         "recovered_breakdown": {
             "total_renewals": len(recovery_rows),

@@ -402,10 +402,12 @@ def test_m12_oversized_with_scheduled_row_converges(client, seed_gym):
     # V4-M12: the stored start tracked row 3's old start, not the
     # latest (scheduled) row's — it must still move with the ledger.
     assert m.membership_start == rows[2].new_start
-    # The scheduled row shifts with the chain but stays pending, and
-    # its previous_end still matches the member's end so it can
-    # activate later.
-    assert rows[3].new_start == fourth_start - timedelta(days=2)
+    # V5-L14: the scheduled row keeps its PAID dates — its new_start /
+    # new_end are not shifted earlier (a large shift could cross today
+    # and activate the "future" renewal early). Only its previous_end
+    # re-chains to the corrected end, so it can still activate later.
+    assert rows[3].new_start == fourth_start
+    assert rows[3].new_end == fourth_end
     assert rows[3].new_start > today
     assert rows[3].previous_end == proposed
     assert _scan(client, seed_gym) == []

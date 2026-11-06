@@ -25,6 +25,7 @@
 
     <form method="post" id="bulk-renew-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="bulk_renew_token" value="{{ bulk_renew_token }}">
         <div class="row g-3 mb-3">
             <div class="col-md-3">
                 <label class="form-label" for="renewal_days">Renewal days</label>

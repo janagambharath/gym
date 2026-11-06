@@ -377,8 +377,102 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
         existing = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
         if existing is not None:
             return existing, False
+        # V5-L13: the winner may hold the same punch under a different
+        # key spelling (direction present vs absent — the V4-L13 pair) —
+        # the loser's exact key then finds nothing and the old code
+        # re-raised, 500ing the whole ATTLOG batch. Probe the legacy
+        # keys too before giving up.
+        for legacy_key in _legacy_dedupe_keys(
+            device_serial, biometric_user_id, punch_time, direction=direction
+        ):
+            if legacy_key == key:
+                continue
+            existing = RRRAttendanceEvent.query.filter_by(
+                gym_id=gym_id, dedupe_key=legacy_key
+            ).first()
+            if existing is not None:
+                return existing, False
         raise
     return event, True
+
+
+def _backfill_bridge_punch(event: RRRAttendanceEvent, member: Member) -> None:
+    """Give a non-ADMS punch its feed identity after a late link (V6-M13).
+
+    Bridge/eBioServer punches project into ``AccessEvent`` at ingest
+    from ``BridgeAttendance`` with ``member_id=None``; the RRR row is
+    the only thing ``remap_unresolved`` used to update, so a bridge
+    punch linked later stayed "Unknown" in Live Access forever and
+    never flipped the member INSIDE. Update the matching
+    ``BridgeAttendance.member_id`` and its projected ``AccessEvent``
+    (identity + INSIDE state), mirroring the existing-branch handling
+    in ``process_rrr_attendance_to_access_event``.
+    """
+    from app.models.bridge import BridgeAttendance
+    from app.services.access_event_service import (
+        _update_member_access_state,
+        process_attendance_to_access_event,
+    )
+
+    bridge_row = None
+    if event.external_event_id:
+        bridge_row = BridgeAttendance.query.filter_by(
+            gym_id=event.gym_id, event_id=event.external_event_id
+        ).first()
+    if bridge_row is None:
+        return
+    bridge_row.member_id = member.id
+    db.session.flush()
+    existing = AccessEvent.query.filter_by(
+        gym_id=event.gym_id, source_event_id=bridge_row.event_id
+    ).first()
+    if existing is None:
+        # Projection failed or never ran at ingest — project now that
+        # the member is known.
+        process_attendance_to_access_event(bridge_row)
+        return
+    existing.member_id = member.id
+    existing.member_name = member.full_name
+    existing.membership_status = member.status
+    if existing.event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
+        _update_member_access_state(
+            gym_id=event.gym_id,
+            member_id=member.id,
+            access_event=existing,
+            event_type="ENTRY" if existing.event_type == "ATTENDANCE" else existing.event_type,
+        )
+
+
+def backfill_unmapped_punches(gym_id: int, external_id: str, member: Member) -> int:
+    """Attribute every unmapped punch for *external_id* to *member*.
+
+    Shared by ``remap_unresolved`` and the two direct link paths that
+    used to bypass it (V6-M12: bridge enroll confirm, mobile enroll
+    endpoint). ADMS rows project via
+    ``process_rrr_attendance_to_access_event``; bridge/eBioServer rows
+    also get their ``BridgeAttendance`` + ``AccessEvent`` identity
+    backfilled (V6-M13). Returns the number of RRR rows attributed.
+    """
+    from app.services.access_event_service import process_rrr_attendance_to_access_event
+
+    candidates = RRRAttendanceEvent.query.filter(
+        RRRAttendanceEvent.gym_id == gym_id,
+        RRRAttendanceEvent.processing_status == "unmapped",
+        RRRAttendanceEvent.biometric_user_id.like(f"%{external_id}"),
+    ).all()
+    events = [
+        event
+        for event in candidates
+        if _canonical_or_raw(event.biometric_user_id) == external_id
+    ]
+    for event in events:
+        event.member_id = member.id
+        event.processing_status = "processed"
+        if event.source == "adms_direct":
+            process_rrr_attendance_to_access_event(event)
+        else:
+            _backfill_bridge_punch(event, member)
+    return len(events)
 
 
 def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int | None,
@@ -512,23 +606,10 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     # The LIKE pre-filter bounds the scan to IDs ending in these digits
     # (external_id is canonical digits-only here); the Python filter
     # then keeps only true canonical matches ("142" is not "42").
-    candidates = RRRAttendanceEvent.query.filter(
-        RRRAttendanceEvent.gym_id == gym_id,
-        RRRAttendanceEvent.processing_status == "unmapped",
-        RRRAttendanceEvent.biometric_user_id.like(f"%{external_id}"),
-    ).all()
-    events = [
-        event
-        for event in candidates
-        if _canonical_or_raw(event.biometric_user_id) == external_id
-    ]
-    for event in events:
-        event.member_id = member.id
-        event.processing_status = "processed"
-        if event.source == "adms_direct":
-            from app.services.access_event_service import process_rrr_attendance_to_access_event
-
-            process_rrr_attendance_to_access_event(event)
+    # V6-M12/M13: the shared helper also backfills bridge/eBioServer
+    # rows' BridgeAttendance + AccessEvent identity, not just the RRR
+    # row (ADMS-only backfill left bridge punches "Unknown" forever).
+    backfilled = backfill_unmapped_punches(gym_id, external_id, member)
     # Only queue a terminal command when the desired state differs from what
     # the terminal already has. For active members the terminal already has
     # them (they were just enrolled/linked) — queuing a redundant "enable"
@@ -537,7 +618,7 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     from app.services.bridge_service import desired_command_type
     if queue_command and desired_command_type(member) != "enable_user":
         queue_membership_command(member)
-    return len(events)
+    return backfilled
 
 
 def _upsert_opportunity(*, gym_id: int, member: Member, pillar: str, reason_code: str,

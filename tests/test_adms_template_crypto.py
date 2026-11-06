@@ -54,9 +54,7 @@ def test_template_crypto_wrong_key_raises(app):
         app.config["TEMPLATE_ENCRYPTION_KEY"] = ""
 
 
-def test_userinfo_capture_encrypts_and_restore_decrypts(client, seed_gym, seed_member):
-    from app.services.bridge_service import _queue_template_restore_commands
-
+def test_userinfo_capture_encrypts_templates_at_rest(client, seed_gym, seed_member):
     integration = _integration(seed_gym)
     seed_member.device_enroll_number = "7"
     db.session.commit()
@@ -78,10 +76,17 @@ def test_userinfo_capture_encrypts_and_restore_decrypts(client, seed_gym, seed_m
     assert is_encrypted(row.template_data)
     assert row.template_data != "QUJDREVGRw=="
 
-    # Restore path decrypts: the terminal receives plaintext TMP.
-    _queue_template_restore_commands(seed_member, integration, "7")
+    # V6-L9: _queue_template_restore_commands was DELETED (dead code — no
+    # production path ever queued a restore, so its presence implied a
+    # restore happens on unblock/re-enroll when none does). No restore
+    # command may appear: an unblock for this member queues only the
+    # unblock itself, never a restore_template row.
+    import app.services.bridge_service as bridge_service
+
+    assert not hasattr(bridge_service, "_queue_template_restore_commands")
+    from app.services.bridge_service import queue_manual_adms_member_command
+
+    queue_manual_adms_member_command(seed_member, "unblock", None)
     db.session.commit()
-    restore = RRRAdmsCommand.query.filter_by(
-        integration_id=integration.id, action="restore_template").one()
-    assert "TMP=QUJDREVGRw==" in restore.command_text
-    assert "Size=7" in restore.command_text  # base64 of 7-byte "ABCDEFG"
+    assert RRRAdmsCommand.query.filter_by(
+        integration_id=integration.id, action="restore_template").count() == 0

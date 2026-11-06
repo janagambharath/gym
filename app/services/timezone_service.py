@@ -1,8 +1,29 @@
 """Timezone helpers for gym-local calendar business rules."""
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timezone as tz
 import zoneinfo
+
+
+_logger = logging.getLogger(__name__)
+
+
+def is_valid_timezone(value) -> bool:
+    """True when *value* is a real IANA timezone name (V5-L19).
+
+    The backend equivalent of the Android-side rejection: every
+    write path that stores a gym timezone must validate with this
+    before persisting, so a typo can never silently shift every
+    tz-sensitive rule to the fallback.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        zoneinfo.ZoneInfo(value.strip())
+    except Exception:
+        return False
+    return True
 
 
 def _zone_for_gym(gym_timezone: str | None) -> zoneinfo.ZoneInfo:
@@ -10,6 +31,17 @@ def _zone_for_gym(gym_timezone: str | None) -> zoneinfo.ZoneInfo:
     try:
         return zoneinfo.ZoneInfo(gym_timezone or "Asia/Kolkata")
     except Exception:
+        # V5-L19: never swallow this silently. A typo'd gym.timezone
+        # used to shift today_for_gym by hours with no trace, moving
+        # scheduled-renewal activation, auto-expiry, and every Date
+        # Repair comparison. Log loudly so the bad stored value gets
+        # fixed instead of silently mis-driving the gym.
+        _logger.error(
+            "Invalid gym timezone %r — falling back to Asia/Kolkata. "
+            "Fix the stored gym timezone; every gym-local date rule "
+            "is currently running on the fallback.",
+            gym_timezone,
+        )
         return zoneinfo.ZoneInfo("Asia/Kolkata")
 
 

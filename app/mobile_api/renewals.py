@@ -241,6 +241,18 @@ def register_renewals_routes(bp):
         else:
             discount = Decimal("0.00")
 
+        # V6-L2: same range check as create_payment — a negative
+        # discount or a discount above standard_price makes the stored
+        # (standard, discount, amount) triple arithmetically
+        # impossible, and a negative standard_price shrinks
+        # recovery_rate's expected-value denominator.
+        if standard_price is not None and standard_price < 0:
+            return error_response("VALIDATION_ERROR", "standard_price cannot be negative.", 400)
+        if discount < 0:
+            return error_response("VALIDATION_ERROR", "discount cannot be negative.", 400)
+        if standard_price is not None and discount > standard_price:
+            return error_response("VALIDATION_ERROR", "discount cannot exceed standard_price.", 400)
+
         channel = str(data.get("channel", "offline")).strip().lower()
         # B-L1: channel is an enum, not free text — a typo would land in
         # reports as an unknown channel. (Payments validate the same set.)
@@ -296,19 +308,22 @@ def register_renewals_routes(bp):
 
         scheduled = new_start > today
         target_plan_id = plan.id if plan else member.plan_id
-        if scheduled:
-            # V3-M16: same live-scheduled check as verify_payment —
-            # stale rows that can never activate do not block.
-            from app.services.payment_service import active_scheduled_renewals
+        # V6-M3: the live-scheduled check is NOT gated on this renewal
+        # being scheduled. When the current period already expired and
+        # a live scheduled renewal waits in the future, an immediate
+        # renewal used to rewrite membership_end and orphan the paid
+        # future period. Bulk renew checks unconditionally — direct
+        # renew must too.
+        from app.services.payment_service import active_scheduled_renewals
 
-            if active_scheduled_renewals(member, today):
-                db.session.rollback()
-                return error_response(
-                    "CONFLICT",
-                    "This member already has a future renewal scheduled.",
-                    409,
-                )
-        else:
+        if active_scheduled_renewals(member, today):
+            db.session.rollback()
+            return error_response(
+                "CONFLICT",
+                "This member already has a future renewal scheduled.",
+                409,
+            )
+        if not scheduled:
             member.membership_start = new_start
             member.membership_end = new_end
             # M3: a paused member stays paused through a renewal — only
@@ -341,6 +356,9 @@ def register_renewals_routes(bp):
             amount=amount,
             channel=channel,
             notes=notes or f"Renewed for {renewal_days} days via mobile.",
+            # V5-L16: carry the owner-approved override onto the row so
+            # Date Repair skips it instead of stripping approved days.
+            override_reason=_override_reason,
         )
         db.session.add(renewal)
         db.session.flush()
@@ -413,3 +431,43 @@ def register_renewals_routes(bp):
             raise
 
         return jsonify(response_body), 201
+
+    @bp.route("/renewals/scheduled/<int:renewal_id>/activate", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def force_activate_scheduled_renewal_endpoint(renewal_id: int):
+        """Manually activate one due scheduled renewal (V6-L20).
+
+        The scheduler and CLI are the only automatic callers of
+        ``apply_due_scheduled_renewals``; when a window was missed
+        (gym suspended, outage) the row otherwise just dies via the
+        V5-M10 expired drop. This is the owner's lever to activate it
+        — including a row whose end already passed, which lands the
+        member ``expired`` with the paid period on record instead of
+        leaving the money with no service. Audited.
+        """
+        from app.services.payment_service import force_activate_scheduled_renewal
+
+        renewal = RenewalHistory.query.filter_by(id=renewal_id, gym_id=g.gym_id).first()
+        if renewal is None:
+            return error_response("NOT_FOUND", "Scheduled renewal not found.", 404)
+        try:
+            outcome = force_activate_scheduled_renewal(
+                renewal, actor_id=g.current_user.id
+            )
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            return error_response("CONFLICT", str(exc), 409)
+        return jsonify(
+            {
+                "success": True,
+                "data": {
+                    "renewal_id": renewal.id,
+                    "member_id": renewal.member_id,
+                    "outcome": outcome,
+                    "new_start": renewal.new_start.isoformat() if renewal.new_start else None,
+                    "new_end": renewal.new_end.isoformat() if renewal.new_end else None,
+                },
+            }
+        )

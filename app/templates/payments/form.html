@@ -5,6 +5,7 @@
 <div class="panel narrow-panel">
     <form method="post" novalidate>
         {{ form.hidden_tag() }}
+        <input type="hidden" name="idempotency_token" value="{{ idempotency_token }}">
         {% include "partials/form_errors.html" %}
         <div class="row g-3">
             <div class="col-md-12">{{ form.member_id.label(class="form-label") }}{{ form.member_id(class="form-select") }}</div>
@@ -13,6 +14,7 @@
             <div class="col-md-6">{{ form.method.label(class="form-label") }}{{ form.method(class="form-select") }}</div>
             <div class="col-md-6">{{ form.reference.label(class="form-label") }}{{ form.reference(class="form-control") }}</div>
             <div class="col-md-6">{{ form.renewal_days.label(class="form-label") }}{{ form.renewal_days(class="form-control") }}</div>
+            <div class="col-12">{{ form.override_reason.label(class="form-label") }}{{ form.override_reason(class="form-control", placeholder="Owner only — required when renewal days differ from the plan duration") }}</div>
             <div class="col-12">{{ form.notes.label(class="form-label") }}{{ form.notes(class="form-control", rows="4") }}</div>
         </div>
         <div class="d-flex justify-content-between mt-4">

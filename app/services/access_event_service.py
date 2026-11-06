@@ -181,6 +181,52 @@ def _rrr_entry_rows_query(gym_id: int):
     )
 
 
+def _rrr_exit_rows_query(gym_id: int):
+    """RRR rows that belong in the Live Access unprojected-exit backfill
+    (V5-L12): direct-ADMS punches in an exit direction (att-states
+    1/2/5). Mirrors :func:`_rrr_entry_rows_query` — entries got an
+    unprojected backfill leg, exits had none, so a projection failure
+    left an ADMS exit invisible in the feed and in ``exits_today``.
+    """
+    from app.models.rrr import RRRAttendanceEvent
+
+    return RRRAttendanceEvent.query.filter(
+        RRRAttendanceEvent.gym_id == gym_id,
+        RRRAttendanceEvent.source == "adms_direct",
+        RRRAttendanceEvent.direction.in_(["1", "2", "5"]),
+    )
+
+
+def _serialize_rrr_event(evt) -> dict:
+    """Serialize one unprojected RRR row for the feed (V5-L28).
+
+    Sends the REAL event type + direction (classified from the stored
+    att-state) instead of hardcoding ``"ENTRY"`` with no direction:
+    the old shape rendered every unprojected punch as an ENTRY twin of
+    its projected AccessEvent row, and the client dedupe key
+    (device:member:timestamp:event_type:direction) split the twins
+    instead of collapsing them.
+    """
+    try:
+        att_state = int(evt.direction) if evt.direction is not None else None
+    except (TypeError, ValueError):
+        att_state = None
+    event_type, direction = _classify_event(att_state, is_invalid=False)
+    member = _live_member(evt.member)
+    return {
+        "id": f"adms-{evt.id}",
+        "event_type": event_type,
+        "direction": direction,
+        "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
+        "member_id": member.id if member else None,
+        "member_name": member.full_name if member else f"User {evt.biometric_user_id}",
+        "biometric_user_id": evt.biometric_user_id,
+        "device_name": evt.device_serial,
+        "verify_method": evt.verify_method,
+        "source": "adms_direct",
+    }
+
+
 def process_attendance_to_access_event(
     attendance: BridgeAttendance,
 ) -> AccessEvent | None:
@@ -402,6 +448,15 @@ def _update_member_access_state(
         # This event is older than the current state — don't update state
         return
 
+    # V6-L14: same-second entry+exit is order-dependent — whichever
+    # event is processed last wins the state. Let EXIT win: an ENTRY
+    # at the same timestamp as the recorded event must not flip a
+    # member back INSIDE after an EXIT at that second, and an ENTRY
+    # re-delivered at the same second changes nothing anyway.
+    if prev_time is not None and curr_time is not None and prev_time == curr_time:
+        if event_type != "EXIT":
+            return
+
     # Update state
     if event_type == "ENTRY":
         state.current_state = "INSIDE"
@@ -488,6 +543,14 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
         RRRAttendanceEvent.punch_time >= day_start_utc,
     ).filter(~_unprojected_rrr_exists(gym_id)).count()
     entries_today = entries_today + adms_entries_today
+
+    # V5-L12: same unprojected backfill for exits — an ADMS exit whose
+    # projection failed must still count, or the member reads as
+    # INSIDE with zero exits until the nightly auto-reset.
+    adms_exits_today = _rrr_exit_rows_query(gym_id).filter(
+        RRRAttendanceEvent.punch_time >= day_start_utc,
+    ).filter(~_unprojected_rrr_exists(gym_id)).count()
+    exits_today = exits_today + adms_exits_today
 
     # Last event time — check both tables
     last_adms_event = (
@@ -625,61 +688,58 @@ def get_access_events(
 
     adms_events: list[dict] = []
     adms_total = 0
-    # ADMS punches have no exit/denied direction (entry-only feed).
-    if event_type not in ("exit", "denied"):
-        # V4-M22: the RRR leg is ADMS-direct entry rows only — bridge /
-        # eBioServer rows already appear via the AccessEvent leg, and
-        # exit-direction rows are not entries.
-        adms_query = _rrr_entry_rows_query(gym_id)
-        if adms_since is not None:
-            adms_query = adms_query.filter(
-                RRRAttendanceEvent.punch_time >= adms_since
-            )
-        if search and search.strip():
-            term = f"%{search.strip()}%"
-            adms_query = adms_query.outerjoin(
-                Member, RRRAttendanceEvent.member_id == Member.id
-            ).filter(
-                or_(
-                    Member.full_name.ilike(term),
-                    RRRAttendanceEvent.biometric_user_id.ilike(term),
-                )
-            )
-        # Total = ADMS rows in the window that have NO AccessEvent
-        # projection. A correlated EXISTS on source_event_id keeps the
-        # count exact under every filter (date/search/type) — counting
-        # projected rows separately would drift whenever the two legs'
-        # search predicates differ (name vs name-or-biometric-ID).
-        # V3-M11: the same NOT EXISTS filter applies to the ROWS query,
-        # not just the count. The old code fetched the most recent 500
-        # RAW rows and filtered projected ones out in Python, so an
-        # unprojected punch older than the newest 500 raw rows was
-        # counted in the total but could never appear on any page.
+    # V5-L12 / V5-L28: the RRR leg backfills unprojected rows for BOTH
+    # directions — entry rows when the caller wants entries (or all),
+    # exit rows when it wants exits (or all). Denied has no RRR leg.
+    # Each leg serializes via _serialize_rrr_event (real type +
+    # direction), so an unprojected row can no longer render as an
+    # ENTRY twin of its projected AccessEvent row.
+    if event_type != "denied":
         _projected = _unprojected_rrr_exists(gym_id)
-        adms_total = adms_query.filter(~_projected).count()
+        for _leg_query, _leg_wanted in (
+            (_rrr_entry_rows_query(gym_id), event_type in (None, "entry")),
+            (_rrr_exit_rows_query(gym_id), event_type in (None, "exit")),
+        ):
+            if not _leg_wanted:
+                continue
+            adms_query = _leg_query
+            if adms_since is not None:
+                adms_query = adms_query.filter(
+                    RRRAttendanceEvent.punch_time >= adms_since
+                )
+            if search and search.strip():
+                term = f"%{search.strip()}%"
+                adms_query = adms_query.outerjoin(
+                    Member, RRRAttendanceEvent.member_id == Member.id
+                ).filter(
+                    or_(
+                        Member.full_name.ilike(term),
+                        RRRAttendanceEvent.biometric_user_id.ilike(term),
+                    )
+                )
+            # Total = ADMS rows in the window that have NO AccessEvent
+            # projection. A correlated EXISTS on source_event_id keeps
+            # the count exact under every filter (date/search/type) —
+            # counting projected rows separately would drift whenever
+            # the two legs' search predicates differ (name vs
+            # name-or-biometric-ID).
+            # V3-M11: the same NOT EXISTS filter applies to the ROWS
+            # query, not just the count. The old code fetched the most
+            # recent 500 RAW rows and filtered projected ones out in
+            # Python, so an unprojected punch older than the newest 500
+            # raw rows was counted in the total but could never appear
+            # on any page.
+            adms_total += adms_query.filter(~_projected).count()
 
-        # fetch_limit (both legs, from the top) is defined above.
-        adms_rows = (
-            adms_query.filter(~_projected)
-            .order_by(RRRAttendanceEvent.punch_time.desc())
-            .limit(fetch_limit)
-            .all()
-        )
-        for evt in adms_rows:
-            # V4-M10: a soft-deleted member must not appear named in the
-            # feed — its punches read as unknown, like the AccessEvent leg.
-            evt_member = _live_member(evt.member)
-            adms_events.append({
-                "id": f"adms-{evt.id}",
-                "event_type": "ENTRY",
-                "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
-                "member_id": evt_member.id if evt_member else None,
-                "member_name": evt_member.full_name if evt_member else f"User {evt.biometric_user_id}",
-                "biometric_user_id": evt.biometric_user_id,
-                "device_name": evt.device_serial,
-                "verify_method": evt.verify_method,
-                "source": "adms_direct",
-            })
+            # fetch_limit (both legs, from the top) is defined above.
+            adms_rows = (
+                adms_query.filter(~_projected)
+                .order_by(RRRAttendanceEvent.punch_time.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            for evt in adms_rows:
+                adms_events.append(_serialize_rrr_event(evt))
 
     # Re-sort merged events by timestamp (most recent first) and take
     # this page's slice. Both legs were fetched from the top through
@@ -726,10 +786,13 @@ def get_members_inside(
         .options(joinedload(MemberAccessState.member))
     )
 
-    # Search by member name
+    # Search by member name — V5-M7: the base query above already
+    # joins Member, so filter on the already-joined table. A second
+    # unaliased join(Member) emitted two JOIN members and made
+    # members.full_name ambiguous (500 on any Inside search).
     if search and search.strip():
         search_term = f"%{search.strip()}%"
-        query = query.join(Member).filter(Member.full_name.ilike(search_term))
+        query = query.filter(Member.full_name.ilike(search_term))
 
     pagination = (
         query.order_by(MemberAccessState.last_entry_at.desc())

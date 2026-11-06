@@ -582,7 +582,15 @@ def _register_cli(app: Flask) -> None:
         click.echo(f"Reconciled {reconciled} subscription(s); {failed} failed.")
 
     @app.cli.command("create-admin")
-    def create_admin() -> None:
+    @click.option(
+        "--reset-password",
+        is_flag=True,
+        default=False,
+        help="Intentionally reset the existing super admin's password to "
+        "DEFAULT_ADMIN_PASSWORD. Without this flag an existing admin is "
+        "left completely untouched.",
+    )
+    def create_admin(reset_password: bool) -> None:
         email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com").lower().strip()
         password = os.getenv("DEFAULT_ADMIN_PASSWORD")
         if not password:
@@ -590,13 +598,27 @@ def _register_cli(app: Flask) -> None:
             return
         user = User.query.filter_by(email=email).first()
         if user:
+            # V6-M19: preDeploy runs this command on EVERY deploy
+            # (railway.json + Procfile release line). An existing admin
+            # must never have its password, role or lockout state
+            # silently overwritten here — a password rotation done
+            # through the app would be reverted at the next deploy.
+            # Only an explicit --reset-password rotates the password,
+            # and even then the role and lockout state are left alone.
+            if not reset_password:
+                print(
+                    f"Super admin already exists: {email} — leaving "
+                    "password, role and lock state unchanged. Re-run "
+                    "with --reset-password to rotate the password "
+                    "intentionally."
+                )
+                return
             user.set_password(password)
-            user.role = "super_admin"
-            user.is_active = True
-            user.failed_login_count = 0
-            user.locked_until = None
             db.session.commit()
-            print(f"Updated existing super admin credentials: {email}")
+            print(
+                f"Reset super admin password: {email} "
+                "(role and lock state unchanged)"
+            )
             return
 
         admin = User(
@@ -721,67 +743,103 @@ def _register_cli(app: Flask) -> None:
 
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
         access_totals = {"auto_exited": 0}
-        for gym in _iter_active_gyms():
-            expired_count = auto_expire_members_for_gym(gym)
-            if expired_count:
-                db.session.commit()
-                app.logger.info(
-                    json.dumps(
-                        {"event": "auto_expired", "gym_id": gym.id, "count": expired_count}
+        # V6-M20: per-gym containment, mirroring the APScheduler job
+        # (reminder_scheduler._scheduled_reminder_job). One gym's
+        # failure used to abort activation/reminders for every later
+        # gym and skip the heartbeat. Each step is now guarded with
+        # rollback + log, failures are counted per gym, and the
+        # heartbeat is recorded even on partial failure (finally).
+        gym_errors: dict[int, int] = {}
+        try:
+            for gym in _iter_active_gyms():
+                _gym_errors = 0
+                try:
+                    expired_count = auto_expire_members_for_gym(gym)
+                    if expired_count:
+                        db.session.commit()
+                        app.logger.info(
+                            json.dumps(
+                                {"event": "auto_expired", "gym_id": gym.id, "count": expired_count}
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Auto-expiry failed for gym %s", gym.id)
+
+                try:
+                    activated_count = apply_due_scheduled_renewals(gym)
+                    if activated_count:
+                        db.session.commit()
+                        app.logger.info(
+                            json.dumps(
+                                {"event": "scheduled_renewals_activated", "gym_id": gym.id, "count": activated_count}
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Scheduled renewal activation failed for gym %s", gym.id)
+
+                try:
+                    result = run_due_reminders_for_gym(
+                        gym.id,
+                        app.config["REMINDER_DAYS_BEFORE"],
+                        gym.timezone or "Asia/Kolkata",
                     )
-                )
-
-            activated_count = apply_due_scheduled_renewals(gym)
-            if activated_count:
-                db.session.commit()
-                app.logger.info(
-                    json.dumps(
-                        {"event": "scheduled_renewals_activated", "gym_id": gym.id, "count": activated_count}
+                    for key, value in result.items():
+                        totals[key] = totals.get(key, 0) + value
+                    app.logger.info(
+                        json.dumps(
+                            {"event": "gym_reminders", "gym_id": gym.id, "gym": gym.name, **result}
+                        )
                     )
-                )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Reminders failed for gym %s", gym.id)
 
-            result = run_due_reminders_for_gym(
-                gym.id,
-                app.config["REMINDER_DAYS_BEFORE"],
-                gym.timezone or "Asia/Kolkata",
-            )
-            for key, value in result.items():
-                totals[key] = totals.get(key, 0) + value
-            app.logger.info(
-                json.dumps(
-                    {"event": "gym_reminders", "gym_id": gym.id, "gym": gym.name, **result}
-                )
-            )
+                try:
+                    from app.services.retention_service import run_retention_nudges_for_gym
 
-            try:
-                from app.services.retention_service import run_retention_nudges_for_gym
-
-                retention_result = run_retention_nudges_for_gym(
-                    gym.id, gym.timezone or "Asia/Kolkata"
-                )
-                app.logger.info(
-                    json.dumps(
-                        {"event": "gym_retention", "gym_id": gym.id, **retention_result}
+                    retention_result = run_retention_nudges_for_gym(
+                        gym.id, gym.timezone or "Asia/Kolkata"
                     )
-                )
-            except Exception:
-                db.session.rollback()
-                app.logger.exception("Retention nudges failed for gym %s", gym.id)
-
-            # Reset stale "Inside" members whose entry was before gym closing time
-            reset_count = auto_reset_stale_inside_members(
-                gym.id, gym.timezone or "Asia/Kolkata",
-            )
-            if reset_count:
-                access_totals["auto_exited"] += reset_count
-                db.session.commit()
-                app.logger.info(
-                    json.dumps(
-                        {"event": "auto_exit_reset", "gym_id": gym.id, "count": reset_count}
+                    app.logger.info(
+                        json.dumps(
+                            {"event": "gym_retention", "gym_id": gym.id, **retention_result}
+                        )
                     )
-                )
-        app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
-        _record_reminders_heartbeat(app, totals)
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Retention nudges failed for gym %s", gym.id)
+
+                # Reset stale "Inside" members whose entry was before gym closing time
+                try:
+                    reset_count = auto_reset_stale_inside_members(
+                        gym.id, gym.timezone or "Asia/Kolkata",
+                    )
+                    if reset_count:
+                        access_totals["auto_exited"] += reset_count
+                        db.session.commit()
+                        app.logger.info(
+                            json.dumps(
+                                {"event": "auto_exit_reset", "gym_id": gym.id, "count": reset_count}
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Stale-inside reset failed for gym %s", gym.id)
+
+                if _gym_errors:
+                    gym_errors[gym.id] = _gym_errors
+        finally:
+            totals["gym_errors"] = gym_errors
+            totals["gyms_with_errors"] = len(gym_errors)
+            app.logger.info(json.dumps({"event": "reminders_complete", **totals}))
+            _record_reminders_heartbeat(app, totals)
 
     @app.cli.command("check-reminders-heartbeat")
     def check_reminders_heartbeat() -> None:

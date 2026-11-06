@@ -316,6 +316,73 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
             gym_id, enroll_number, exc,
         )
         return
+    # V5-L11: a snapshot arrival changes the suggestion set — drop the
+    # cached one so the match screen never serves a stale (or
+    # no_snapshot-error) result for up to 60 s after the snapshot lands.
+    invalidate_suggest_cache(gym_id)
+
+
+def prune_operlog_snapshot(gym_id: int, fresh_enroll_numbers) -> int:
+    """Drop OPERLOG-snapshot entries absent from a fresh USERINFO list
+    (V6-L11).
+
+    The OPERLOG snapshot only ever grows (every enrollment upserts
+    into it), so a user deleted on the terminal stays in the snapshot
+    forever and keeps being suggested / auto-link-gated. A USERINFO
+    upload is the terminal's full user table, so entries missing from
+    it are terminal-deleted. Returns the number of entries dropped.
+    Never raises — snapshot hygiene must not break the upload ack.
+    """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    try:
+        from app.models.rrr import RRRAdmsCommand, RRRIntegration
+
+        integration = RRRIntegration.query.filter_by(
+            gym_id=gym_id, connector_type="adms_direct"
+        ).first()
+        if not integration:
+            return 0
+        cmd = (
+            RRRAdmsCommand.query.filter_by(
+                integration_id=integration.id, action="operlog_snapshot"
+            )
+            .filter(RRRAdmsCommand.result_data.isnot(None))
+            .order_by(RRRAdmsCommand.id.desc())
+            .first()
+        )
+        if not cmd or not cmd.result_data:
+            return 0
+        try:
+            data = json.loads(cmd.result_data)
+            stored = data.get("users") if isinstance(data, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return 0
+        if not isinstance(stored, list):
+            return 0
+        fresh = {_canonical_or_raw(str(e).strip()) for e in fresh_enroll_numbers}
+        kept = [
+            u for u in stored
+            if isinstance(u, dict)
+            and _canonical_or_raw(str(u.get("enroll_number") or "").strip()) in fresh
+        ]
+        removed = len(stored) - len(kept)
+        if removed:
+            cmd.result_data = json.dumps({
+                "users": kept,
+                "source": "operlog",
+                "count": len(kept),
+            })
+            _log.info(
+                "Pruned %d terminal-deleted user(s) from OPERLOG snapshot (gym %s)",
+                removed, gym_id,
+            )
+            invalidate_suggest_cache(gym_id)
+        return removed
+    except Exception as exc:  # noqa: BLE001 — best-effort hygiene
+        _log.warning("OPERLOG snapshot prune failed (gym %s): %s", gym_id, exc)
+        return 0
 
 
 # V4-M7: per-gym cache for suggest_matches (60 s). The PWA match screen
@@ -343,13 +410,47 @@ def suggest_matches_cached(gym_id: int) -> dict:
         result["cached"] = True
         return result
     result = suggest_matches(gym_id)
-    _SUGGEST_CACHE[gym_id] = (now_mono, result)
+    # V5-L11: never cache the no_snapshot error — a snapshot arriving
+    # seconds later must be visible immediately, not after the 60 s
+    # TTL expires (staff opening the match screen early got "Match
+    # members unavailable" until then). Only successful scans cache.
+    if not result.get("error"):
+        _SUGGEST_CACHE[gym_id] = (now_mono, result)
     return result
 
 
 def invalidate_suggest_cache(gym_id: int) -> None:
     """Drop the cached suggestions for *gym_id* after a link changes them."""
     _SUGGEST_CACHE.pop(gym_id, None)
+
+
+def _linked_best(linked_members: list, terminal_name: str):
+    """Best similarity of *terminal_name* against already-linked members.
+
+    V6-M10: both matchers used to score unlinked members only, so a
+    terminal name matching both an already-linked member and an
+    unlinked namesake was never flagged ambiguous — the unlinked
+    namesake auto-linked at confidence 100 even when the terminal ID
+    was a re-enrollment of the linked member. Returns
+    ``(best_score, [members])``.
+    """
+    best_score = 0.0
+    best: list = []
+    for m in linked_members:
+        score = _similarity(terminal_name, m.full_name)
+        if score > best_score:
+            best_score, best = score, [m]
+        elif score == best_score and score > 0:
+            best.append(m)
+    return best_score, best
+
+
+def _linked_members_for_gym(gym_id: int) -> list:
+    return (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None), Member.device_enroll_number.isnot(None))
+        .all()
+    )
 
 
 def _suggest_for_enroll(gym_id: int, enroll_number: str) -> dict | None:
@@ -397,6 +498,31 @@ def _suggest_for_enroll(gym_id: int, enroll_number: str) -> dict | None:
             tied_best.append(m)
     if best is None or best_score < 1.0 or len(tied_best) > 1:
         return None
+    # V6-M10: a linked namesake tying the exact match means this ID
+    # may be a re-enrollment of the linked member, not the unlinked
+    # namesake — return it as ambiguous (never auto-linkable) instead
+    # of silently linking the wrong Rahul.
+    linked_score, linked_best = _linked_best(
+        _linked_members_for_gym(gym_id), terminal_user["name"]
+    )
+    if linked_score >= best_score:
+        return {
+            "enroll_number": enroll_number,
+            "terminal_name": terminal_user["name"],
+            "member_id": None,
+            "member_name": None,
+            "member_phone": None,
+            "confidence": 100,
+            "ambiguous": True,
+            "candidate_members": [
+                {"id": m.id, "name": m.full_name, "phone": m.phone,
+                 "already_linked": True}
+                for m in linked_best
+            ] + [
+                {"id": best.id, "name": best.full_name, "phone": best.phone}
+            ],
+            "auto_linkable": False,
+        }
     return {
         "enroll_number": enroll_number,
         "terminal_name": terminal_user["name"],
@@ -435,6 +561,9 @@ def suggest_matches(gym_id: int) -> dict:
         .filter(Member.deleted_at.is_(None), Member.device_enroll_number.isnot(None))
         .all()
     }
+    # V6-M10: already-linked members are scored too (below) — a
+    # namesake collision must surface as ambiguous, not auto-link.
+    linked_members = _linked_members_for_gym(gym_id)
 
     suggestions = []
     unmatched = []
@@ -458,9 +587,32 @@ def suggest_matches(gym_id: int) -> dict:
             elif score == best_score and score > 0:
                 tied_best.append(m)
         if best is not None and best_score >= MATCH_THRESHOLD:
-            ambiguous = len(tied_best) > 1
+            # V6-M10: an already-linked member tying (or beating) the
+            # best unlinked score makes this suggestion ambiguous — the
+            # terminal ID may belong to the linked namesake. Never
+            # auto-linkable; the owner picks from both candidates.
+            linked_score, linked_best = _linked_best(linked_members, tname)
+            linked_tie = linked_score >= best_score
+            ambiguous = len(tied_best) > 1 or linked_tie
             if not ambiguous:
                 used_member_ids.add(best.id)
+            candidates = (
+                [{"id": m.id, "name": m.full_name, "phone": m.phone} for m in tied_best]
+                if len(tied_best) > 1 else []
+            )
+            if linked_tie:
+                seen_ids = {c["id"] for c in candidates}
+                for m in linked_best:
+                    if m.id not in seen_ids:
+                        candidates.append(
+                            {"id": m.id, "name": m.full_name, "phone": m.phone,
+                             "already_linked": True}
+                        )
+                        seen_ids.add(m.id)
+                if len(tied_best) == 1 and best.id not in seen_ids:
+                    candidates.append(
+                        {"id": best.id, "name": best.full_name, "phone": best.phone}
+                    )
             suggestions.append({
                 "enroll_number": enroll,
                 "terminal_name": tname,
@@ -471,10 +623,7 @@ def suggest_matches(gym_id: int) -> dict:
                 "member_phone": None if ambiguous else best.phone,
                 "confidence": round(best_score * 100),
                 "ambiguous": ambiguous,
-                "candidate_members": (
-                    [{"id": m.id, "name": m.full_name, "phone": m.phone} for m in tied_best]
-                    if ambiguous else []
-                ),
+                "candidate_members": candidates,
                 # Review-UI flag (M5): only exact normalized matches are
                 # auto-linkable; ties always need an explicit profile mapping.
                 "auto_linkable": round(best_score * 100) >= 100 and not ambiguous,

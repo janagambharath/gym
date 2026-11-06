@@ -88,6 +88,13 @@ def register_reports_routes(bp):
             )
             .scalar()
         )
+        # V6-L4: pending revenue is scoped to the SAME period as
+        # collected revenue (claims created in the period) — an
+        # abandoned claim from months ago is not pending revenue
+        # forever. In-flight UPI demands (status "processing") are
+        # split out from staff-pending claims so the headline never
+        # mixes a member's half-finished UPI flow with a claim awaiting
+        # verification.
         revenue_pending = (
             db.session.query(
                 func.coalesce(
@@ -100,7 +107,30 @@ def register_reports_routes(bp):
                     0,
                 )
             )
-            .filter(PaymentVerification.gym_id == gym_id, PaymentVerification.is_test.is_(False))
+            .filter(
+                PaymentVerification.gym_id == gym_id,
+                PaymentVerification.created_at >= start_at,
+                PaymentVerification.is_test.is_(False),
+            )
+            .scalar()
+        )
+        revenue_processing = (
+            db.session.query(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PaymentVerification.status == "processing", PaymentVerification.amount),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                )
+            )
+            .filter(
+                PaymentVerification.gym_id == gym_id,
+                PaymentVerification.created_at >= start_at,
+                PaymentVerification.is_test.is_(False),
+            )
             .scalar()
         )
 
@@ -210,6 +240,7 @@ def register_reports_routes(bp):
                 "revenue": {
                     "collected": str(revenue_collected),
                     "pending": str(revenue_pending),
+                    "processing": str(revenue_processing),
                     "at_risk": str(revenue_at_risk),
                 },
                 "renewals": {

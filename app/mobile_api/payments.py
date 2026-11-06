@@ -357,6 +357,18 @@ def register_payments_routes(bp):
         else:
             discount = Decimal("0.00")
 
+        # V6-L2: standard_price / discount are money, not free text —
+        # a negative discount inflates the total_discount sum and a
+        # discount above standard_price makes the stored triple
+        # arithmetically impossible; a negative standard_price shrinks
+        # recovery_rate's expected-value denominator.
+        if standard_price is not None and standard_price < 0:
+            return error_response("VALIDATION_ERROR", "standard_price cannot be negative.", 400)
+        if discount < 0:
+            return error_response("VALIDATION_ERROR", "discount cannot be negative.", 400)
+        if standard_price is not None and discount > standard_price:
+            return error_response("VALIDATION_ERROR", "discount cannot exceed standard_price.", 400)
+
         channel = str(data.get("channel", "offline")).strip().lower()
         # B-L1: channel is an enum, not free text.
         from app.services.payment_service import PAYMENT_CHANNELS, PAYMENT_METHODS
@@ -470,6 +482,9 @@ def register_payments_routes(bp):
             status="pending",
             renewal_days=renewal_days,
             notes=(data.get("notes") or "").strip() or None,
+            # V5-L16/V5-L17: carry the owner-approved override through
+            # verify time so the renewal row is flagged, not stripped.
+            override_reason=_override_reason,
         )
         db.session.add(payment)
         db.session.flush()
@@ -477,16 +492,21 @@ def register_payments_routes(bp):
         if auto_verify:
             try:
                 verify_payment(payment, verified_by_id=g.current_user.id, renewal_days=renewal_days)
-            except IntegrityError:
+            except IntegrityError as exc:
                 # V4-L1: two concurrent auto_verify creates with the
                 # same UTR both pass the re-check, then the second
                 # commit/flush hits the partial unique index — that
-                # used to surface as a 500. Map it to
-                # DUPLICATE_REFERENCE like the verify endpoint does.
+                # used to surface as a 500. V5-L3: map it to
+                # DUPLICATE_REFERENCE only when the constraint in the
+                # error IS the UTR index; any other integrity failure
+                # still re-raises.
+                from app.services.payment_service import is_duplicate_reference_error
+
                 db.session.rollback()
-                if reference is not None and verified_payment_with_reference(
-                    g.gym_id, reference
-                ) is not None:
+                if is_duplicate_reference_error(exc) or (
+                    reference is not None
+                    and verified_payment_with_reference(g.gym_id, reference) is not None
+                ):
                     return error_response(
                         "DUPLICATE_REFERENCE",
                         "A verified payment with this reference already exists for this gym.",
@@ -524,7 +544,7 @@ def register_payments_routes(bp):
 
         try:
             db.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             db.session.rollback()
             # A concurrent retry may have won the unique-key race. Its entire
             # transaction includes the payment, so replay its stored response
@@ -548,11 +568,15 @@ def register_payments_routes(bp):
             # V4-L1: the commit-time UTR race (two concurrent creates
             # with the same reference, second one hitting the partial
             # unique index) is a DUPLICATE_REFERENCE 409, not a 500.
-            # The clash check decides — any other integrity failure
-            # still re-raises.
-            if reference is not None and verified_payment_with_reference(
-                g.gym_id, reference
-            ) is not None:
+            # V5-L3: only when the constraint in the error IS the UTR
+            # index (or the clash check finds a verified payment) —
+            # any other integrity failure still re-raises.
+            from app.services.payment_service import is_duplicate_reference_error
+
+            if is_duplicate_reference_error(exc) or (
+                reference is not None
+                and verified_payment_with_reference(g.gym_id, reference) is not None
+            ):
                 return error_response(
                     "DUPLICATE_REFERENCE",
                     "A verified payment with this reference already exists for this gym.",
@@ -590,11 +614,18 @@ def register_payments_routes(bp):
                 metadata={"new_end": str(payment.member.membership_end), "renewal_days": renewal_days},
             )
             db.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             # V3-M3 backstop: the partial unique index refused a second
             # verified payment with the same reference (concurrent verifies
-            # racing past the re-check).
+            # racing past the re-check). V5-L3: only map it when the
+            # constraint in the error IS the UTR index — a non-UTR
+            # integrity failure re-raises (500) instead of being
+            # misreported as a duplicate reference.
+            from app.services.payment_service import is_duplicate_reference_error
+
             db.session.rollback()
+            if not is_duplicate_reference_error(exc):
+                raise
             return error_response(
                 "DUPLICATE_REFERENCE",
                 "A verified payment with this reference already exists for this gym.",
