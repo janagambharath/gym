@@ -611,7 +611,7 @@ export function WhatsAppOnboardingModal({
               }}
               onShouldStartLoadWithRequest={(request) => {
                 // V4-L29: navigation allowlist, same shape as
-                // WhatsAppSetupScreen — only our own embedded-signup page
+                // Only our own embedded-signup page
                 // (served from the configured API base origin) and Meta
                 // OAuth hosts. Previously any URL the page navigated to
                 // (redirect, ad, spoofed frame) loaded unchecked.

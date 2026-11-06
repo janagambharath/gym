@@ -21,6 +21,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
+import { updateStaffMember } from '../services/staffApi';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatDate as formatGymDate } from '../types';
@@ -65,6 +66,14 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
 
   // Action modal state
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
+
+  // Edit staff modal state (GAP 3 parity: PATCH /api/mobile/v1/staff/<id>,
+  // same endpoint the PWA uses for staff updates — name + role only; the
+  // backend User model has no phone column, so phone is not editable)
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
+  const [editNameInput, setEditNameInput] = useState('');
+  const [editRoleInput, setEditRoleInput] = useState<'staff' | 'gym_owner'>('staff');
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const fetchStaff = useCallback(() => apiRequest<{ staff: StaffMember[] }>('/api/mobile/v1/staff').then((res) => {
     if (res.ok) {
@@ -167,6 +176,34 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
       Alert.alert('Error', res.error.message || 'Could not reset password.');
     }
   }, [selectedStaff]);
+
+  const openEditStaff = useCallback((staff: StaffMember) => {
+    setSelectedStaff(null);
+    setEditingStaff(staff);
+    setEditNameInput(staff.full_name);
+    setEditRoleInput(staff.role === 'gym_owner' ? 'gym_owner' : 'staff');
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editingStaff) return;
+    if (!editNameInput.trim()) {
+      Alert.alert('Required Fields', 'Full Name is required.');
+      return;
+    }
+    setEditSubmitting(true);
+    const res = await updateStaffMember(
+      editingStaff.id,
+      { full_name: editNameInput, role: editRoleInput },
+      apiRequest,
+    );
+    setEditSubmitting(false);
+    if (res.ok) {
+      setEditingStaff(null);
+      void fetchStaff();
+    } else {
+      Alert.alert('Error', res.error.message || 'Could not update staff member.');
+    }
+  }, [editingStaff, editNameInput, editRoleInput, fetchStaff]);
 
   const renderStaff = ({ item }: { item: StaffMember }) => (
     <TouchableOpacity
@@ -365,6 +402,14 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
             </View>
 
             <View style={styles.actionOptions}>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => selectedStaff && openEditStaff(selectedStaff)}
+              >
+                <Icon name="edit" size={18} color={colors.brand} />
+                <Text style={styles.actionBtnText}>Edit Details</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.actionBtn} onPress={handleResetPassword}>
                 <Icon name="lock" size={18} color={colors.brand} />
                 <Text style={styles.actionBtnText}>Reset Password</Text>
@@ -386,6 +431,60 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
                 </Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Staff Modal */}
+      <Modal visible={!!editingStaff} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Staff Member</Text>
+              <TouchableOpacity onPress={() => setEditingStaff(null)} hitSlop={10}>
+                <Icon name="close" size={20} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <FormField
+                label="Full Name *"
+                value={editNameInput}
+                onChangeText={setEditNameInput}
+                placeholder="e.g. Vikram Singh"
+              />
+              <Text style={styles.email}>
+                {editingStaff?.email}
+              </Text>
+
+              <Text style={styles.fieldLabel}>Role</Text>
+              <View style={styles.roleSelector}>
+                <TouchableOpacity
+                  style={[styles.roleOption, editRoleInput === 'staff' && styles.roleOptionActive]}
+                  onPress={() => setEditRoleInput('staff')}
+                >
+                  <Text style={[styles.roleOptionText, editRoleInput === 'staff' && styles.roleOptionTextActive]}>
+                    Staff / Trainer
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.roleOption, editRoleInput === 'gym_owner' && styles.roleOptionActive]}
+                  onPress={() => setEditRoleInput('gym_owner')}
+                >
+                  <Text style={[styles.roleOptionText, editRoleInput === 'gym_owner' && styles.roleOptionTextActive]}>
+                    Co-Owner / Manager
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.modalActions}>
+                <PrimaryButton
+                  label={editSubmitting ? 'Saving...' : 'Save Changes'}
+                  onPress={handleSaveEdit}
+                  disabled={editSubmitting}
+                />
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>

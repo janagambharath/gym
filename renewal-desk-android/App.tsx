@@ -19,6 +19,7 @@ const linking = {
         screens: {
           DashboardHome: 'dashboard',
           RrrGrowth: 'rrr',
+          RrrOpportunities: 'rrr/opportunities',
           Notifications: 'notifications',
           Plans: 'plans',
           Campaigns: 'campaigns',
@@ -53,6 +54,7 @@ const linking = {
         screens: {
           MoreHome: 'more',
           RrrGrowth: 'rrr',
+          RrrOpportunities: 'rrr/opportunities',
           DateRepair: 'date-repair',
           OwnerFinance: 'finance',
           OwnerLeads: 'leads',
@@ -130,6 +132,7 @@ import { RenewalsScreen } from './src/screens/RenewalsScreen';
 import { RenewMemberScreen } from './src/screens/RenewMemberScreen';
 import { ReportsScreen } from './src/screens/ReportsScreen';
 import { RrrGrowthScreen } from './src/screens/RrrGrowthScreen';
+import { RrrOpportunitiesScreen } from './src/screens/RrrOpportunitiesScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { SignupScreen } from './src/screens/SignupScreen';
 import { StaffScreen } from './src/screens/StaffScreen';
@@ -164,6 +167,7 @@ type FastRenewalParams = {
 type DashboardStackParamList = {
   DashboardHome: undefined;
   RrrGrowth: undefined;
+  RrrOpportunities: { pillar?: 'revenue' | 'retain' | 'recover' } | undefined;
   BulkDeactivate: undefined;
   MemberDetail: { member: Member };
   MemberHistory: { memberId: number };
@@ -242,6 +246,7 @@ type AccessStackParamList = {
 type MoreStackParamList = {
   MoreHome: undefined;
   RrrGrowth: undefined;
+  RrrOpportunities: { pillar?: 'revenue' | 'retain' | 'recover' } | undefined;
   BulkDeactivate: undefined;
   DateRepair: undefined;
   OwnerFinance: undefined;
@@ -393,6 +398,15 @@ function DashboardStackScreen({
           <RrrGrowthScreen
             onBack={() => props.navigation.goBack()}
             onNavigateBulkDeactivate={() => props.navigation.navigate('BulkDeactivate')}
+            onNavigateOpportunities={(pillar) => props.navigation.navigate('RrrOpportunities', { pillar })}
+          />
+        )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="RrrOpportunities">
+        {(props) => (
+          <RrrOpportunitiesScreen
+            onBack={() => props.navigation.goBack()}
+            initialPillar={props.route.params?.pillar}
           />
         )}
       </DashboardStackNav.Screen>
@@ -1217,6 +1231,15 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
           <RrrGrowthScreen
             onBack={() => props.navigation.goBack()}
             onNavigateBulkDeactivate={() => props.navigation.navigate('BulkDeactivate')}
+            onNavigateOpportunities={(pillar) => props.navigation.navigate('RrrOpportunities', { pillar })}
+          />
+        )}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="RrrOpportunities">
+        {(props) => (
+          <RrrOpportunitiesScreen
+            onBack={() => props.navigation.goBack()}
+            initialPillar={props.route.params?.pillar}
           />
         )}
       </MoreStackNav.Screen>

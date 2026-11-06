@@ -23,6 +23,7 @@ import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} fro
 import type { MemberProfile } from '../../services/memberApiClient';
 import {
   clearMemberSession,
+  deleteMemberAccount,
   fetchMemberProfile,
   getMemberSession,
 } from '../../services/memberApiClient';
@@ -80,28 +81,43 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
     ]);
   }, [onLogout]);
 
+  // Double-confirm: deleting the member account soft-deletes the member
+  // record at the gym (same as the owner deactivating the member) and
+  // cannot be undone from the app — the gym has to re-add the member.
   const handleDeleteAccount = useCallback(() => {
-    const config = getRuntimeConfiguration();
-    if (!config.apiBaseUrl) {
-      Alert.alert('Error', 'API base URL is not configured for this build.');
-      return;
-    }
-    const deleteUrl = `${config.apiBaseUrl}/delete-account`;
-
     Alert.alert(
       'Delete Account',
-      'To delete your member account and associated data, you can submit a deletion request or contact your gym administrator.',
+      'This will permanently delete your member account at this gym, including your membership record and access. This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Open Deletion Page',
+          text: 'Continue',
+          style: 'destructive',
           onPress: () => {
-            void Linking.openURL(deleteUrl);
+            Alert.alert(
+              'Are you absolutely sure?',
+              'Your membership, payment history and gym access will be deleted. To rejoin, the gym will need to add you as a member again.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete Permanently',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const res = await deleteMemberAccount();
+                    if (res.ok) {
+                      onLogout();
+                    } else {
+                      Alert.alert('Error', res.error || 'Could not delete account. Please try again.');
+                    }
+                  },
+                },
+              ],
+            );
           },
         },
       ],
     );
-  }, []);
+  }, [onLogout]);
 
   const handlePrivacyPolicy = useCallback(() => {
     const config = getRuntimeConfiguration();

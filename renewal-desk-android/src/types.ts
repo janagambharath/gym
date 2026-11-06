@@ -662,6 +662,8 @@ export type AccessSummary = {
   remote_unlock_available?: boolean;
   remote_unlock_reason?: string;
   remote_unlock_path?: 'bridge' | 'adms';
+  /** Direct Cloud (ADMS) integration id, or null when the gym is on the legacy bridge. Set by /access/summary; gates the bridge-only Re-sync button. */
+  adms_integration_id?: number | null;
 };
 
 export type AccessEvent = {

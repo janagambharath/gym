@@ -138,12 +138,9 @@ export function BulkDeactivateScreen({ onBack, onLogout }: BulkDeactivateScreenP
     const failedNames: string[] = [];
     const selectedMembers = members.filter((m) => selected.has(m.id));
     // One stable key per member per batch: a retry of this batch after a
-    // timeout must not deactivate the same member twice. NOTE: the
-    // backend deactivate endpoint does not honour Idempotency-Key yet
-    // (no idempotency handling in app/mobile_api/members.py) — the
-    // header is sent so the endpoint can honour it without a client
-    // change; until then the soft-delete is itself idempotent-ish
-    // (re-deactivating an already-deleted member 404s, not double-acts).
+    // timeout must not deactivate the same member twice. The backend
+    // honours Idempotency-Key on deactivate_member, so the retry replays
+    // the stored success instead of 404ing on the already-deleted member.
     const batchKey = `bulk-deactivate-${Date.now()}`;
     for (const member of selectedMembers) {
       try {

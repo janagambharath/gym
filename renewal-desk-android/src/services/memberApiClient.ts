@@ -382,6 +382,20 @@ export async function verifyOtp(
   return result;
 }
 
+export async function deleteMemberAccount(): Promise<ApiResult<{ message: string }>> {
+  // Mirrors the owner-side deleteAccount(): the local session is cleared
+  // regardless of the outcome — a deleted account must never stay signed
+  // in on the device, and a failed attempt leaves no stale session behind
+  // for the next sign-in either.
+  try {
+    return await memberApiRequest<{ message: string }>('/api/member/v1/auth/account', {
+      method: 'DELETE',
+    });
+  } finally {
+    await clearMemberSession();
+  }
+}
+
 // ── Dashboard ────────────────────────────────────────────────────────
 
 export async function fetchMemberDashboard(): Promise<ApiResult<MemberDashboard>> {

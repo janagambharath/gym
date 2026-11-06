@@ -22,6 +22,12 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
 import { WhatsAppOnboardingModal } from '../components/WhatsAppOnboardingModal';
 import { apiRequest } from '../services/apiClient';
+import {
+  fetchRecentWhatsAppMessages,
+  logDisplayName,
+  logDisplayTemplate,
+  type WhatsAppLogEntry,
+} from '../services/whatsappLogApi';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
@@ -96,7 +102,7 @@ const PRESETS = [
 ];
 
 export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScreenProps) {
-  const [activeTab, setActiveTab] = useState<'reminders' | 'broadcast' | 'leads'>('reminders');
+  const [activeTab, setActiveTab] = useState<'reminders' | 'broadcast' | 'leads' | 'log'>('reminders');
 
   // Reminders state
   const [reminders, setReminders] = useState<ReminderLog[]>([]);
@@ -113,6 +119,13 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [leadsRefreshing, setLeadsRefreshing] = useState(false);
   const [leadsError, setLeadsError] = useState<string | undefined>();
   const [leadFilter, setLeadFilter] = useState('');
+
+  // Recent-message log state (GAP 5 parity with the PWA, which shows the
+  // last 15 messages from GET /api/mobile/v1/whatsapp/logs)
+  const [messageLog, setMessageLog] = useState<WhatsAppLogEntry[]>([]);
+  const [logLoading, setLogLoading] = useState(true);
+  const [logRefreshing, setLogRefreshing] = useState(false);
+  const [logError, setLogError] = useState<string | undefined>();
 
   // Selected Lead modal state
   const [selectedLead, setSelectedLead] = useState<BotLead | null>(null);
@@ -218,18 +231,35 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
     });
   }, []);
 
+  // Fetch recent-message log (last 15, same endpoint + limit as the PWA)
+  const fetchMessageLog = useCallback(() => {
+    return fetchRecentWhatsAppMessages(apiRequest).then((res) => {
+      if (res.ok) {
+        setMessageLog(res.data);
+        setLogError(undefined);
+      } else {
+        setLogError(res.error.message);
+      }
+      setLogLoading(false);
+      setLogRefreshing(false);
+    });
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'reminders') {
       void fetchReminders(1, reminderFilter);
     } else if (activeTab === 'leads') {
       void fetchLeads(leadFilter);
+    } else if (activeTab === 'log') {
+      void fetchMessageLog();
     }
-  }, [activeTab, reminderFilter, leadFilter, fetchReminders, fetchLeads]);
+  }, [activeTab, reminderFilter, leadFilter, fetchReminders, fetchLeads, fetchMessageLog]);
 
-  const handleTabChange = useCallback((tab: 'reminders' | 'broadcast' | 'leads') => {
+  const handleTabChange = useCallback((tab: 'reminders' | 'broadcast' | 'leads' | 'log') => {
     if (tab === activeTab) return;
     if (tab === 'reminders') setRemindersLoading(true);
     else if (tab === 'leads') setLeadsLoading(true);
+    else if (tab === 'log') setLogLoading(true);
     setActiveTab(tab);
   }, [activeTab]);
 
@@ -254,6 +284,11 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
     setLeadsRefreshing(true);
     void fetchLeads(leadFilter);
   }, [fetchLeads, leadFilter]);
+
+  const refreshMessageLog = useCallback(() => {
+    setLogRefreshing(true);
+    void fetchMessageLog();
+  }, [fetchMessageLog]);
 
   const openLeadDetail = async (lead: BotLead) => {
     setSelectedLead(lead);
@@ -359,6 +394,24 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
         ) : null}
       </View>
       <StatusBadge status={item.status} />
+    </TouchableOpacity>
+  );
+
+  const renderLogEntry = ({ item }: { item: WhatsAppLogEntry }) => (
+    <TouchableOpacity
+      style={styles.cardRow}
+      onPress={() => item.member_id && onNavigateMemberDetail?.(item.member_id)}
+    >
+      <Avatar name={logDisplayName(item)} size={40} />
+      <View style={styles.cardInfo}>
+        <Text style={styles.cardName} numberOfLines={1}>
+          {logDisplayName(item)}
+        </Text>
+        <Text style={styles.cardMeta} numberOfLines={1}>
+          {logDisplayTemplate(item)} · {formatTime(item.sent_at || item.created_at)}
+        </Text>
+      </View>
+      <StatusBadge status={item.status ?? 'sent'} />
     </TouchableOpacity>
   );
 
@@ -473,7 +526,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           ) : null}
         </TouchableOpacity>
 
-        {/* 3-Tab Toggle */}
+        {/* 4-Tab Toggle */}
         <View style={styles.tabToggle}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'reminders' && styles.tabButtonActive]}
@@ -497,6 +550,14 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           >
             <Text style={[styles.tabText, activeTab === 'leads' && styles.tabTextActive]}>
               AI Leads
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'log' && styles.tabButtonActive]}
+            onPress={() => handleTabChange('log')}
+          >
+            <Text style={[styles.tabText, activeTab === 'log' && styles.tabTextActive]}>
+              📋 Log
             </Text>
           </TouchableOpacity>
         </View>
@@ -687,6 +748,37 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
             )}
           </>
         ) : null}
+
+        {/* TAB 4: RECENT MESSAGE LOG (last 15, PWA parity) */}
+        {activeTab === 'log' ? (
+          <>
+            <Text style={styles.sectionHeaderTitle}>Recent Messages</Text>
+            {logLoading && !logRefreshing ? (
+              <View style={styles.loadingWrap}>
+                <CardSkeleton />
+                <CardSkeleton />
+              </View>
+            ) : logError ? (
+              <ErrorState message={logError} onRetry={refreshMessageLog} />
+            ) : messageLog.length === 0 ? (
+              <EmptyState
+                icon={<Icon name="whatsapp" size={40} color={colors.muted} />}
+                title="No messages yet"
+                subtitle="Sent WhatsApp messages will appear here."
+              />
+            ) : (
+              <FlatList
+                data={messageLog}
+                keyExtractor={(item) => String(item.id)}
+                renderItem={renderLogEntry}
+                contentContainerStyle={styles.listContent}
+                refreshControl={
+                  <RefreshControl refreshing={logRefreshing} onRefresh={refreshMessageLog} tintColor={colors.brand} />
+                }
+              />
+            )}
+          </>
+        ) : null}
       </View>
 
       {/* Selected Lead Modal */}
@@ -738,6 +830,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           fetchWhatsAppStatus();
           refreshReminders();
           refreshLeads();
+          refreshMessageLog();
         }}
       />
     </SafeAreaView>

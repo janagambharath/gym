@@ -87,12 +87,9 @@ export function CampaignCreateScreen({
   const [sending, setSending] = useState(false);
   // V6-M16: one stable idempotency key per launch attempt — a retry of
   // the create after a timeout must not create a duplicate campaign.
-  // NOTE: the backend /campaigns endpoint does not honour
-  // Idempotency-Key yet (no idempotency handling in
-  // app/mobile_api/campaigns.py) — the header is sent so the endpoint
-  // can honour it without a client change; until then the key is
-  // best-effort and the retry-send path below is the real guard against
-  // double-messaging (it re-sends the SAME campaign, never a fresh one).
+  // The backend honours Idempotency-Key on both create_campaign and
+  // send_campaign, so a retry replays the first campaign instead of
+  // double-messaging members.
   const launchKeyRef = useRef<string | undefined>(undefined);
 
   // V6-M16: re-send the already-created campaign after a send failure

@@ -18,6 +18,10 @@ import { ErrorState } from '../components/ErrorState';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { apiRequest } from '../services/apiClient';
+import {
+  clearFailedSyncsWithConfirm,
+  reconcileMembers,
+} from '../services/accessSync';
 import type {
   AccessEvent,
   AccessEventsResponse,
@@ -406,6 +410,62 @@ export function AccessScreen({
     }
   }, [retryingSync, loadAll]);
 
+  const [reconciling, setReconciling] = useState(false);
+
+  // PWA parity: "Re-sync Members" (POST /access/reconcile) — re-sync all
+  // active members' access states to the biometric device.
+  const handleReconcile = useCallback(async () => {
+    if (reconciling) return;
+    setReconciling(true);
+    const res = await reconcileMembers(apiRequest);
+    setReconciling(false);
+    if (res.ok) {
+      setActionMessage(res.data?.message || 'Re-sync queued for device');
+      setTimeout(() => setActionMessage(null), 3500);
+      void loadAll();
+    } else {
+      Alert.alert('Re-sync Failed', res.error.message || 'Re-sync failed.');
+    }
+  }, [reconciling, loadAll]);
+
+  const [clearingFailed, setClearingFailed] = useState(false);
+
+  // PWA parity: "Clear" failed syncs (POST /access/clear-failed).
+  // Irreversible — cleared commands were never delivered and can never be
+  // retried — so the operator must confirm first (same wording as PWA).
+  const handleClearFailedSyncs = useCallback(() => {
+    if (clearingFailed) return;
+    setClearingFailed(true);
+    void (async () => {
+      try {
+        const res = await clearFailedSyncsWithConfirm({
+          confirm: () =>
+            new Promise<boolean>((resolve) => {
+              Alert.alert(
+                'Clear failed syncs?',
+                'Permanently delete all failed biometric commands? This cannot be undone.',
+                [
+                  { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                  { text: 'Clear', style: 'destructive', onPress: () => resolve(true) },
+                ],
+              );
+            }),
+          request: apiRequest,
+        });
+        if (res === null) return; // operator cancelled — nothing to do
+        if (res.ok) {
+          setActionMessage(res.data?.message || 'Failed commands cleared');
+          setTimeout(() => setActionMessage(null), 3500);
+          void loadAll();
+        } else {
+          Alert.alert('Clear Failed', res.error.message || 'Could not clear commands.');
+        }
+      } finally {
+        setClearingFailed(false);
+      }
+    })();
+  }, [clearingFailed, loadAll]);
+
   const renderActionBanner = () => {
     if (!actionMessage) return null;
     return (
@@ -426,13 +486,56 @@ export function AccessScreen({
             {summary.failed_commands} biometric command(s) failed
           </Text>
         </View>
+        <View style={styles.failedCommandsActions}>
+          <TouchableOpacity
+            style={styles.retrySyncBtn}
+            onPress={handleRetrySync}
+            disabled={retryingSync}
+          >
+            <Text style={styles.retrySyncBtnText}>
+              {retryingSync ? 'Retrying...' : 'Retry All'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.clearFailedBtn}
+            onPress={handleClearFailedSyncs}
+            disabled={clearingFailed}
+          >
+            <Text style={styles.clearFailedBtnText}>
+              {clearingFailed ? 'Clearing...' : 'Clear'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  // PWA parity: "Hardware Bridge Controls" card with Re-sync Members.
+  // Bridge-only — Direct Cloud (ADMS) gyms have no legacy bridge queue to
+  // re-sync, exactly as the PWA hides this card when adms_integration_id
+  // is set. (The backend reconcile endpoint would 403 for an
+  // uncommissioned ADMS gym, so hiding it also avoids a dead button.)
+  const renderBridgeControls = () => {
+    if (!summary || summary.adms_integration_id) return null;
+    return (
+      <View style={styles.bridgeControlsCard}>
+        <View style={styles.bridgeControlsHeader}>
+          <Text style={styles.bridgeControlsTitle}>Hardware Bridge Controls</Text>
+          <View style={[styles.bridgeStatusPill, { backgroundColor: summary.bridge_online ? colors.successSurface : colors.criticalSurface }]}>
+            <Text style={[styles.bridgeStatusPillText, { color: summary.bridge_online ? colors.success : colors.critical }]}>
+              {summary.bridge_online ? 'BRIDGE ONLINE' : 'BRIDGE OFFLINE'}
+            </Text>
+          </View>
+        </View>
         <TouchableOpacity
-          style={styles.retrySyncBtn}
-          onPress={handleRetrySync}
-          disabled={retryingSync}
+          style={styles.reconcileBtn}
+          onPress={handleReconcile}
+          disabled={reconciling}
+          activeOpacity={0.8}
         >
-          <Text style={styles.retrySyncBtnText}>
-            {retryingSync ? 'Retrying...' : 'Retry All'}
+          <Icon name="refresh" size={16} color={colors.text} />
+          <Text style={styles.reconcileBtnText}>
+            {reconciling ? 'Syncing...' : 'Re-sync Members'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -735,6 +838,7 @@ export function AccessScreen({
               {renderSummaryStaleness()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
+              {renderBridgeControls()}
               {renderFailedCommandsBanner()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
@@ -778,6 +882,7 @@ export function AccessScreen({
               {renderSummaryStaleness()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
+              {renderBridgeControls()}
               {renderFailedCommandsBanner()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
@@ -1035,6 +1140,75 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     fontSize: fontSize.xs,
     fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+  failedCommandsActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  clearFailedBtn: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xxs + 2,
+  },
+  clearFailedBtnText: {
+    color: colors.critical,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+
+  // Hardware Bridge Controls (Re-sync Members) — PWA parity
+  bridgeControlsCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...shadows.sm,
+  },
+  bridgeControlsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  bridgeControlsTitle: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  bridgeStatusPill: {
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  bridgeStatusPillText: {
+    fontSize: 10,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+  reconcileBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.gray100,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+  },
+  reconcileBtnText: {
+    color: colors.text,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
   },
 
   // Device status bar

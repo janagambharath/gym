@@ -20,6 +20,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { resolveBlockToggle } from '../services/memberAccess';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Renewal, Payment } from '../types';
@@ -319,6 +320,33 @@ export function MemberDetailScreen({
     }
   }, [member.id, onMemberUpdated, fetchMemberData]);
 
+  // V6-M8/M9: the confirm dialog for the block/unblock toggle, shared by
+  // the toggle button AND the failed-state hint below — a failed block used
+  // to show "tap to retry" text with no retry button. The toggle itself
+  // re-issues the failed action (see resolveBlockToggle); the backend
+  // still enforces its own block rules.
+  const promptToggleAccess = useCallback(() => {
+    const toggle = resolveBlockToggle({ accessBlocked, doorAccessFailed, doorAccessFailedAction });
+    Alert.alert(
+      toggle.isRetry
+        ? `Retry ${toggle.action === 'block' ? 'Block' : 'Unblock'} Biometric Access?`
+        : accessBlocked ? 'Unblock Biometric Access?' : 'Block Biometric Access?',
+      toggle.isRetry
+        ? `The last ${toggle.action} command failed${doorAccessError ? `: ${doorAccessError}` : ''}. Send it again?`
+        : accessBlocked
+          ? `${member.full_name} will be able to verify on the terminal again.`
+          : `${member.full_name} will be denied on the terminal until unblocked. Their fingerprint stays enrolled.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: toggle.isRetry ? 'Retry' : accessBlocked ? 'Unblock' : 'Block',
+          style: accessBlocked ? 'default' : 'destructive',
+          onPress: () => void handleToggleAccess(toggle.action),
+        },
+      ]
+    );
+  }, [accessBlocked, doorAccessFailed, doorAccessFailedAction, doorAccessError, member.full_name, handleToggleAccess]);
+
   const handleFreeze = useCallback(async () => {
     const days = parseInt(freezeDaysInput, 10);
     if (isNaN(days) || days < 1) {
@@ -366,6 +394,9 @@ export function MemberDetailScreen({
     );
   }, [member.id, member.full_name, fetchMemberData, onMemberUpdated]);
 
+  // V6-M8/M9: PWA parity — the toggle renders for every enrolled member,
+  // including active ones; the label/action follow the failed/blocked state.
+  const blockToggle = resolveBlockToggle({ accessBlocked, doorAccessFailed, doorAccessFailedAction });
   const verifiedPaidAmount = payments
     .filter((payment) => ['verified', 'paid'].includes(payment.status.toLowerCase()))
     .reduce((total, payment) => total + (Number(payment.amount) || 0), 0);
@@ -701,44 +732,21 @@ export function MemberDetailScreen({
                   </TouchableOpacity>
                   {member.status === 'active' && !accessBlocked ? (
                     <Text style={styles.biometricAccessHint}>
-                      Active members can&apos;t be blocked from here — pause (freeze) the membership instead. Blocking is only for expired or paused members.
+                      Active member — blocking denies terminal entry until unblocked. Pause (freeze) the membership instead if they should stop attending.
                     </Text>
-                  ) : (
+                  ) : null}
+                  {/* V6-M8/M9: PWA parity — the toggle renders for every enrolled member, active included. The backend still enforces its own block rules. */}
                   <TouchableOpacity
                     style={[styles.biometricActionBtn, { borderColor: accessBlocked ? colors.successDark : colors.warningDark }]}
-                    onPress={() => {
-                      // V6-M8: retry re-issues the failed action — the toggle
-                      // state is stale/unknown after a failure.
-                      const retrying = doorAccessFailed && doorAccessFailedAction !== null;
-                      const action = retrying ? doorAccessFailedAction : accessBlocked ? 'unblock' : 'block';
-                      Alert.alert(
-                        retrying
-                          ? `Retry ${action === 'block' ? 'Block' : 'Unblock'} Biometric Access?`
-                          : accessBlocked ? 'Unblock Biometric Access?' : 'Block Biometric Access?',
-                        retrying
-                          ? `The last ${action} command failed${doorAccessError ? `: ${doorAccessError}` : ''}. Send it again?`
-                          : accessBlocked
-                            ? `${member.full_name} will be able to verify on the terminal again.`
-                            : `${member.full_name} will be denied on the terminal until unblocked. Their fingerprint stays enrolled.`,
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: retrying ? 'Retry' : accessBlocked ? 'Unblock' : 'Block',
-                            style: accessBlocked ? 'default' : 'destructive',
-                            onPress: () => void handleToggleAccess(action),
-                          },
-                        ]
-                      );
-                    }}
+                    onPress={() => promptToggleAccess()}
                     disabled={togglingAccess}
                     activeOpacity={0.7}
                   >
                     <Icon name="access" size={14} color={accessBlocked ? colors.successDark : colors.warningDark} />
                     <Text style={[styles.biometricActionBtnText, { color: accessBlocked ? colors.successDark : colors.warningDark }]}>
-                      {togglingAccess ? 'Working...' : doorAccessFailed && doorAccessFailedAction ? `Retry ${doorAccessFailedAction === 'unblock' ? 'Unblock' : 'Block'}` : accessBlocked ? 'Unblock Access' : 'Block Access'}
+                      {togglingAccess ? 'Working...' : blockToggle.label}
                     </Text>
                   </TouchableOpacity>
-                  )}
                   <TouchableOpacity
                     style={[styles.biometricActionBtn, { borderColor: colors.critical }]}
                     onPress={() => {
@@ -761,9 +769,11 @@ export function MemberDetailScreen({
                   </TouchableOpacity>
                 </View>
                 {doorAccessFailed ? (
-                  <Text style={[styles.biometricAccessHint, { color: colors.critical }]}>
-                    Failed — tap to retry {doorAccessFailedAction || 'the access change'}{doorAccessError ? `: ${doorAccessError}` : ''}.
-                  </Text>
+                  <TouchableOpacity onPress={() => promptToggleAccess()} accessibilityRole="button" accessibilityLabel={`Retry ${doorAccessFailedAction || 'the access change'}`}>
+                    <Text style={[styles.biometricAccessHint, { color: colors.critical }]}>
+                      Failed — tap to retry {doorAccessFailedAction || 'the access change'}{doorAccessError ? `: ${doorAccessError}` : ''}.
+                    </Text>
+                  </TouchableOpacity>
                 ) : doorAccessStaleQueued ? (
                   <Text style={styles.biometricAccessHint}>
                     Queued — terminal hasn&apos;t checked in since {formatDateTime(doorAccessTerminalLastSeenAt || doorAccessQueuedSince)}.
