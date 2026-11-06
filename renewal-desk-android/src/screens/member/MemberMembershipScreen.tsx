@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
+import { formatCurrency, formatDate } from '../../types';
 import type { MemberMembership } from '../../services/memberApiClient';
 import { fetchMemberMembership } from '../../services/memberApiClient';
 import { ErrorState } from '../../components/ErrorState';
@@ -152,11 +153,11 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
           <View style={styles.detailsGrid}>
             <DetailItem
               label="Valid From"
-              value={membership?.membership_start ?? 'N/A'}
+              value={formatDate(membership?.membership_start)}
             />
             <DetailItem
               label="Valid Until"
-              value={membership?.membership_end ?? 'N/A'}
+              value={formatDate(membership?.membership_end)}
             />
             <DetailItem
               label="Days Remaining"
@@ -171,10 +172,10 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
             />
             <DetailItem
               label="Plan Price"
-              value={membership?.plan_price ? `₹${membership.plan_price}` : 'N/A'}
+              value={membership?.plan_price ? formatCurrency(membership.plan_price) : 'N/A'}
             />
             {membership?.joined_on && (
-              <DetailItem label="Member Since" value={membership.joined_on} />
+              <DetailItem label="Member Since" value={formatDate(membership.joined_on)} />
             )}
             {membership?.plan_duration_days && (
               <DetailItem
@@ -208,15 +209,15 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
               <View key={item.id} style={styles.historyCard}>
                 <View style={styles.historyTop}>
                   <Text style={styles.historyPlan}>{item.plan_name ?? 'Membership'}</Text>
-                  <Text style={styles.historyAmount}>₹{item.amount}</Text>
+                  <Text style={styles.historyAmount}>{formatCurrency(item.amount)}</Text>
                 </View>
                 <View style={styles.historyBottom}>
                   <Text style={styles.historyPeriod}>
-                    {item.new_start} → {item.new_end}
+                    {formatDate(item.new_start)} → {formatDate(item.new_end)}
                   </Text>
                   {item.created_at && (
                     <Text style={styles.historyDate}>
-                      Renewed: {item.created_at.split('T')[0]}
+                      Renewed: {formatDate(item.created_at)}
                     </Text>
                   )}
                 </View>

@@ -18,18 +18,10 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Plan } from '../types';
-import { formatCurrency, getCurrencySymbol, getGymTodayISO } from '../types';
+import { formatCurrency, getCurrencySymbol, getGymTodayISO, getPhoneCountryPrefix } from '../types';
 
-/** Map gym timezone to a phone country prefix. */
-function getCountryPrefix(timezone?: string): string {
-  if (!timezone) return '+91';
-  const tz = timezone.toLowerCase();
-  if (tz.startsWith('asia/kolkata') || tz.startsWith('asia/calcutta') || tz === 'ist') return '+91';
-  if (tz.startsWith('america/')) return '+1';
-  if (tz.startsWith('europe/london')) return '+44';
-  if (tz.startsWith('asia/dubai')) return '+971';
-  if (tz.startsWith('asia/singapore')) return '+65';
-  return '+91';
+function createMemberRequestKey(): string {
+  return `member-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 const PAYMENT_METHODS = [
@@ -59,15 +51,19 @@ type AddMemberScreenProps = {
   onLogout: () => void;
   onMemberCreated?: (member: Member) => void;
   plans?: Plan[];
+  /** Convert-to-member prefill from a bot lead (name + phone). */
+  prefillName?: string;
+  prefillPhone?: string;
 };
 
-export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: initialPlans = [] }: AddMemberScreenProps) {
+export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: initialPlans = [], prefillName, prefillPhone }: AddMemberScreenProps) {
   const session = getCachedSession();
-  const countryPrefix = getCountryPrefix(session?.gymTimezone);
+  const countryPrefix = getPhoneCountryPrefix(session?.gymTimezone, session?.gymCountry);
+  const memberRequestKeyRef = useRef<string | undefined>(undefined);
 
   const [plans, setPlans] = useState<Plan[]>(initialPlans);
-  const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState(countryPrefix);
+  const [fullName, setFullName] = useState(prefillName?.trim() ?? '');
+  const [phone, setPhone] = useState(prefillPhone?.trim() ? prefillPhone.trim() : countryPrefix);
   const [dupWarning, setDupWarning] = useState<string | null>(null);
   const dupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -177,12 +173,20 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     const endDate = dateToISO(startObj);
 
     const cleanDigits = phone.replace(/\D/g, '');
+    // 10-digit local numbers get the gym's own country prefix — never a
+    // hardcoded +91 (a US gym's 10-digit number is not an Indian number).
     const normalizedPhone = phone.trim().startsWith('+')
       ? phone.trim()
-      : (cleanDigits.length === 10 ? `+91${cleanDigits}` : `+${cleanDigits}`);
+      : (cleanDigits.length === 10 ? `${countryPrefix}${cleanDigits}` : `+${cleanDigits}`);
+
+    // Stable idempotency key per screen instance: a timeout retry after the
+    // server already created the member must not create a duplicate.
+    const idempotencyKey = memberRequestKeyRef.current ?? createMemberRequestKey();
+    memberRequestKeyRef.current = idempotencyKey;
 
     const result = await apiRequest<Member>('/api/mobile/v1/members', {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: {
         full_name: fullName.trim(),
         phone: normalizedPhone,
@@ -201,9 +205,13 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     });
 
     if (result.ok) {
+      memberRequestKeyRef.current = undefined;
       onMemberCreated?.(result.data);
     } else {
       if (result.error.status === 401) { onLogout(); return; }
+      if (result.error.status && result.error.status < 500) {
+        memberRequestKeyRef.current = undefined;
+      }
       setError(result.error.message);
     }
     setLoading(false);
@@ -221,6 +229,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     paymentReference,
     startDate,
     loading,
+    countryPrefix,
     onLogout,
     onMemberCreated,
     selectedPlan,

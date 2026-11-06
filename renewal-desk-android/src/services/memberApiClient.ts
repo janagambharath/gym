@@ -8,6 +8,7 @@
 import * as SecureStore from 'expo-secure-store';
 
 import { getRuntimeConfiguration } from '../config/runtime';
+import { configureDisplayPreferences, localeFromPhonePrefix } from '../types';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -185,6 +186,9 @@ export async function loadMemberSession(): Promise<MemberSession | undefined> {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.token === 'string' && typeof parsed.memberId === 'number') {
       cachedSession = parsed as MemberSession;
+      // No member endpoint exposes the gym locale — derive display prefs
+      // from the member's phone prefix (see localeFromPhonePrefix).
+      configureDisplayPreferences(localeFromPhonePrefix(cachedSession.phone));
       return cachedSession;
     }
     return undefined;
@@ -245,9 +249,11 @@ async function refreshMemberSession(baseUrl: string): Promise<MemberSession | nu
 
 // ── API Helpers ──────────────────────────────────────────────────────
 
-function getBaseUrl(): string {
+function getBaseUrl(): string | undefined {
   const config = getRuntimeConfiguration();
-  return config.apiBaseUrl || 'https://gym-production-910c.up.railway.app';
+  // No production fallback: a build without EXPO_PUBLIC_API_BASE_URL must
+  // fail loudly instead of silently talking to production.
+  return config.apiBaseUrl;
 }
 
 async function memberApiRequest<T>(
@@ -259,6 +265,9 @@ async function memberApiRequest<T>(
   } = {},
 ): Promise<ApiResult<T>> {
   const baseUrl = getBaseUrl();
+  if (!baseUrl) {
+    return { ok: false, error: 'API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL for this build.' };
+  }
   const { method = 'GET', body, anonymous = false } = options;
 
   try {
@@ -365,6 +374,9 @@ export async function verifyOtp(
       planName: member.plan_name,
     };
     await saveMemberSession(session);
+    // No member endpoint exposes the gym locale — derive display prefs
+    // from the member's phone prefix (see localeFromPhonePrefix).
+    configureDisplayPreferences(localeFromPhonePrefix(member.phone));
   }
 
   return result;

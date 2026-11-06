@@ -20,15 +20,16 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Plan } from '../types';
-import { formatCurrency, getGymTodayISO } from '../types';
+import { formatCurrency, getGymTodayISO, getPhoneCountryPrefix } from '../types';
 
 type EditMemberScreenProps = {
   memberId: number;
   onBack: () => void;
   onSaved?: (member: Member) => void;
+  onNavigateDateRepair?: () => void;
 };
 
-export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreenProps) {
+export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepair }: EditMemberScreenProps) {
   const canEditMembership = getCachedSession()?.userRole === 'gym_owner';
   const [member, setMember] = useState<Member | undefined>();
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -96,9 +97,12 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
     setFormErrors({});
 
     const cleanDigits = phone.replace(/\D/g, '');
+    // 10-digit local numbers get the gym's own country prefix — never a
+    // hardcoded +91 (a US gym's 10-digit number is not an Indian number).
+    const countryPrefix = getPhoneCountryPrefix(getCachedSession()?.gymTimezone, getCachedSession()?.gymCountry);
     const normalizedPhone = phone.trim().startsWith('+')
       ? phone.trim()
-      : (cleanDigits.length === 10 ? `+91${cleanDigits}` : `+${cleanDigits}`);
+      : (cleanDigits.length === 10 ? `${countryPrefix}${cleanDigits}` : `+${cleanDigits}`);
 
     const body: Record<string, unknown> = {
       full_name: fullName.trim(),
@@ -257,6 +261,15 @@ export function EditMemberScreen({ memberId, onBack, onSaved }: EditMemberScreen
                 <Text style={styles.readOnlyCopy}>
                   End date will be recalculated from the selected plan or the current membership length.
                 </Text>
+                {onNavigateDateRepair ? (
+                  <Text style={styles.readOnlyCopy}>
+                    If dates don&apos;t match payments, fix them in{' '}
+                    <Text style={styles.dateRepairLink} onPress={onNavigateDateRepair}>
+                      Date Repair
+                    </Text>
+                    .
+                  </Text>
+                ) : null}
               </View>
             ) : null}
           </View>
@@ -315,6 +328,7 @@ const styles = StyleSheet.create({
   dateButton: { alignItems: 'center', backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 48, paddingHorizontal: spacing.lg },
   dateButtonText: { color: colors.text, fontSize: fontSize.base },
   readOnlyCopy: { color: colors.muted, fontSize: fontSize.xs, lineHeight: 18, marginTop: spacing.xs },
+  dateRepairLink: { color: colors.brand, fontWeight: fontWeight.bold, textDecorationLine: 'underline' },
   card: {
     backgroundColor: colors.card,
     borderColor: colors.border,

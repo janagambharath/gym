@@ -82,7 +82,11 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
 
   const handleDeleteAccount = useCallback(() => {
     const config = getRuntimeConfiguration();
-    const deleteUrl = `${config.apiBaseUrl || 'https://gym-production-910c.up.railway.app'}/delete-account`;
+    if (!config.apiBaseUrl) {
+      Alert.alert('Error', 'API base URL is not configured for this build.');
+      return;
+    }
+    const deleteUrl = `${config.apiBaseUrl}/delete-account`;
 
     Alert.alert(
       'Delete Account',
@@ -101,7 +105,11 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
 
   const handlePrivacyPolicy = useCallback(() => {
     const config = getRuntimeConfiguration();
-    const privacyUrl = `${config.apiBaseUrl || 'https://gym-production-910c.up.railway.app'}/privacy`;
+    if (!config.apiBaseUrl) {
+      Alert.alert('Error', 'API base URL is not configured for this build.');
+      return;
+    }
+    const privacyUrl = `${config.apiBaseUrl}/privacy`;
     void Linking.openURL(privacyUrl);
   }, []);
 

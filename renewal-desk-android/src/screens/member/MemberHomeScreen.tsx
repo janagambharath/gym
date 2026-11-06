@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
+import { formatCurrency, formatDate } from '../../types';
 import type { MemberDashboard } from '../../services/memberApiClient';
 import { fetchMemberDashboard, getMemberSession } from '../../services/memberApiClient';
 import { ErrorState } from '../../components/ErrorState';
@@ -164,7 +165,7 @@ export function MemberHomeScreen({
 
           <View style={styles.statusDetails}>
             <DetailRow label="Plan" value={member?.plan_name ?? 'N/A'} />
-            <DetailRow label="Valid Until" value={member?.membership_end ?? 'N/A'} />
+            <DetailRow label="Valid Until" value={formatDate(member?.membership_end)} />
             {daysLeft !== null && daysLeft !== undefined && !isExpired && (
               <DetailRow
                 label="Days Remaining"
@@ -173,7 +174,7 @@ export function MemberHomeScreen({
               />
             )}
             {member?.plan_price && (
-              <DetailRow label="Plan Price" value={`₹${member.plan_price}`} />
+              <DetailRow label="Plan Price" value={formatCurrency(member.plan_price)} />
             )}
           </View>
 
@@ -190,7 +191,7 @@ export function MemberHomeScreen({
               <Icon name="time" size={20} color={colors.warning} />
               <Text style={styles.cardTitle}>Payment Pending</Text>
             </View>
-            <Text style={styles.pendingAmount}>₹{data.pending_payment.amount}</Text>
+            <Text style={styles.pendingAmount}>{formatCurrency(data.pending_payment.amount)}</Text>
             <Text style={styles.pendingNote}>
               {"Your payment is being verified by the gym. You'll be notified once confirmed."}
             </Text>
@@ -210,7 +211,7 @@ export function MemberHomeScreen({
             </Text>
             {member?.plan_price && (
               <Text style={styles.renewButtonSub}>
-                {member.plan_name} · ₹{member.plan_price}
+                {member.plan_name} · {formatCurrency(member.plan_price)}
               </Text>
             )}
           </TouchableOpacity>
@@ -251,10 +252,10 @@ export function MemberHomeScreen({
               <View key={r.id} style={styles.renewalRow}>
                 <View>
                   <Text style={styles.renewalDates}>
-                    {r.new_start} → {r.new_end}
+                    {formatDate(r.new_start)} → {formatDate(r.new_end)}
                   </Text>
                 </View>
-                <Text style={styles.renewalAmount}>₹{r.amount}</Text>
+                <Text style={styles.renewalAmount}>{formatCurrency(r.amount)}</Text>
               </View>
             ))}
           </View>

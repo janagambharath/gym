@@ -464,19 +464,28 @@ export function formatTime(dateStr: string | null | undefined): string {
   }
 }
 
+const countryPrefixByCode: Record<string, string> = {
+  IN: '+91', US: '+1', GB: '+44', AE: '+971', SG: '+65', AU: '+61',
+};
+
 /** Map a gym timezone to the phone country prefix for that gym's country.
- * Derived from the gym's own timezone — never a hardcoded +91. Falls back
- * to +91 only when the timezone is unknown (the gym default). */
-export function getPhoneCountryPrefix(timezone?: string): string {
-  if (!timezone) return '+91';
-  const tz = timezone.toLowerCase();
-  if (tz.startsWith('asia/kolkata') || tz.startsWith('asia/calcutta') || tz === 'ist') return '+91';
-  if (tz.startsWith('america/')) return '+1';
-  if (tz.startsWith('europe/london')) return '+44';
-  if (tz.startsWith('asia/dubai')) return '+971';
-  if (tz.startsWith('asia/singapore')) return '+65';
-  if (tz.startsWith('australia/')) return '+61';
-  return '+91';
+ * Derived from the gym's own timezone — never a hardcoded +91. When the
+ * timezone is unknown, fall back to the gym's stored country; when that
+ * is unknown too, return '' (no prefix) so a 10-digit number is left as
+ * typed instead of being silently mislabelled +91. */
+export function getPhoneCountryPrefix(timezone?: string, country?: string): string {
+  if (timezone) {
+    const tz = timezone.toLowerCase();
+    if (tz.startsWith('asia/kolkata') || tz.startsWith('asia/calcutta') || tz === 'ist') return '+91';
+    if (tz.startsWith('america/')) return '+1';
+    if (tz.startsWith('europe/london')) return '+44';
+    if (tz.startsWith('asia/dubai')) return '+971';
+    if (tz.startsWith('asia/singapore')) return '+65';
+    if (tz.startsWith('australia/')) return '+61';
+  }
+  const code = country?.trim().toUpperCase();
+  if (code && countryPrefixByCode[code]) return countryPrefixByCode[code];
+  return '';
 }
 
 /** Best-effort locale guess from an E.164 phone number.

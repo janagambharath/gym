@@ -83,7 +83,12 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, onImportM
       if (cancelled) return;
       if (result.ok) {
         setMembers(result.data.members);
-        setTotalPages(result.data.pagination.total_pages);
+        // The biometric=not_enrolled branch omits total_pages server-side;
+        // derive it so the pager doesn't vanish for that filter.
+        setTotalPages(
+          result.data.pagination.total_pages ??
+            Math.max(1, Math.ceil(result.data.pagination.total / (result.data.pagination.page_size || 20))),
+        );
         setTotalCount(result.data.pagination.total);
         setError(undefined);
       } else {

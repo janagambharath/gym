@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
@@ -50,11 +50,17 @@ function formatAccessTime(isoString: string): string {
   return `${formatShortDate(isoString)}, ${timeStr}`;
 }
 
-/** Defence against duplicate feed rows: same member + same punch instant. */
+/** Defence against duplicate feed rows: same terminal + same member + same punch instant.
+ * The terminal discriminator is device_name — the event payload carries no
+ * device serial/terminal ID, so two terminals reporting the same member at
+ * the same second must not collapse into one row. */
 function dedupeEvents(events: AccessEvent[]): AccessEvent[] {
   const seen = new Set<string>();
   return events.filter((event) => {
-    const key = `${event.member_id ?? event.device_enroll_number}:${event.event_timestamp}`;
+    // V4-L24: the key must include the event kind — an ENTRY and an EXIT
+    // (or ATTENDANCE) for the same member at the same second are distinct
+    // punches and must not collapse into one row.
+    const key = `${event.device_name ?? ''}:${event.member_id ?? event.device_enroll_number}:${event.event_timestamp}:${event.event_type}:${event.direction ?? ''}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -121,6 +127,10 @@ export function AccessScreen({
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [search, setSearch] = useState('');
+  // V4-M15: the feed/inside search is debounced — the raw keystrokes only
+  // update the input; fetches run against this settled value, 350 ms after
+  // the user stops typing (same pattern as the check-in modal below).
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -145,17 +155,25 @@ export function AccessScreen({
 
   // ── Fetch events ─────────────────────────────────────────────────
 
+  // V4-M15: sequence guard — only the latest feed/inside request may apply
+  // its results, so a slow response for an old query can never overwrite
+  // newer results (same pattern as the check-in candidate fetch below).
+  const eventsSeqRef = useRef(0);
+  const insideSeqRef = useRef(0);
+
   const fetchEvents = useCallback(
     async (page = 1, append = false) => {
       if (activeTab === 'inside') return;
+      const seq = ++eventsSeqRef.current;
       const typeParam =
         activeTab === 'entry' ? '&type=entry' :
         activeTab === 'exit' ? '&type=exit' :
         activeTab === 'denied' ? '&type=denied' : '';
-      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const searchParam = debouncedSearch.trim() ? `&search=${encodeURIComponent(debouncedSearch.trim())}` : '';
       const url = `/api/mobile/v1/access/events?page=${page}&per_page=25&date=today${typeParam}${searchParam}`;
 
       const res = await apiRequest<AccessEventsResponse>(url);
+      if (seq !== eventsSeqRef.current) return;
       if (res.ok) {
         if (append) {
           setEvents((prev) => dedupeEvents([...prev, ...res.data.events]));
@@ -168,24 +186,26 @@ export function AccessScreen({
         if (!append) setError(res.error.message);
       }
     },
-    [activeTab, search],
+    [activeTab, debouncedSearch],
   );
 
   // ── Fetch inside members ─────────────────────────────────────────
 
   const fetchInsideMembers = useCallback(async () => {
     if (activeTab !== 'inside') return;
-    const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+    const seq = ++insideSeqRef.current;
+    const searchParam = debouncedSearch.trim() ? `&search=${encodeURIComponent(debouncedSearch.trim())}` : '';
     const res = await apiRequest<InsideMembersResponse>(
       `/api/mobile/v1/access/inside?per_page=50${searchParam}`,
     );
+    if (seq !== insideSeqRef.current) return;
     if (res.ok) {
       setInsideMembers(res.data.members);
       setError(undefined);
     } else {
       setError(res.error.message);
     }
-  }, [activeTab, search]);
+  }, [activeTab, debouncedSearch]);
 
   // ── Initial + refresh load ───────────────────────────────────────
 
@@ -196,6 +216,19 @@ export function AccessScreen({
     ]);
     setLoading(false);
   }, [fetchSummary, fetchEvents, fetchInsideMembers, activeTab]);
+
+  // V4-M15: settle the shared search 350 ms after the last keystroke so
+  // the feed/inside fetches fire once per pause in typing, not once per
+  // keystroke. Clearing the box settles immediately (tab switch / X tap
+  // must not wait out the debounce with a stale query).
+  useEffect(() => {
+    if (!search.trim()) {
+      setDebouncedSearch('');
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useLiveEffect(() => {
     let cancelled = false;
@@ -212,7 +245,7 @@ export function AccessScreen({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, fetchEvents, fetchInsideMembers, fetchSummary, refreshToken, search], 15000);
+  }, [activeTab, fetchEvents, fetchInsideMembers, fetchSummary, refreshToken], 15000);
 
   // ── Pull-to-refresh ──────────────────────────────────────────────
 
@@ -237,15 +270,34 @@ export function AccessScreen({
     setLoadingMore(false);
   }, [activeTab, loadingMore, pagination, fetchEvents]);
 
+  // Sequence guard: only the latest search may apply its results, so a
+  // slow earlier request can never overwrite a newer one.
+  const candidateSearchSeqRef = useRef(0);
+
   const fetchCandidateMembers = useCallback(async (q: string) => {
+    const seq = ++candidateSearchSeqRef.current;
     setLoadingCandidates(true);
-    const url = `/api/mobile/v1/members?per_page=20${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : '&status=active'}`;
+    // V4-M16: status=active stays in the query when typing — dropping it
+    // let paused members appear and be checked in, bypassing the freeze
+    // (the backend denies expired members but not paused ones).
+    const url = `/api/mobile/v1/members?per_page=20&status=active${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`;
     const res = await apiRequest<{ members: Member[] }>(url);
+    if (seq !== candidateSearchSeqRef.current) return;
     if (res.ok) {
       setCandidateMembers(res.data.members || []);
     }
     setLoadingCandidates(false);
   }, []);
+
+  // Manual check-in search is debounced 350ms — one request per pause in
+  // typing, not one per keystroke. Fires on open too (current query).
+  useEffect(() => {
+    if (!showCheckInModal) return;
+    const timer = setTimeout(() => {
+      void fetchCandidateMembers(checkInSearch);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [checkInSearch, showCheckInModal, fetchCandidateMembers]);
 
   const handleManualCheckIn = useCallback(async (memberId: number, type: 'ENTRY' | 'EXIT' = 'ENTRY') => {
     setCheckingInId(memberId);
@@ -351,7 +403,6 @@ export function AccessScreen({
         style={styles.checkInBtn}
         onPress={() => {
           setShowCheckInModal(true);
-          void fetchCandidateMembers('');
         }}
         activeOpacity={0.8}
       >
@@ -716,10 +767,7 @@ export function AccessScreen({
                 placeholder="Search member by name or phone..."
                 placeholderTextColor={colors.muted}
                 value={checkInSearch}
-                onChangeText={(t) => {
-                  setCheckInSearch(t);
-                  void fetchCandidateMembers(t);
-                }}
+                onChangeText={setCheckInSearch}
               />
             </View>
             <FlatList

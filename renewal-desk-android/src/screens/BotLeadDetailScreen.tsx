@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   RefreshControl,
   ScrollView,
@@ -29,6 +31,8 @@ type BotLeadDetailScreenProps = {
   onBack: () => void;
   onLeadUpdated?: (lead: BotLead) => void;
   onLogout?: () => void;
+  /** Navigate to Add Member prefilled with this lead's name + phone. */
+  onConvertToMember?: (lead: BotLead) => void;
 };
 
 type Notice = {
@@ -53,7 +57,7 @@ function formatTimestamp(timestamp: string | null): string {
   return formatted === '—' ? 'Unavailable' : formatted;
 }
 
-export function BotLeadDetailScreen({ leadId, onBack, onLeadUpdated, onLogout }: BotLeadDetailScreenProps) {
+export function BotLeadDetailScreen({ leadId, onBack, onLeadUpdated, onLogout, onConvertToMember }: BotLeadDetailScreenProps) {
   const [lead, setLead] = useState<BotLead>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -135,6 +139,15 @@ export function BotLeadDetailScreen({ leadId, onBack, onLeadUpdated, onLogout }:
     setSaving(false);
   }, [lead, name, notes, onLeadUpdated, onLogout, status]);
 
+  // Mirror the PWA: open a WhatsApp chat with the lead's phone number.
+  const handleSendWhatsApp = useCallback(() => {
+    if (!lead?.phone) return;
+    const url = `https://wa.me/${lead.phone.replace(/\D/g, '')}`;
+    void Linking.openURL(url).catch(() => {
+      Alert.alert('Cannot Open WhatsApp', 'Please ensure WhatsApp is installed.');
+    });
+  }, [lead?.phone]);
+
   if (loading && !lead) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -179,6 +192,28 @@ export function BotLeadDetailScreen({ leadId, onBack, onLeadUpdated, onLogout }:
               <Text style={styles.createdAt}>Captured {formatTimestamp(lead.created_at)}</Text>
             </View>
             <StatusBadge status={lead.status} />
+          </View>
+
+          <View style={styles.actionsRow}>
+            {onConvertToMember ? (
+              <PrimaryButton
+                fullWidth={false}
+                icon={<Icon name="personAdd" size={18} color={colors.textInverse} />}
+                onPress={() => onConvertToMember(lead)}
+                style={styles.actionButton}
+                title="Convert to Member"
+              />
+            ) : null}
+            {lead.phone ? (
+              <PrimaryButton
+                fullWidth={false}
+                icon={<Icon name="chatbubble" size={18} color={colors.textInverse} />}
+                onPress={handleSendWhatsApp}
+                style={styles.actionButton}
+                title="Send WhatsApp"
+                variant="whatsapp"
+              />
+            ) : null}
           </View>
 
           {notice ? (
@@ -264,6 +299,13 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  actionButton: {
+    flex: 1,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   avatar: {
     alignItems: 'center',
     backgroundColor: colors.successSurface,

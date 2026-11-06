@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -17,11 +17,15 @@ import { Avatar } from '../components/Avatar';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SearchBar } from '../components/SearchBar';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Payment } from '../types';
-import { formatCurrency, getCurrencySymbol } from '../types';
+import { formatCurrency, formatDate, getCurrencySymbol } from '../types';
+
+function createPaymentRequestKey(): string {
+  return `payment-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 function dateKeyInTimezone(value: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
@@ -68,7 +72,9 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
   const [gymTimezone, setGymTimezone] = useState('Asia/Kolkata');
   const [renewalStartDateOverride, setRenewalStartDateOverride] = useState<string>();
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const paymentRequestKeyRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     void apiRequest<{ gym?: { timezone?: string } }>('/api/mobile/v1/settings').then((res) => {
@@ -83,6 +89,19 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
       : today;
   })();
   const renewalStartDate = renewalStartDateOverride || minimumStartDate;
+  // Backdated renewals: the backend accepts any start date for EXPIRED
+  // members — the picker floor applies only while the member is active.
+  const isExpiredMember = Boolean(
+    selectedMember &&
+      (selectedMember.status === 'expired' ||
+        (selectedMember.membership_end !== null &&
+          selectedMember.membership_end < dateKeyInTimezone(new Date(), gymTimezone))),
+  );
+  const parsedRenewalDays = parseInt(renewalDays, 10);
+  const renewalEndDate =
+    renewalStartDate && parsedRenewalDays > 0
+      ? addDays(renewalStartDate, parsedRenewalDays - 1)
+      : '';
 
   // Pre-select member if provided
   useEffect(() => {
@@ -138,8 +157,14 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
     const submitPayment = async () => {
       setSaving(true);
 
+      // Stable idempotency key per screen instance: a timeout retry after the
+      // server already committed must not double-create the payment.
+      const idempotencyKey = paymentRequestKeyRef.current ?? createPaymentRequestKey();
+      paymentRequestKeyRef.current = idempotencyKey;
+
       const result = await apiRequest<Payment>('/api/mobile/v1/payments', {
         method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
         body: {
           member_id: selectedMember.id,
           amount: parsedAmount,
@@ -148,12 +173,15 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
           notes: notes.trim() || undefined,
           renewal_days: days,
           renewal_start_date: renewalStartDate,
+          // Off-plan days are rejected server-side without this.
+          override_reason: days !== selectedMember.plan?.duration_days ? overrideReason.trim() || undefined : undefined,
         },
       });
 
       setSaving(false);
 
       if (result.ok) {
+        paymentRequestKeyRef.current = undefined;
         const whatsappUrl = result.data?.whatsapp_url || result.data?.receipt?.whatsapp_url;
         if (whatsappUrl) {
           Alert.alert(
@@ -185,11 +213,27 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
           onBack();
         }
       } else {
+        if (result.error.status && result.error.status < 500) {
+          paymentRequestKeyRef.current = undefined;
+        }
         Alert.alert('Error', result.error.message);
       }
     };
 
     const proceed = async () => {
+      // Off-plan days need an owner override reason — the backend rejects
+      // the payment without one, so require it before submitting.
+      if (
+        selectedMember.plan?.duration_days &&
+        days !== selectedMember.plan.duration_days &&
+        !overrideReason.trim()
+      ) {
+        Alert.alert(
+          'Override reason required',
+          'Off-plan renewal days need a reason (owner only). Enter it below, then tap Proceed Anyway.',
+        );
+        return;
+      }
       if (parsedAmount === 0) {
         Alert.alert(
           'Confirm Complementary Payment',
@@ -207,12 +251,22 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
 
     // Guard: a mistyped renewal-days value silently moves the member's
     // end date by that many days. If it differs from the plan's actual
-    // duration, make the staff member confirm it is deliberate.
+    // duration, make it deliberate — and honest about who may override it.
+    // Staff cannot override: the backend rejects off-plan days without an
+    // owner override reason, so staff get the rejection up front instead of
+    // a "Proceed Anyway" that always fails.
     const planDays = selectedMember.plan?.duration_days;
     if (planDays && days !== planDays) {
+      if (getCachedSession()?.userRole !== 'gym_owner') {
+        Alert.alert(
+          'Off-plan renewal days',
+          `You entered ${days} days, but ${selectedMember.plan?.name || 'the selected plan'} is ${planDays} days. Only the gym owner can record off-plan days (with a reason) — please ask the owner to record this payment.`,
+        );
+        return;
+      }
       Alert.alert(
         'Check Renewal Days',
-        `You entered ${days} days, but ${selectedMember.plan?.name || 'the selected plan'} is ${planDays} days. The member's end date will move by ${days} days.`,
+        `You entered ${days} days, but ${selectedMember.plan?.name || 'the selected plan'} is ${planDays} days. The member's end date will move by ${days} days. Enter an override reason below, then tap Proceed Anyway.`,
         [
           { text: 'Go Back', style: 'cancel' },
           { text: 'Proceed Anyway', onPress: () => { void proceed(); } },
@@ -222,7 +276,7 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
     }
 
     await proceed();
-  }, [selectedMember, amount, method, reference, notes, renewalDays, renewalStartDate, onBack, onCreated, saving]);
+  }, [selectedMember, amount, method, reference, notes, renewalDays, renewalStartDate, overrideReason, onBack, onCreated, saving]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -355,11 +409,32 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
                 value={pickerDate(renewalStartDate)}
                 mode="date"
                 display="default"
-                minimumDate={pickerDate(minimumStartDate)}
+                minimumDate={isExpiredMember ? undefined : pickerDate(minimumStartDate)}
                 onChange={(_, selectedDate) => {
                   setShowStartDatePicker(false);
                   if (selectedDate) setRenewalStartDateOverride(dateKeyFromLocalDate(selectedDate));
                 }}
+              />
+            ) : null}
+            {isExpiredMember ? (
+              <Text style={styles.noticeText}>
+                This membership already expired — you can backdate the start to when the member actually paid.
+              </Text>
+            ) : null}
+            {renewalEndDate ? (
+              <Text style={styles.noticeText}>
+                New end date: {formatDate(renewalEndDate)}
+              </Text>
+            ) : null}
+
+            {selectedMember?.plan?.duration_days && parsedRenewalDays !== selectedMember.plan.duration_days ? (
+              <FormField
+                label="Override reason (required for off-plan days, owner only)"
+                value={overrideReason}
+                onChangeText={setOverrideReason}
+                placeholder="e.g. Owner approved 45-day extension"
+                multiline
+                numberOfLines={2}
               />
             ) : null}
 

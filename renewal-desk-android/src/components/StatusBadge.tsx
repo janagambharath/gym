@@ -13,12 +13,19 @@ type BadgeStyle = { bg: string; text: string; label: string };
 
 function getStatusStyle(status: string): BadgeStyle {
   switch (status.toLowerCase()) {
+    case 'owner':
+    case 'gym_owner':
+      return { bg: colors.brandSubtle, text: colors.brand, label: 'OWNER' };
+    case 'staff':
+      return { bg: colors.infoSurface, text: colors.info, label: 'STAFF' };
     case 'active':
       return { bg: colors.statusActiveSurface, text: colors.statusActive, label: 'ACTIVE' };
     case 'trial':
       return { bg: colors.warningSurface, text: colors.warning, label: 'TRIAL' };
     case 'expiring':
       return { bg: colors.statusExpiringSurface, text: colors.statusExpiring, label: 'EXPIRING' };
+    case 'paused':
+      return { bg: colors.infoSurface, text: colors.info, label: 'PAUSED' };
     case 'expired':
       return { bg: colors.statusExpiredSurface, text: colors.statusExpired, label: 'EXPIRED' };
     case 'cancelled':

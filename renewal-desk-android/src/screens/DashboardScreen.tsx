@@ -20,7 +20,7 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
-import { formatCurrency, formatDate, getDaysText, getMemberDisplayStatus } from '../types';
+import { formatCurrency, formatDate, formatDateTime, getDaysText, getMemberDisplayStatus } from '../types';
 
 const PILLAR_TONES: Record<'revenue' | 'retain' | 'recover', {
   label: string;
@@ -102,6 +102,28 @@ export function DashboardScreen({
   const hasAttention = Boolean(
     data && (data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0 || (data.bot_summary?.handover_count ?? 0) > 0),
   );
+
+  // Money truth (C1 / B-H3 / B-H4): the hero is verified-only money.
+  // The backend splits the cohort into payment-backed renewals (a verified
+  // payment exists) and direct/owner-recorded renewals (no payment on file).
+  // The recorded total is shown as secondary text, never as the headline.
+  const recoveredBreakdown = data?.recovery_rate?.recovered_breakdown;
+  const recordedRecovered =
+    recoveredBreakdown?.total_amount ??
+    data?.recovery_rate?.revenue_recovered ??
+    data?.revenue_recovered?.total_amount ??
+    '0';
+  // No silent fallback: if the backend omits the verified-only split,
+  // the hero shows "—" instead of the recorded (inflated) total. The
+  // recorded total is shown as secondary text below, never as the
+  // "Verified recovered" headline.
+  const verifiedRecovered: string | null =
+    recoveredBreakdown?.payment_backed_amount ??
+    data?.revenue_recovered?.payment_backed_amount ??
+    null;
+  const directRecovered =
+    recoveredBreakdown?.direct_amount ?? data?.revenue_recovered?.direct_amount;
+  const riskBreakdown = data?.recovery_rate?.risk_breakdown;
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -196,12 +218,19 @@ export function DashboardScreen({
         }
         showsVerticalScrollIndicator={false}
       >
-        {loading && !refreshing ? (
+        {loading && !refreshing && !data ? (
           <DashboardSkeleton />
-        ) : error ? (
+        ) : error && !data ? (
           <ErrorState message={error} onRetry={refresh} />
         ) : data ? (
           <>
+            {error ? (
+              <View style={styles.staleBanner}>
+                <Text style={styles.staleBannerText}>
+                  Update failed — showing previous data. Pull to refresh to retry.
+                </Text>
+              </View>
+            ) : null}
             {/* Greeting */}
             <View style={styles.greeting}>
               <Text style={styles.greetingText}>
@@ -403,9 +432,9 @@ export function DashboardScreen({
                       </View>
                       <View style={styles.revenueHeroDivider} />
                       <View style={styles.revenueHeroStat}>
-                        <Text style={styles.revenueHeroLabel}>Renewal value recorded</Text>
+                        <Text style={styles.revenueHeroLabel}>Verified recovered</Text>
                         <Text style={[styles.revenueHeroValue, { color: colors.success }]}>
-                          {formatCurrency(data.recovery_rate?.revenue_recovered || '0')}
+                          {verifiedRecovered == null ? '—' : formatCurrency(verifiedRecovered)}
                         </Text>
                       </View>
                       <View style={styles.revenueHeroDivider} />
@@ -417,7 +446,11 @@ export function DashboardScreen({
                       </View>
                     </View>
                     <Text style={styles.revenueHeroLabel}>
-                      Forecasts use member or plan rates. Renewal entries may be owner-recorded; verified payments are tracked separately.
+                      Recorded total {formatCurrency(recordedRecovered)}
+                      {directRecovered && Number(directRecovered) > 0
+                        ? ` (includes ${formatCurrency(directRecovered)} owner-recorded, not yet verified)`
+                        : ''}
+                      . Forecasts use member or plan rates.
                     </Text>
 
                     {/* Campaign-linked renewal callout; timing is not causal proof. */}
@@ -549,7 +582,7 @@ export function DashboardScreen({
                   </Text>
                   {data.access_summary.last_event_at ? (
                     <Text style={styles.accessLastEventText}>
-                      Last scan {new Date(data.access_summary.last_event_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      Last scan {formatDateTime(data.access_summary.last_event_at)}
                     </Text>
                   ) : null}
                 </View>
@@ -723,8 +756,12 @@ export function DashboardScreen({
                     <Icon name="warning" size={16} color={colors.critical} />
                   </View>
                   <View style={styles.riskTextWrap}>
-                    <Text style={styles.riskLabel}>Expiry Value Estimate (7 Days)</Text>
-                    <Text style={styles.riskSubtext}>{data.expiring_soon} memberships expiring soon</Text>
+                    <Text style={styles.riskLabel}>Revenue at risk</Text>
+                    <Text style={styles.riskSubtext}>
+                      {riskBreakdown
+                        ? `${riskBreakdown.expiring_count} expiring in the next 7 days · ${riskBreakdown.expired_count} expired in the last 30 days`
+                        : `${data.expiring_soon} memberships expiring soon · plus memberships expired in the last 30 days`}
+                    </Text>
                   </View>
                   <Text style={styles.riskAmount}>{formatCurrency(data.revenue_at_risk)}</Text>
                 </TouchableOpacity>
@@ -998,6 +1035,19 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     padding: spacing.lg,
     paddingBottom: spacing.section,
+  },
+  staleBanner: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warningBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  staleBannerText: {
+    color: colors.warningDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
   },
   greeting: {
     backgroundColor: colors.brand,

@@ -17,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
+import { formatDate, formatTime } from '../../types';
 import type {
   MemberAccessEvent,
   MemberAccessSummary,
@@ -108,24 +109,6 @@ export function MemberAccessScreen() {
       </SafeAreaView>
     );
   }
-
-  const formatTime = (ts: string) => {
-    try {
-      const d = new Date(ts);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return ts;
-    }
-  };
-
-  const formatDate = (ts: string) => {
-    try {
-      const d = new Date(ts);
-      return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-    } catch {
-      return ts;
-    }
-  };
 
   return (
     <SafeAreaView style={styles.safeArea}>

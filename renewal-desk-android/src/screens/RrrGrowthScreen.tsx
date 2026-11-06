@@ -1,16 +1,25 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveEffect } from '../hooks/useLiveEffect';
 import { Alert, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
+import { formatDateTime, formatTime } from '../types';
 import { MemberPickerModal, PickerPerson } from '../components/MemberPickerModal';
 import { CardSkeleton, PillarCardSkeleton } from '../components/LoadingSkeleton';
 
 type Opportunity = { id: number; pillar: string; status: string; reason: string; potential_revenue: string; member: { name: string } };
 type Device = { id: number; name: string; serial_number: string; status: string; selected: boolean };
-type Unresolved = { biometric_user_id: string; punch_time: string };
-type Person = { id: number; full_name: string };
+/** One distinct unmapped terminal ID, grouped server-side with punch counts. */
+type UnresolvedGroup = {
+  biometric_user_id: string;
+  punch_count: number;
+  latest_punch_time: string | null;
+  first_punch_time: string | null;
+  latest_event_id: number | null;
+  source: string | null;
+  device_serial: string | null;
+};
 type Integration = { id: number; type: 'adms_direct' | 'ebioserver' | 'direct_bridge'; status: string; device_name?: string; device_serial?: string; records_synced?: number; terminal_settings?: TerminalSettings; commands_enabled?: boolean; commissioning_status?: string; last_success_at?: string | null };
 type TerminalSettings = { server_mode?: string; server_address?: string; server_port?: number; https?: boolean; path?: string; warning?: string };
 type Command = { id: number; action: string; status: string; result_code?: string };
@@ -27,14 +36,21 @@ type OwnerToday = {
 const ruleFields = [['expiry_days', 'Expiry window'], ['no_visit_days', 'No visit'], ['attendance_drop_percent', 'Attendance decline'], ['recent_expiry_days', 'Recent expiry']] as const;
 const tones = { revenue: { label: 'REVENUE', copy: 'Grow existing value', color: colors.success, surface: colors.successSurface }, retain: { label: 'RETAIN', copy: 'Protect recurring revenue', color: colors.warning, surface: colors.warningSurface }, recover: { label: 'RECOVER', copy: 'Bring members back', color: colors.critical, surface: colors.criticalSurface } } as const;
 
-export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
+export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: () => void; onNavigateBulkDeactivate?: () => void }) {
+  const isOwner = getCachedSession()?.userRole === 'gym_owner';
   const [data, setData] = useState<Payload>();
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
-  const [unresolved, setUnresolved] = useState<Unresolved[]>([]);
+  const [unresolvedGroups, setUnresolvedGroups] = useState<UnresolvedGroup[]>([]);
+  const [unresolvedPage, setUnresolvedPage] = useState(1);
+  const [unresolvedTotalPages, setUnresolvedTotalPages] = useState(0);
+  const [unresolvedTotal, setUnresolvedTotal] = useState(0);
+  const [loadingMoreUnresolved, setLoadingMoreUnresolved] = useState(false);
+  // Staged terminal-ID → member pairs, linked together via bulk-resolve.
+  const [pendingMappings, setPendingMappings] = useState<Record<string, number>>({});
+  const [pendingMappingNames, setPendingMappingNames] = useState<Record<string, string>>({});
   const [showBiometricLinkBanner, setShowBiometricLinkBanner] = useState(true);
-  const [people, setPeople] = useState<Person[]>([]);
   const [rules, setRules] = useState<Record<string, number>>({});
   const [ownerToday, setOwnerToday] = useState<OwnerToday>();
   const [pairingCode, setPairingCode] = useState('');
@@ -47,9 +63,20 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const [directDoorConfirmed, setDirectDoorConfirmed] = useState(false);
   const [commissioning, setCommissioning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [pickerEvent, setPickerEvent] = useState<Unresolved | null>(null);
+  const [pickerEvent, setPickerEvent] = useState<UnresolvedGroup | null>(null);
   const [matches, setMatches] = useState<EnrollMatches | null>(null);
   const [scanning, setScanning] = useState(false);
+  const scanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // The terminal-scan poll must die when the screen unmounts / is navigated
+  // away from — otherwise it keeps firing API calls for up to 60s.
+  const stopScanTimer = useCallback(() => {
+    if (scanTimerRef.current) {
+      clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => () => stopScanTimer(), [stopScanTimer]);
   const [loading, setLoading] = useState(true);
   const [recoveryTarget, setRecoveryTarget] = useState<Opportunity | null>(null);
   const [outcomeAmount, setOutcomeAmount] = useState('');
@@ -64,11 +91,10 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   const directLive = isLive(direct);
 
   const load = useCallback(async (preserveDrafts = false) => {
-    const [dashboard, integrationData, mappings, members, ruleData, ownerTodayData, settings] = await Promise.all([
+    const [dashboard, integrationData, mappings, ruleData, ownerTodayData, settings] = await Promise.all([
       apiRequest<Payload>('/api/mobile/v1/rrr/dashboard'),
       apiRequest<{ integrations: Integration[]; devices: Device[] }>('/api/mobile/v1/rrr/integrations'),
-      apiRequest<{ events: Unresolved[] }>('/api/mobile/v1/rrr/mappings/unresolved'),
-      apiRequest<{ members: Person[] }>('/api/mobile/v1/members?page=1&page_size=100'),
+      apiRequest<{ groups: UnresolvedGroup[]; pagination: { page: number; per_page: number; total: number; total_pages: number } }>('/api/mobile/v1/rrr/mappings/unresolved?page=1&per_page=20'),
       apiRequest<{ rules: Record<string, number> }>('/api/mobile/v1/rrr/rules'),
       apiRequest<OwnerToday>('/api/mobile/v1/owner/today'),
       apiRequest<{ gym: { show_biometric_link_banner?: boolean } }>('/api/mobile/v1/settings'),
@@ -86,9 +112,13 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
         if (commandData.ok) setCommands(commandData.data.commands || []);
       } else setCommands([]);
     }
-    if (mappings.ok) setUnresolved(mappings.data.events || []);
+    if (mappings.ok) {
+      setUnresolvedGroups(mappings.data.groups || []);
+      setUnresolvedPage(mappings.data.pagination?.page ?? 1);
+      setUnresolvedTotalPages(mappings.data.pagination?.total_pages ?? 0);
+      setUnresolvedTotal(mappings.data.pagination?.total ?? 0);
+    }
     if (settings.ok) setShowBiometricLinkBanner(settings.data.gym?.show_biometric_link_banner !== false);
-    if (members.ok) setPeople(members.data.members || []);
     if (ruleData.ok) setRules(current => preserveDrafts && Object.keys(current).length ? current : ruleData.data.rules || {});
     if (ownerTodayData.ok) {
       setOwnerToday(ownerTodayData.data);
@@ -117,7 +147,9 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
   };
   const pairBridge = async () => {
     const result = await apiRequest<{ pairing_code: string; expires_at: string }>('/api/mobile/v1/rrr/integrations/ebioserver/pairing', { method: 'POST', body: {} });
-    if (result.ok) setPairingCode(`${result.data.pairing_code} · expires ${new Date(result.data.expires_at).toLocaleTimeString()}`);
+    // V4-L27: expiry in the gym's timezone via the shared helper —
+    // `new Date(...).toLocaleTimeString()` showed the phone's timezone.
+    if (result.ok) setPairingCode(`${result.data.pairing_code} · expires ${formatTime(result.data.expires_at)}`);
     else Alert.alert('Pairing unavailable', result.error.message);
   };
   const selectDevice = async (id: number) => {
@@ -158,7 +190,70 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     if (result.ok) { Alert.alert('Command queued', 'Keep the terminal online; it will receive this on its next cloud poll.'); void load(); }
     else Alert.alert('Command not queued', result.error.message);
   };
-  const queue = (action: 'probe_info' | 'essl_group_block_test' | 'essl_group_unblock_test') => {
+
+  /** Canonical terminal-ID compare: "042" and "42" are the same enrollee. */
+  const canonicalEnroll = (value: string) => value.replace(/^0+/, '') || '0';
+
+  /**
+   * Resolve the typed test ID against real members BEFORE queuing a group
+   * test. Typing a real member's terminal ID + exact name used to queue a
+   * Grp=100 block on them. Returns the matched member (hard refuse), or a
+   * terminal user with no linked member (loud warning), or null.
+   */
+  const resolveTestId = async (): Promise<{ memberName?: string; terminalName?: string } | null> => {
+    const wantedId = canonicalEnroll(testUserId.trim());
+    // V4-L26: targeted lookup — enrolled members whose stored name/phone
+    // matches the typed terminal name, filtered server-side. The old
+    // name search (page_size=10, all members) could miss the real member
+    // at Yodha scale when 10+ members shared a similar name; scoping to
+    // enrolled members + the name filter keeps the result set small and
+    // exact. The backend applies both filters together (q ilike on
+    // full_name/phone, biometric=enrolled on device_enroll_number).
+    const byName = await apiRequest<{ members: { id: number; full_name: string; device_enroll_number?: string | null }[] }>(
+      `/api/mobile/v1/members?biometric=enrolled&q=${encodeURIComponent(testUserName.trim())}&page_size=20`,
+    );
+    if (byName.ok) {
+      const hit = (byName.data.members || []).find(
+        (m) => m.device_enroll_number != null && canonicalEnroll(String(m.device_enroll_number)) === wantedId,
+      );
+      if (hit) return { memberName: hit.full_name };
+    }
+    // Terminal snapshot: a suggestion already linked to a member.
+    const snapshot = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
+    if (snapshot.ok) {
+      const linked = (snapshot.data.suggestions || []).find(
+        (s) => canonicalEnroll(s.enroll_number) === wantedId,
+      );
+      if (linked?.member_id) return { memberName: linked.member_name ?? undefined, terminalName: linked.terminal_name };
+      const unlinked = (snapshot.data.unmatched_terminal || []).find(
+        (s) => canonicalEnroll(s.enroll_number) === wantedId,
+      );
+      if (unlinked) return { terminalName: unlinked.terminal_name };
+    }
+    // Members enrolled by terminal ID but absent from the snapshot (stale
+    // or offline terminal, user never appeared in a snapshot): page
+    // through the enrolled list instead of trusting one capped page.
+    // V4-L26: the old single page_size=500 fetch missed real members at
+    // Yodha scale (>500 enrolled); the serve-side guard remains the final
+    // defence, but this sweep is the last client-side chance to catch one.
+    let page = 1;
+    for (;;) {
+      const enrolled = await apiRequest<{ members: { id: number; full_name: string; device_enroll_number?: string | null }[]; pagination?: { page: number; total_pages: number } }>(
+        `/api/mobile/v1/members?biometric=enrolled&page=${page}&page_size=500`,
+      );
+      if (!enrolled.ok) break;
+      const hit = (enrolled.data.members || []).find(
+        (m) => m.device_enroll_number != null && canonicalEnroll(String(m.device_enroll_number)) === wantedId,
+      );
+      if (hit) return { memberName: hit.full_name };
+      const totalPages = enrolled.data.pagination?.total_pages ?? 1;
+      if (page >= totalPages) break;
+      page += 1;
+    }
+    return null;
+  };
+
+  const queue = async (action: 'probe_info' | 'essl_group_block_test' | 'essl_group_unblock_test') => {
     if (!direct) return;
     if (action === 'probe_info') { void sendTestCommand(action); return; }
     if (!/^[1-9][0-9]{0,8}$/.test(testUserId.trim())) {
@@ -173,12 +268,20 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       Alert.alert('Fake account confirmation required', 'Confirm that this is the dedicated fake test account, not a real customer or member.');
       return;
     }
+    const resolved = await resolveTestId();
+    if (resolved?.memberName) {
+      Alert.alert(
+        'That ID belongs to a real member',
+        `Terminal ID ${testUserId.trim()} is linked to member ${resolved.memberName}. Test blocks must only target the dedicated fake test account — use a different ID.`,
+      );
+      return;
+    }
     const isBlock = action === 'essl_group_block_test';
     Alert.alert(
       isBlock ? 'Confirm safe eSSL block test' : 'Confirm safe eSSL unblock test',
       isBlock
-        ? `Queue a Grp=100 update for fake test ID ${testUserId.trim()}? This updates USERINFO without deleting the user or fingerprint.`
-        : `Queue a Grp=1 restore for fake test ID ${testUserId.trim()}? Verify that the same fingerprint still works at the terminal.`,
+        ? `Queue a Grp=100 update for fake test ID ${testUserId.trim()}? This updates USERINFO without deleting the user or fingerprint.${resolved?.terminalName ? ` WARNING: the terminal shows a user named "${resolved.terminalName}" on this ID with no linked member — if that is a real person, do NOT continue.` : ''}`
+        : `Queue a Grp=1 restore for fake test ID ${testUserId.trim()}? Verify that the same fingerprint still works at the terminal.${resolved?.terminalName ? ` WARNING: the terminal shows a user named "${resolved.terminalName}" on this ID with no linked member — if that is a real person, do NOT continue.` : ''}`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Queue test', onPress: () => void sendTestCommand(action) },
@@ -196,7 +299,91 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     setOutcomeAmount('');
     void load();
   };
-  const mapIdentity = async (externalId: string, memberId: number) => { const result = await apiRequest(`/api/mobile/v1/rrr/mappings/${encodeURIComponent(externalId)}`, { method: 'POST', body: { member_id: memberId } }); if (result.ok) void load(); else Alert.alert('Could not map biometric ID', result.error.message); };
+  /** Stage one terminal-ID → member pair; linked together via bulk-resolve. */
+  const stageMapping = (externalId: string, person: PickerPerson) => {
+    setPendingMappings((prev) => ({ ...prev, [externalId]: person.id }));
+    setPendingMappingNames((prev) => ({ ...prev, [externalId]: person.full_name }));
+  };
+  const unstageMapping = (externalId: string) => {
+    setPendingMappings((prev) => {
+      const next = { ...prev };
+      delete next[externalId];
+      return next;
+    });
+    setPendingMappingNames((prev) => {
+      const next = { ...prev };
+      delete next[externalId];
+      return next;
+    });
+  };
+  /** Link every staged pair in one bulk-resolve call (max 100/call). */
+  const linkStagedMappings = async () => {
+    const entries = Object.entries(pendingMappings);
+    if (!entries.length) return;
+    Alert.alert(
+      `Link ${entries.length} terminal ID${entries.length === 1 ? '' : 's'}?`,
+      'Each terminal ID will be linked to the member you picked, and that member\u2019s past punches will be replayed onto them.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Link all',
+          onPress: () => {
+            void (async () => {
+              const mappings = entries.map(([external_id, member_id]) => ({ external_id, member_id }));
+              let linked = 0;
+              let failed = 0;
+              for (let i = 0; i < mappings.length; i += 100) {
+                const chunk = mappings.slice(i, i + 100);
+                const res = await apiRequest<{ linked: number; total: number }>('/api/mobile/v1/rrr/mappings/bulk-resolve', {
+                  method: 'POST',
+                  body: { mappings: chunk },
+                });
+                if (res.ok) {
+                  linked += res.data.linked;
+                  failed += res.data.total - res.data.linked;
+                } else {
+                  failed += chunk.length;
+                }
+              }
+              setPendingMappings({});
+              setPendingMappingNames({});
+              Alert.alert('Linking done', `${linked} terminal ID${linked === 1 ? '' : 's'} linked${failed ? `, ${failed} failed` : ''}.`);
+              void load();
+            })();
+          },
+        },
+      ],
+    );
+  };
+  const loadMoreUnresolved = async () => {
+    if (loadingMoreUnresolved || unresolvedPage >= unresolvedTotalPages) return;
+    setLoadingMoreUnresolved(true);
+    const nextPage = unresolvedPage + 1;
+    const res = await apiRequest<{ groups: UnresolvedGroup[]; pagination: { page: number; per_page: number; total: number; total_pages: number } }>(
+      `/api/mobile/v1/rrr/mappings/unresolved?page=${nextPage}&per_page=20`,
+    );
+    if (res.ok) {
+      setUnresolvedGroups((prev) => {
+        const seen = new Set(prev.map((g) => g.biometric_user_id));
+        return [...prev, ...res.data.groups.filter((g) => !seen.has(g.biometric_user_id))];
+      });
+      setUnresolvedPage(nextPage);
+      setUnresolvedTotalPages(res.data.pagination?.total_pages ?? unresolvedTotalPages);
+      setUnresolvedTotal(res.data.pagination?.total ?? unresolvedTotal);
+    } else {
+      Alert.alert('Could not load more', res.error.message);
+    }
+    setLoadingMoreUnresolved(false);
+  };
+  /** Server-side member search for the mapping picker (q=, 20/page). */
+  const searchMembersForPicker = useCallback(async (query: string): Promise<PickerPerson[]> => {
+    const q = query.trim();
+    const url = q
+      ? `/api/mobile/v1/members?q=${encodeURIComponent(q)}&page_size=20`
+      : '/api/mobile/v1/members?page=1&page_size=20';
+    const res = await apiRequest<{ members: PickerPerson[] }>(url);
+    return res.ok ? (res.data.members || []) : [];
+  }, []);
   const saveRules = async () => { const result = await apiRequest('/api/mobile/v1/rrr/rules', { method: 'PUT', body: { rules } }); if (result.ok) Alert.alert('Saved', 'RRR signal thresholds updated.'); else Alert.alert('Could not save rules', result.error.message); };
   const loadMatches = useCallback(async () => {
     const result = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
@@ -207,14 +394,19 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     const result = await apiRequest('/api/mobile/v1/rrr/enroll-scan', { method: 'POST', body: {} });
     if (!result.ok) { setScanning(false); Alert.alert('Scan failed', result.error.message); return; }
     // Poll for the snapshot to arrive (terminal responds on its next poll).
+    // V4-M7 (PWA parity): poll the cheap snapshot-presence check, NOT the
+    // full fuzzy scan — the heavy /enroll-matches runs once, when the
+    // terminal user list has actually arrived.
+    // The timer is cleared on success, on 20 tries, AND on unmount (above).
     let tries = 0;
-    const timer = setInterval(async () => {
+    stopScanTimer();
+    scanTimerRef.current = setInterval(async () => {
       tries += 1;
-      const r = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
-      if (r.ok && (r.data.snapshot || (r.data.suggestions || []).length)) {
-        clearInterval(timer); setScanning(false); setMatches(r.data); return;
+      const r = await apiRequest<{ has_snapshot: boolean }>('/api/mobile/v1/rrr/enroll-snapshot-status');
+      if (r.ok && r.data.has_snapshot) {
+        stopScanTimer(); setScanning(false); void loadMatches(); return;
       }
-      if (tries >= 20) { clearInterval(timer); setScanning(false); Alert.alert('Still waiting', 'The terminal may be offline. It will respond when it reconnects — pull to refresh then.'); }
+      if (tries >= 20) { stopScanTimer(); setScanning(false); Alert.alert('Still waiting', 'The terminal may be offline. It will respond when it reconnects — pull to refresh then.'); }
     }, 3000);
   };
   const confirmMatch = async (s: EnrollSuggestion) => {
@@ -236,7 +428,7 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
     {(['revenue', 'retain', 'recover'] as const).map((pillar) => { const tone = tones[pillar]; const values = pillars[pillar]; return <View key={pillar} style={[styles.focus, { backgroundColor: tone.surface }]}><View style={styles.focusTop}><View><Text style={[styles.focusLabel, { color: tone.color }]}>{tone.label}</Text><Text style={styles.rowSub}>{tone.copy}</Text></View><Text style={[styles.focusCount, { color: tone.color }]}>{values?.count ?? 0}</Text></View><View style={styles.focusBottom}><Text style={styles.copy}>{pillar === 'revenue' ? 'Revenue opportunities' : pillar === 'retain' ? 'Members at risk' : 'Inactive / expired'}</Text><Text style={[styles.focusValue, { color: tone.color }]}>₹{money(Number(values?.potential_revenue || 0))}</Text></View>{(data?.opportunities || []).filter((item) => item.pillar === pillar).slice(0, 2).map((item) => <View key={item.id} style={styles.opportunity}><View style={recoveryStyles.opportunityCopy}><Text style={styles.rowTitle}>{item.member.name}</Text><Text style={styles.rowSub}>{item.reason}</Text><Text style={styles.rowSub}>{item.status}</Text></View><View style={recoveryStyles.opportunityActions}><TouchableOpacity onPress={() => void markActioned(item.id)}><Text style={[styles.link, { color: tone.color }]}>Action</Text></TouchableOpacity><TouchableOpacity onPress={() => { setOutcomeAmount(''); setRecoveryTarget(item); }}><Text style={[styles.link, { color: colors.successDark }]}>Recovered</Text></TouchableOpacity></View></View>)}</View>; })}
     <View style={[styles.card, styles.directCard]}><View style={styles.cardHeader}><View><Text style={styles.cardEyebrow}>ATTENDANCE CONNECTION</Text><Text style={styles.cardTitle}>Direct Cloud</Text></View><View style={[styles.status, directLive ? styles.live : styles.setup]}><Text style={[styles.statusText, directLive ? styles.liveText : styles.setupText]}>{directLive ? 'LIVE' : 'SET UP'}</Text></View></View>
       {direct ? <><Text style={styles.deviceTitle}>{direct.device_name || 'Gym entry terminal'}</Text><Text style={styles.copy}>{direct.device_serial} · {direct.records_synced || 0} attendance records · {data?.unmapped_count || 0} need review</Text><View style={styles.server}><Text style={styles.serverLabel}>Terminal Cloud Server</Text><Text selectable style={styles.serverHost}>{direct.terminal_settings?.server_address || '—'}</Text><Text style={styles.serverMeta}>ADMS mode · Port {direct.terminal_settings?.server_port ?? '—'} · HTTPS {direct.terminal_settings?.https === false ? 'off' : 'on'} · Path {direct.terminal_settings?.path || '/iclock'}</Text></View><Text style={styles.copy}>Terminal: Menu → Comm. → Cloud Server Setting. Save these values and make a test punch. Your phone never joins the gym LAN.</Text></> : <><Text style={styles.copy}>Connect eSSL attendance directly to RRR Cloud—no gym PC or bridge is required for attendance.</Text><TextInput style={styles.textInput} value={serial} onChangeText={setSerial} placeholder="Terminal serial number" placeholderTextColor={colors.muted} autoCapitalize="characters" /><TextInput style={styles.textInput} value={deviceName} onChangeText={setDeviceName} placeholder="Friendly terminal name" placeholderTextColor={colors.muted} /><Button text="Save terminal and continue" onPress={() => void provision()} /></>}</View>
-    {direct && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>These safe Group tests update USERINFO and preserve the fingerprint. Automatic access rules remain off until a test command is acknowledged and you verify the door in person.</Text><Text style={styles.command}>{latest ? `${latest.action.replace(/_/g, ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => queue('probe_info')} secondary /><TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Fake terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><TextInput style={styles.textInput} value={testUserName} onChangeText={setTestUserName} placeholder="Exact name currently shown on terminal" placeholderTextColor={colors.muted} /><TouchableOpacity style={recoveryStyles.testConfirmation} onPress={() => setTestMemberConfirmed((value) => !value)}><Text style={recoveryStyles.testConfirmationBox}>{testMemberConfirmed ? '☑' : '☐'}</Text><Text style={styles.copy}>I confirm this is the dedicated fake test account I created, not a real customer/member.</Text></TouchableOpacity><View style={styles.commands}><TouchableOpacity style={styles.block} onPress={() => queue('essl_group_block_test')}><Text style={styles.blockText}>2. Test eSSL block (Grp=100)</Text></TouchableOpacity><TouchableOpacity style={styles.unblock} onPress={() => queue('essl_group_unblock_test')}><Text style={styles.unblockText}>3. Test eSSL unblock (Grp=1)</Text></TouchableOpacity></View>
+    {direct && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>These safe Group tests update USERINFO and preserve the fingerprint. Automatic access rules remain off until a test command is acknowledged and you verify the door in person.</Text><Text style={styles.command}>{latest ? `${latest.action.replace(/_/g, ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => void queue('probe_info')} secondary /><TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Fake terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><TextInput style={styles.textInput} value={testUserName} onChangeText={setTestUserName} placeholder="Exact name currently shown on terminal" placeholderTextColor={colors.muted} /><TouchableOpacity style={recoveryStyles.testConfirmation} onPress={() => setTestMemberConfirmed((value) => !value)}><Text style={recoveryStyles.testConfirmationBox}>{testMemberConfirmed ? '☑' : '☐'}</Text><Text style={styles.copy}>I confirm this is the dedicated fake test account I created, not a real customer/member.</Text></TouchableOpacity><View style={styles.commands}><TouchableOpacity style={styles.block} onPress={() => void queue('essl_group_block_test')}><Text style={styles.blockText}>2. Test eSSL block (Grp=100)</Text></TouchableOpacity><TouchableOpacity style={styles.unblock} onPress={() => void queue('essl_group_unblock_test')}><Text style={styles.unblockText}>3. Test eSSL unblock (Grp=1)</Text></TouchableOpacity></View>
     <View style={styles.commissionRow}>
       <TouchableOpacity style={styles.checkbox} onPress={() => setDirectDoorConfirmed(!directDoorConfirmed)}>
         <Text style={styles.checkboxText}>{directDoorConfirmed ? '☑' : '☐'}</Text>
@@ -250,20 +442,25 @@ export function RrrGrowthScreen({ onBack }: { onBack: () => void }) {
       </TouchableOpacity>
       <Text style={styles.copy}>I stood at the door and verified block/unblock works on the terminal.</Text>
     </View><Button text={commissioning ? 'Enabling…' : bridge.commands_enabled ? 'Automatic block/unblock is ON' : 'Enable automatic block/unblock'} onPress={() => void commissionBridge()} /></>}</View>
-    {showBiometricLinkBanner && <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolved.length} punches need a member</Text>{unresolved.length ? unresolved.slice(0, 5).map((event, index) => <View style={styles.deviceRow} key={`${event.biometric_user_id}-${index}`}><View><Text style={styles.rowTitle}>Terminal ID {event.biometric_user_id}</Text><Text style={styles.rowSub}>{new Date(event.punch_time).toLocaleString()}</Text></View><TouchableOpacity onPress={() => setPickerEvent(event)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity></View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}</View>}
+    {showBiometricLinkBanner && <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolvedTotal} terminal IDs · {unresolvedGroups.reduce((sum, g) => sum + (g.punch_count || 0), 0)} punches need a member</Text>{unresolvedGroups.length ? unresolvedGroups.map((group) => <View style={styles.deviceRow} key={group.biometric_user_id}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Terminal ID {group.biometric_user_id}</Text><Text style={styles.rowSub}>{group.punch_count} punch{group.punch_count === 1 ? '' : 'es'}{group.latest_punch_time ? ` · latest ${formatDateTime(group.latest_punch_time)}` : ''}</Text>{pendingMappingNames[group.biometric_user_id] ? <Text style={[styles.rowSub, { color: colors.successDark }]}>→ {pendingMappingNames[group.biometric_user_id]} (ready to link)</Text> : null}</View>{pendingMappingNames[group.biometric_user_id] ? <TouchableOpacity onPress={() => unstageMapping(group.biometric_user_id)}><Text style={styles.link}>Clear</Text></TouchableOpacity> : <TouchableOpacity onPress={() => setPickerEvent(group)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity>}</View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}{unresolvedPage < unresolvedTotalPages ? <Button text={loadingMoreUnresolved ? 'Loading…' : `Show more (${Math.max(0, unresolvedTotal - unresolvedGroups.length)} remaining)`} onPress={() => void loadMoreUnresolved()} secondary /> : null}{Object.keys(pendingMappings).length > 0 ? <Button text={`Link ${Object.keys(pendingMappings).length} selected`} onPress={() => void linkStagedMappings()} /> : null}</View>}
     {(direct || bridge) && <View style={styles.card}><Text style={styles.cardEyebrow}>SMART MATCHING</Text><Text style={styles.cardTitle}>Who is who on the terminal?</Text><Text style={styles.copy}>We read the names on your terminal and match them to members. One tap per match — nothing links without your approval.</Text><Button text={scanning ? 'Scanning…' : 'Scan terminal users'} onPress={() => { void loadMatches(); void scanTerminalUsers(); }} secondary />
     {(matches?.suggestions || []).map((s) => <View style={styles.deviceRow} key={s.enroll_number}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>#{s.enroll_number} {s.terminal_name || 'No name'}</Text>{s.ambiguous ? <Text style={styles.rowSub}>This name matches multiple members: {(s.candidate_members || []).map((candidate) => candidate.name).join(', ')}. Link from the correct member profile.</Text> : <Text style={styles.rowSub}>→ {s.member_name}{s.member_phone ? ` · ${s.member_phone}` : ''} · {s.confidence}%</Text>}</View>{!s.ambiguous && s.member_id ? <TouchableOpacity onPress={() => void confirmMatch(s)}><Text style={styles.link}>Confirm</Text></TouchableOpacity> : null}</View>)}
       {(matches?.unmatched_terminal || []).length > 0 && <Text style={styles.copy}>{matches?.unmatched_terminal?.length} terminal user(s) couldn&apos;t be matched confidently — ask staff and link from the member profile.</Text>}
       {matches && !(matches.suggestions || []).length && !(matches.unmatched_terminal || []).length && matches.snapshot && <Text style={styles.copy}>Everyone on the terminal is already linked. 🎉</Text>}</View>}
+    {(direct || bridge) && isOwner && onNavigateBulkDeactivate ? (
+      <TouchableOpacity onPress={onNavigateBulkDeactivate} style={{ paddingVertical: spacing.sm }} activeOpacity={0.7}>
+        <Text style={styles.link}>Manage terminal members (deactivate) →</Text>
+      </TouchableOpacity>
+    ) : null}
     <MemberPickerModal
       visible={pickerEvent !== null}
       title={pickerEvent ? `Map Terminal ID ${pickerEvent.biometric_user_id}` : 'Map to member'}
-      people={people as PickerPerson[]}
       onClose={() => setPickerEvent(null)}
+      serverSearch={searchMembersForPicker}
       onSelect={(person) => {
         const event = pickerEvent;
         setPickerEvent(null);
-        if (event) void mapIdentity(event.biometric_user_id, person.id);
+        if (event) stageMapping(event.biometric_user_id, person);
       }}
     />
     <View style={styles.card}><Text style={styles.cardEyebrow}>GROWTH ENGINE</Text><Text style={styles.cardTitle}>Signal thresholds</Text>{ruleFields.map(([key, label]) => <View style={styles.rule} key={key}><Text style={styles.copy}>{label}</Text><View style={styles.ruleValue}><TextInput keyboardType="number-pad" value={String(rules[key] ?? '')} onChangeText={(value) => setRules((old) => ({ ...old, [key]: Number(value) }))} style={styles.ruleInput} /><Text style={styles.unit}>{key === 'attendance_drop_percent' ? '%' : 'days'}</Text></View></View>)}<Button text="Save thresholds" onPress={() => void saveRules()} /></View>
@@ -292,9 +489,6 @@ const ownerStyles = StyleSheet.create({
   actionDotHigh: { backgroundColor: colors.critical },
   todayActionCopy: { flex: 1 },
   actionCount: { color: colors.successDark, fontSize: fontSize.sm, fontWeight: fontWeight.bold },
-  cashClose: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.gray50, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.xs },
-  cashCloseCopy: { flex: 1 },
-  cashInput: { minWidth: 110, color: colors.text, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 8, fontSize: fontSize.sm },
 });
 
 const styles = StyleSheet.create({

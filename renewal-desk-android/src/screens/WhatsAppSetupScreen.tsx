@@ -41,6 +41,12 @@ type SetupState =
 export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreenProps) {
   const [state, setState] = useState<SetupState>({ phase: 'loading' });
   const webViewRef = useRef<WebView>(null);
+  // URL actually loaded in the WebView right now (updated on every
+  // navigation). The postMessage origin check below is based on THIS, not
+  // on the URL we originally asked the WebView to load — after an OAuth
+  // redirect the two differ, and a message from the redirected page must
+  // not be trusted as if it came from our signup page.
+  const currentUrlRef = useRef<string | null>(null);
 
   // ── 1. Load onboarding config → build Embedded Signup page URL ──
   useEffect(() => {
@@ -89,6 +95,29 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
 
   // ── 2. Handle postMessage from the Embedded Signup WebView ──
   const handleWebViewMessage = useCallback(async (event: WebViewMessageEvent) => {
+    // Origin check (same pattern as the live WhatsAppOnboardingModal):
+    // react-native-webview does not report the posting frame's origin, so
+    // only accept messages while the URL actually loaded in the WebView
+    // is our backend-hosted signup page (same origin as the configured API
+    // base). Messages from any other page — a redirect, an ad, a spoofed
+    // frame — are ignored.
+    const loadedUrl = currentUrlRef.current ?? (state.phase === 'ready' ? state.url : null);
+    if (!loadedUrl) return;
+    let loadedOrigin = '';
+    try {
+      loadedOrigin = new URL(loadedUrl).origin;
+    } catch {
+      return;
+    }
+    let expectedOrigin = '';
+    try {
+      const base = getRuntimeConfiguration().apiBaseUrl;
+      expectedOrigin = base ? new URL(base).origin : '';
+    } catch {
+      return;
+    }
+    if (!expectedOrigin || loadedOrigin !== expectedOrigin) return;
+
     let data: Record<string, any>;
     try {
       data = JSON.parse(event.nativeEvent.data);
@@ -99,8 +128,17 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
 
     if (data.type === 'open_external_browser') {
       const targetUrl = data.direct_meta_url || (state.phase === 'ready' ? state.url : null);
+      // Only ever open Meta signup URLs from this message — never an
+      // arbitrary URL supplied by page content.
       if (targetUrl) {
-        void WebBrowser.openBrowserAsync(targetUrl);
+        try {
+          const host = new URL(targetUrl).hostname.toLowerCase();
+          if (host === 'facebook.com' || host.endsWith('.facebook.com')) {
+            void WebBrowser.openBrowserAsync(targetUrl);
+          }
+        } catch {
+          // Ignore malformed URLs.
+        }
       }
       return;
     }
@@ -193,21 +231,37 @@ export function WhatsAppSetupScreen({ onBack, onConnected }: WhatsAppSetupScreen
           setSupportMultipleWindows
           javaScriptCanOpenWindowsAutomatically
           onMessage={handleWebViewMessage}
+          onNavigationStateChange={(navState) => {
+            currentUrlRef.current = navState.url;
+          }}
           startInLoadingState
           userAgent="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
           onShouldStartLoadWithRequest={(request) => {
-            // Allow Meta OAuth redirects and our own signup page
+            // Allow only our own signup page and Meta OAuth hosts. (This
+            // previously returned true for every URL — "Allow all".)
             const url = request.url || '';
-            if (
-              url.includes('facebook.com') ||
-              url.includes('fbcdn.net') ||
-              url.includes('fb.com') ||
-              url.includes('connect.facebook.net') ||
-              url.startsWith(state.url.split('?')[0])
-            ) {
-              return true;
+            try {
+              const parsed = new URL(url);
+              const host = parsed.hostname.toLowerCase();
+              if (state.phase === 'ready' && parsed.origin === new URL(state.url).origin) {
+                return true;
+              }
+              if (
+                host === 'facebook.com' ||
+                host.endsWith('.facebook.com') ||
+                host.endsWith('.fbcdn.net') ||
+                host === 'fb.com' ||
+                host.endsWith('.fb.com') ||
+                host === 'connect.facebook.net' ||
+                host === 'whatsapp.com' ||
+                host.endsWith('.whatsapp.com')
+              ) {
+                return true;
+              }
+            } catch {
+              return false;
             }
-            return true; // Allow all — Meta SDK needs various redirects
+            return false;
           }}
           onOpenWindow={(syntheticEvent) => {
             const { nativeEvent } = syntheticEvent;

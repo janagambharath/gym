@@ -96,7 +96,6 @@ export function RenewMemberScreen({
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [paymentResult, setPaymentResult] = useState<Payment | null>(null);
-  const [agreementChecked, setAgreementChecked] = useState(false);
   const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
   const [whatsAppFeedback, setWhatsAppFeedback] = useState<{
     message: string;
@@ -132,6 +131,13 @@ export function RenewMemberScreen({
   const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 0;
   const renewalDays = activePlan?.duration_days ?? 30;
   const minimumStartDate = suggestedRenewalStart(member.membership_end, gymTimezone);
+  // Backdated renewals: the backend accepts any start date for EXPIRED
+  // members, so the picker floor (previous end + 1) applies only while the
+  // member is still active. Expired members may backdate freely.
+  const isExpiredMember =
+    member.status === 'expired' ||
+    (member.membership_end !== null &&
+      member.membership_end < dateKeyInTimezone(new Date(), gymTimezone));
   const renewalEndDate = renewalStartDate
     ? addDaysToDateKey(renewalStartDate, renewalDays - 1)
     : '';
@@ -361,7 +367,7 @@ export function RenewMemberScreen({
                 value={datePickerValue(renewalStartDate)}
                 mode="date"
                 display="default"
-                minimumDate={datePickerValue(minimumStartDate)}
+                minimumDate={isExpiredMember ? undefined : datePickerValue(minimumStartDate)}
                 onChange={(_, selectedDate) => {
                   setShowStartDatePicker(false);
                   if (selectedDate) {
@@ -370,6 +376,11 @@ export function RenewMemberScreen({
                   }
                 }}
               />
+            ) : null}
+            {isExpiredMember ? (
+              <Text style={styles.helperText}>
+                This membership already expired — you can backdate the start to when the member actually paid.
+              </Text>
             ) : null}
             <InfoRow label="New Membership End Date" value={formatDate(renewalEndDate)} valueColor={colors.brand} />
         </View>
@@ -531,19 +542,6 @@ export function RenewMemberScreen({
           )}
         </View>
 
-        {/* Agreement Checkbox */}
-        <TouchableOpacity
-          style={styles.agreement}
-          onPress={() => setAgreementChecked(!agreementChecked)}
-        >
-          <View style={[styles.checkbox, agreementChecked && styles.checkboxChecked]}>
-            {agreementChecked ? <Icon name="checkmark" size={15} color={colors.textInverse} /> : null}
-          </View>
-          <Text style={styles.agreementText}>
-            I confirm that the commercial price of {formatCurrency(numericPayable)} is approved for {member.full_name}.
-          </Text>
-        </TouchableOpacity>
-
         {/* Error */}
         {error ? (
           <View style={styles.errorBanner}>
@@ -560,7 +558,7 @@ export function RenewMemberScreen({
           }
           icon={<Icon name={channelMode === 'online' ? "send" : "checkmark"} size={16} color={colors.textInverse} />}
           onPress={() => void handleRenew()}
-          disabled={!agreementChecked || numericPayable <= 0}
+          disabled={numericPayable <= 0}
           loading={renewing}
         />
 
@@ -573,17 +571,6 @@ export function RenewMemberScreen({
 }
 
 const styles = StyleSheet.create({
-  agreement: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  agreementText: {
-    color: colors.textSecondary,
-    flex: 1,
-    fontSize: fontSize.base,
-    lineHeight: 20,
-  },
   cancelButton: {
     alignItems: 'center',
     backgroundColor: colors.card,
@@ -604,20 +591,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: spacing.lg,
     ...shadows.sm,
-  },
-  checkbox: {
-    alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: radius.xs,
-    borderWidth: 2,
-    height: 22,
-    justifyContent: 'center',
-    marginTop: 2,
-    width: 22,
-  },
-  checkboxChecked: {
-    backgroundColor: colors.brand,
-    borderColor: colors.brand,
   },
   content: {
     gap: spacing.lg,

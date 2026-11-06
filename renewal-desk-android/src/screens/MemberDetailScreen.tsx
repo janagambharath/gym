@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
@@ -23,7 +23,7 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Renewal, Payment } from '../types';
-import { formatCurrency, formatDate, getMemberDisplayStatus, getDaysText } from '../types';
+import { formatCurrency, formatDate, formatDateTime, getMemberDisplayStatus, getDaysText } from '../types';
 
 type MemberDetailScreenProps = {
   member: Member;
@@ -32,6 +32,7 @@ type MemberDetailScreenProps = {
   onRenew?: (member: Member) => void;
   onEdit?: (memberId: number) => void;
   onRecordPayment?: (memberId: number) => void;
+  onNavigateMemberHistory?: (memberId: number) => void;
   onMemberUpdated?: () => void;
   refreshToken?: number;
 };
@@ -59,12 +60,15 @@ export function MemberDetailScreen({
   onRenew,
   onEdit,
   onRecordPayment,
+  onNavigateMemberHistory,
   onMemberUpdated,
   refreshToken,
 }: MemberDetailScreenProps) {
   const [member, setMember] = useState(initialMember);
   const [renewals, setRenewals] = useState<Renewal[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  // Server-side total for this member (the loaded page is capped at 50).
+  const [paymentTotal, setPaymentTotal] = useState<number | null>(null);
   const [biometricHistory, setBiometricHistory] = useState<BiometricHistory>();
   const [biometricError, setBiometricError] = useState<string>();
   const [loadingMoreBiometrics, setLoadingMoreBiometrics] = useState(false);
@@ -88,8 +92,6 @@ export function MemberDetailScreen({
   const [freezeReasonInput, setFreezeReasonInput] = useState('');
   const [freezing, setFreezing] = useState(false);
   const session = getCachedSession();
-  const biometricPages = useRef(1);
-
   const displayStatus = getMemberDisplayStatus(member);
   const daysText = getDaysText(member.days_until_expiry);
 
@@ -102,15 +104,10 @@ export function MemberDetailScreen({
   const fetchMemberData = useCallback(() => Promise.all([
       apiRequest<Member>(`/api/mobile/v1/members/${member.id}`),
       apiRequest<{ renewals: Renewal[] }>(`/api/mobile/v1/renewals?member_id=${member.id}&page_size=5`),
-      apiRequest<{ payments: Payment[] }>(`/api/mobile/v1/payments?page_size=50`),
-      Promise.all(Array.from({ length: biometricPages.current }, (_, index) =>
-        apiRequest<BiometricHistory>(`/api/mobile/v1/rrr/member/${member.id}/attendance?page=${index + 1}&per_page=50`)))
-        .then(results => {
-          const failed = results.find(result => !result.ok);
-          if (failed) return failed;
-          const last = results[results.length - 1];
-          return last.ok ? { ...last, data: { ...last.data, events: results.flatMap(result => result.ok ? result.data.events : []) } } : last;
-        }),
+      apiRequest<{ payments: Payment[]; pagination?: { total: number } }>(`/api/mobile/v1/payments?member_id=${member.id}&page_size=50`),
+      // Poll only page 1 of the punch history: already-loaded pages are kept
+      // (merged below) instead of re-downloading every page on each poll.
+      apiRequest<BiometricHistory>(`/api/mobile/v1/rrr/member/${member.id}/attendance?page=1&per_page=50`),
     ]).then(([memberRes, renewalRes, paymentRes, biometricRes]) => {
 
     if (memberRes.ok) {
@@ -124,11 +121,29 @@ export function MemberDetailScreen({
 
     if (renewalRes.ok) setRenewals(renewalRes.data.renewals);
     if (paymentRes.ok) {
-      // Filter payments for this member
-      setPayments(paymentRes.data.payments.filter((p) => p.member_id === member.id));
+      // Server-filtered to this member; the count comes from the server
+      // total, not the (50-row) loaded page.
+      setPayments(paymentRes.data.payments);
+      setPaymentTotal(paymentRes.data.pagination?.total ?? paymentRes.data.payments.length);
     }
     if (biometricRes.ok) {
-      setBiometricHistory(biometricRes.data);
+      // Merge page 1 over already-loaded pages (dedupe by record id) so a
+      // poll never re-downloads — or drops — pages loaded via "Load more".
+      setBiometricHistory((prev) => {
+        if (!prev) return biometricRes.data;
+        const freshIds = new Set(biometricRes.data.events.map((e) => e.id));
+        return {
+          ...biometricRes.data,
+          events: [
+            ...biometricRes.data.events,
+            ...prev.events.filter((e) => !freshIds.has(e.id)),
+          ],
+          pagination: {
+            ...biometricRes.data.pagination,
+            page: Math.max(prev.pagination.page, biometricRes.data.pagination.page),
+          },
+        };
+      });
       setBiometricError(undefined);
     } else if (biometricRes.error.status === 401) {
       onLogout();
@@ -150,9 +165,11 @@ export function MemberDetailScreen({
     if (result.ok) {
       setBiometricHistory((current) => current ? {
         ...result.data,
-        events: [...current.events, ...result.data.events],
+        events: [
+          ...current.events,
+          ...result.data.events.filter((e) => !current.events.some((existing) => existing.id === e.id)),
+        ],
       } : result.data);
-      biometricPages.current = nextPage;
     } else if (result.error.status === 401) {
       onLogout();
     } else {
@@ -268,6 +285,9 @@ export function MemberDetailScreen({
       onMemberUpdated?.();
       void fetchMemberData();
     } else {
+      // A 409 BLOCK_NOT_ALLOWED (or any rejection) is surfaced on the card,
+      // never shown as a queued success — the door did not change.
+      if (res.error.status === 409) setDoorAccessError(res.error.message);
       showMessage(res.error.message, 'error');
     }
   }, [member.id, onMemberUpdated, fetchMemberData]);
@@ -533,16 +553,30 @@ export function MemberDetailScreen({
             </View>
             <Text style={styles.sectionTitle}>Activity</Text>
           </View>
-          <View style={styles.activityRow}>
-            <View>
-              <Text style={styles.activityTitle}>Renewal History</Text>
-              <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
+          {onNavigateMemberHistory ? (
+            <TouchableOpacity
+              style={styles.activityRow}
+              onPress={() => onNavigateMemberHistory(member.id)}
+              activeOpacity={0.7}
+            >
+              <View>
+                <Text style={styles.activityTitle}>Renewal History</Text>
+                <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
+              </View>
+              <Text style={styles.activityLink}>View full history ›</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.activityRow}>
+              <View>
+                <Text style={styles.activityTitle}>Renewal History</Text>
+                <Text style={styles.activitySub}>{renewals.length} renewal{renewals.length !== 1 ? 's' : ''}</Text>
+              </View>
             </View>
-          </View>
+          )}
           <View style={styles.activityRow}>
             <View>
               <Text style={styles.activityTitle}>Payment History</Text>
-              <Text style={styles.activitySub}>{payments.length} payment{payments.length !== 1 ? 's' : ''}</Text>
+              <Text style={styles.activitySub}>{paymentTotal ?? payments.length} payment{(paymentTotal ?? payments.length) !== 1 ? 's' : ''}</Text>
             </View>
           </View>
           <View style={styles.activityRow}>
@@ -590,7 +624,7 @@ export function MemberDetailScreen({
                 </View>
                 <View style={styles.biometricRecordCopy}>
                   <Text style={styles.activityTitle}>
-                    {record.punch_time ? new Date(record.punch_time).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Punch time unavailable'}
+                    {record.punch_time ? formatDateTime(record.punch_time) : 'Punch time unavailable'}
                   </Text>
                   <Text style={styles.activitySub}>
                     {[record.direction ? record.direction[0].toUpperCase() + record.direction.slice(1) : 'Entry', record.verify_method, record.device_serial || record.source].filter(Boolean).join(' · ')}
@@ -638,6 +672,11 @@ export function MemberDetailScreen({
                     <Icon name="edit" size={14} color={colors.brand} />
                     <Text style={[styles.biometricActionBtnText, { color: colors.brand }]}>Change ID</Text>
                   </TouchableOpacity>
+                  {member.status === 'active' && !accessBlocked ? (
+                    <Text style={styles.biometricAccessHint}>
+                      Active members can&apos;t be blocked from here — pause (freeze) the membership instead. Blocking is only for expired or paused members.
+                    </Text>
+                  ) : (
                   <TouchableOpacity
                     style={[styles.biometricActionBtn, { borderColor: accessBlocked ? colors.successDark : colors.warningDark }]}
                     onPress={() => {
@@ -665,6 +704,7 @@ export function MemberDetailScreen({
                       {togglingAccess ? 'Working...' : accessBlocked ? 'Unblock Access' : 'Block Access'}
                     </Text>
                   </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={[styles.biometricActionBtn, { borderColor: colors.critical }]}
                     onPress={() => {
@@ -975,6 +1015,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingTop: spacing.md,
   },
+  activityLink: { color: colors.brand, fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
   activitySub: {
     color: colors.muted,
     fontSize: fontSize.sm,

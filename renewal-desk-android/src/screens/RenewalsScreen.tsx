@@ -204,6 +204,11 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
         <Text style={styles.headerSubtitle}>
           {upcoming.length} upcoming · {expired.length} expired
         </Text>
+        {upcoming.length >= 100 || expired.length >= 100 ? (
+          <Text style={styles.capNote}>
+            Showing the first 100 in each list — the server caps these lists at 100.
+          </Text>
+        ) : null}
       </View>
 
       <FlatList
@@ -326,6 +331,11 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: fontSize.md,
     marginTop: spacing.xxs,
+  },
+  capNote: {
+    color: colors.warningDark,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xs,
   },
   headerTitle: {
     color: colors.text,

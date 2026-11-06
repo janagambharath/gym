@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
+import { formatCurrency, formatDate } from '../../types';
 import type { MemberPayment } from '../../services/memberApiClient';
 import { fetchMemberPayments } from '../../services/memberApiClient';
 import { ErrorState } from '../../components/ErrorState';
@@ -161,7 +162,7 @@ export function MemberPaymentHistoryScreen() {
           <View style={styles.paymentCard}>
             <View style={styles.cardTop}>
               <View>
-                <Text style={styles.amount}>₹{item.amount}</Text>
+                <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
                 <Text style={styles.method}>
                   {item.method ? item.method.replace('_', ' ').toUpperCase() : 'PAYMENT'}
                 </Text>
@@ -185,14 +186,14 @@ export function MemberPaymentHistoryScreen() {
             <View style={styles.cardFooter}>
               <Text style={styles.dateText}>
                 {item.paid_on
-                  ? `Paid: ${item.paid_on.split('T')[0]}`
+                  ? `Paid: ${formatDate(item.paid_on)}`
                   : item.created_at
-                  ? `Submitted: ${item.created_at.split('T')[0]}`
+                  ? `Submitted: ${formatDate(item.created_at)}`
                   : ''}
               </Text>
               {item.verified_at && (
                 <Text style={styles.verifiedDate}>
-                  Verified: {item.verified_at.split('T')[0]}
+                  Verified: {formatDate(item.verified_at)}
                 </Text>
               )}
             </View>

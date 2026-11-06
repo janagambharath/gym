@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   FlatList,
@@ -52,6 +52,8 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
   const [statusFilter, setStatusFilter] = useState('all');
   const [channelFilter, setChannelFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
@@ -68,7 +70,7 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
     const params = new URLSearchParams({ page: String(page), page_size: '20' });
     if (statusFilter !== 'all') params.set('status', statusFilter);
     if (channelFilter !== 'all') params.set('channel', channelFilter);
-    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
 
     // Fetch payments list and summary
     Promise.all([
@@ -94,7 +96,18 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
     });
 
     return () => { cancelled = true; };
-  }, [page, statusFilter, channelFilter, searchQuery, revision, refreshToken, onLogout]);
+  }, [page, statusFilter, channelFilter, debouncedSearch, revision, refreshToken, onLogout]);
+
+  // Debounce search 400ms (same pattern as MembersScreen): typing "rahul"
+  // must not fire a list + summary request per keystroke.
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setDebouncedSearch(text);
+      setPage(1);
+    }, 400);
+  }, []);
 
   const executeAction = useCallback(async (action: 'verify' | 'reject' | 'cancel', paymentId: number) => {
     setActionLoading(paymentId);
@@ -297,15 +310,12 @@ export function PaymentsScreen({ onLogout, onSelectPayment, onRecordPayment, ref
           placeholder="Search by UTR, member name, or phone..."
           placeholderTextColor={colors.muted}
           value={searchQuery}
-          onChangeText={(txt) => {
-            setSearchQuery(txt);
-            setPage(1);
-          }}
+          onChangeText={handleSearchChange}
           returnKeyType="search"
           clearButtonMode="while-editing"
         />
         {searchQuery.length > 0 ? (
-          <TouchableOpacity onPress={() => { setSearchQuery(''); setPage(1); }}>
+          <TouchableOpacity onPress={() => { handleSearchChange(''); }}>
             <Icon name="close" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         ) : null}

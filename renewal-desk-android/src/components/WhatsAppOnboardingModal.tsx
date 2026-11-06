@@ -46,6 +46,16 @@ export function WhatsAppOnboardingModal({
   const [fetchingNumbers, setFetchingNumbers] = useState(false);
   const [activeTab, setActiveTab] = useState<'connect' | 'profile'>('connect');
   const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
+  // URL actually loaded in the WebView right now (updated on every
+  // navigation). The postMessage origin check below is based on THIS, not
+  // on webViewUrl (the URL we originally asked the WebView to load): after
+  // an OAuth redirect the two differ, and a message from the redirected
+  // page must not be trusted as if it came from our signup page.
+  const currentWebViewUrlRef = useRef<string | null>(null);
+  // Server-provided Meta app/config IDs for the "Open in Meta" fallback link.
+  // Never hardcoded: without server config the signup cannot start.
+  const [metaAppId, setMetaAppId] = useState('');
+  const [configId, setConfigId] = useState('');
   const webViewRef = useRef<WebView>(null);
 
   const handleAutoFetchNumbers = async () => {
@@ -84,31 +94,40 @@ export function WhatsAppOnboardingModal({
   const handleLaunchEmbeddedSignup = async () => {
     try {
       setLoading(true);
-      let metaAppId = '1711816793132513';
-      let configId = '1075973911551679';
       let handshake = '';
+      let appId = '';
+      let cfgId = '';
 
       try {
         const res = await getWhatsAppOnboardingConfig();
         if (res.ok && res.data.meta_app_id) {
-          metaAppId = res.data.meta_app_id;
-          configId = res.data.config_id || configId;
+          appId = res.data.meta_app_id;
+          cfgId = res.data.config_id || '';
         }
         handshake = res.ok ? res.data.signup_handshake || '' : '';
-        if (!handshake) {
-          Alert.alert('Error', 'Could not prepare secure signup. Please try again.');
-          setLoading(false);
-          return;
-        }
       } catch {
-        // Fall back to preconfigured production credentials
+        // No fallback to hardcoded credentials: without server config the
+        // signup cannot start safely.
+      }
+      if (!handshake || !appId) {
+        Alert.alert('Error', 'WhatsApp onboarding is not configured on the server. Please try again later.');
+        setLoading(false);
+        return;
       }
 
       const config = getRuntimeConfiguration();
-      const baseUrl = config.apiBaseUrl || 'https://gym-production-910c.up.railway.app';
+      const baseUrl = config.apiBaseUrl;
+      if (!baseUrl) {
+        Alert.alert('Error', 'API base URL is not configured for this build.');
+        setLoading(false);
+        return;
+      }
+      setMetaAppId(appId);
+      setConfigId(cfgId);
       const featureParam = method === 'coexistence' ? '&feature_type=whatsapp_business_app_onboarding' : '';
-      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(handshake)}&meta_app_id=${encodeURIComponent(metaAppId)}&config_id=${encodeURIComponent(configId)}${featureParam}&v=${Date.now()}`;
+      const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(handshake)}&meta_app_id=${encodeURIComponent(appId)}&config_id=${encodeURIComponent(cfgId)}${featureParam}&v=${Date.now()}`;
       setWebViewUrl(pageUrl);
+      currentWebViewUrlRef.current = pageUrl;
     } catch {
       Alert.alert('Error', 'Failed to launch Meta Embedded Signup.');
     } finally {
@@ -118,14 +137,40 @@ export function WhatsAppOnboardingModal({
 
   const handleWebViewClose = useCallback(() => {
     setWebViewUrl(null);
+    currentWebViewUrlRef.current = null;
   }, []);
 
   const handleClose = () => {
     setWebViewUrl(null);
+    currentWebViewUrlRef.current = null;
     onClose();
   };
 
   const handleWebViewMessage = useCallback(async (event: { nativeEvent: { data: string } }) => {
+    // Origin check: react-native-webview does not report the posting
+    // frame's origin, so only accept messages while the URL ACTUALLY
+    // loaded in the WebView (tracked via onNavigationStateChange) is our
+    // embedded-signup page (served from the configured API base origin).
+    // Checking the URL we originally requested — the old state-based
+    // check — would still trust messages after the WebView navigated
+    // away to a redirect, an ad, or a spoofed frame.
+    if (!webViewUrl) return;
+    const loadedUrl = currentWebViewUrlRef.current ?? webViewUrl;
+    let loadedOrigin: string;
+    try {
+      loadedOrigin = new URL(loadedUrl).origin;
+    } catch {
+      return;
+    }
+    let expectedOrigin = '';
+    try {
+      const base = getRuntimeConfiguration().apiBaseUrl;
+      expectedOrigin = base ? new URL(base).origin : '';
+    } catch {
+      expectedOrigin = '';
+    }
+    if (!expectedOrigin || loadedOrigin !== expectedOrigin) return;
+
     let data: any;
     try {
       data = JSON.parse(event.nativeEvent.data);
@@ -135,8 +180,17 @@ export function WhatsAppOnboardingModal({
 
     if (data.type === 'open_external_browser') {
       const targetUrl = data.direct_meta_url || webViewUrl;
+      // Only ever open Meta signup URLs from this message — never an
+      // arbitrary URL supplied by page content.
       if (targetUrl) {
-        void WebBrowser.openBrowserAsync(targetUrl);
+        try {
+          const host = new URL(targetUrl).hostname.toLowerCase();
+          if (host === 'facebook.com' || host.endsWith('.facebook.com')) {
+            void WebBrowser.openBrowserAsync(targetUrl);
+          }
+        } catch {
+          // Ignore malformed URLs.
+        }
       }
       return;
     }
@@ -502,11 +556,15 @@ export function WhatsAppOnboardingModal({
             <View style={styles.webViewHeaderRight}>
               <TouchableOpacity
                 onPress={() => {
+                  if (!metaAppId) {
+                    Alert.alert('Error', 'WhatsApp onboarding is not configured on the server.');
+                    return;
+                  }
                   const extrasObj: Record<string, string> = { sessionInfoVersion: '3', version: 'v4' };
                   if (method === 'coexistence') {
                     extrasObj.featureType = 'whatsapp_business_app_onboarding';
                   }
-                  const directMetaUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=1711816793132513&config_id=1075973911551679&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
+                  const directMetaUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=${metaAppId}&config_id=${configId}&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
                   void WebBrowser.openBrowserAsync(directMetaUrl);
                 }}
                 style={styles.browserBtn}
@@ -548,10 +606,53 @@ export function WhatsAppOnboardingModal({
                 </View>
               )}
               onMessage={handleWebViewMessage}
+              onNavigationStateChange={(navState) => {
+                currentWebViewUrlRef.current = navState.url;
+              }}
+              onShouldStartLoadWithRequest={(request) => {
+                // V4-L29: navigation allowlist, same shape as
+                // WhatsAppSetupScreen — only our own embedded-signup page
+                // (served from the configured API base origin) and Meta
+                // OAuth hosts. Previously any URL the page navigated to
+                // (redirect, ad, spoofed frame) loaded unchecked.
+                const url = request.url || '';
+                try {
+                  const parsed = new URL(url);
+                  const host = parsed.hostname.toLowerCase();
+                  const base = getRuntimeConfiguration().apiBaseUrl;
+                  if (base && parsed.origin === new URL(base).origin) {
+                    return true;
+                  }
+                  if (
+                    host === 'facebook.com' ||
+                    host.endsWith('.facebook.com') ||
+                    host.endsWith('.fbcdn.net') ||
+                    host === 'fb.com' ||
+                    host.endsWith('.fb.com') ||
+                    host === 'connect.facebook.net' ||
+                    host === 'whatsapp.com' ||
+                    host.endsWith('.whatsapp.com')
+                  ) {
+                    return true;
+                  }
+                } catch {
+                  return false;
+                }
+                return false;
+              }}
               onOpenWindow={(event) => {
                 const targetUrl = event.nativeEvent.targetUrl;
+                // Only open Meta signup windows — never an arbitrary URL
+                // supplied by page content.
                 if (targetUrl) {
-                  void WebBrowser.openBrowserAsync(targetUrl);
+                  try {
+                    const host = new URL(targetUrl).hostname.toLowerCase();
+                    if (host === 'facebook.com' || host.endsWith('.facebook.com')) {
+                      void WebBrowser.openBrowserAsync(targetUrl);
+                    }
+                  } catch {
+                    // Ignore malformed URLs.
+                  }
                 }
               }}
               onError={() => {

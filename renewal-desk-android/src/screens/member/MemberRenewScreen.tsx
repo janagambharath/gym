@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
+import { formatCurrency } from '../../types';
 import type { MemberPlan, MemberPaymentInfo } from '../../services/memberApiClient';
 import {
   claimPayment,
@@ -167,9 +168,9 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.planPrice}>₹{plan.price}</Text>
+                  <Text style={styles.planPrice}>{formatCurrency(plan.price)}</Text>
                   <Text style={styles.planPerDay}>
-                    ₹{(parseFloat(plan.price) / plan.duration_days).toFixed(0)}/day
+                    {formatCurrency(parseFloat(plan.price) / plan.duration_days)}/day
                   </Text>
                 </TouchableOpacity>
               ))
@@ -183,7 +184,7 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
             <View style={styles.selectedPlanBanner}>
               <Text style={styles.selectedPlanLabel}>Selected Plan</Text>
               <Text style={styles.selectedPlanName}>{selectedPlan?.name}</Text>
-              <Text style={styles.selectedPlanPrice}>₹{selectedPlan?.price}</Text>
+              <Text style={styles.selectedPlanPrice}>{selectedPlan ? formatCurrency(selectedPlan.price) : ''}</Text>
             </View>
 
             <Text style={styles.sectionTitle}>Payment Details</Text>
@@ -251,7 +252,7 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
 
               <View style={styles.confirmDetails}>
                 <DetailRow label="Plan" value={selectedPlan?.name ?? ''} />
-                <DetailRow label="Amount" value={`₹${selectedPlan?.price ?? '0'}`} />
+                <DetailRow label="Amount" value={formatCurrency(selectedPlan?.price ?? '0')} />
                 <DetailRow label="Duration" value={`${selectedPlan?.duration_days ?? 0} days`} />
               </View>
 

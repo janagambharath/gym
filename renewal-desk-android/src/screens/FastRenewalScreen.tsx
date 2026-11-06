@@ -63,7 +63,9 @@ export function FastRenewalScreen({
           onPress: async () => {
             setConfirming(true);
             const res = await apiRequest<{
-              renewal: { new_start: string; new_end: string };
+              renewal?: { new_start: string; new_end: string };
+              renewal_start_date?: string;
+              membership_end?: string;
             }>(`/api/mobile/v1/payments/${paymentId}/verify`, {
               method: 'POST',
             });
@@ -72,10 +74,50 @@ export function FastRenewalScreen({
 
             if (res.ok) {
               setConfirmed(true);
-              setResult(res.data.renewal ?? null);
-            } else if (res.error.code === 'CONFLICT' || res.error.status === 409) {
-              // Idempotent completion: payment was already verified/confirmed
+              // The backend returns { renewal_start_date, membership_end },
+              // not a `renewal` object — map that shape (and keep the
+              // legacy `renewal` shape as a fallback) so the result card
+              // actually renders on a fresh verify.
+              setResult(
+                res.data.renewal ??
+                  (res.data.renewal_start_date && res.data.membership_end
+                    ? { new_start: res.data.renewal_start_date, new_end: res.data.membership_end }
+                    : null),
+              );
+            } else if (
+              res.error.code === 'ALREADY_VERIFIED' ||
+              (res.error.code === 'CONFLICT' &&
+                /already verified/i.test(res.error.message || ''))
+            ) {
+              // Idempotent completion ONLY: the backend returns code
+              // CONFLICT for every verify 409 — "Payment is already
+              // verified." (genuinely idempotent) but also "Payment is
+              // rejected/cancelled/…" and every ValueError from
+              // verify_payment. Only the already-verified message (or a
+              // future distinct ALREADY_VERIFIED code) may render as a
+              // success; every other 409 is a real error and must NOT
+              // show the success screen with new dates / a "recovered"
+              // banner for money that was never verified.
               setConfirmed(true);
+              // V4-L25: the renewal already happened, so fetch the dates
+              // it produced instead of showing the "recovered" banner
+              // with no dates. verify_payment writes the renewal onto
+              // the member row (membership_start/end), so read it back.
+              void (async () => {
+                const payment = await apiRequest<{ member_id: number; renewal_start_date?: string }>(
+                  `/api/mobile/v1/payments/${paymentId}`,
+                );
+                if (!payment.ok) return;
+                const member = await apiRequest<{ membership_start?: string; membership_end?: string }>(
+                  `/api/mobile/v1/members/${payment.data.member_id}`,
+                );
+                if (member.ok && member.data.membership_start && member.data.membership_end) {
+                  setResult({ new_start: member.data.membership_start, new_end: member.data.membership_end });
+                }
+                // If the member fetch fails, result stays null and the
+                // banner below stays hidden rather than claiming
+                // recovery with no dates.
+              })();
             } else {
               Alert.alert('Error', res.error.message || 'Failed to verify payment.');
             }
@@ -116,12 +158,18 @@ export function FastRenewalScreen({
             </View>
           )}
 
-          <View style={styles.revenueBanner}>
-            <Icon name="revenue" size={20} color={colors.success} />
-            <Text style={styles.revenueBannerText}>
-              {formatCurrency(amount)} recovered for your gym
-            </Text>
-          </View>
+          {/* V4-L25: the "recovered" banner only renders with the dates
+              behind it. On the idempotent path the dates arrive from the
+              member fetch above; if that fetch fails, no banner — a
+              dateless recovery claim is worse than none. */}
+          {result && (
+            <View style={styles.revenueBanner}>
+              <Icon name="revenue" size={20} color={colors.success} />
+              <Text style={styles.revenueBannerText}>
+                {formatCurrency(amount)} recovered for your gym
+              </Text>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.doneButton} onPress={onConfirmed} activeOpacity={0.7}>
             <Text style={styles.doneButtonText}>Done</Text>

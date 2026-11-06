@@ -658,7 +658,9 @@ export type PaymentQrUploadResult = {
   is_active: boolean;
 };
 
-/** Upload a QR image selected by the gym owner for display in VYNLA. */
+/** Upload a QR image selected by the gym owner for display in VYNLA.
+ * Multipart upload with the same 401 → refresh-once → retry path as the
+ * JSON client: an expired access token no longer forces a re-login. */
 export async function uploadPaymentQrImage(
   image: PaymentQrImage,
 ): Promise<ApiResult<PaymentQrUploadResult>> {
@@ -667,23 +669,30 @@ export async function uploadPaymentQrImage(
     return { ok: false, error: { message: 'API base URL is not configured.' } };
   }
 
-  const form = new FormData();
-  form.append('qr_image', {
-    uri: image.uri,
-    name: image.name,
-    type: image.mimeType,
-  } as never);
-
-  try {
-    const response = await fetch(`${config.apiBaseUrl}/api/mobile/v1/settings/payment/qr`, {
+  const makeUpload = async (token?: string): Promise<Response> => {
+    const form = new FormData();
+    form.append('qr_image', {
+      uri: image.uri,
+      name: image.name,
+      type: image.mimeType,
+    } as never);
+    return fetch(`${config.apiBaseUrl}/api/mobile/v1/settings/payment/qr`, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
-        ...(cachedSession?.accessToken ? { Authorization: `Bearer ${cachedSession.accessToken}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: form,
     });
-    const envelope = (await response.json()) as BackendEnvelope<PaymentQrUploadResult>;
+  };
+
+  const parseResult = async (response: Response): Promise<ApiResult<PaymentQrUploadResult>> => {
+    let envelope: BackendEnvelope<PaymentQrUploadResult>;
+    try {
+      envelope = (await response.json()) as BackendEnvelope<PaymentQrUploadResult>;
+    } catch {
+      return { ok: false, error: { message: `Upload failed (${response.status}).`, status: response.status } };
+    }
     if (!response.ok || !envelope.success || !envelope.data) {
       return {
         ok: false,
@@ -695,6 +704,19 @@ export async function uploadPaymentQrImage(
       };
     }
     return { ok: true, data: envelope.data };
+  };
+
+  try {
+    let response = await makeUpload(cachedSession?.accessToken);
+    if (response.status === 401 && cachedSession) {
+      const refreshed = await refreshOnce(config.apiBaseUrl);
+      if (refreshed) {
+        response = await makeUpload(refreshed.accessToken);
+      } else {
+        return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+      }
+    }
+    return await parseResult(response);
   } catch {
     return { ok: false, error: { message: 'Could not upload the QR image. Check your connection and try again.' } };
   }

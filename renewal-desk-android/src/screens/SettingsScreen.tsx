@@ -37,6 +37,9 @@ type SettingsScreenProps = {
   onNavigatePaymentSetup?: () => void;
   onNavigateRrr?: () => void;
   onNavigateEditGymProfile?: () => void;
+  onNavigateDateRepair?: () => void;
+  onNavigateOwnerFinance?: () => void;
+  onNavigateOwnerLeads?: () => void;
 };
 
 export function SettingsScreen({
@@ -54,6 +57,9 @@ export function SettingsScreen({
   onNavigatePaymentSetup,
   onNavigateRrr,
   onNavigateEditGymProfile,
+  onNavigateDateRepair,
+  onNavigateOwnerFinance,
+  onNavigateOwnerLeads,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings | undefined>();
@@ -121,7 +127,11 @@ export function SettingsScreen({
 
   const handlePrivacyPolicy = useCallback(() => {
     const config = getRuntimeConfiguration();
-    const privacyUrl = `${config.apiBaseUrl || 'https://gym-production-910c.up.railway.app'}/privacy`;
+    if (!config.apiBaseUrl) {
+      Alert.alert('Error', 'API base URL is not configured for this build.');
+      return;
+    }
+    const privacyUrl = `${config.apiBaseUrl}/privacy`;
     void Linking.openURL(privacyUrl);
   }, []);
 
@@ -282,6 +292,9 @@ export function SettingsScreen({
           <View style={styles.menuList}>
             <MenuItem icon="analytics" label="Revenue · Retain · Recover" onPress={onNavigateRrr} />
             <MenuItem icon="analytics" label="Operational Analytics & Performance" onPress={onNavigateReports} />
+            <MenuItem icon="wallet" label="Daily Collections & Cash Close" onPress={onNavigateOwnerFinance} />
+            <MenuItem icon="members" label="Leads & Trial Visits" onPress={onNavigateOwnerLeads} />
+            <MenuItem icon="calendar" label="Date Repair" onPress={onNavigateDateRepair} />
           </View>
         </View>
 
