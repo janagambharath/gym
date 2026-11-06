@@ -4,7 +4,7 @@
    ═══════════════════════════════════════════════════════════════════════ */
 
 import { saveSession, loadSession, clearSession, loadMemberSession, saveMemberSession, clearMemberSession } from './session.js';
-import { configureDisplayPreferences } from './utils.js';
+import { configureDisplayPreferences, uuid } from './utils.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
 // V3-L32: the base URL comes from the build environment (VITE_API_BASE_URL,
@@ -203,10 +203,24 @@ async function refreshMemberOnce() {
 export async function apiRequest(path, options = {}) {
   const { method = 'GET', body, headers: extraHeaders, anonymous = false, timeoutMs = 15000 } = options;
 
+  // Idempotency: every mutation carries a fresh key unless the caller
+  // supplied its own (add-member / record-payment / renew-member hold a
+  // stable per-form key so a double-tap replays; everyone else gets one
+  // fresh key per apiRequest call). The key is generated ONCE here, so
+  // the 401-refresh retry below re-sends the SAME key — a retry after
+  // the server already committed replays instead of executing twice.
+  // GETs never carry a key; the backend ignores keys on endpoints that
+  // do not honour them (auth, reads, setup flows).
+  const hasExplicitKey = Object.keys(extraHeaders || {}).some(
+    (name) => name.toLowerCase() === 'idempotency-key',
+  );
+  const idempotencyKey = method !== 'GET' && !hasExplicitKey ? uuid() : undefined;
+
   const makeRequest = async (token) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const headers = { Accept: 'application/json', ...extraHeaders };
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
     if (body) headers['Content-Type'] = 'application/json';
     if (token) headers['Authorization'] = `Bearer ${token}`;
     try {

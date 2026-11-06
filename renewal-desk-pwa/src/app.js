@@ -31,7 +31,6 @@ function registerScreens() {
   // Auth
   router.register('login', () => import('./screens/login.js'));
   router.register('signup', () => import('./screens/signup.js'));
-  router.register('member-login', () => import('./screens/member-login.js'));
 
   // Tabs
   router.register('dashboard', () => import('./screens/rrr-dashboard.js'), { auth: true });
@@ -82,14 +81,6 @@ function registerScreens() {
   router.register('member-import', () => import('./screens/member-import.js'), { auth: true });
   router.register('member-scan', () => import('./screens/member-scan.js'), { auth: true });
   router.register('member-scan-review', () => import('./screens/member-scan-review.js'), { auth: true });
-
-  // Member-facing
-  router.register('member-home', () => import('./screens/member/home.js'));
-  router.register('member-membership', () => import('./screens/member/membership.js'));
-  router.register('member-payments', () => import('./screens/member/payments.js'));
-  router.register('member-profile', () => import('./screens/member/profile.js'));
-  router.register('member-access', () => import('./screens/member/access.js'));
-  router.register('member-renew', () => import('./screens/member/renew.js'));
 }
 
 // ─── App Shell ───────────────────────────────────────────────────────
