@@ -20,7 +20,7 @@ import { apiRequest } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Payment, Plan } from '../types';
-import { formatCurrency, formatDate, getCurrencySymbol, getMemberDisplayStatus } from '../types';
+import { formatCurrency, formatDate, getCurrencySymbol, getMemberDisplayStatus, safeDateKeyInTimezone } from '../types';
 
 type RenewMemberScreenProps = {
   member: Member;
@@ -38,14 +38,10 @@ function createPaymentRequestKey(): string {
 }
 
 function dateKeyInTimezone(value: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(value);
-  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  // V5-L32: the shared safe helper — an invalid gym timezone falls back
+  // to the device-local date with a loud warning instead of throwing
+  // RangeError during render and crashing this screen.
+  return safeDateKeyInTimezone(value, timezone);
 }
 
 function addDaysToDateKey(value: string, days: number): string {
@@ -189,7 +185,10 @@ export function RenewMemberScreen({
       setSuccess(true);
       onComplete?.();
     } else {
-      if (result.error.status === 401) { onLogout(); return; }
+      // V6-L38: reset the busy flag before the 401 early-return, like
+      // RecordPayment does — otherwise the renew button stays dead if
+      // the logout navigation ever doesn't unmount this screen.
+      if (result.error.status === 401) { setRenewing(false); onLogout(); return; }
       if (result.error.status && result.error.status < 500) {
         paymentRequestKeyRef.current = undefined;
       }

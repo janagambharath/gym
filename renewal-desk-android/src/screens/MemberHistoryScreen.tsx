@@ -70,16 +70,20 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
     } else {
       setError(memberRes.error.message);
     }
+    // V6-L35: keep already-fetched pages on a mid-fetch failure instead
+    // of discarding them — fetchAllPages returns its partial items.
     if (renewalsRes.ok) {
       setRenewals(renewalsRes.items);
       setRenewalsError(false);
     } else {
+      setRenewals(renewalsRes.items);
       setRenewalsError(true);
     }
     if (paymentsRes.ok) {
       setPayments(paymentsRes.items);
       setPaymentsError(false);
     } else {
+      setPayments(paymentsRes.items);
       setPaymentsError(true);
     }
     setLoading(false);
@@ -142,8 +146,19 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
               Membership Renewals{renewals.length ? ` (${renewals.length})` : ''}
             </Text>
             {renewalsError ? (
-              <Text style={styles.inlineError}>Could not load renewals.</Text>
-            ) : renewals.length ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setLoading(true);
+                  void load();
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.inlineError}>
+                  Couldn&apos;t load all renewals{renewals.length ? ` — showing ${renewals.length} loaded so far` : ''}. Tap to retry.
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            {renewals.length ? (
               <View style={styles.listCard}>
                 {renewals.map((renewal) => (
                   <View key={renewal.id} style={styles.listRow}>
@@ -151,6 +166,8 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
                       <Text style={styles.listTitle}>{renewal.plan_name || 'Membership Renewal'}</Text>
                       <Text style={styles.listSub}>
                         {formatDate(renewal.new_start)} → {formatDate(renewal.new_end)}
+                        {/* V5-L35: render the channel the PWA shows. */}
+                        {renewal.channel ? ` · ${renewal.channel === 'online' ? 'Online' : 'Offline'}` : ''}
                       </Text>
                     </View>
                     <View style={styles.listRight}>
@@ -160,7 +177,7 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
                   </View>
                 ))}
               </View>
-            ) : (
+            ) : renewalsError ? null : (
               <Text style={styles.inlineMuted}>No renewals recorded for this member.</Text>
             )}
 
@@ -169,12 +186,25 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
               Payments{payments.length ? ` (${payments.length})` : ''}
             </Text>
             {paymentsError ? (
-              <Text style={styles.inlineError}>Could not load payments.</Text>
-            ) : payments.length ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setLoading(true);
+                  void load();
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.inlineError}>
+                  Couldn&apos;t load all payments{payments.length ? ` — showing ${payments.length} loaded so far` : ''}. Tap to retry.
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            {payments.length ? (
               <View style={styles.listCard}>
                 {payments.map((payment) => {
                   const sub = [
                     payment.method,
+                    // V5-L35: Payment.channel exists but was never shown.
+                    payment.channel ? (payment.channel === 'online' ? 'Online' : 'Offline') : null,
                     formatDate(payment.paid_on || payment.created_at),
                     payment.renewal_days ? `${payment.renewal_days} days` : null,
                     payment.reference ? `Ref: ${payment.reference}` : null,
@@ -209,7 +239,7 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
                   );
                 })}
               </View>
-            ) : (
+            ) : paymentsError ? null : (
               <EmptyState
                 title="No payments"
                 subtitle={`No payments recorded for ${member.full_name}`}
@@ -222,21 +252,31 @@ export function MemberHistoryScreen({ memberId, onBack, onLogout, onSelectPaymen
   );
 }
 
-async function fetchAllPages<T>(
+async function fetchAllPages<T extends { id: number }>(
   baseUrl: string,
   key: 'renewals' | 'payments',
 ): Promise<{ ok: boolean; error?: { status?: number; message: string }; items: T[] }> {
+  // V5-L39: cap the page loop (20 pages × 100 = 2,000 rows) and dedupe
+  // by id across pages — a renewal created mid-fetch used to duplicate
+  // a boundary row, and a server that kept returning total > loaded
+  // could loop unboundedly.
+  const MAX_PAGES = 20;
   const items: T[] = [];
+  const seenIds = new Set<number>();
   let page = 1;
   let total = Infinity;
-  while (items.length < total) {
+  while (items.length < total && page <= MAX_PAGES) {
     const sep = baseUrl.includes('?') ? '&' : '?';
     const res = await apiRequest<{ renewals?: T[]; payments?: T[]; pagination?: Pagination }>(
       `${baseUrl}${sep}page=${page}&page_size=100`,
     );
     if (!res.ok) return { ok: false, error: res.error, items };
     const batch = res.data?.[key] || [];
-    items.push(...batch);
+    for (const item of batch) {
+      if (seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      items.push(item);
+    }
     total = res.data?.pagination?.total ?? items.length;
     if (batch.length === 0) break;
     page += 1;

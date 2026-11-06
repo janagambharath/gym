@@ -21,16 +21,17 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 import type { Member, Payment } from '../types';
-import { formatCurrency, formatDate, getCurrencySymbol } from '../types';
+import { formatCurrency, formatDate, getCurrencySymbol, safeDateKeyInTimezone } from '../types';
 
 function createPaymentRequestKey(): string {
   return `payment-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function dateKeyInTimezone(value: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
-  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  // V5-L32: the shared safe helper — an invalid gym timezone falls back
+  // to the device-local date with a loud warning instead of throwing
+  // RangeError during render and crashing this screen.
+  return safeDateKeyInTimezone(value, timezone);
 }
 
 function dateKeyFromLocalDate(value: Date): string {

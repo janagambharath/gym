@@ -122,8 +122,14 @@ export function AccessScreen({
   refreshToken,
 }: AccessScreenProps) {
   const [summary, setSummary] = useState<AccessSummary | null>(null);
+  // V6-L33: a failed summary fetch used to be fully silent — the 15 s
+  // poll kept failing while last-good counts rendered as live. Track the
+  // failure and the last good update so the screen can say so.
+  const [summaryStale, setSummaryStale] = useState(false);
+  const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null);
   const [events, setEvents] = useState<AccessEvent[]>([]);
   const [insideMembers, setInsideMembers] = useState<InsideMember[]>([]);
+  const [insidePagination, setInsidePagination] = useState<Pagination | null>(null);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [search, setSearch] = useState('');
@@ -150,6 +156,12 @@ export function AccessScreen({
     const res = await apiRequest<AccessSummary>('/api/mobile/v1/access/summary');
     if (res.ok) {
       setSummary(res.data);
+      setSummaryStale(false);
+      setSummaryUpdatedAt(Date.now());
+    } else {
+      // V6-L33: keep the last-good stats but mark them stale — never
+      // render them as live with no signal.
+      setSummaryStale(true);
     }
   }, []);
 
@@ -191,19 +203,31 @@ export function AccessScreen({
 
   // ── Fetch inside members ─────────────────────────────────────────
 
-  const fetchInsideMembers = useCallback(async () => {
+  // V6-L12: the Inside tab used to fetch only page 1 (50 rows) — members
+  // past 50 were invisible, including their Check Out buttons. Page it
+  // like the feed, deduped by id across pages.
+  const fetchInsideMembers = useCallback(async (page = 1, append = false) => {
     if (activeTab !== 'inside') return;
     const seq = ++insideSeqRef.current;
     const searchParam = debouncedSearch.trim() ? `&search=${encodeURIComponent(debouncedSearch.trim())}` : '';
     const res = await apiRequest<InsideMembersResponse>(
-      `/api/mobile/v1/access/inside?per_page=50${searchParam}`,
+      `/api/mobile/v1/access/inside?page=${page}&per_page=50${searchParam}`,
     );
     if (seq !== insideSeqRef.current) return;
     if (res.ok) {
-      setInsideMembers(res.data.members);
+      if (append) {
+        setInsideMembers((prev) => {
+          const seen = new Set(prev.map((m) => m.id));
+          return [...prev, ...res.data.members.filter((m) => !seen.has(m.id))];
+        });
+      } else {
+        setInsideMembers(res.data.members);
+      }
+      setInsidePagination(res.data.pagination ?? null);
       setError(undefined);
     } else {
-      setError(res.error.message);
+      if (!append) setError(res.error.message);
+      else Alert.alert('Could not load more', res.error.message);
     }
   }, [activeTab, debouncedSearch]);
 
@@ -258,9 +282,16 @@ export function AccessScreen({
   // ── Load more (pagination) ───────────────────────────────────────
 
   const onEndReached = useCallback(async () => {
+    if (loadingMore) return;
+    if (activeTab === 'inside') {
+      // V6-L12: page the Inside list too.
+      if (!insidePagination || insidePagination.page >= insidePagination.total_pages) return;
+      setLoadingMore(true);
+      await fetchInsideMembers(insidePagination.page + 1, true);
+      setLoadingMore(false);
+      return;
+    }
     if (
-      activeTab === 'inside' ||
-      loadingMore ||
       !pagination ||
       pagination.page >= pagination.total_pages
     )
@@ -268,7 +299,7 @@ export function AccessScreen({
     setLoadingMore(true);
     await fetchEvents(pagination.page + 1, true);
     setLoadingMore(false);
-  }, [activeTab, loadingMore, pagination, fetchEvents]);
+  }, [activeTab, loadingMore, pagination, fetchEvents, insidePagination, fetchInsideMembers]);
 
   // Sequence guard: only the latest search may apply its results, so a
   // slow earlier request can never overwrite a newer one.
@@ -301,16 +332,28 @@ export function AccessScreen({
 
   const handleManualCheckIn = useCallback(async (memberId: number, type: 'ENTRY' | 'EXIT' = 'ENTRY') => {
     setCheckingInId(memberId);
-    const res = await apiRequest<{ message: string }>('/api/mobile/v1/access/checkin', {
+    const res = await apiRequest<AccessEvent>('/api/mobile/v1/access/checkin', {
       method: 'POST',
       body: { member_id: memberId, type },
     });
     if (res.ok) {
-      const msg = res.data?.message || (type === 'ENTRY' ? 'Member checked in successfully!' : 'Member checked out.');
-      setActionMessage(msg);
-      setTimeout(() => setActionMessage(null), 3500);
-      setShowCheckInModal(false);
-      void loadAll();
+      // V5-M13: the backend returns HTTP 200 success:true even when it
+      // DENIED the check-in (expired/paused member tapped from a stale
+      // list). The denial rides in data.event_type plus the top-level
+      // message — a hardcoded "checked in successfully!" banner here
+      // made staff believe a denied member was admitted.
+      if (res.data?.event_type === 'ACCESS_DENIED') {
+        Alert.alert(
+          'Access denied',
+          res.message || 'This member cannot check in — their membership is expired or paused.',
+        );
+      } else {
+        const msg = res.message || (type === 'ENTRY' ? 'Member checked in successfully!' : 'Member checked out.');
+        setActionMessage(msg);
+        setTimeout(() => setActionMessage(null), 3500);
+        setShowCheckInModal(false);
+        void loadAll();
+      }
     } else {
       Alert.alert('Action Failed', res.error.message);
     }
@@ -454,6 +497,19 @@ export function AccessScreen({
           <Text style={styles.summaryLabel}>Exits</Text>
         </View>
       </View>
+    );
+  };
+
+  // V6-L33: when the summary fetch fails, the last-good counts stay on
+  // screen — say so, with when they were last fresh, instead of letting
+  // stale stats pass as live.
+  const renderSummaryStaleness = () => {
+    if (!summary || !summaryStale) return null;
+    return (
+      <Text style={styles.staleNote}>
+        Stats may be out of date
+        {summaryUpdatedAt ? ` — last updated ${timeAgo(new Date(summaryUpdatedAt).toISOString())}` : ''}. Pull to refresh.
+      </Text>
     );
   };
 
@@ -676,6 +732,7 @@ export function AccessScreen({
             <>
               {renderActionBanner()}
               {renderSummaryCards()}
+              {renderSummaryStaleness()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
               {renderFailedCommandsBanner()}
@@ -701,7 +758,10 @@ export function AccessScreen({
             </>
           }
           ListEmptyComponent={renderEmpty}
+          ListFooterComponent={renderFooter}
           contentContainerStyle={styles.listContent}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.3}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />
           }
@@ -715,6 +775,7 @@ export function AccessScreen({
             <>
               {renderActionBanner()}
               {renderSummaryCards()}
+              {renderSummaryStaleness()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
               {renderFailedCommandsBanner()}
@@ -877,6 +938,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxs,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  // V6-L33: staleness note under the summary cards.
+  staleNote: {
+    color: colors.warningDark,
+    fontSize: fontSize.xs,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
   },
 
   // Action banner

@@ -65,6 +65,10 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
   const [refreshing, setRefreshing] = useState(false);
   const [pickerEvent, setPickerEvent] = useState<UnresolvedGroup | null>(null);
   const [matches, setMatches] = useState<EnrollMatches | null>(null);
+  const [matchesError, setMatchesError] = useState<string | undefined>();
+  // V6-L37: which terminal ID is mid-confirm, so a rapid double-tap
+  // can't fire two /enroll-matches/confirm POSTs for the same pair.
+  const [confirmingEnroll, setConfirmingEnroll] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const scanTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -202,21 +206,22 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
    */
   const resolveTestId = async (): Promise<{ memberName?: string; terminalName?: string } | null> => {
     const wantedId = canonicalEnroll(testUserId.trim());
-    // V4-L26: targeted lookup — enrolled members whose stored name/phone
-    // matches the typed terminal name, filtered server-side. The old
-    // name search (page_size=10, all members) could miss the real member
-    // at Yodha scale when 10+ members shared a similar name; scoping to
-    // enrolled members + the name filter keeps the result set small and
-    // exact. The backend applies both filters together (q ilike on
-    // full_name/phone, biometric=enrolled on device_enroll_number).
-    const byName = await apiRequest<{ members: { id: number; full_name: string; device_enroll_number?: string | null }[] }>(
-      `/api/mobile/v1/members?biometric=enrolled&q=${encodeURIComponent(testUserName.trim())}&page_size=20`,
-    );
-    if (byName.ok) {
+    // V4-L26 / V5-L40: targeted lookup — enrolled members whose stored
+    // name/phone matches the typed terminal name, filtered server-side.
+    // The name search used to be capped at one page of 20: a name
+    // matching >20 enrolled members could miss the real member. Page
+    // through it (page_size=100, up to 5 pages) before giving up.
+    for (let namePage = 1; namePage <= 5; namePage += 1) {
+      const byName = await apiRequest<{ members: { id: number; full_name: string; device_enroll_number?: string | null }[]; pagination?: { page: number; total_pages: number } }>(
+        `/api/mobile/v1/members?biometric=enrolled&q=${encodeURIComponent(testUserName.trim())}&page=${namePage}&page_size=100`,
+      );
+      if (!byName.ok) break;
       const hit = (byName.data.members || []).find(
         (m) => m.device_enroll_number != null && canonicalEnroll(String(m.device_enroll_number)) === wantedId,
       );
       if (hit) return { memberName: hit.full_name };
+      const totalPages = byName.data.pagination?.total_pages ?? 1;
+      if (namePage >= totalPages) break;
     }
     // Terminal snapshot: a suggestion already linked to a member.
     const snapshot = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
@@ -241,7 +246,10 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
       const enrolled = await apiRequest<{ members: { id: number; full_name: string; device_enroll_number?: string | null }[]; pagination?: { page: number; total_pages: number } }>(
         `/api/mobile/v1/members?biometric=enrolled&page=${page}&page_size=500`,
       );
-      if (!enrolled.ok) break;
+      // V5-L40: a failed sweep page used to `break` silently and queue
+      // the test on incomplete data. Fail loudly instead — the caller
+      // refuses to queue the test until the ID is verified.
+      if (!enrolled.ok) throw new Error(enrolled.error.message);
       const hit = (enrolled.data.members || []).find(
         (m) => m.device_enroll_number != null && canonicalEnroll(String(m.device_enroll_number)) === wantedId,
       );
@@ -268,7 +276,18 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
       Alert.alert('Fake account confirmation required', 'Confirm that this is the dedicated fake test account, not a real customer or member.');
       return;
     }
-    const resolved = await resolveTestId();
+    let resolved: { memberName?: string; terminalName?: string } | null;
+    try {
+      resolved = await resolveTestId();
+    } catch (err) {
+      // V5-L40: the enrolled sweep failed — do not queue a group test on
+      // unverified data; the ID might belong to a real member.
+      Alert.alert(
+        'Could not verify terminal ID',
+        `The member check failed (${err instanceof Error ? err.message : 'network error'}), so the test was not queued. Check your connection and try again.`,
+      );
+      return;
+    }
     if (resolved?.memberName) {
       Alert.alert(
         'That ID belongs to a real member',
@@ -387,9 +406,18 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
   const saveRules = async () => { const result = await apiRequest('/api/mobile/v1/rrr/rules', { method: 'PUT', body: { rules } }); if (result.ok) Alert.alert('Saved', 'RRR signal thresholds updated.'); else Alert.alert('Could not save rules', result.error.message); };
   const loadMatches = useCallback(async () => {
     const result = await apiRequest<EnrollMatches>('/api/mobile/v1/rrr/enroll-matches');
-    if (result.ok) setMatches(result.data);
+    if (result.ok) {
+      setMatches(result.data);
+      setMatchesError(undefined);
+    } else {
+      // V6-L37: a failed matches fetch used to leave the previous (stale)
+      // suggestions on screen with no error — the owner could stare at
+      // them believing they were fresh from the scan.
+      setMatchesError(result.error.message);
+    }
   }, []);
   const scanTerminalUsers = async () => {
+    if (scanning) return;
     setScanning(true);
     const result = await apiRequest('/api/mobile/v1/rrr/enroll-scan', { method: 'POST', body: {} });
     if (!result.ok) { setScanning(false); Alert.alert('Scan failed', result.error.message); return; }
@@ -411,7 +439,10 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
   };
   const confirmMatch = async (s: EnrollSuggestion) => {
     if (s.ambiguous || !s.member_id) return;
+    if (confirmingEnroll === s.enroll_number) return;
+    setConfirmingEnroll(s.enroll_number);
     const result = await apiRequest('/api/mobile/v1/rrr/enroll-matches/confirm', { method: 'POST', body: { member_id: s.member_id, enroll_number: s.enroll_number } });
+    setConfirmingEnroll(null);
     if (result.ok) { Alert.alert('Linked', `${s.member_name} is now linked to terminal #${s.enroll_number}.`); void loadMatches(); }
     else Alert.alert('Could not link', result.error.message);
   };
@@ -443,8 +474,9 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
       <Text style={styles.copy}>I stood at the door and verified block/unblock works on the terminal.</Text>
     </View><Button text={commissioning ? 'Enabling…' : bridge.commands_enabled ? 'Automatic block/unblock is ON' : 'Enable automatic block/unblock'} onPress={() => void commissionBridge()} /></>}</View>
     {showBiometricLinkBanner && <View style={styles.card}><Text style={styles.cardEyebrow}>IDENTITY REVIEW</Text><Text style={styles.cardTitle}>{unresolvedTotal} terminal IDs · {unresolvedGroups.reduce((sum, g) => sum + (g.punch_count || 0), 0)} punches need a member</Text>{unresolvedGroups.length ? unresolvedGroups.map((group) => <View style={styles.deviceRow} key={group.biometric_user_id}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>Terminal ID {group.biometric_user_id}</Text><Text style={styles.rowSub}>{group.punch_count} punch{group.punch_count === 1 ? '' : 'es'}{group.latest_punch_time ? ` · latest ${formatDateTime(group.latest_punch_time)}` : ''}</Text>{pendingMappingNames[group.biometric_user_id] ? <Text style={[styles.rowSub, { color: colors.successDark }]}>→ {pendingMappingNames[group.biometric_user_id]} (ready to link)</Text> : null}</View>{pendingMappingNames[group.biometric_user_id] ? <TouchableOpacity onPress={() => unstageMapping(group.biometric_user_id)}><Text style={styles.link}>Clear</Text></TouchableOpacity> : <TouchableOpacity onPress={() => setPickerEvent(group)}><Text style={styles.link}>Map to member…</Text></TouchableOpacity>}</View>) : <Text style={styles.copy}>No unresolved biometric punches.</Text>}{unresolvedPage < unresolvedTotalPages ? <Button text={loadingMoreUnresolved ? 'Loading…' : `Show more (${Math.max(0, unresolvedTotal - unresolvedGroups.length)} remaining)`} onPress={() => void loadMoreUnresolved()} secondary /> : null}{Object.keys(pendingMappings).length > 0 ? <Button text={`Link ${Object.keys(pendingMappings).length} selected`} onPress={() => void linkStagedMappings()} /> : null}</View>}
-    {(direct || bridge) && <View style={styles.card}><Text style={styles.cardEyebrow}>SMART MATCHING</Text><Text style={styles.cardTitle}>Who is who on the terminal?</Text><Text style={styles.copy}>We read the names on your terminal and match them to members. One tap per match — nothing links without your approval.</Text><Button text={scanning ? 'Scanning…' : 'Scan terminal users'} onPress={() => { void loadMatches(); void scanTerminalUsers(); }} secondary />
-    {(matches?.suggestions || []).map((s) => <View style={styles.deviceRow} key={s.enroll_number}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>#{s.enroll_number} {s.terminal_name || 'No name'}</Text>{s.ambiguous ? <Text style={styles.rowSub}>This name matches multiple members: {(s.candidate_members || []).map((candidate) => candidate.name).join(', ')}. Link from the correct member profile.</Text> : <Text style={styles.rowSub}>→ {s.member_name}{s.member_phone ? ` · ${s.member_phone}` : ''} · {s.confidence}%</Text>}</View>{!s.ambiguous && s.member_id ? <TouchableOpacity onPress={() => void confirmMatch(s)}><Text style={styles.link}>Confirm</Text></TouchableOpacity> : null}</View>)}
+    {(direct || bridge) && <View style={styles.card}><Text style={styles.cardEyebrow}>SMART MATCHING</Text><Text style={styles.cardTitle}>Who is who on the terminal?</Text><Text style={styles.copy}>We read the names on your terminal and match them to members. One tap per match — nothing links without your approval.</Text><Button text={scanning ? 'Scanning…' : 'Scan terminal users'} onPress={() => { void scanTerminalUsers(); }} secondary disabled={scanning} />
+    {matchesError ? <Text style={[styles.copy, { color: colors.critical }]}>Couldn&apos;t load terminal matches: {matchesError} <Text style={styles.link} onPress={() => void loadMatches()}>Retry</Text></Text> : null}
+    {(matches?.suggestions || []).map((s) => <View style={styles.deviceRow} key={s.enroll_number}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>#{s.enroll_number} {s.terminal_name || 'No name'}</Text>{s.ambiguous ? <Text style={styles.rowSub}>This name matches multiple members: {(s.candidate_members || []).map((candidate) => candidate.name).join(', ')}. Link from the correct member profile.</Text> : <Text style={styles.rowSub}>→ {s.member_name}{s.member_phone ? ` · ${s.member_phone}` : ''} · {s.confidence}%</Text>}</View>{!s.ambiguous && s.member_id ? <TouchableOpacity onPress={() => void confirmMatch(s)} disabled={confirmingEnroll === s.enroll_number} style={confirmingEnroll === s.enroll_number ? { opacity: 0.5 } : undefined}><Text style={styles.link}>{confirmingEnroll === s.enroll_number ? 'Linking…' : 'Confirm'}</Text></TouchableOpacity> : null}</View>)}
       {(matches?.unmatched_terminal || []).length > 0 && <Text style={styles.copy}>{matches?.unmatched_terminal?.length} terminal user(s) couldn&apos;t be matched confidently — ask staff and link from the member profile.</Text>}
       {matches && !(matches.suggestions || []).length && !(matches.unmatched_terminal || []).length && matches.snapshot && <Text style={styles.copy}>Everyone on the terminal is already linked. 🎉</Text>}</View>}
     {(direct || bridge) && isOwner && onNavigateBulkDeactivate ? (
@@ -478,7 +510,7 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate }: { onBack: 
 }
 
 function Metric({ value, label }: { value: string; label: string }) { return <View style={[styles.metric, recoveryStyles.metricGridItem]}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>; }
-function Button({ text, onPress, secondary = false }: { text: string; onPress: () => void; secondary?: boolean }) { return <TouchableOpacity style={secondary ? styles.secondaryButton : styles.button} onPress={onPress}><Text style={secondary ? styles.secondaryText : styles.buttonText}>{text}</Text></TouchableOpacity>; }
+function Button({ text, onPress, secondary = false, disabled = false }: { text: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) { return <TouchableOpacity style={[secondary ? styles.secondaryButton : styles.button, disabled && { opacity: 0.5 }]} onPress={onPress} disabled={disabled}><Text style={secondary ? styles.secondaryText : styles.buttonText}>{text}</Text></TouchableOpacity>; }
 function money(value: number) { return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(Number.isFinite(value) ? value : 0); }
 
 const ownerStyles = StyleSheet.create({

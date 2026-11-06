@@ -46,10 +46,35 @@ export function FastRenewalScreen({
 }: FastRenewalScreenProps) {
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [result, setResult] = useState<{
     new_start: string;
     new_end: string;
   } | null>(null);
+
+  // V5-L38: the idempotent-path date fetch used to be fire-and-forget —
+  // on failure the screen stayed "Renewal Confirmed!" with no dates, no
+  // banner, and no retry. Extracted so the confirmed screen can retry it.
+  const loadRenewedDates = useCallback(async () => {
+    setLoadError(false);
+    const payment = await apiRequest<{ member_id: number; renewal_start_date?: string }>(
+      `/api/mobile/v1/payments/${paymentId}`,
+    );
+    if (!payment.ok) {
+      setLoadError(true);
+      return;
+    }
+    const member = await apiRequest<{ membership_start?: string; membership_end?: string }>(
+      `/api/mobile/v1/members/${payment.data.member_id}`,
+    );
+    if (member.ok && member.data.membership_start && member.data.membership_end) {
+      setResult({ new_start: member.data.membership_start, new_end: member.data.membership_end });
+    } else {
+      setLoadError(true);
+    }
+    // If either fetch fails, result stays null and the banner below
+    // stays hidden rather than claiming recovery with no dates.
+  }, [paymentId]);
 
   const handleConfirm = useCallback(async () => {
     Alert.alert(
@@ -103,21 +128,7 @@ export function FastRenewalScreen({
               // it produced instead of showing the "recovered" banner
               // with no dates. verify_payment writes the renewal onto
               // the member row (membership_start/end), so read it back.
-              void (async () => {
-                const payment = await apiRequest<{ member_id: number; renewal_start_date?: string }>(
-                  `/api/mobile/v1/payments/${paymentId}`,
-                );
-                if (!payment.ok) return;
-                const member = await apiRequest<{ membership_start?: string; membership_end?: string }>(
-                  `/api/mobile/v1/members/${payment.data.member_id}`,
-                );
-                if (member.ok && member.data.membership_start && member.data.membership_end) {
-                  setResult({ new_start: member.data.membership_start, new_end: member.data.membership_end });
-                }
-                // If the member fetch fails, result stays null and the
-                // banner below stays hidden rather than claiming
-                // recovery with no dates.
-              })();
+              void loadRenewedDates();
             } else {
               Alert.alert('Error', res.error.message || 'Failed to verify payment.');
             }
@@ -125,7 +136,7 @@ export function FastRenewalScreen({
         },
       ],
     );
-  }, [paymentId, amount, memberName]);
+  }, [paymentId, amount, memberName, loadRenewedDates]);
 
   if (confirmed) {
     return (
@@ -155,6 +166,20 @@ export function FastRenewalScreen({
                   {formatCurrency(amount)}
                 </Text>
               </View>
+            </View>
+          )}
+
+          {/* V5-L38: if the renewed dates couldn't be loaded, say so
+              with a retry instead of a bare "Renewal Confirmed!" screen
+              that shows no dates. */}
+          {!result && loadError && (
+            <View style={styles.loadErrorCard}>
+              <Text style={styles.loadErrorText}>
+                The renewal is confirmed, but the renewed dates couldn&apos;t be loaded. Pull to retry below — the member&apos;s new period is on their profile either way.
+              </Text>
+              <TouchableOpacity style={styles.retryButton} onPress={() => void loadRenewedDates()} activeOpacity={0.7}>
+                <Text style={styles.retryButtonText}>Retry loading dates</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -438,6 +463,33 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
     color: colors.success,
+  },
+  loadErrorCard: {
+    backgroundColor: colors.warningSurface,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+    width: '100%',
+    gap: spacing.sm,
+  },
+  loadErrorText: {
+    fontSize: fontSize.sm,
+    color: colors.warningDark,
+    lineHeight: 19,
+  },
+  retryButton: {
+    backgroundColor: colors.warning,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  },
+  retryButtonText: {
+    color: colors.textInverse,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   doneButton: {
     backgroundColor: colors.brand,

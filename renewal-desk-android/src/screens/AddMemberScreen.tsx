@@ -54,9 +54,13 @@ type AddMemberScreenProps = {
   /** Convert-to-member prefill from a bot lead (name + phone). */
   prefillName?: string;
   prefillPhone?: string;
+  /** Bot lead this member was converted from — PATCHed to `converted`
+   * on success (V5-L31). The backend endpoint exists:
+   * PATCH /api/mobile/v1/bot/leads/{id} {status: "converted"}. */
+  leadId?: number;
 };
 
-export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: initialPlans = [], prefillName, prefillPhone }: AddMemberScreenProps) {
+export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: initialPlans = [], prefillName, prefillPhone, leadId }: AddMemberScreenProps) {
   const session = getCachedSession();
   const countryPrefix = getPhoneCountryPrefix(session?.gymTimezone, session?.gymCountry);
   const memberRequestKeyRef = useRef<string | undefined>(undefined);
@@ -64,6 +68,14 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const [plans, setPlans] = useState<Plan[]>(initialPlans);
   const [fullName, setFullName] = useState(prefillName?.trim() ?? '');
   const [phone, setPhone] = useState(prefillPhone?.trim() ? prefillPhone.trim() : countryPrefix);
+
+  // V5-L30: prefill is NOT initializer-only — navigating to an already
+  // mounted AddMember with a new lead's params used to keep the previous
+  // lead's name/phone. Re-sync whenever the prefill props change.
+  useEffect(() => {
+    setFullName(prefillName?.trim() ?? '');
+    setPhone(prefillPhone?.trim() ? prefillPhone.trim() : countryPrefix);
+  }, [prefillName, prefillPhone, countryPrefix]);
   const [dupWarning, setDupWarning] = useState<string | null>(null);
   const dupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -206,9 +218,26 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
 
     if (result.ok) {
       memberRequestKeyRef.current = undefined;
+      // V5-L31: a member converted from a bot lead must mark the lead
+      // converted, or it sits `new` in the pipeline forever. Fire and
+      // forget — navigation must not wait on it — but warn loudly on
+      // failure so a stuck lead is visible in logs.
+      if (leadId) {
+        void apiRequest(`/api/mobile/v1/bot/leads/${leadId}`, {
+          method: 'PATCH',
+          body: { status: 'converted' },
+        }).then((leadRes) => {
+          if (!leadRes.ok) {
+            console.warn(`[AddMember] Could not mark bot lead ${leadId} converted: ${leadRes.error.message}`);
+          }
+        });
+      }
       onMemberCreated?.(result.data);
     } else {
-      if (result.error.status === 401) { onLogout(); return; }
+      // V6-L38: reset the busy flag before the 401 early-return, like
+      // RecordPayment does — otherwise the submit button stays dead if
+      // the logout navigation ever doesn't unmount this screen.
+      if (result.error.status === 401) { setLoading(false); onLogout(); return; }
       if (result.error.status && result.error.status < 500) {
         memberRequestKeyRef.current = undefined;
       }
@@ -234,6 +263,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     onMemberCreated,
     selectedPlan,
     validate,
+    leadId,
   ]);
 
   const submitLabel = isPaid

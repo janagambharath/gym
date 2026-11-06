@@ -87,6 +87,12 @@ export function MemberDetailScreen({
   const [doorAccessPending, setDoorAccessPending] = useState(false);
   const [doorAccessPendingAction, setDoorAccessPendingAction] = useState<'block' | 'unblock' | null>(null);
   const [doorAccessError, setDoorAccessError] = useState<string | undefined>();
+  // V6-M8/M9: failed command (door state unknown) / stale queued command.
+  const [doorAccessFailed, setDoorAccessFailed] = useState(false);
+  const [doorAccessFailedAction, setDoorAccessFailedAction] = useState<'block' | 'unblock' | null>(null);
+  const [doorAccessStaleQueued, setDoorAccessStaleQueued] = useState(false);
+  const [doorAccessQueuedSince, setDoorAccessQueuedSince] = useState<string | null>(null);
+  const [doorAccessTerminalLastSeenAt, setDoorAccessTerminalLastSeenAt] = useState<string | null>(null);
   const [showFreezeModal, setShowFreezeModal] = useState(false);
   const [freezeDaysInput, setFreezeDaysInput] = useState('14');
   const [freezeReasonInput, setFreezeReasonInput] = useState('');
@@ -116,6 +122,11 @@ export function MemberDetailScreen({
       setDoorAccessPending(memberRes.data.door_access_pending === true);
       setDoorAccessPendingAction(memberRes.data.door_access_pending_action || null);
       setDoorAccessError(memberRes.data.door_access_error || undefined);
+      setDoorAccessFailed(memberRes.data.door_access_failed === true);
+      setDoorAccessFailedAction(memberRes.data.door_access_failed_action || null);
+      setDoorAccessStaleQueued(memberRes.data.door_access_stale_queued === true);
+      setDoorAccessQueuedSince(memberRes.data.door_access_queued_since || null);
+      setDoorAccessTerminalLastSeenAt(memberRes.data.door_access_terminal_last_seen_at || null);
     }
     else if (memberRes.error.status === 401) { onLogout(); return; }
 
@@ -182,13 +193,23 @@ export function MemberDetailScreen({
     if (checkingIn) return;
     setCheckingIn(true);
     const isExiting = !!member.is_inside;
-    const result = await apiRequest<{ message: string }>('/api/mobile/v1/access/checkin', {
+    const result = await apiRequest<{ event_type?: string }>('/api/mobile/v1/access/checkin', {
       method: 'POST',
       body: { member_id: member.id, type: isExiting ? 'EXIT' : 'ENTRY' },
     });
     if (result.ok) {
-      showMessage(isExiting ? `${member.full_name} checked out.` : `${member.full_name} checked in!`, 'success');
-      void fetchMemberData();
+      // V6-M15: same denial-as-success bug as V5-M13 — the backend
+      // returns success:true with an ACCESS_DENIED event for an
+      // expired/paused member. Check the event before celebrating.
+      if (result.data?.event_type === 'ACCESS_DENIED') {
+        showMessage(
+          result.message || `${member.full_name} cannot check in — their membership is expired or paused.`,
+          'error',
+        );
+      } else {
+        showMessage(isExiting ? `${member.full_name} checked out.` : `${member.full_name} checked in!`, 'success');
+        void fetchMemberData();
+      }
     } else {
       showMessage(result.error.message, 'error');
     }
@@ -276,6 +297,12 @@ export function MemberDetailScreen({
       setDoorAccessPending(true);
       setDoorAccessPendingAction(action);
       setDoorAccessError(undefined);
+      // V6-M8/M9: the fresh command supersedes the failed / stale state.
+      setDoorAccessFailed(false);
+      setDoorAccessFailedAction(null);
+      setDoorAccessStaleQueued(false);
+      setDoorAccessQueuedSince(null);
+      setDoorAccessTerminalLastSeenAt(null);
       showMessage(
         action === 'block'
           ? 'Block command queued. Access changes after the terminal acknowledges its next cloud poll.'
@@ -680,16 +707,23 @@ export function MemberDetailScreen({
                   <TouchableOpacity
                     style={[styles.biometricActionBtn, { borderColor: accessBlocked ? colors.successDark : colors.warningDark }]}
                     onPress={() => {
-                      const action = accessBlocked ? 'unblock' : 'block';
+                      // V6-M8: retry re-issues the failed action — the toggle
+                      // state is stale/unknown after a failure.
+                      const retrying = doorAccessFailed && doorAccessFailedAction !== null;
+                      const action = retrying ? doorAccessFailedAction : accessBlocked ? 'unblock' : 'block';
                       Alert.alert(
-                        accessBlocked ? 'Unblock Biometric Access?' : 'Block Biometric Access?',
-                        accessBlocked
-                          ? `${member.full_name} will be able to verify on the terminal again.`
-                          : `${member.full_name} will be denied on the terminal until unblocked. Their fingerprint stays enrolled.`,
+                        retrying
+                          ? `Retry ${action === 'block' ? 'Block' : 'Unblock'} Biometric Access?`
+                          : accessBlocked ? 'Unblock Biometric Access?' : 'Block Biometric Access?',
+                        retrying
+                          ? `The last ${action} command failed${doorAccessError ? `: ${doorAccessError}` : ''}. Send it again?`
+                          : accessBlocked
+                            ? `${member.full_name} will be able to verify on the terminal again.`
+                            : `${member.full_name} will be denied on the terminal until unblocked. Their fingerprint stays enrolled.`,
                         [
                           { text: 'Cancel', style: 'cancel' },
                           {
-                            text: accessBlocked ? 'Unblock' : 'Block',
+                            text: retrying ? 'Retry' : accessBlocked ? 'Unblock' : 'Block',
                             style: accessBlocked ? 'default' : 'destructive',
                             onPress: () => void handleToggleAccess(action),
                           },
@@ -701,7 +735,7 @@ export function MemberDetailScreen({
                   >
                     <Icon name="access" size={14} color={accessBlocked ? colors.successDark : colors.warningDark} />
                     <Text style={[styles.biometricActionBtnText, { color: accessBlocked ? colors.successDark : colors.warningDark }]}>
-                      {togglingAccess ? 'Working...' : accessBlocked ? 'Unblock Access' : 'Block Access'}
+                      {togglingAccess ? 'Working...' : doorAccessFailed && doorAccessFailedAction ? `Retry ${doorAccessFailedAction === 'unblock' ? 'Unblock' : 'Block'}` : accessBlocked ? 'Unblock Access' : 'Block Access'}
                     </Text>
                   </TouchableOpacity>
                   )}
@@ -726,12 +760,20 @@ export function MemberDetailScreen({
                     </Text>
                   </TouchableOpacity>
                 </View>
-                {doorAccessError ? (
-                  <Text style={[styles.biometricAccessHint, { color: colors.critical }]}>{doorAccessError}</Text>
+                {doorAccessFailed ? (
+                  <Text style={[styles.biometricAccessHint, { color: colors.critical }]}>
+                    Failed — tap to retry {doorAccessFailedAction || 'the access change'}{doorAccessError ? `: ${doorAccessError}` : ''}.
+                  </Text>
+                ) : doorAccessStaleQueued ? (
+                  <Text style={styles.biometricAccessHint}>
+                    Queued — terminal hasn&apos;t checked in since {formatDateTime(doorAccessTerminalLastSeenAt || doorAccessQueuedSince)}.
+                  </Text>
                 ) : doorAccessPending ? (
                   <Text style={styles.biometricAccessHint}>
                     Waiting for the terminal to confirm {doorAccessPendingAction || 'the access change'}.
                   </Text>
+                ) : doorAccessError ? (
+                  <Text style={[styles.biometricAccessHint, { color: colors.critical }]}>{doorAccessError}</Text>
                 ) : null}
               </View>
             ) : (

@@ -1,4 +1,4 @@
-import { getRuntimeConfiguration } from '../config/runtime';
+import { getRuntimeConfigurationSafely } from '../config/runtime';
 import { clearSession, loadSession, MobileSession, saveSession } from '../storage/secureSessionStore';
 import { configureDisplayPreferences } from '../types';
 
@@ -13,7 +13,7 @@ export type ApiError = {
 };
 
 export type ApiResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; message?: string }
   | { ok: false; error: ApiError };
 
 type RequestOptions = {
@@ -33,6 +33,10 @@ type RequestOptions = {
 type BackendEnvelope<T> = {
   success: boolean;
   data?: T;
+  // Top-level outcome message (e.g. POST /access/checkin puts the
+  // "Access denied: …" outcome here, outside `data` — V5-M13/V6-M15).
+  // Carried through on the ok result so callers can surface it.
+  message?: string;
   error?: { code: string; message: string };
 };
 
@@ -156,7 +160,15 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<ApiResult<T>> {
-  const config = getRuntimeConfiguration();
+  // V6-L36: a malformed API base URL must return a controlled error
+  // result, not throw synchronously (getRuntimeConfiguration throws on a
+  // bad URL / embedded credentials / non-HTTPS outside dev) and break
+  // every `void …` caller as an unhandled rejection.
+  const safeConfig = getRuntimeConfigurationSafely();
+  if (!safeConfig.ok) {
+    return { ok: false, error: { message: 'API configuration is invalid.' } };
+  }
+  const config = safeConfig.config;
   if (!config.apiBaseUrl) {
     return { ok: false, error: { message: 'API base URL is not configured.' } };
   }
@@ -216,8 +228,10 @@ export async function apiRequest<T>(
       return { ok: false, error: { message, code, status: response.status } };
     }
 
-    // Unwrap: return envelope.data as T
-    return { ok: true, data: envelope.data as T };
+    // Unwrap: return envelope.data as T, plus the top-level outcome
+    // message when the backend sent one (V5-M13: the check-in denial
+    // message lives here, not in `data`).
+    return { ok: true, data: envelope.data as T, message: envelope.message };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       return { ok: false, error: { message: 'Request timed out. Please try again.' } };
@@ -664,7 +678,13 @@ export type PaymentQrUploadResult = {
 export async function uploadPaymentQrImage(
   image: PaymentQrImage,
 ): Promise<ApiResult<PaymentQrUploadResult>> {
-  const config = getRuntimeConfiguration();
+  // V6-L36: same safe-config pattern as apiRequest — a malformed base URL
+  // returns a controlled error instead of throwing synchronously.
+  const safeConfig = getRuntimeConfigurationSafely();
+  if (!safeConfig.ok) {
+    return { ok: false, error: { message: 'API configuration is invalid.' } };
+  }
+  const config = safeConfig.config;
   if (!config.apiBaseUrl) {
     return { ok: false, error: { message: 'API base URL is not configured.' } };
   }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -50,6 +51,10 @@ export function BulkDeactivateScreen({ onBack, onLogout }: BulkDeactivateScreenP
   const [deactivating, setDeactivating] = useState(false);
   const [result, setResult] = useState<string | undefined>();
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // V5-L33: sequence guard — only the latest search may apply its
+  // results, so a slow response for an older query can never overwrite
+  // newer results (same pattern as AccessScreen's eventsSeqRef).
+  const loadSeqRef = useRef(0);
 
   const isOwner = getCachedSession()?.userRole === 'gym_owner';
 
@@ -63,26 +68,42 @@ export function BulkDeactivateScreen({ onBack, onLogout }: BulkDeactivateScreenP
   }, []);
 
   const load = useCallback(async (nextPage: number, search: string, append: boolean) => {
+    const seq = ++loadSeqRef.current;
     if (append) {
       setLoadingMore(true);
     } else {
       setLoading(true);
     }
+    // V5-L34: filter to terminal-enrolled members — the empty state
+    // promises "No members with terminal enroll numbers", so the list
+    // must not show members with no enroll number to deactivate.
     const res = await apiRequest<{ members: Member[]; pagination?: Pagination }>(
-      `/api/mobile/v1/members?page=${nextPage}&page_size=50${search ? `&q=${encodeURIComponent(search)}` : ''}`,
+      `/api/mobile/v1/members?biometric=enrolled&page=${nextPage}&page_size=50${search ? `&q=${encodeURIComponent(search)}` : ''}`,
     );
+    if (seq !== loadSeqRef.current) return;
     if (!res.ok && res.error.status === 401) {
       onLogout();
       return;
     }
     if (res.ok) {
-      setMembers((current) => (append ? [...current, ...(res.data.members || [])] : res.data.members || []));
+      // V6-L34: dedupe appended members by id — a member added between
+      // page fetches used to duplicate at the boundary.
+      setMembers((current) => {
+        if (!append) return res.data.members || [];
+        const seen = new Set(current.map((m) => m.id));
+        return [...current, ...(res.data.members || []).filter((m) => !seen.has(m.id))];
+      });
       setTotal(res.data.pagination?.total ?? res.data.members?.length ?? 0);
       setTotalPages(res.data.pagination?.total_pages ?? 1);
       setPage(nextPage);
       setError(undefined);
     } else if (!append) {
       setError(res.error.message);
+    } else {
+      // V6-L34: an append failure used to be silent — the user just saw
+      // nothing happen. The page isn't advanced, so tapping again
+      // retries, but now with feedback.
+      Alert.alert('Could not load more', res.error.message);
     }
     setLoading(false);
     setLoadingMore(false);
@@ -114,20 +135,36 @@ export function BulkDeactivateScreen({ onBack, onLogout }: BulkDeactivateScreenP
     setDeactivating(true);
     setResult(undefined);
     let success = 0;
-    let failed = 0;
-    for (const memberId of selected) {
+    const failedNames: string[] = [];
+    const selectedMembers = members.filter((m) => selected.has(m.id));
+    // One stable key per member per batch: a retry of this batch after a
+    // timeout must not deactivate the same member twice. NOTE: the
+    // backend deactivate endpoint does not honour Idempotency-Key yet
+    // (no idempotency handling in app/mobile_api/members.py) — the
+    // header is sent so the endpoint can honour it without a client
+    // change; until then the soft-delete is itself idempotent-ish
+    // (re-deactivating an already-deleted member 404s, not double-acts).
+    const batchKey = `bulk-deactivate-${Date.now()}`;
+    for (const member of selectedMembers) {
       try {
-        const res = await apiRequest(`/api/mobile/v1/members/${memberId}/deactivate`, { method: 'POST' });
+        const res = await apiRequest(`/api/mobile/v1/members/${member.id}/deactivate`, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': `${batchKey}-${member.id}` },
+        });
         if (res.ok) success += 1;
-        else failed += 1;
+        else failedNames.push(member.full_name || `ID ${member.id}`);
       } catch {
-        failed += 1;
+        failedNames.push(member.full_name || `ID ${member.id}`);
       }
     }
     setDeactivating(false);
     setSelected(new Set());
+    // V5-L34: name the failures instead of a bare count — the owner
+    // needs to know WHO is still active, not just how many failed.
     setResult(
-      failed > 0 ? `✓ ${success} deactivated, ⚠ ${failed} failed` : `✓ All ${success} deactivated`,
+      failedNames.length > 0
+        ? `✓ ${success} deactivated, ⚠ ${failedNames.length} failed: ${failedNames.slice(0, 5).join(', ')}${failedNames.length > 5 ? ` +${failedNames.length - 5} more` : ''}`
+        : `✓ All ${success} deactivated`,
     );
     reloadTimerRef.current = setTimeout(() => void load(1, debouncedQuery, false), 2000);
   };
@@ -165,7 +202,9 @@ export function BulkDeactivateScreen({ onBack, onLogout }: BulkDeactivateScreenP
                 <View style={[styles.checkbox, allSelected && styles.checkboxChecked]}>
                   {allSelected ? <Text style={styles.checkMark}>✓</Text> : null}
                 </View>
-                <Text style={styles.selectAllText}>Select all ({members.length})</Text>
+                {/* V5-L34: "Select all" only ever selected the loaded
+                    page — label it honestly instead of implying all Y. */}
+                <Text style={styles.selectAllText}>Select all on this page ({members.length})</Text>
               </TouchableOpacity>
               <Text style={styles.selectedCount}>{selectedCount} selected</Text>
             </View>

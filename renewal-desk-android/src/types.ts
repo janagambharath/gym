@@ -30,6 +30,14 @@ export type Member = {
   door_access_pending_action?: 'block' | 'unblock' | null;
   door_access_connector?: 'adms_direct' | 'bridge' | null;
   door_access_error?: string | null;
+  // V6-M8: latest manual command failed — door state is unknown.
+  door_access_failed?: boolean;
+  door_access_failed_action?: 'block' | 'unblock' | null;
+  door_access_failed_at?: string | null;
+  // V6-M9: queued command the terminal never picked up — not blocked-as-fact.
+  door_access_stale_queued?: boolean;
+  door_access_queued_since?: string | null;
+  door_access_terminal_last_seen_at?: string | null;
 };
 
 export type MembersResponse = {
@@ -148,6 +156,9 @@ export type Renewal = {
   new_start: string | null;
   new_end: string | null;
   amount: string;
+  // V5-L35: the backend serializes `channel` on renewals
+  // (app/mobile_api/renewals.py) — render it like the PWA does.
+  channel?: 'online' | 'offline';
   notes: string | null;
   renewed_by: string | null;
   created_at: string | null;
@@ -393,8 +404,68 @@ let displayPreferences: DisplayPreferences = {
   country: 'IN', currency: 'INR', timezone: 'Asia/Kolkata',
 };
 
+/** Timezones already warned about, so a broken gym timezone is loud once
+ * instead of spamming the log on every formatted date. */
+const warnedInvalidTimezones = new Set<string>();
+
+function warnInvalidTimezoneOnce(timezone: string): void {
+  if (warnedInvalidTimezones.has(timezone)) return;
+  warnedInvalidTimezones.add(timezone);
+  console.warn(
+    `[display] Invalid gym timezone "${timezone}" — dates will use the device timezone until the gym profile is fixed in Settings.`,
+  );
+}
+
+/** True when Intl accepts the timezone. */
+export function isValidTimezone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The gym's configured timezone (for date-key helpers that need it). */
+export function getDisplayTimezone(): string {
+  return displayPreferences.timezone;
+}
+
+/**
+ * Gym-local YYYY-MM-DD key that never throws: an invalid gym timezone
+ * falls back to the device-local date (with a loud warning) instead of
+ * the RangeError that used to crash Renew/Record Payment at render
+ * (V5-L32). The fallback date can be a day off the gym's — the warning
+ * is the signal to fix the stored timezone, not a silent correction.
+ */
+export function safeDateKeyInTimezone(value: Date, timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(value);
+    const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
+    const key = `${part('year')}-${part('month')}-${part('day')}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return key;
+  } catch {
+    // Fall through to the device-local key below.
+  }
+  warnInvalidTimezoneOnce(timezone);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
 /** Configure output from the authenticated gym's server-provided locale. */
 export function configureDisplayPreferences(preferences: Partial<DisplayPreferences>): void {
+  // V5-L32: validate the gym timezone once at session load — a typo'd
+  // timezone used to crash money screens at render (RangeError) while
+  // every shared formatter silently fell back to device-local times.
+  // Warn loudly here so the bad value is visible; the formatters and
+  // safeDateKeyInTimezone still fall back instead of throwing.
+  if (preferences.timezone && !isValidTimezone(preferences.timezone)) {
+    warnInvalidTimezoneOnce(preferences.timezone);
+  }
   displayPreferences = {
     country: preferences.country?.toUpperCase() || displayPreferences.country,
     currency: preferences.currency?.toUpperCase() || displayPreferences.currency,

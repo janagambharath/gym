@@ -20,7 +20,7 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
-import { formatDateTime, getPhoneCountryPrefix } from '../types';
+import { formatDateTime, getPhoneCountryPrefix, safeDateKeyInTimezone } from '../types';
 
 type OwnerLead = {
   id: number;
@@ -62,9 +62,9 @@ type PromptAction = 'book' | 'followup' | 'lost';
 /** Date key (YYYY-MM-DD) of an instant in the gym's timezone — same
  * helper shape as the renew/record-payment screens. */
 function dateKeyInTimezone(value: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value);
-  const part = (type: string) => parts.find((item) => item.type === type)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  // V5-L32 (same class as Renew/Record Payment): never throw RangeError
+  // on an invalid gym timezone — fall back with a loud warning.
+  return safeDateKeyInTimezone(value, timezone);
 }
 
 /** Calendar-day arithmetic on a YYYY-MM-DD key (noon-local construction
@@ -120,8 +120,12 @@ function localInputToIso(value: string, timezone: string): string | null {
       return null;
     }
   }
-  const date = new Date(trimmed);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  // V5-L37: anything not matching YYYY-MM-DD HH:MM is REJECTED — the
+  // old `new Date(trimmed)` fallback parsed device-local time and saved
+  // it with no warning, booking trials/follow-ups hours off whenever
+  // the phone timezone differed from the gym's. Callers already show
+  // the "Enter a valid date" alert on a null return.
+  return null;
 }
 
 /** True when Intl accepts the timezone. Used to surface a broken gym

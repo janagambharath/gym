@@ -28,6 +28,9 @@ const linking = {
           PaymentSetup: 'payment-setup',
           ImportMembers: 'import',
           AddMember: 'members/add',
+          MemberHistory: 'members/:memberId/history',
+          BotLeadDetail: 'bot/leads/:leadId',
+          BulkDeactivate: 'terminal/deactivate',
           RecordPayment: 'payments/record',
         },
       },
@@ -164,8 +167,9 @@ type DashboardStackParamList = {
   BulkDeactivate: undefined;
   MemberDetail: { member: Member };
   MemberHistory: { memberId: number };
+  PaymentDetail: { paymentId: number };
   RenewMember: { member: Member };
-  AddMember: { prefillName?: string; prefillPhone?: string } | undefined;
+  AddMember: { prefillName?: string; prefillPhone?: string; leadId?: number } | undefined;
   ImportMembers: undefined;
   MemberImport: undefined;
   MemberScan: undefined;
@@ -193,8 +197,9 @@ type MembersStackParamList = {
   MembersList: undefined;
   MemberDetail: { member: Member };
   MemberHistory: { memberId: number };
+  PaymentDetail: { paymentId: number };
   RenewMember: { member: Member };
-  AddMember: { prefillName?: string; prefillPhone?: string } | undefined;
+  AddMember: { prefillName?: string; prefillPhone?: string; leadId?: number } | undefined;
   ImportMembers: undefined;
   MemberImport: undefined;
   MemberScan: undefined;
@@ -207,6 +212,7 @@ type RenewalsStackParamList = {
   RenewalsHome: undefined;
   MemberDetail: { member: Member };
   MemberHistory: { memberId: number };
+  PaymentDetail: { paymentId: number };
   RenewMember: { member: Member };
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
@@ -227,6 +233,7 @@ type AccessStackParamList = {
   AccessHome: undefined;
   MemberDetail: { member: Member };
   MemberHistory: { memberId: number };
+  PaymentDetail: { paymentId: number };
   RenewMember: { member: Member };
   EditMember: { memberId: number };
   RecordPayment: { memberId?: number };
@@ -248,7 +255,7 @@ type MoreStackParamList = {
   BotLeadDetail: { leadId: number };
   BotSetup: undefined;
   BotTest: undefined;
-  AddMember: { prefillName?: string; prefillPhone?: string } | undefined;
+  AddMember: { prefillName?: string; prefillPhone?: string; leadId?: number } | undefined;
   Plans: undefined;
   Staff: undefined;
   Reports: undefined;
@@ -493,8 +500,20 @@ function DashboardStackScreen({
             memberId={props.route.params.memberId}
             onBack={() => props.navigation.goBack()}
             onLogout={onLogout}
+            onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
           />
         )}
+      </DashboardStackNav.Screen>
+      <DashboardStackNav.Screen name="PaymentDetail">
+        {(props) => {
+          const paymentId = (props.route.params as { paymentId: number })?.paymentId;
+          return (
+            <PaymentDetailScreen
+              paymentId={paymentId}
+              onBack={() => props.navigation.goBack()}
+            />
+          );
+        }}
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="EditMember">
         {(props) => {
@@ -527,7 +546,7 @@ function DashboardStackScreen({
       </DashboardStackNav.Screen>
       <DashboardStackNav.Screen name="AddMember">
         {(props) => {
-          const prefill = (props.route.params as { prefillName?: string; prefillPhone?: string } | undefined);
+          const prefill = (props.route.params as { prefillName?: string; prefillPhone?: string; leadId?: number } | undefined);
           return (
             <AddMemberScreen
               onBack={() => props.navigation.goBack()}
@@ -535,6 +554,7 @@ function DashboardStackScreen({
               plans={plans}
               prefillName={prefill?.prefillName}
               prefillPhone={prefill?.prefillPhone}
+              leadId={prefill?.leadId}
               onMemberCreated={(member) => {
                 refresh();
                 props.navigation.replace('MemberDetail', { member });
@@ -618,7 +638,7 @@ function DashboardStackScreen({
             onBack={() => props.navigation.goBack()}
             onLogout={onLogout}
             onConvertToMember={(lead) =>
-              props.navigation.navigate('AddMember', { prefillName: lead.name ?? '', prefillPhone: lead.phone })
+              props.navigation.navigate('AddMember', { prefillName: lead.name ?? '', prefillPhone: lead.phone, leadId: lead.id })
             }
           />
         )}
@@ -727,8 +747,20 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
             memberId={props.route.params.memberId}
             onBack={() => props.navigation.goBack()}
             onLogout={onLogout}
+            onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
           />
         )}
+      </MembersStackNav.Screen>
+      <MembersStackNav.Screen name="PaymentDetail">
+        {(props) => {
+          const paymentId = (props.route.params as { paymentId: number })?.paymentId;
+          return (
+            <PaymentDetailScreen
+              paymentId={paymentId}
+              onBack={() => props.navigation.goBack()}
+            />
+          );
+        }}
       </MembersStackNav.Screen>
       <MembersStackNav.Screen name="EditMember">
         {(props) => {
@@ -761,7 +793,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
       </MembersStackNav.Screen>
       <MembersStackNav.Screen name="AddMember">
         {(props) => {
-          const prefill = (props.route.params as { prefillName?: string; prefillPhone?: string } | undefined);
+          const prefill = (props.route.params as { prefillName?: string; prefillPhone?: string; leadId?: number } | undefined);
           return (
             <AddMemberScreen
               onBack={() => props.navigation.goBack()}
@@ -769,6 +801,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
               plans={plans}
               prefillName={prefill?.prefillName}
               prefillPhone={prefill?.prefillPhone}
+              leadId={prefill?.leadId}
               onMemberCreated={(member) => {
                 refresh();
                 props.navigation.replace('MemberDetail', { member });
@@ -886,8 +919,20 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
             memberId={props.route.params.memberId}
             onBack={() => props.navigation.goBack()}
             onLogout={onLogout}
+            onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
           />
         )}
+      </RenewalsStackNav.Screen>
+      <RenewalsStackNav.Screen name="PaymentDetail">
+        {(props) => {
+          const paymentId = (props.route.params as { paymentId: number })?.paymentId;
+          return (
+            <PaymentDetailScreen
+              paymentId={paymentId}
+              onBack={() => props.navigation.goBack()}
+            />
+          );
+        }}
       </RenewalsStackNav.Screen>
       <RenewalsStackNav.Screen name="EditMember">
         {(props) => {
@@ -1079,6 +1124,7 @@ function AccessStackScreen({ onLogout }: { onLogout: () => void }) {
             memberId={props.route.params.memberId}
             onBack={() => props.navigation.goBack()}
             onLogout={onLogout}
+            onSelectPayment={(paymentId) => props.navigation.navigate('PaymentDetail', { paymentId })}
           />
         )}
       </AccessStackNav.Screen>
@@ -1094,6 +1140,17 @@ function AccessStackScreen({ onLogout }: { onLogout: () => void }) {
                 props.navigation.navigate('MemberDetail', { member: updatedMember })
               }
               onComplete={() => refresh()}
+            />
+          );
+        }}
+      </AccessStackNav.Screen>
+      <AccessStackNav.Screen name="PaymentDetail">
+        {(props) => {
+          const paymentId = (props.route.params as { paymentId: number })?.paymentId;
+          return (
+            <PaymentDetailScreen
+              paymentId={paymentId}
+              onBack={() => props.navigation.goBack()}
             />
           );
         }}
@@ -1264,14 +1321,14 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
             onBack={() => props.navigation.goBack()}
             onLogout={onLogout}
             onConvertToMember={(lead) =>
-              props.navigation.navigate('AddMember', { prefillName: lead.name ?? '', prefillPhone: lead.phone })
+              props.navigation.navigate('AddMember', { prefillName: lead.name ?? '', prefillPhone: lead.phone, leadId: lead.id })
             }
           />
         )}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="AddMember">
         {(props) => {
-          const prefill = (props.route.params as { prefillName?: string; prefillPhone?: string } | undefined);
+          const prefill = (props.route.params as { prefillName?: string; prefillPhone?: string; leadId?: number } | undefined);
           return (
             <AddMemberScreen
               onBack={() => props.navigation.goBack()}
@@ -1279,6 +1336,7 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
               plans={plans}
               prefillName={prefill?.prefillName}
               prefillPhone={prefill?.prefillPhone}
+              leadId={prefill?.leadId}
               onMemberCreated={(member) => {
                 refresh();
                 props.navigation.replace('MemberDetail', { member });

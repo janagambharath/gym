@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -85,6 +85,42 @@ export function CampaignCreateScreen({
   // Campaign Meta & Send
   const [campaignName, setCampaignName] = useState('');
   const [sending, setSending] = useState(false);
+  // V6-M16: one stable idempotency key per launch attempt — a retry of
+  // the create after a timeout must not create a duplicate campaign.
+  // NOTE: the backend /campaigns endpoint does not honour
+  // Idempotency-Key yet (no idempotency handling in
+  // app/mobile_api/campaigns.py) — the header is sent so the endpoint
+  // can honour it without a client change; until then the key is
+  // best-effort and the retry-send path below is the real guard against
+  // double-messaging (it re-sends the SAME campaign, never a fresh one).
+  const launchKeyRef = useRef<string | undefined>(undefined);
+
+  // V6-M16: re-send the already-created campaign after a send failure
+  // instead of forcing a fresh create (which would double-message
+  // members who got the first partial send).
+  const retrySend = useCallback(async (campaignId: number) => {
+    if (sending) return;
+    setSending(true);
+    const sendRes = await apiRequest<{ sent: number; total: number; failed: number }>(
+      `/api/mobile/v1/campaigns/${campaignId}/send`,
+      { method: 'POST' },
+    );
+    setSending(false);
+    if (sendRes.ok) {
+      Alert.alert(
+        'Campaign Launched! 🎉',
+        `Successfully sent to ${sendRes.data.sent} of ${sendRes.data.total} members.${
+          sendRes.data.failed > 0 ? ` (${sendRes.data.failed} failed)` : ''
+        }`,
+        [{ text: 'View Campaigns', onPress: onCampaignCreated }],
+      );
+    } else {
+      Alert.alert('Send failed again', sendRes.error.message || 'Some messages may not have sent.', [
+        { text: 'Retry send', onPress: () => void retrySend(campaignId) },
+        { text: 'View Campaigns', onPress: onCampaignCreated },
+      ]);
+    }
+  }, [sending, onCampaignCreated]);
 
   const onSwitchPurpose = useCallback((newPurpose: CampaignType) => {
     setPurpose(newPurpose);
@@ -249,8 +285,12 @@ export function CampaignCreateScreen({
     const effectiveSegment: CampaignSegmentType = audienceSource === 'import' ? 'custom_import' : selectedSegment;
     const importedContacts: ImportedContact[] = audienceSource === 'import' ? importResult?.valid_contacts || [] : [];
 
+    const idempotencyKey = launchKeyRef.current ?? `campaign-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    launchKeyRef.current = idempotencyKey;
+
     const createRes = await apiRequest<{ id: number }>('/api/mobile/v1/campaigns', {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: {
         name: campaignName.trim(),
         campaign_type: purpose,
@@ -270,6 +310,7 @@ export function CampaignCreateScreen({
     }
 
     const campaignId = createRes.data.id;
+    launchKeyRef.current = undefined;
 
     // Send Campaign
     const sendRes = await apiRequest<{ sent: number; total: number; failed: number }>(
@@ -288,9 +329,18 @@ export function CampaignCreateScreen({
         [{ text: 'View Campaigns', onPress: onCampaignCreated }],
       );
     } else {
-      Alert.alert('Notice', sendRes.error.message || 'Some messages may not have sent.', [
-        { text: 'OK', onPress: onCampaignCreated },
-      ]);
+      // V6-M16: offer "Retry send on this campaign" — the old alert
+      // only offered OK → navigate away, so the owner's only retry was
+      // a fresh launch that created a duplicate campaign and
+      // double-messaged members from the first partial send.
+      Alert.alert(
+        'Send failed',
+        `${sendRes.error.message || 'Some messages may not have sent.'} The campaign was created — retry sending this same campaign instead of creating a new one.`,
+        [
+          { text: 'Retry send', onPress: () => void retrySend(campaignId) },
+          { text: 'View Campaigns', onPress: onCampaignCreated },
+        ],
+      );
     }
   }, [
     campaignName,
@@ -302,6 +352,7 @@ export function CampaignCreateScreen({
     importResult,
     excludeRecent,
     onCampaignCreated,
+    retrySend,
   ]);
 
   // Recipient totals calculation
