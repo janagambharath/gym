@@ -1,7 +1,7 @@
 /* Reports Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderInfoRow } from '../components.js';
-import { icon } from '../icons.js'; import { formatCurrency, formatInteger } from '../utils.js';
+import { icon } from '../icons.js'; import { formatCurrency, formatInteger, escapeHtml } from '../utils.js';
 const PERIODS = [
   { value: 'today', label: 'Today', windowLabel: 'Today' },
   { value: '7d', label: 'Last 7 days', windowLabel: 'Last 7 days' },
@@ -26,7 +26,9 @@ export default { async mount(el) {
   const scroll = el.querySelector('#rpt-scroll');
   const res = await apiRequest(`/api/mobile/v1/reports/summary?period=${period}`);
   // V3-L27: the error state had no retry — same pattern as the router retry.
-  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load reports</div><div class="empty-state-text">${res.error.message}</div><button class="btn btn-primary" id="rpt-retry" style="margin-top:var(--sp-md)">Try Again</button></div>`; scroll.querySelector('#rpt-retry')?.addEventListener('click', load); return; }
+  // V5-L26: the server error message was interpolated into innerHTML
+  // unescaped — the only unescaped error interpolation in src/.
+  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load reports</div><div class="empty-state-text">${escapeHtml(res.error.message)}</div><button class="btn btn-primary" id="rpt-retry" style="margin-top:var(--sp-md)">Try Again</button></div>`; scroll.querySelector('#rpt-retry')?.addEventListener('click', load); return; }
   const d = res.data;
   const windowLabel = PERIODS.find(p => p.value === period)?.windowLabel || 'Last 30 days';
   const section = (title, data) => `<div style="padding:0 var(--sp-lg) var(--sp-lg)">

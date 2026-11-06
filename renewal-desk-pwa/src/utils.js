@@ -21,6 +21,27 @@ export function configureDisplayPreferences(prefs) {
   };
 }
 
+/** The gym's IANA timezone as configured for display (V6-L29). */
+export function getGymTimezone() {
+  return displayPreferences.timezone;
+}
+
+/**
+ * Dedupe a list of rows by a key function, keeping the first occurrence
+ * (V5-M11 / V6-L32). Paginated lists re-fetch overlapping windows when a
+ * new row lands between page fetches, so plain [...old, ...new] renders
+ * duplicates.
+ */
+export function dedupeByKey(rows, keyFn) {
+  const seen = new Set();
+  return (rows || []).filter((row) => {
+    const k = keyFn(row);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 function displayLocale() {
   return localeByCountry[displayPreferences.country] ?? 'en-US';
 }
@@ -55,6 +76,21 @@ export function formatDateTime(dateStr) {
     }).format(date);
   } catch {
     return date.toLocaleString(displayLocale());
+  }
+}
+
+/** Time-only variant of formatDateTime, in the gym timezone (V5-L24). */
+export function formatTime(dateStr) {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat(displayLocale(), {
+      hour: 'numeric', minute: '2-digit',
+      timeZone: displayPreferences.timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleTimeString(displayLocale(), { hour: 'numeric', minute: '2-digit' });
   }
 }
 
@@ -163,6 +199,57 @@ export function getGymTodayISO() {
     if (y && m && d) return `${y}-${m}-${d}`;
   } catch { /* fallback */ }
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Timezone offset (ms) of `timeZone` at `date`, via Intl. */
+function tzOffsetMs(timeZone, date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(date);
+  const get = (t) => Number(parts.find((p) => p.type === t)?.value);
+  const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'));
+  return asUtc - date.getTime();
+}
+
+/**
+ * Parse a "YYYY-MM-DDTHH:MM" wall time as gym-local time and return an ISO
+ * UTC string (V6-L29). A datetime-local value carries no zone; `new Date()`
+ * read it in the device zone, which is wrong whenever the device tz differs
+ * from the gym's. Returns null on invalid input.
+ */
+export function gymLocalInputToIso(value) {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(value).trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || (s || 0) > 59) return null;
+  const wallAsUtc = Date.UTC(y, mo - 1, d, h, mi, s || 0);
+  const tz = displayPreferences.timezone;
+  // Wall time -> UTC: subtract the gym-tz offset at that instant; one
+  // refinement pass covers a DST edge landing on the other side.
+  let utc = wallAsUtc - tzOffsetMs(tz, new Date(wallAsUtc));
+  utc = wallAsUtc - tzOffsetMs(tz, new Date(utc));
+  const out = new Date(utc);
+  return Number.isNaN(out.getTime()) ? null : out.toISOString();
+}
+
+/** Format a Date as "YYYY-MM-DDTHH:MM" wall time in the gym timezone. */
+export function toGymLocalInput(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: displayPreferences.timezone, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    }).formatToParts(d);
+    const get = (t) => parts.find((p) => p.type === t)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+  } catch {
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
 }
 
 // ─── Avatar Color ────────────────────────────────────────────────────

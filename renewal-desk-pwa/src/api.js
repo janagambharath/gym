@@ -246,16 +246,25 @@ export async function apiRequest(path, options = {}) {
     const envelope = await response.json();
     if (response.status === 401 && !anonymous && isMemberPath) clearMemberSession();
     if (!response.ok || !envelope.success) {
+      // V6-L23: the main error path used to read envelope.error?.message
+      // directly, so a string-form error fell through to the generic text
+      // and the top-level message (which carries e.g. access denials) was
+      // dropped. Route through errorMessage() and expose envelope.message.
       return {
         ok: false,
         error: {
-          message: envelope.error?.message ?? `Request failed (${response.status}).`,
+          message: errorMessage(envelope.error, envelope.message || `Request failed (${response.status}).`),
           code: envelope.error?.code,
           status: response.status,
         },
+        message: typeof envelope.message === 'string' ? envelope.message : undefined,
       };
     }
-    return { ok: true, data: envelope.data };
+    // V6-L23: a 200 success envelope can still carry a top-level message
+    // (e.g. "Access denied: … membership is expired" on a denied
+    // check-in, where data.event_type is ACCESS_DENIED) — expose it so
+    // call sites can tell a denial from a success.
+    return { ok: true, data: envelope.data, message: typeof envelope.message === 'string' ? envelope.message : undefined };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       return { ok: false, error: { message: 'Request timed out. Please try again.' } };

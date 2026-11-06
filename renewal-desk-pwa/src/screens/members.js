@@ -4,7 +4,7 @@ import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState, showToast } from '../components.js';
 import { icon } from '../icons.js';
-import { debounce, escapeHtml, formatInteger } from '../utils.js';
+import { debounce, escapeHtml, formatInteger, dedupeByKey, formatTime } from '../utils.js';
 
 export default {
   async mount(el) {
@@ -60,6 +60,13 @@ export default {
     });
 
     let requestId = 0;
+    // V6-L25: background (live-refresh) failures used to be silent —
+    // toast once and stamp the count line with the last good time.
+    let bgErrorShown = false, lastGoodAt = null;
+    function stampStale() {
+      const countEl = el.querySelector('#members-count');
+      if (countEl && lastGoodAt) countEl.textContent = `${formatInteger(total)} member${total !== 1 ? 's' : ''} · last updated ${formatTime(lastGoodAt)}`;
+    }
     async function loadMembers(append = false, background = false) {
       if (background && loading) return;
       const id = ++requestId;
@@ -83,19 +90,29 @@ export default {
         // V4-L19: an append failure must toast and keep the loaded list —
         // rendering the error state here used to wipe it.
         if (append) { showToast(res.error?.message || 'Could not load more members.', 'error'); return; }
-        if (!background) listEl.innerHTML = renderErrorState(res.error.message);
+        if (background) {
+          if (!bgErrorShown) { bgErrorShown = true; showToast('Could not refresh the member list — showing the last loaded members.', 'error'); }
+          stampStale();
+          return;
+        }
+        listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
-      const newMembers = results.flatMap(result => result.data.members || []);
+      bgErrorShown = false;
+      lastGoodAt = new Date();
+      // V5-M11: dedupe by id — a new member landing between page fetches
+      // shifts rows and the boundary row renders twice (same for the
+      // background flatMap over pages 1..N).
+      const newMembers = dedupeByKey(results.flatMap(result => result.data.members || []), (m) => m.id);
       total = res.data.pagination?.total || 0;
       if (append) page = fetchPage;
-      members = append ? [...members, ...newMembers] : newMembers;
+      members = append ? dedupeByKey([...members, ...newMembers], (m) => m.id) : newMembers;
       if (members.length === 0) {
         listEl.innerHTML = renderEmptyState({ icon: 'members', title: 'No members found', text: query ? 'Try a different search term' : 'Add your first member to get started', actionText: !query ? 'Add Member' : undefined, actionId: 'add-empty' });
         listEl.querySelector('#add-empty')?.addEventListener('click', () => navigate.push('add-member'));
       } else {
         listEl.innerHTML = `<div class="scroll-content">
-          <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">${formatInteger(total)} member${total !== 1 ? 's' : ''}</div>
+          <div id="members-count" style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">${formatInteger(total)} member${total !== 1 ? 's' : ''}</div>
           <div class="card" style="margin:0 var(--sp-lg)">${members.map(m => renderMemberCard(m)).join('')}</div>
         </div>`;
         listEl.querySelectorAll('[data-member-id]').forEach(card => {

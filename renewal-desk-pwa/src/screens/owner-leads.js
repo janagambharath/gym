@@ -1,6 +1,6 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml, formatDateTime } from '../utils.js';
+import { escapeHtml, formatDateTime, getGymTimezone, gymLocalInputToIso, toGymLocalInput } from '../utils.js';
 import { icon } from '../icons.js';
 import { showToast, showPrompt } from '../components.js';
 
@@ -38,7 +38,7 @@ async function load(el) {
         <label>Full name<input name="name" required maxlength="160" placeholder="e.g. Neha Rao"></label>
         <label>Phone number<input name="phone" required maxlength="40" placeholder="+91 98…"></label>
         <label>Source<select name="source"><option value="walk_in">Walk-in</option><option value="phone">Phone</option><option value="referral">Referral</option><option value="instagram">Instagram</option><option value="google">Google</option><option value="whatsapp">WhatsApp</option><option value="other">Other</option></select></label>
-        <label>Next follow-up<input name="next_follow_up_at" type="datetime-local"></label>
+        <label>Next follow-up (gym time, ${escapeHtml(getGymTimezone())})<input name="next_follow_up_at" type="datetime-local"></label>
         <label>Interested in<input name="interested_plan" maxlength="160" placeholder="Membership / personal training"></label>
         <label class="owner-form-wide">Notes<textarea name="notes" maxlength="4000" rows="3" placeholder="Goal, budget, schedule or anything the team should know"></textarea></label>
         <label class="owner-check"><input name="trial_requested" type="checkbox"> Wants a trial visit</label>
@@ -98,7 +98,9 @@ function bindLeadActions(el, leads) {
     if (action === 'book' || action === 'followup') {
       const value = await showPrompt({
         title: action === 'book' ? 'Book Trial' : 'Follow-up',
-        message: action === 'book' ? 'Trial date and time:' : 'Next follow-up date and time:',
+        // V6-L29: the entered time is gym-local — label the zone so the
+        // owner types gym time, not device time.
+        message: action === 'book' ? `Trial date and time (gym time, ${getGymTimezone()}):` : `Next follow-up date and time (gym time, ${getGymTimezone()}):`,
         placeholder: 'YYYY-MM-DDTHH:MM (e.g. 2026-10-09T18:30)',
         defaultValue: toLocalInput(new Date(Date.now() + 86400000)),
         confirmText: 'Save',
@@ -121,13 +123,12 @@ function bindLeadActions(el, leads) {
   }));
 }
 
+// V6-L29: a datetime-local value carries no zone — interpret it as
+// gym-local wall time, not device-local. (utils.gymLocalInputToIso.)
 function localInputToIso(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  return gymLocalInputToIso(value);
 }
 
 function toLocalInput(date) {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
+  return toGymLocalInput(date);
 }

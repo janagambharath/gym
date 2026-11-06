@@ -1,6 +1,7 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml } from '../utils.js';
+import { escapeHtml, formatDate, formatTime, dedupeByKey } from '../utils.js';
+import { showToast } from '../components.js';
 import { attachLiveRefresh } from '../live-refresh.js';
 
 export default { async mount(el, params) {
@@ -9,19 +10,30 @@ export default { async mount(el, params) {
 } };
 
 const esc = escapeHtml;
+// V6-L25: background (live-refresh) failures used to be silent — toast once
+// and stamp the count line with the last good time.
+let attBgErrorShown = false;
+let attLastGoodAt = null;
+const punchKey = (p) => p.id ?? `${p.punch_time || ''}|${p.direction || ''}|${p.biometric_user_id || ''}`;
 
 let attPage = 1;
 let attTotalPages = 1;
+let attTotalPunches = 0;
 let attPunches = [];
 
-async function load(el, params, background = false) {
+async function load(el, params, background = false, append = false) {
   const memberId = params?.id;
   if (!memberId) {
     el.innerHTML = '<main class="rrr-page"><p>No member specified.</p></main>';
     return;
   }
 
-  if (!background) { attPage = 1; attPunches = []; el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>'; }
+  if (!background && !append) { attPage = 1; attPunches = []; el.innerHTML = '<div class="rrr-loading">Loading biometric records…</div>'; }
+
+  // V5-M12: fetch-then-advance — the old code incremented attPage in the
+  // click handler and load() immediately reset it to 1, so "Load more"
+  // re-fetched page 1 forever. The page advances only on success now.
+  const fetchPage = append ? attPage + 1 : attPage;
 
   let res;
   if (background) {
@@ -30,14 +42,26 @@ async function load(el, params, background = false) {
       apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=${i + 1}&per_page=50`)));
     res = pages.find(r => !r.ok) || pages[pages.length - 1];
     if (res.ok) {
-      attPunches = pages.flatMap(r => r.data.events || []);
+      // V6-L32: dedupe across the re-fetched pages.
+      attPunches = dedupeByKey(pages.flatMap(r => r.data.events || []), punchKey);
       attTotalPages = res.data.pagination?.total_pages ?? attTotalPages;
     }
   } else {
-    res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=${attPage}&per_page=50`);
+    res = await apiRequest(`/api/mobile/v1/rrr/member/${memberId}/attendance?page=${fetchPage}&per_page=50`);
   }
   if (!res.ok) {
-    if (background) return;
+    if (background) {
+      if (!attBgErrorShown) { attBgErrorShown = true; showToast('Could not refresh the biometric records — showing the last loaded punches.', 'error'); }
+      const countEl = el.querySelector('#rrr-att-count');
+      if (countEl && attLastGoodAt) countEl.textContent = `Showing ${attPunches.length} of ${attTotalPunches} punches · last updated ${formatTime(attLastGoodAt)}`;
+      return;
+    }
+    if (append) {
+      // V5-M12: an append failure must toast and keep the page — the old
+      // code reset attPage and re-rendered page 1.
+      showToast(res.error?.message || 'Could not load more records.', 'error');
+      return;
+    }
     el.innerHTML = `<main class="rrr-page rrr-detail">
       <header class="rrr-header"><button id="rrr-back" class="rrr-back-btn">← Member</button></header>
       <h1>Biometric Records</h1>
@@ -46,16 +70,24 @@ async function load(el, params, background = false) {
     el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
     return;
   }
+  attBgErrorShown = false;
+  attLastGoodAt = new Date();
 
   const data = res.data;
   const member = data.member || {};
   if (!background) {
     attTotalPages = data.pagination?.total_pages ?? 1;
-    attPunches = [...attPunches, ...(data.events || [])];
+    // V6-L32: dedupe the append — a new punch between page fetches shifts
+    // rows and the boundary punch renders twice.
+    attPunches = append
+      ? dedupeByKey([...attPunches, ...(data.events || [])], punchKey)
+      : dedupeByKey(data.events || [], punchKey);
+    if (append) attPage = fetchPage;
   }
   const punches = attPunches;
   const stats = data.stats || {};
   const totalPunches = stats.total_punches ?? punches.length;
+  attTotalPunches = totalPunches;
 
   el.innerHTML = `<main class="rrr-page rrr-detail">
     <header class="rrr-header">
@@ -81,9 +113,9 @@ async function load(el, params, background = false) {
     ${punches.length ? `
     <div class="rrr-att-list">
       ${punches.map(p => {
-        const dt = new Date(p.punch_time);
-        const dateStr = dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-        const timeStr = dt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+        // V5-L25: punch times in the gym timezone, not the device's.
+        const dateStr = formatDate(p.punch_time);
+        const timeStr = formatTime(p.punch_time);
         return `<div class="rrr-att-item">
           <div class="rrr-att-icon">→</div>
           <div class="rrr-att-info">
@@ -95,7 +127,7 @@ async function load(el, params, background = false) {
       }).join('')}
     </div>
     <div style="text-align:center;padding:var(--sp-md)">
-      <div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-sm)">Showing ${punches.length} of ${totalPunches} punches</div>
+      <div id="rrr-att-count" style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-sm)">Showing ${punches.length} of ${totalPunches} punches</div>
       ${attPage < attTotalPages ? `<button class="btn btn-secondary" id="rrr-att-more">Load more</button>` : ''}
     </div>` : `
     <div class="rrr-empty-state">
@@ -128,5 +160,7 @@ async function load(el, params, background = false) {
   </style>`;
 
   el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
-  el.querySelector('#rrr-att-more')?.addEventListener('click', () => { attPage++; load(el, params); });
+  // V5-M12: load() advances attPage itself, only on success — the old
+  // pre-increment here was undone by load()'s reset on every call.
+  el.querySelector('#rrr-att-more')?.addEventListener('click', () => { load(el, params, false, true); });
 }

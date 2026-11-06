@@ -1,7 +1,7 @@
 import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml } from '../utils.js';
+import { escapeHtml, formatTime } from '../utils.js';
 
 export default {
   async mount(el) {
@@ -464,7 +464,7 @@ function wireBridge(el, bridge, devices) {
     const box = el.querySelector('#rrr-pair-code');
     box.hidden = false;
     if (!pair.ok) { box.innerHTML = `<span>${apiMessage(pair, 'Could not create a pairing code.')}</span>`; return; }
-    box.innerHTML = `<div class="rrr-code-row"><b>${esc(pair.data.pairing_code)}</b><button class="rrr-copy-btn" id="rrr-copy-code">Copy</button></div><small>Valid for <b>10 minutes</b> — expires ${esc(new Date(pair.data.expires_at).toLocaleTimeString())}. Type it into the eBioServer Bridge on the gym PC.</small>`;
+    box.innerHTML = `<div class="rrr-code-row"><b>${esc(pair.data.pairing_code)}</b><button class="rrr-copy-btn" id="rrr-copy-code">Copy</button></div><small>Valid for <b>10 minutes</b> — expires ${esc(formatTime(pair.data.expires_at))} (gym time). Type it into the eBioServer Bridge on the gym PC.</small>`;
     box.querySelector('#rrr-copy-code')?.addEventListener('click', event => copyText(pair.data.pairing_code, event.currentTarget));
   });
   el.querySelectorAll('.rrr-device-select').forEach(button => button.addEventListener('click', async () => {

@@ -35,6 +35,13 @@ export default {
         </div>`;
     }
     let feedErrorShown = false;
+    // V5-L27: a summary-only failure used to render stale stats with no
+    // indication — toast once and show a staleness note on the card.
+    let summaryErrorShown = false;
+    let summaryLoadedAt = null;
+    // V6-L13: an inside-leg failure used to silently drop that page's rows
+    // and never surface — toast once like the feed leg does.
+    let insideErrorShown = false;
 
     // One feed row — shared by the full render and load-more appends so
     // appended rows look and behave exactly like the first page.
@@ -96,7 +103,14 @@ export default {
           btn.disabled = true;
           btn.textContent = 'Checking out...';
           const res = await checkInMember(mid, 'EXIT');
-          if (res.ok) {
+          // V6-M14: the backend returns HTTP 200 success:true with the
+          // denial only in the top-level message + data.event_type — a
+          // green "checked out" toast here would lie about a denied member.
+          if (res.ok && res.data?.event_type === 'ACCESS_DENIED') {
+            showToast(res.message || res.data?.message || `${name} was denied access — membership is not active.`, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Check Out';
+          } else if (res.ok) {
             showToast(`${name} checked out`, 'success');
             await loadData();
           } else {
@@ -209,6 +223,14 @@ export default {
       }
       const s = summaryRes.ok ? summaryRes.data : (summaryData || {});
       summaryData = s;
+      // V5-L27: serving a cached summary after a failed refresh must say so.
+      if (!summaryRes.ok) {
+        if (summaryData && !summaryErrorShown) { summaryErrorShown = true; showToast('Could not refresh the access summary — showing the last loaded stats.', 'error'); }
+      } else {
+        summaryErrorShown = false;
+        summaryLoadedAt = new Date();
+      }
+      const summaryStale = !summaryRes.ok && !!summaryData;
 
       // /access/events never returns a members list — inside-now comes from
       // the dedicated /access/inside endpoint (the old feedRes.data.members
@@ -225,7 +247,21 @@ export default {
       allEvents = dedupeEvents(feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events));
       // V4-L16: inside-now keeps its own page/total; a failed inside fetch
       // keeps the previous total instead of collapsing the count to 0.
-      insideMembers = [...new Map(insidePages.flatMap((r) => (r.ok ? (r.data?.members || []) : [])).map((m) => [m.id, m])).values()];
+      // V6-L13: on a partial inside failure, MERGE the ok pages into the
+      // previous rows instead of rebuilding from ok-only pages (which
+      // silently dropped the failed page's rows). On a full success the
+      // list is rebuilt, so members who left are not kept forever.
+      const insideFailed = insidePages.some((r) => !r.ok);
+      if (insideFailed) {
+        if (!insideErrorShown) { insideErrorShown = true; showToast('Could not refresh the inside-now list — showing the last loaded members.', 'error'); }
+        const freshInside = insidePages.flatMap((r) => (r.ok ? (r.data?.members || []) : []));
+        const insideById = new Map(insideMembers.map((m) => [m.id, m]));
+        freshInside.forEach((m) => insideById.set(m.id, m));
+        insideMembers = [...insideById.values()];
+      } else {
+        insideErrorShown = false;
+        insideMembers = [...new Map(insidePages.flatMap((r) => (r.ok ? (r.data?.members || []) : [])).map((m) => [m.id, m])).values()];
+      }
       insideTotal = insideRes.ok ? (insideRes.data?.pagination?.total ?? insideMembers.length) : insideTotal;
       insideTotalPages = insideRes.ok ? (insideRes.data?.pagination?.total_pages ?? insideTotalPages) : insideTotalPages;
       insidePage = insideRes.ok ? (insideRes.data?.pagination?.page ?? insidePage) : insidePage;
@@ -243,6 +279,7 @@ export default {
                 ${s.device_name ? `<span style="font-size:var(--fs-xs);color:var(--muted)">· ${escapeHtml(s.device_name)}</span>` : ''}
               </div>
               ${lastEventText ? `<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">Last event: ${escapeHtml(lastEventText)}</div>` : '<div style="margin-bottom:var(--sp-md)"></div>'}
+              ${summaryStale ? `<div style="font-size:var(--fs-xs);color:var(--warning);margin-bottom:var(--sp-md)">Stats from ${summaryLoadedAt ? escapeHtml(formatDateTime(summaryLoadedAt.toISOString())) : 'an earlier load'} — could not refresh.</div>` : ''}
               <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-lg)">
                 <div style="cursor:pointer" id="stat-entries">
                   <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${formatInteger(s.entries_today || 0)}</div>
@@ -539,7 +576,15 @@ export default {
             btn.disabled = true;
             btn.textContent = 'Checking in...';
             const res = await checkInMember(mid, 'ENTRY');
-            if (res.ok) {
+            // V6-M14: the backend returns HTTP 200 success:true with the
+            // denial only in the top-level message + data.event_type — a
+            // green "checked in successfully!" toast here would lie about
+            // a denied member.
+            if (res.ok && res.data?.event_type === 'ACCESS_DENIED') {
+              showToast(res.message || res.data?.message || `${name} was denied access — membership is not active.`, 'error');
+              btn.disabled = false;
+              btn.textContent = 'Check In';
+            } else if (res.ok) {
               showToast(`${name} checked in successfully!`, 'success');
               modal.remove();
               await loadData();
@@ -673,7 +718,7 @@ async function openQuickAssign(bioId) {
       });
     });
     resultsEl.querySelector('#qa-more')?.addEventListener('click', () => {
-      qaPage += 1;
+      // V6-L26: loadQaMembers advances qaPage itself, only on success.
       loadQaMembers(false);
     });
   };
@@ -681,14 +726,20 @@ async function openQuickAssign(bioId) {
   async function loadQaMembers(reset) {
     if (qaLoading) return;
     qaLoading = true;
-    if (reset) { qaPage = 1; members = []; }
-    const res = await apiRequest(`/api/mobile/v1/members?page=${qaPage}&page_size=30${qaQuery ? `&q=${encodeURIComponent(qaQuery)}` : ''}`);
+    // V6-L26: fetch-then-advance — the old "Show more" pre-incremented
+    // qaPage, so a failed page was skipped silently with no error signal.
+    const fetchPage = reset ? 1 : qaPage + 1;
+    const res = await apiRequest(`/api/mobile/v1/members?page=${fetchPage}&page_size=30${qaQuery ? `&q=${encodeURIComponent(qaQuery)}` : ''}`);
     qaLoading = false;
     if (res.ok) {
+      if (reset) { qaPage = 1; members = []; }
       const got = res.data.members || [];
       qaTotal = res.data.pagination?.total ?? (reset ? got.length : members.length + got.length);
       const seen = new Set(members.map(m => m.id));
       members = reset ? got : [...members, ...got.filter(m => !seen.has(m.id))];
+      qaPage = fetchPage;
+    } else {
+      showToast(res.error?.message || 'Could not load more members.', 'error');
     }
     renderResults();
   }

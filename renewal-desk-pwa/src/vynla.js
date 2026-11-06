@@ -2,6 +2,13 @@
    separate from Renewal Desk owner credentials. */
 
 import { attachLiveRefresh } from './live-refresh.js';
+import { dedupeByKey } from './utils.js';
+
+// V5-L21: dedupe keys for the member attendance/payment lists — a new row
+// landing between page fetches shifts rows and the boundary row renders
+// twice, on append and in the background flatMap.
+const vynlaEventKey = (e) => e.id ?? `${e.timestamp || ''}|${e.event_type || ''}`;
+const vynlaPaymentKey = (p) => p.id ?? `${p.paid_on || p.created_at || ''}|${p.amount || ''}|${p.reference || ''}`;
 
 let activePage = null, pageVersion = 0;
 let attendancePage = 1, paymentsPage = 1;
@@ -475,11 +482,18 @@ async function renderAttendance(page=1,prior=[],background=false) {
     return;
   }
   if (background) {
-    prior = results.slice(0, -1).flatMap(item => item.data.events || []);
+    prior = dedupeByKey(results.slice(0, -1).flatMap(item => item.data.events || []), vynlaEventKey);
   }
   attendancePage = page;
-  if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('attendance',result.error,()=>renderAttendance(page,prior));}else alert(result.error);return;}
-  const data=result.data||{},summary=data.summary||{},events=[...prior,...(data.events||[])];
+  if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('attendance',result.error,()=>renderAttendance(page,prior));}else {
+    // V5-L20: the button was disabled before the fetch and the failure
+    // returned without re-enabling it, so "Load older visits" died
+    // permanently after one failed fetch. Re-enable it for a retry.
+    const olderBtn = document.querySelector('#older');
+    if (olderBtn) olderBtn.disabled = false;
+    alert(result.error);
+  }return;}
+  const data=result.data||{},summary=data.summary||{},events=dedupeByKey([...prior,...(data.events||[])], vynlaEventKey);
   const rows=events.map((event)=>{const type=String(event.event_type||'').toUpperCase();const label=type==='ENTRY'?'Gym entry':type==='EXIT'?'Gym exit':type.includes('DENIED')?'Access denied':'Attendance recorded';const color=type==='ENTRY'?'#059669':type.includes('DENIED')?'#dc2626':'#475569';return `<article style="display:flex;align-items:center;gap:12px;background:#fff;border-radius:14px;padding:14px;margin-top:9px"><div style="width:10px;height:10px;border-radius:50%;background:${color}"></div><div style="flex:1"><strong>${label}</strong><div style="margin-top:4px;color:#64748b;font-size:13px">${pageDateTime(event.timestamp)}${event.device_name?` · ${esc(event.device_name)}`:''}</div></div></article>`;}).join('');
   memberPage('attendance',`<section style="padding:22px"><h1 style="font-size:26px">Attendance</h1><p style="margin:5px 0 16px;color:#64748b">Your visits recorded by your gym’s access system.</p><article style="display:flex;background:#fff;border-radius:16px;padding:15px;text-align:center"><div style="flex:1"><strong style="font-size:24px">${summary.today_entries||0}</strong><div style="color:#64748b;font-size:12px">Entries today</div></div><div style="flex:1"><strong style="font-size:24px">${summary.today_exits||0}</strong><div style="color:#64748b;font-size:12px">Exits today</div></div><div style="flex:1"><strong style="font-size:14px">${summary.is_inside?'Inside':'Outside'}</strong><div style="color:#64748b;font-size:12px">Current state</div></div></article><div style="margin-top:14px">${rows||'<article style="background:#fff;border-radius:16px;padding:22px;text-align:center;color:#64748b">No visits have been recorded yet.</article>'}</div>${page<data.pagination?.total_pages?`<button id="older" style="width:100%;margin-top:14px;padding:13px;border:1px solid #cbd5e1;border-radius:11px;background:#fff;font-weight:700">Load older visits</button>`:''}<p style="font-size:12px;color:#94a3b8;margin-top:14px">Last visit: ${pageDateTime(summary.last_visit)}</p></section>`);
   if (savedScrollY != null) window.scrollTo(0, savedScrollY);
@@ -503,11 +517,17 @@ async function renderPayments(page=1,prior=[],background=false) {
     return;
   }
   if (background) {
-    prior = results.slice(0, -1).flatMap(item => item.data.payments || []);
+    prior = dedupeByKey(results.slice(0, -1).flatMap(item => item.data.payments || []), vynlaPaymentKey);
   }
   paymentsPage = page;
-  if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('payments',result.error,()=>renderPayments(page,prior));}else alert(result.error);return;}
-  const data=result.data||{},payments=[...prior,...(data.payments||[])];
+  if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('payments',result.error,()=>renderPayments(page,prior));}else {
+    // V5-L20: same dead-button fix as renderAttendance — re-enable "Load
+    // older payments" so a failed fetch is retryable instead of terminal.
+    const olderBtn = document.querySelector('#older');
+    if (olderBtn) olderBtn.disabled = false;
+    alert(result.error);
+  }return;}
+  const data=result.data||{},payments=dedupeByKey([...prior,...(data.payments||[])], vynlaPaymentKey);
   memberPage('payments',`<section style="padding:22px"><h1 style="font-size:26px">Payments</h1><p style="color:#64748b">Payment claims and confirmations from your gym.</p>${payments.length?payments.map((p)=>`<article style="background:#fff;border-radius:15px;padding:16px;margin-top:10px"><div style="display:flex;justify-content:space-between;gap:12px"><strong>${money(p.amount)}</strong><span style="font-size:12px;font-weight:700;color:${String(p.status).toLowerCase()==='verified'?'#059669':String(p.status).toLowerCase()==='pending'?'#b45309':'#475569'}">${esc(String(p.status||'unknown').replaceAll('_',' ').toUpperCase())}</span></div><div style="color:#64748b;font-size:13px;margin-top:7px">${esc(p.method||p.channel||'Payment')} · ${pageDate(p.paid_on||p.created_at)}</div>${p.reference?`<div style="color:#64748b;font-size:12px;margin-top:4px">Reference: ${esc(p.reference)}</div>`:''}${p.notes?`<div style="color:#64748b;font-size:12px;margin-top:4px">${esc(p.notes)}</div>`:''}</article>`).join(''):'<article style="background:#fff;border-radius:16px;padding:22px;text-align:center;color:#64748b">No payment records yet.</article>'}${page<data.pagination?.total_pages?'<button id="older" style="width:100%;margin-top:14px;padding:13px;border:1px solid #cbd5e1;border-radius:11px;background:#fff;font-weight:700">Load older payments</button>':''}</section>`);
   if (savedScrollY != null) window.scrollTo(0, savedScrollY);
   const olderBtn = document.querySelector('#older');
@@ -518,7 +538,14 @@ async function renderRenew() {
   const version = beginPage('renew');
   shell('<div style="padding:48px;text-align:center">Loading payment details…</div>'); const [plans, payment] = await Promise.all([api('/api/member/v1/plans'), api('/api/member/v1/payment-info')]);
   if (version !== pageVersion) return;
-  if (!plans.ok || !payment.ok) return renderHome(); const list = plans.data.plans || [], p = payment.data;
+  // V6-L31: a failed plans/payment-info fetch used to silently bounce the
+  // member home with no error and no retry. Render an error state with
+  // retry, the same memberLoadError pattern as attendance/payments.
+  if (!plans.ok || !payment.ok) {
+    const err = !plans.ok ? plans.error : payment.error;
+    return memberLoadError('membership', err || 'Could not load payment details.', renderRenew);
+  }
+  const list = plans.data.plans || [], p = payment.data;
   shell(`<section style="max-width:600px;margin:auto;padding:24px"><button id="back" style="border:0;background:none;color:#2563eb">← Home</button><h1>Renew membership</h1><p style="color:#64748b">Choose a plan, pay using your gym's QR, then submit the payment reference.</p><div id="plans">${list.map((plan) => `<button class="plan" data-id="${plan.id}" data-name="${esc(plan.name)}" data-price="${plan.price}" style="width:100%;text-align:left;margin:10px 0;padding:16px;border:1px solid #cbd5e1;border-radius:14px;background:white"><strong>${esc(plan.name)}</strong><span style="float:right;color:#2563eb;font-weight:700">${money(plan.price)}</span><br><small>${plan.duration_days} days</small></button>`).join('') || notice('No renewal plans are available.', true)}</div><div id="pay" style="display:none;background:white;border-radius:16px;padding:18px;margin-top:16px"><h2 id="plan-name"></h2>${p.qr_public_url ? `<img src="${esc(p.qr_public_url)}" alt="Payment QR" style="width:220px;height:220px;display:block;margin:12px auto;object-fit:contain">` : `<div style="text-align:center;padding:18px;background:#fef3c7;border-radius:12px;margin:12px 0;color:#92400e"><strong>No payment QR available</strong><br>Ask your gym to upload their payment QR code.</div>`}<p><strong>UPI:</strong> ${esc(p.upi_id || 'Contact your gym')}</p><p>${esc(p.instructions || '')}</p><input id="reference" placeholder="UPI transaction reference (optional)" style="width:100%;box-sizing:border-box;padding:13px;border:1px solid #cbd5e1;border-radius:10px"><button id="claim" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:700">I've made the payment</button></div></section>`);
   document.querySelector('#app main')?.insertAdjacentHTML('beforeend',memberNav('membership')); bindMemberNav();
   document.querySelector('#back').onclick = renderHome; let selected;

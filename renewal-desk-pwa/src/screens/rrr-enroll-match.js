@@ -1,6 +1,6 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml } from '../utils.js';
+import { escapeHtml, formatDateTime } from '../utils.js';
 
 export default {
   async mount(el) { await load(el); },
@@ -77,7 +77,7 @@ function render(el, data) {
     <header class="rrr-header"><button id="rrr-back">← Integrations</button><div class="rrr-brand"><b>RRR</b><span>Match terminal users</span></div></header>
     <h1>Who is who on the terminal?</h1>
     <p>We read the names stored on your biometric terminal and matched them against your members. Confirm each match with one tap — nothing links without your approval.</p>
-    ${snapshot ? `<p class="rrr-muted-copy">Terminal snapshot: ${snapshot.terminal_user_count} users · ${snapshot.source === 'adms' ? 'Direct Cloud' : 'Bridge'} · ${snapshot.acknowledged_at ? new Date(snapshot.acknowledged_at).toLocaleString() : ''}</p>` : ''}
+    ${snapshot ? `<p class="rrr-muted-copy">Terminal snapshot: ${snapshot.terminal_user_count} users · ${snapshot.source === 'adms' ? 'Direct Cloud' : 'Bridge'} · ${snapshot.acknowledged_at ? formatDateTime(snapshot.acknowledged_at) : ''}</p>` : ''}
     <div class="rrr-match-actions">
       <button id="rrr-scan" class="rrr-primary-button">Scan terminal users</button>
       <span id="rrr-scan-status" class="rrr-muted-copy"></span>

@@ -4,7 +4,7 @@ import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderPaymentCard, renderListSkeleton, renderEmptyState, renderErrorState, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js';
-import { formatCurrency, formatInteger } from '../utils.js';
+import { formatCurrency, formatInteger, dedupeByKey, formatTime } from '../utils.js';
 
 export default {
   async mount(el) {
@@ -43,6 +43,13 @@ export default {
     });
 
     let requestId = 0;
+    // V6-L25: background (live-refresh) failures used to be silent —
+    // toast once and stamp the count line with the last good time.
+    let bgErrorShown = false, lastGoodAt = null;
+    function stampStale() {
+      const countEl = el.querySelector('#pay-count');
+      if (countEl && lastGoodAt) countEl.textContent = `Showing ${formatInteger(payments.length)} of ${formatInteger(total)} payment${total !== 1 ? 's' : ''} · last updated ${formatTime(lastGoodAt)}`;
+    }
     async function loadPayments(background = false, append = false) {
       if (background && loading) return;
       if (append && (loading || payments.length >= total)) return;
@@ -75,11 +82,21 @@ export default {
         // V4-L19: an append failure must toast and keep the loaded list —
         // rendering the error state here used to wipe it.
         if (append) { showToast(res.error?.message || 'Could not load more payments.', 'error'); return; }
-        if (!background) listEl.innerHTML = renderErrorState(res.error.message);
+        if (background) {
+          if (!bgErrorShown) { bgErrorShown = true; showToast('Could not refresh the payment list — showing the last loaded payments.', 'error'); }
+          stampStale();
+          return;
+        }
+        listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
+      bgErrorShown = false;
+      lastGoodAt = new Date();
+      // V5-M11: dedupe by id — a new payment landing between page fetches
+      // shifts rows and the boundary row renders twice (same for the
+      // background flatMap over pages 1..N).
       const newPayments = res.data.payments || [];
-      payments = append ? [...payments, ...newPayments] : newPayments;
+      payments = append ? dedupeByKey([...payments, ...newPayments], (p) => p.id) : dedupeByKey(newPayments, (p) => p.id);
       total = res.data.pagination?.total ?? payments.length;
       if (append) page = fetchPage;
 
@@ -108,7 +125,7 @@ export default {
       }
       const showingAll = payments.length >= total;
       listEl.innerHTML = `<div class="scroll-content">
-        <div style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">Showing ${formatInteger(payments.length)} of ${formatInteger(total)} payment${total !== 1 ? 's' : ''}</div>
+        <div id="pay-count" style="padding:var(--sp-xs) var(--sp-lg);font-size:var(--fs-sm);color:var(--muted)">Showing ${formatInteger(payments.length)} of ${formatInteger(total)} payment${total !== 1 ? 's' : ''}</div>
         <div class="card" style="margin:0 var(--sp-lg)">${payments.map(p => renderPaymentCard(p)).join('')}</div>
         ${showingAll ? '' : `<div style="padding:var(--sp-lg);text-align:center"><button class="btn btn-secondary" id="pay-more">Load more</button></div>`}
       </div>`;

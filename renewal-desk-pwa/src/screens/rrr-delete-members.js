@@ -1,6 +1,7 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml } from '../utils.js';
+import { showToast } from '../components.js';
+import { escapeHtml, dedupeByKey } from '../utils.js';
 
 let delPage = 1;
 let delTotal = 0;
@@ -19,18 +20,23 @@ async function load(el, append = false) {
     el.innerHTML = '<div class="rrr-loading">Loading members…</div>';
   }
 
-  // Server-paginated + searchable (M31): the old page_size=500 fetch capped
-  // the list silently at 500 members.
-  const res = await apiRequest(`/api/mobile/v1/members?page=${delPage}&page_size=50${delQuery ? `&q=${encodeURIComponent(delQuery)}` : ''}`);
+  // V5-L23: fetch-then-advance — the old click handler pre-incremented
+  // delPage, so a failed "Load more" silently skipped a page, and the
+  // append had no dedupe. The page moves only on success now.
+  const fetchPage = append ? delPage + 1 : delPage;
+  const res = await apiRequest(`/api/mobile/v1/members?page=${fetchPage}&page_size=50${delQuery ? `&q=${encodeURIComponent(delQuery)}` : ''}`);
   if (!res.ok) {
-    if (append) return;
+    if (append) { showToast(res.error?.message || 'Could not load more members.', 'error'); return; }
     el.innerHTML = '<main class="rrr-page"><h1>Failed to load</h1><button onclick="history.back()">Back</button></main>';
     return;
   }
 
   delTotal = res.data.pagination?.total ?? 0;
   delTotalPages = res.data.pagination?.total_pages ?? 1;
-  delMembers = append ? [...delMembers, ...(res.data.members || [])] : (res.data.members || []);
+  if (append) delPage = fetchPage;
+  delMembers = append
+    ? dedupeByKey([...delMembers, ...(res.data.members || [])], (m) => m.id)
+    : dedupeByKey(res.data.members || [], (m) => m.id);
   const members = delMembers;
   
   el.innerHTML = `<main class="rrr-page rrr-detail">
@@ -100,7 +106,9 @@ async function load(el, append = false) {
     clearTimeout(delSearchTimer);
     delSearchTimer = setTimeout(() => { delQuery = e.target.value.trim(); load(el); }, 400);
   });
-  el.querySelector('#rrr-del-more')?.addEventListener('click', () => { delPage++; load(el, true); });
+  // V5-L23: load() advances delPage itself, only on success — the old
+  // pre-increment here skipped a page on any append failure.
+  el.querySelector('#rrr-del-more')?.addEventListener('click', () => { load(el, true); });
   
   const selectAll = el.querySelector('#rrr-select-all');
   const checkboxes = el.querySelectorAll('.rrr-del-check');

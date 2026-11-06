@@ -254,10 +254,15 @@ function render(el, memberLoadFailed = false) {
     if (!confirm('Final confirm: clear all unmapped entries?')) return;
     const r = await apiRequest('/api/mobile/v1/rrr/attendance/unmapped', { method: 'DELETE' });
     if (r.ok) {
-      alert(`Cleared ${r.data.deleted} unmapped entries.`);
+      // V6-L30: guard the success shape — r.data.deleted is the count, and
+      // a missing/odd shape must not render "undefined".
+      const deleted = typeof r.data?.deleted === 'number' ? r.data.deleted : 0;
+      alert(`Cleared ${deleted} unmapped ${deleted === 1 ? 'entry' : 'entries'}.`);
       load(el);
     } else {
-      alert('Failed: ' + (r.data?.message || r.error || 'unknown error'));
+      // V6-L30: r.error is an object — interpolating it rendered
+      // "[object Object]". Use its message.
+      alert('Failed: ' + (r.error?.message || 'unknown error'));
     }
   });
   

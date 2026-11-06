@@ -29,6 +29,25 @@ export default {
       const statusColor = getMemberStatusColor(status);
       const daysText = getDaysText(member.days_until_expiry);
 
+      // V6-M8/M9: after a failed command the door state is UNKNOWN, and a
+      // stale queued command is NOT blocked-as-fact — never present
+      // door_blocked as current truth in either state.
+      const doorFailed = member.door_access_failed === true;
+      const doorStaleQueued = member.door_access_stale_queued === true;
+      const doorFailedAction = member.door_access_failed_action === 'block' || member.door_access_failed_action === 'unblock'
+        ? member.door_access_failed_action
+        : null;
+      const doorToggleLabel = doorFailed
+        ? `Retry ${doorFailedAction === 'unblock' ? 'Unblock' : 'Block'} Access`
+        : member.door_blocked ? 'Unblock Biometric Access' : 'Block Biometric Access';
+      const doorAccessStateHtml = doorFailed
+        ? `Failed — tap to retry ${escapeHtml(doorFailedAction || 'the access change')}${member.door_access_error ? `: ${escapeHtml(member.door_access_error)}` : ''}.`
+        : doorStaleQueued
+          ? `Queued — terminal hasn't checked in since ${escapeHtml(formatDateTime(member.door_access_terminal_last_seen_at || member.door_access_queued_since))}.`
+          : member.door_access_pending
+            ? `Waiting for the terminal to confirm ${escapeHtml(member.door_access_pending_action || 'the access change')}.`
+            : member.door_access_error ? escapeHtml(member.door_access_error) : '';
+
       el.innerHTML = `
         ${renderHeader({ title: 'Member', showBack: true, actions: [{ icon: 'edit', label: 'Edit' }] })}
         <div class="scroll-view">
@@ -159,9 +178,9 @@ export default {
                 ${icon('whatsapp', 18, 'white')} Send WhatsApp Reminder
               </button>
               <button class="btn btn-outline btn-full" id="btn-toggle-access" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
-                ${icon('lock', 18)} <span id="btn-toggle-access-label">${member.door_blocked ? 'Unblock Biometric Access' : 'Block Biometric Access'}</span>
+                ${icon('lock', 18)} <span id="btn-toggle-access-label">${escapeHtml(doorToggleLabel)}</span>
               </button>
-              <div class="form-hint" id="door-access-state" role="status">${member.door_access_error ? escapeHtml(member.door_access_error) : member.door_access_pending ? `Waiting for the terminal to confirm ${escapeHtml(member.door_access_pending_action || 'the access change')}.` : ''}</div>
+              <div class="form-hint" id="door-access-state" role="status">${doorAccessStateHtml}</div>
               <button class="btn btn-outline btn-full" id="btn-biometric-records" style="font-weight:var(--fw-semibold);display:flex;align-items:center;justify-content:center;gap:var(--sp-xs)">
                 ${icon('clock', 18)} Biometric Records
               </button>
@@ -193,7 +212,14 @@ export default {
           method: 'POST',
           body: { member_id: member.id, type: isCheckingOut ? 'EXIT' : 'ENTRY' },
         });
-        if (res.ok) {
+        // V6-M14: the backend returns HTTP 200 success:true with the denial
+        // only in the top-level message + data.event_type — do NOT flip
+        // is_inside or toast success on a denial.
+        if (res.ok && res.data?.event_type === 'ACCESS_DENIED') {
+          showToast(res.message || res.data?.message || `${member.full_name} was denied access — membership is not active.`, 'error');
+          btn.disabled = false;
+          btn.innerHTML = member.is_inside ? `${icon('back', 18)} Check Out Member` : `${icon('access', 18, 'white')} Check In Member (Attendance)`;
+        } else if (res.ok) {
           member.is_inside = !isCheckingOut;
           showToast(res.data?.message || (isCheckingOut ? `${member.full_name} checked out` : `${member.full_name} checked in!`), 'success');
           render();
@@ -265,9 +291,15 @@ export default {
       // The initial label reflects the member's actual door state (server-computed).
       let accessBlocked = member.door_blocked === true;
       el.querySelector('#btn-toggle-access')?.addEventListener('click', async () => {
-        const action = accessBlocked ? 'unblock' : 'block';
+        // V6-M8: retry re-issues the failed action — the toggle state is
+        // stale/unknown after a failure, so it must not pick the action.
+        const retrying = member.door_access_failed === true
+          && (member.door_access_failed_action === 'block' || member.door_access_failed_action === 'unblock');
+        const action = retrying ? member.door_access_failed_action : accessBlocked ? 'unblock' : 'block';
         const yes = await showConfirm({
-          title: action === 'block' ? 'Block Biometric Access' : 'Unblock Biometric Access',
+          title: retrying
+            ? `Retry ${action === 'block' ? 'Block' : 'Unblock'} Biometric Access`
+            : action === 'block' ? 'Block Biometric Access' : 'Unblock Biometric Access',
           message: action === 'block'
             ? `${member.full_name} will not be able to enter with their fingerprint until unblocked.`
             : `${member.full_name} will be able to enter with their fingerprint again.`,
@@ -285,6 +317,12 @@ export default {
           member.door_access_pending = Boolean(res.data?.command);
           member.door_access_pending_action = action;
           member.door_access_error = null;
+          // V6-M8/M9: the fresh command supersedes the failed / stale state.
+          member.door_access_failed = false;
+          member.door_access_failed_action = null;
+          member.door_access_failed_at = null;
+          member.door_access_stale_queued = false;
+          member.door_access_queued_since = null;
           el.querySelector('#btn-toggle-access-label').textContent = accessBlocked ? 'Unblock Biometric Access' : 'Block Biometric Access';
           el.querySelector('#door-access-state').textContent = member.door_access_pending
             ? `Waiting for the terminal to confirm ${action}.`

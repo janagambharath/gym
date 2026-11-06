@@ -84,8 +84,19 @@ export default {
         btn.disabled = true; btn.textContent = 'Applying…';
         const r = await apiRequest('/api/mobile/v1/date-repair/apply', { method: 'POST', body: { member_ids: ids } });
         if (r.ok) {
-          const applied = (r.data.results || []).filter(x => x.applied).length;
-          showToast(`Repaired ${applied} member${applied === 1 ? '' : 's'}`, 'success');
+          const results = r.data.results || [];
+          const applied = results.filter(x => x.applied).length;
+          const failed = results.filter(x => !x.applied);
+          if (failed.length) {
+            // V6-L27: a partial apply used to toast full success with the
+            // failed members unnamed. Name the count and the reasons.
+            const byId = new Map(flagged.map(f => [f.member_id, f.full_name]));
+            const reasonLabel = { frozen: 'frozen/paused', not_flagged: 'no longer flagged', needs_review: 'needs review', not_found: 'not found', already_correct: 'already correct' };
+            const detail = failed.map(x => `${byId.get(x.member_id) || `member ${x.member_id}`} (${reasonLabel[x.reason] || x.reason || 'not applied'})`).join(', ');
+            showToast(`Repaired ${applied} of ${ids.length} — ${failed.length} not applied: ${detail}`, 'warning');
+          } else {
+            showToast(`Repaired ${applied} member${applied === 1 ? '' : 's'}`, 'success');
+          }
           load();
         } else {
           showToast(r.error.message, 'error');
@@ -109,8 +120,17 @@ export default {
         btn.disabled = true; btn.textContent = 'Confirming…';
         const r = await apiRequest('/api/mobile/v1/date-repair/confirm', { method: 'POST', body: { member_ids: ids, confirmed_no_extra_payment: true } });
         if (r.ok) {
-          const applied = (r.data.results || []).filter(x => x.applied).length;
-          showToast(`Confirmed ${applied} member${applied === 1 ? '' : 's'}`, 'success');
+          const results = r.data.results || [];
+          const applied = results.filter(x => x.applied).length;
+          const failed = results.filter(x => !x.applied);
+          if (failed.length) {
+            // V6-L27 (same shape as Apply): name the members not confirmed.
+            const byId = new Map(flagged.map(f => [f.member_id, f.full_name]));
+            const detail = failed.map(x => `${byId.get(x.member_id) || `member ${x.member_id}`} (${x.reason || 'not applied'})`).join(', ');
+            showToast(`Confirmed ${applied} of ${ids.length} — ${failed.length} not confirmed: ${detail}`, 'warning');
+          } else {
+            showToast(`Confirmed ${applied} member${applied === 1 ? '' : 's'}`, 'success');
+          }
           load();
         } else {
           showToast(r.error.message, 'error');

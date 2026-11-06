@@ -1,7 +1,7 @@
 /* Notifications Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, showToast } from '../components.js';
-import { icon } from '../icons.js'; import { escapeHtml, formatRelativeTime } from '../utils.js';
+import { icon } from '../icons.js'; import { escapeHtml, formatRelativeTime, dedupeByKey } from '../utils.js';
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Notifications',showBack:true})}
     <div style="padding:var(--sp-sm) var(--sp-lg);text-align:right"><button class="btn btn-sm btn-secondary" id="nf-read-all">Mark all read</button></div>
@@ -10,8 +10,12 @@ export default { async mount(el) {
   el.querySelector('#nf-read-all')?.addEventListener('click', async () => {
     const btn = el.querySelector('#nf-read-all');
     btn.disabled = true;
-    await apiRequest('/api/mobile/v1/notifications/read-all', { method: 'POST' });
+    // V6-L28: the old code ignored the result and cleared the unread
+    // highlights optimistically — a failed request left the server state
+    // unread while the UI claimed otherwise. Only clear on success.
+    const res = await apiRequest('/api/mobile/v1/notifications/read-all', { method: 'POST' });
     btn.disabled = false;
+    if (!res.ok) { showToast(res.error?.message || 'Could not mark notifications as read.', 'error'); return; }
     // Re-render without the unread highlight.
     el.querySelectorAll('#nf-list .list-item').forEach(row => { row.style.background = ''; row.querySelector('.list-item-title').style.fontWeight = 'var(--fw-normal)'; });
   });
@@ -88,8 +92,13 @@ export default { async mount(el) {
     page = pg.page ?? fetchPage;
     const fresh = res.data.notifications || res.data || [];
     if (!Array.isArray(fresh)) return;
+    // V5-M11: dedupe by id — a new notification landing between page
+    // fetches shifts rows and the boundary row renders twice.
     const base = append ? notifs.length : 0;
-    notifs = append ? [...notifs, ...fresh] : fresh;
+    const freshDeduped = append
+      ? dedupeByKey(fresh, (n) => n.id).filter((n) => !notifs.some((x) => x.id === n.id))
+      : dedupeByKey(fresh, (n) => n.id);
+    notifs = append ? [...notifs, ...freshDeduped] : freshDeduped;
     if (!append && notifs.length === 0) {
       list.innerHTML = renderEmptyState({icon:'notifications',title:'No notifications',text:'You\'re all caught up!'});
       return;
@@ -102,7 +111,7 @@ export default { async mount(el) {
     } else {
       const card = el.querySelector('#nf-card');
       if (card) {
-        card.insertAdjacentHTML('beforeend', fresh.map((n, i) => notifRowHtml(n, base + i)).join(''));
+        card.insertAdjacentHTML('beforeend', freshDeduped.map((n, i) => notifRowHtml(n, base + i)).join(''));
         wireRows(card);
       }
     }

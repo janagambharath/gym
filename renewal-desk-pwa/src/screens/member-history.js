@@ -13,15 +13,25 @@ export default {
 };
 
 async function fetchAllPages(baseUrl, key) {
+  // V6-L24: cap the sweep and dedupe across pages — the old loop ran
+  // unbounded with plain push(), so a shifting total could loop long and
+  // a boundary row could appear twice.
+  const MAX_PAGES = 20;
   const items = [];
+  const seen = new Set();
   let page = 1;
   let total = Infinity;
-  while (items.length < total) {
+  while (items.length < total && page <= MAX_PAGES) {
     const sep = baseUrl.includes('?') ? '&' : '?';
     const res = await apiRequest(`${baseUrl}${sep}page=${page}&page_size=100`);
     if (!res.ok) return { ok: false, error: res.error, items };
     const batch = res.data?.[key] || [];
-    items.push(...batch);
+    for (const item of batch) {
+      const k = item.id ?? JSON.stringify(item);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      items.push(item);
+    }
     total = res.data?.pagination?.total ?? items.length;
     if (batch.length === 0) break;
     page += 1;
