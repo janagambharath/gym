@@ -708,14 +708,19 @@ def register_settings_routes(bp):
         # queued command silently carrying a member_id/enroll number that
         # belongs to nobody, or to another gym's member.
         def _resolve_gym_member(canonical_enroll: str):
-            member = Member.query.filter_by(
-                gym_id=g.gym_id, device_enroll_number=canonical_enroll
-            ).first()
+            # V4-M5: route through find_member_by_enroll_number — an
+            # exact query misses a member stored pre-fix as "042".
+            from app.services.bridge_service import (
+                find_confirmed_mapping,
+                find_member_by_enroll_number,
+            )
+
+            member = find_member_by_enroll_number(g.gym_id, canonical_enroll)
             if member is not None:
                 return member
-            mapping = RRRIdentityMapping.query.filter_by(
-                gym_id=g.gym_id, external_id=canonical_enroll, status="confirmed"
-            ).first()
+            # Canonical-aware mapping fallback (V4-M6): a stored pre-fix
+            # mapping "042" is invisible to an exact "42" lookup.
+            mapping = find_confirmed_mapping(g.gym_id, canonical_enroll)
             if mapping is not None and mapping.member_id is not None:
                 member = db.session.get(Member, mapping.member_id)
                 if member is not None and member.gym_id == g.gym_id:

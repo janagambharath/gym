@@ -212,6 +212,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.models.rrr import RRRAdmsCommand, RRRIntegration
                 from sqlalchemy import and_, or_, select
                 from app.services.bridge_service import (
+                    adms_command_intended_member_id,
                     member_is_proven_blockable,
                     resolve_adms_enroll_number,
                 )
@@ -279,6 +280,13 @@ def _scheduled_reminder_job(app: Flask) -> None:
                             test_enroll_number=enroll,
                             status="acked",
                         ).first()
+                        # V4-L8: an acked block for this enroll belongs to
+                        # the member it was queued for — a recycled ID must
+                        # not inherit the previous holder's ack (the
+                        # terminal may have been re-enabled between
+                        # holders). Unknown intent re-queues.
+                        if acked is not None and adms_command_intended_member_id(acked) != m.id:
+                            acked = None
                         if not acked:
                             queue_membership_command(m, force=True)
                             requeued += 1

@@ -56,6 +56,13 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     # by migration (heuristic match) and the heuristic stays as a fallback
     # for rows that predate the flag.
     is_creation = db.Column(db.Boolean, nullable=False, default=False)
+    # V4-M13: snapshot of the plan duration (days) in force when this
+    # row was written. The Date Repair oversized check compares the
+    # applied span against this, not the plan's LIVE duration — an
+    # owner editing a plan's duration must not rewrite history.
+    # NULL on legacy rows (backfilled by migration where the plan is
+    # known); the scan falls back to the live plan duration then.
+    duration_days = db.Column(db.Integer, nullable=True)
     standard_price = db.Column(db.Numeric(10, 2), nullable=True)
     discount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))

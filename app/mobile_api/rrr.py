@@ -7,13 +7,13 @@ import re
 from urllib.parse import urlparse
 
 from flask import current_app, g, jsonify, request
-from sqlalchemy import or_
+from sqlalchemy import and_, or_, select
 
 from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
-from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIntegration, RRROpportunity, RRRRule
+from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIdentityMapping, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
 from app.services.bridge_service import (
     ADMS_GROUP_BLOCK_NOTE,
@@ -1097,11 +1097,47 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def enroll_matches():
-        """Fuzzy-match the terminal user snapshot against unlinked members."""
+        """Fuzzy-match the terminal user snapshot against unlinked members.
+
+        V4-M7: served from a 60 s per-gym cache — the PWA polls this
+        endpoint every 3 s while waiting for a scan, and each uncached
+        call is an O(snapshot x members) fuzzy scan.
+        """
         from app.services import enroll_match_service
 
-        result = enroll_match_service.suggest_matches(g.gym_id)
+        result = enroll_match_service.suggest_matches_cached(g.gym_id)
         return jsonify({"success": True, "data": result})
+
+    @bp.get("/rrr/enroll-snapshot-status")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def enroll_snapshot_status():
+        """Cheap snapshot-presence check (V4-M7).
+
+        The PWA scan poll hits this instead of the full fuzzy scan:
+        it only fetches the stored terminal snapshot (one query) and
+        reports whether a user list has arrived yet. The caller loads
+        the full suggestions once ``has_snapshot`` is true.
+        """
+        from app.services import enroll_match_service
+
+        snapshot = enroll_match_service.get_terminal_snapshot(
+            g.gym_id
+        ) or enroll_match_service.get_adms_snapshot(g.gym_id)
+        if not snapshot:
+            return jsonify({"success": True, "data": {
+                "has_snapshot": False,
+                "terminal_user_count": 0,
+                "acknowledged_at": None,
+                "source": None,
+            }})
+        return jsonify({"success": True, "data": {
+            "has_snapshot": True,
+            "terminal_user_count": len(snapshot.get("users", [])),
+            "acknowledged_at": snapshot.get("acknowledged_at"),
+            "source": snapshot.get("source"),
+            "command_id": snapshot.get("command_id"),
+        }})
 
     @bp.post("/rrr/enroll-matches/confirm")
     @limiter.limit("60 per hour")
@@ -1141,9 +1177,24 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def enroll_match_auto_link():
-        """Automatically link high-confidence matches (e.g., spacing differences)."""
+        """Automatically link high-confidence matches (e.g., spacing differences).
+
+        V4-M7: gated on the shared auto-link throttle — each call is a
+        full-gym fuzzy scan, so a manual caller may not re-run it more
+        than once per interval. When throttled, the cached suggestions
+        are returned with ``throttled: True`` instead of running a scan.
+        """
         from app.services import enroll_match_service
 
+        if not enroll_match_service.auto_link_scan_due(g.gym_id):
+            cached = enroll_match_service.suggest_matches_cached(g.gym_id)
+            return jsonify({"success": True, "data": {
+                "linked": [],
+                "skipped": [],
+                "throttled": True,
+                "message": "Auto-link scan ran recently — try again in a few minutes.",
+                "suggestions": cached.get("suggestions", []),
+            }})
         result = enroll_match_service.auto_link_high_confidence(g.gym_id, g.user_id)
         # V3-L14: auto-link only flushes (via confirm_match) — commit here.
         db.session.commit()
@@ -1240,24 +1291,42 @@ def register_rrr_routes(bp):
         gym = db.session.get(Gym, g.gym_id)
         today = today_for_gym(gym.timezone if gym else "Asia/Kolkata")
 
-        # Find all expired members with terminal enroll numbers
-        expired = Member.query.filter(
+        # V4-L7: mirror the scheduler's reconcile filter (V3-M8) — expired
+        # with a past end, or paused (freeze = blockable on any dates) —
+        # with a terminal identity via enroll number OR a confirmed
+        # mapping. Mapping-only members were invisible here, and paused
+        # members were never counted at all. Active members with a past
+        # end are NOT blockable, but they stay in the target set so the
+        # response still reports them as skipped_not_blockable (pinned by
+        # test_bulk_remove_uses_blockable_filter_and_never_mutates_status)
+        # instead of silently dropping them.
+        mapping_member_ids = select(RRRIdentityMapping.member_id).where(
+            RRRIdentityMapping.gym_id == g.gym_id,
+            RRRIdentityMapping.status == "confirmed",
+        )
+        blockable = Member.query.filter(
             Member.gym_id == g.gym_id,
             Member.deleted_at.is_(None),
-            Member.device_enroll_number.isnot(None),
-            Member.status.in_(["expired", "inactive"]),
+            or_(
+                and_(
+                    Member.status.in_(["expired", "inactive"]),
+                    Member.membership_end < today,
+                ),
+                Member.status == "paused",
+            ),
+            or_(
+                Member.device_enroll_number.isnot(None),
+                Member.id.in_(mapping_member_ids),
+            ),
         ).all()
-
-        # Also catch active members with past end date (not yet auto-expired)
-        overdue = Member.query.filter(
+        overdue_active = Member.query.filter(
             Member.gym_id == g.gym_id,
             Member.deleted_at.is_(None),
             Member.device_enroll_number.isnot(None),
             Member.status == "active",
             Member.membership_end < today,
         ).all()
-
-        all_targets = list({m.id: m for m in expired + overdue}.values())
+        all_targets = list({m.id: m for m in blockable + overdue_active}.values())
 
         # M8: never mutate member status as a side effect of a device
         # command. Queueing derives the desired state from the UNMUTATED
@@ -1406,14 +1475,19 @@ def register_rrr_routes(bp):
                     delete_notes[rid] = (e.metadata_json or {}).get("previous_status")
         for m in members:
             m.deleted_at = None
-            # Set correct status based on membership end date, then on
-            # the pre-delete status. Paused restores keep the door closed
-            # (no unblock queued — the active-only check below handles it).
+            # Set correct status based on the pre-delete status first,
+            # then on the membership end date. V4-M18: paused is
+            # checked BEFORE expiry — a member frozen while their end
+            # passed must restore as paused, not expired (an
+            # expired restore would reactivate them on the next
+            # renewal while freeze markers still sit in notes).
+            # Paused restores keep the door closed (no unblock queued
+            # — the active-only check below handles it).
             prev_status = delete_notes.get(str(m.id))
-            if m.membership_end and local_today and m.membership_end < local_today:
-                m.status = "expired"
-            elif prev_status == "paused":
+            if prev_status == "paused":
                 m.status = "paused"
+            elif m.membership_end and local_today and m.membership_end < local_today:
+                m.status = "expired"
             elif m.status == "deleted":
                 m.status = "active"
             restored += 1

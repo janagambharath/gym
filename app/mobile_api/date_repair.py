@@ -3,9 +3,12 @@
 Scan compares every member's stored membership_end against the end
 implied by their plan and their renewal ledger (RenewalHistory):
 
-- ``ledger_mismatch``: the ledger's latest ``new_end`` differs from the
-  stored end, i.e. the end was changed outside the payment/renewal flow
-  (manual edit, freeze, import). Proposal: the ledger's latest new_end.
+- ``ledger_mismatch``: the ledger's latest *started* ``new_end``
+  differs from the stored end, i.e. the end was changed outside the
+  payment/renewal flow (manual edit, freeze, import). Rows whose
+  ``new_start`` is still in the future are PENDING scheduled renewals
+  and never count as the ledger's latest end (V4-H1). Proposal: the
+  latest started row's new_end.
 - ``span_mismatch``: no usable ledger, and the member is still in
   their first period, but the stored span is longer than one plan
   period. Proposal: start + plan duration - 1 (the renewal
@@ -22,9 +25,14 @@ implied by their plan and their renewal ledger (RenewalHistory):
   both dates so the owner can confirm per member. Never auto-corrected
   by Apply.
 - ``oversized_renewal``: the ledger agrees with the stored end, but at
-  least one renewal applied more days than that plan's duration — the
-  excess is baked into the ledger itself (e.g. a mistyped renewal-days
-  value). Proposal: the stored end minus the total excess days.
+  least one started renewal applied more days than the plan duration
+  in force when that row was written (``RenewalHistory.duration_days``,
+  snapshotted at write time — V4-M13 — so a later plan edit cannot
+  rewrite history; legacy rows fall back to the live plan duration).
+  Creation rows are checked too: a signup that applied more than one
+  period is a real error, proposal start + duration - 1. Pending
+  (not-yet-started) rows are not counted: their excess belongs to a
+  future period, not the stored end.
 - ``start_missing``: no start date stored (defensive — the schema marks
   the column NOT NULL, so this only fires for legacy/imported rows).
   Proposal: the creation row's recorded start, when one exists.
@@ -42,7 +50,8 @@ implied by their plan and their renewal ledger (RenewalHistory):
   start (V3-H4), so the stored start is the CURRENT period's start
   (the latest chain row's ``new_start``), not the chain start; a
   stored start equal to any ledger ``new_start`` is legitimate.
-  Proposal: the latest chain row's ``new_start``.
+  Proposal: the latest *started* chain row's ``new_start`` — never a
+  future scheduled start (V4-H1).
 - ``period_overlap``: two consecutive ledger periods overlap (a later
   period starts strictly before the previous period ends). Review-only:
   which row is wrong is ambiguous. A shared boundary day is tolerated,
@@ -84,7 +93,13 @@ For ``oversized_renewal`` Apply also corrects the ledger (V3-H5):
 each oversized chain row is shortened to its plan duration and later
 chain rows shift earlier by the same amount, so ``chain_last_end``
 equals the applied end and the next scan converges instead of
-proposing the old oversized end back."""
+proposing the old oversized end back. The shift moves each shifted
+row's ``previous_end`` by the same amount and its ``previous_start``
+by the amount the previous row's start moved (V4-M11), or a later
+refund would restore the pre-correction oversized end (and a wrong
+start) via ``_revert_renewal``. Apply never writes a future
+``membership_start`` (V4-H1): proposals come from started rows only,
+and Apply drops any future start as a final guard."""
 from __future__ import annotations
 
 from datetime import date as _date
@@ -112,13 +127,69 @@ def _applied_days(row: RenewalHistory) -> int | None:
     return (row.new_end - row.new_start).days + 1
 
 
-def _is_creation_row(row: RenewalHistory) -> bool:
-    """The creation row stores previous_end == new_start == start."""
+def _is_creation_row(row: RenewalHistory, creation_ids: set | None = None) -> bool:
+    """The creation row stores previous_end == new_start == start.
+
+    V4-L3: when the caller passes the ledger's precomputed
+    ``creation_ids`` (flag first, heuristic + ``paid_on`` refinement
+    only for unflagged legacy rows — see
+    ``_creation_row_ids_for_ledger``), that set decides. Without it,
+    fall back to the flag plus the raw heuristic, which is the old
+    behaviour for callers that cannot supply payment context.
+    """
+    if creation_ids is not None:
+        return row.id in creation_ids
+    if getattr(row, "is_creation", False):
+        return True
     return (
         row.previous_end is not None
         and row.new_start is not None
         and row.previous_end == row.new_start
     )
+
+
+def _creation_row_ids_for_ledger(
+    rows: list[RenewalHistory],
+    member_start,
+    payments_by_id: dict,
+) -> set:
+    """Creation-row ids for one member's ledger (V4-L3, mirrors
+    ``revenue_service._row_is_creation``).
+
+    The explicit ``is_creation`` flag decides first. For unflagged
+    legacy rows the heuristic (member's first row with
+    ``previous_end == new_start``) applies only when the backing
+    payment cannot prove otherwise (``paid_on == membership_start``,
+    with ``previous_start == new_start`` as the create_member-era
+    shape — V4-L5), so a genuine first renewal of an imported member
+    backdated onto ``previous_end`` is no longer misclassified as a
+    signup here while ``revenue_service`` counts it as a recovery.
+    """
+    if not rows:
+        return set()
+    first_id = min(r.id for r in rows)
+    ids = set()
+    for row in rows:
+        if getattr(row, "is_creation", False):
+            ids.add(row.id)
+            continue
+        if (
+            row.id != first_id
+            or row.previous_end is None
+            or row.new_start is None
+            or row.previous_end != row.new_start
+        ):
+            continue
+        if row.previous_start is not None and row.previous_start != row.new_start:
+            continue
+        paid_on = (
+            payments_by_id.get(row.payment_verification_id)
+            if row.payment_verification_id is not None
+            else None
+        )
+        if paid_on is None or member_start is None or paid_on == member_start:
+            ids.add(row.id)
+    return ids
 
 
 def _is_restart_row(row: RenewalHistory) -> bool:
@@ -128,15 +199,15 @@ def _is_restart_row(row: RenewalHistory) -> bool:
     return row.new_start > row.previous_end + timedelta(days=1)
 
 
-def _creation_row(rows: list[RenewalHistory]) -> RenewalHistory | None:
+def _creation_row(rows: list[RenewalHistory], creation_ids: set | None = None) -> RenewalHistory | None:
     """First creation row, if the ledger records the original start."""
     for row in rows:
-        if _is_creation_row(row):
+        if _is_creation_row(row, creation_ids):
             return row
     return None
 
 
-def _chain_start_row(rows: list[RenewalHistory]) -> RenewalHistory | None:
+def _chain_start_row(rows: list[RenewalHistory], creation_ids: set | None = None) -> RenewalHistory | None:
     """First row of the current chain: the last restart row, else the
     first row — but only when the app itself recorded that chain start
     (a creation row or a restart row). Returns None for a partial
@@ -149,23 +220,40 @@ def _chain_start_row(rows: list[RenewalHistory]) -> RenewalHistory | None:
     for row in rows:
         if _is_restart_row(row):
             start_row = row
-    if _is_creation_row(start_row) or _is_restart_row(start_row):
+    if _is_creation_row(start_row, creation_ids) or _is_restart_row(start_row):
         return start_row
     return None
 
 
-def _current_chain_rows(rows: list[RenewalHistory]) -> list[RenewalHistory]:
+def _current_chain_rows(rows: list[RenewalHistory], creation_ids: set | None = None) -> list[RenewalHistory]:
     """Rows of the current chain: from its recorded start row onward.
 
     Rows before the last restart belong to an old chain and no longer
     determine the stored dates. Returns all rows when the ledger does
     not record a chain start (partial/imported ledger).
     """
-    chain_start = _chain_start_row(rows)
+    chain_start = _chain_start_row(rows, creation_ids)
     if chain_start is None:
         return list(rows)
     chain_idx = next((i for i, r in enumerate(rows) if r is chain_start), 0)
     return rows[chain_idx:]
+
+
+def _row_duration_days(row: RenewalHistory, fallback: int) -> int:
+    """Plan duration in force when *row* was written (V4-M13).
+
+    Prefers the snapshot stored on the row; legacy rows without one
+    fall back to the row's live plan, then the member's plan duration.
+    Comparing against the live duration directly is what let a plan
+    edit rewrite history — this helper is the only place the
+    oversized checks/corrector read a duration.
+    """
+    snapshot = getattr(row, "duration_days", None)
+    if snapshot is not None:
+        return snapshot
+    if row.plan is not None:
+        return row.plan.duration_days
+    return fallback
 
 
 def _correct_oversized_ledger(
@@ -178,25 +266,56 @@ def _correct_oversized_ledger(
     earlier by the accumulated excess — so chaining is preserved
     (each period still starts the day after the previous one ends),
     no row stays oversized, and the chain's last end equals the
-    applied end. Creation rows are never shortened (their applied
-    days are the first period, not a renewal excess). Callers must
-    flush/commit; rows are mutated in place.
+    applied end. Creation rows are shortened too when THEY applied
+    more than one period (V4-M13): a signup written with the wrong
+    span is a real error, and leaving it long would keep the scan
+    flagging the member forever. Callers must flush/commit; rows are
+    mutated in place.
     """
     shift = 0
+    # Shift applied to the PREVIOUS row's new_start. A row's
+    # previous_start is the member's start before that renewal, i.e.
+    # the previous period's start — so it moves by the amount the
+    # previous row's new_start moved, NOT by the amount this row
+    # moves (this row also absorbs the previous row's own shortening
+    # via `shift`, which must not leak into previous_start).
+    prev_shift = 0
     for row in chain_rows:
         if row.new_start is None or row.new_end is None:
             continue
-        if shift:
-            row.new_start = row.new_start - timedelta(days=shift)
-            row.new_end = row.new_end - timedelta(days=shift)
-        if _is_creation_row(row):
-            continue
+        shift_before = shift
+        if shift_before:
+            row.new_start = row.new_start - timedelta(days=shift_before)
+            row.new_end = row.new_end - timedelta(days=shift_before)
+            # V4-M11: previous_start/previous_end are snapshots of the
+            # same chain — move them with it, or a later refund
+            # resurrects the oversized end: _revert_renewal restores
+            # membership_end from previous_end. previous_end tracks
+            # the previous period's END, which moved by exactly
+            # shift_before (the previous row's shortening is included
+            # in it). previous_start tracks the previous period's
+            # START, which moved only by prev_shift. (A creation
+            # row's previous_* equal its own new_start, so they move
+            # with the row itself.) Moving previous_end by the same
+            # amount also keeps a restart row recognisable
+            # (_is_restart_row compares new_start against
+            # previous_end + 1), so the old chain cannot re-enter
+            # scope for later scans.
+            if row.previous_end is not None:
+                row.previous_end = row.previous_end - timedelta(days=shift_before)
+            if row.previous_start is not None:
+                _start_shift = (
+                    shift_before if _is_creation_row(row) else prev_shift
+                )
+                if _start_shift:
+                    row.previous_start = row.previous_start - timedelta(
+                        days=_start_shift
+                    )
+        prev_shift = shift_before
         applied = _applied_days(row)
         if applied is None:
             continue
-        row_duration = (
-            row.plan.duration_days if row.plan is not None else duration
-        )
+        row_duration = _row_duration_days(row, duration)
         if applied > row_duration + _TOLERANCE_DAYS:
             excess = applied - row_duration
             row.new_end = row.new_end - timedelta(days=excess)
@@ -276,12 +395,20 @@ def classify_member(
     corrected by Apply; findings without one are review-only and Apply
     leaves them for a manual per-member edit.
     """
+    # V4-L3: creation-row identity for this ledger, flag first with
+    # the paid_on refinement for unflagged legacy rows — computed once
+    # so the scan, the chain scoping and the oversized checks all agree
+    # with revenue_service on which rows are signups.
+    _payments_by_id = {p.id: p.paid_on for p in (payments or [])}
+    creation_ids = _creation_row_ids_for_ledger(
+        rows, member.membership_start, _payments_by_id
+    )
     # 0) A missing start cannot be evaluated further. The schema marks
     #    membership_start NOT NULL, so this is defensive: it can only
     #    fire for legacy/imported rows. The creation row, when present,
     #    records the original start.
     if member.membership_start is None:
-        creation = _creation_row(rows)
+        creation = _creation_row(rows, creation_ids)
         finding = {
             "member_id": member.id,
             "full_name": member.full_name,
@@ -330,17 +457,34 @@ def classify_member(
         "confidence": "review" if freeze_events else "high",
     }
 
-    renewals = [r for r in rows if not _is_creation_row(r)]
+    renewals = [r for r in rows if not _is_creation_row(r, creation_ids)]
     has_restart = any(_is_restart_row(r) for r in renewals)
-    last_end = rows[-1].new_end if rows else None
-    chain_start = _chain_start_row(rows)
+    chain_start = _chain_start_row(rows, creation_ids)
     # M5: the ledger checks below are scoped to the CURRENT chain (from
     # its recorded start row onward). Rows before the last restart belong
     # to an old chain and no longer determine the stored end — but a
     # restart no longer blinds the checks entirely.
-    chain_rows = _current_chain_rows(rows)
-    chain_last_end = chain_rows[-1].new_end if chain_rows else None
-    chain_renewals = [r for r in chain_rows if not _is_creation_row(r)]
+    chain_rows = _current_chain_rows(rows, creation_ids)
+    # V4-H1: rows that have not started yet are PENDING scheduled
+    # renewals, not the ledger's latest end. A member with a live
+    # scheduled renewal must not be flagged ledger_mismatch against
+    # the future period's end, and no proposal may ever carry a future
+    # date. When today is unknown, every row counts as started (the
+    # old behaviour).
+    if today is not None:
+        active_chain_rows = [
+            r for r in chain_rows if r.new_start is None or r.new_start <= today
+        ]
+    else:
+        active_chain_rows = list(chain_rows)
+    chain_last_end = (
+        active_chain_rows[-1].new_end if active_chain_rows else None
+    )
+    # V4-M13: the oversized check runs over started chain rows
+    # INCLUDING creation rows — a signup that applied more than one
+    # period is a real error. Pending rows are excluded: their excess
+    # belongs to a future period, not the stored end.
+    chain_renewals = list(active_chain_rows)
 
     # S1) The stored start is after the stored end: the period is
     #     incoherent. When the ledger determines the coherent pair and
@@ -356,22 +500,23 @@ def classify_member(
             ),
         }
         if (
-            rows
-            and last_end is not None
+            active_chain_rows
+            and chain_last_end is not None
             and not has_restart
             and chain_start is not None
-            and chain_rows
-            and chain_rows[-1].new_start is not None
+            and active_chain_rows[-1].new_start is not None
         ):
             # V3-H4: the proposed start is the CURRENT period's start
-            # (latest chain row), not the chain start — the renewal
-            # flows overwrite membership_start on every renewal.
-            finding["proposed_start"] = chain_rows[-1].new_start.isoformat()
-            finding["proposed_end"] = last_end.isoformat()
+            # (latest started chain row), not the chain start — the
+            # renewal flows overwrite membership_start on every
+            # renewal. V4-H1: a pending scheduled row's future start
+            # is never proposed.
+            finding["proposed_start"] = active_chain_rows[-1].new_start.isoformat()
+            finding["proposed_end"] = chain_last_end.isoformat()
             finding["reason"] += (
                 " The renewal history records this period as "
-                f"{chain_rows[-1].new_start.isoformat()} to "
-                f"{last_end.isoformat()}."
+                f"{active_chain_rows[-1].new_start.isoformat()} to "
+                f"{chain_last_end.isoformat()}."
             )
         else:
             finding["confidence"] = "review"
@@ -401,25 +546,29 @@ def classify_member(
     #     renewal — is legitimate and is not flagged. A partial
     #     (imported) ledger with no recorded chain start cannot judge
     #     the start either: the stored start may legitimately predate
-    #     the surviving rows. Proposal: the latest chain row's
-    #     new_start (current period start).
+    #     the surviving rows. V4-L14: ledger_starts is built from the
+    #     CURRENT chain only — a stored start matching a pre-restart
+    #     (old-chain) row is stale, not legitimate. Proposal: the
+    #     latest STARTED chain row's new_start (V4-H1: never the
+    #     future scheduled start). When no chain row has started yet
+    #     there is no current period to propose, so S3 does not fire.
     ledger_starts = {
-        r.new_start for r in rows if r.new_start is not None
+        r.new_start for r in chain_rows if r.new_start is not None
     }
     if (
         chain_start is not None
-        and chain_rows
-        and chain_rows[-1].new_start is not None
+        and active_chain_rows
+        and active_chain_rows[-1].new_start is not None
         and start not in ledger_starts
     ):
         return {
             **base,
             "classification": "start_ledger_mismatch",
-            "proposed_start": chain_rows[-1].new_start.isoformat(),
+            "proposed_start": active_chain_rows[-1].new_start.isoformat(),
             "reason": (
                 f"The renewal history records no period starting "
                 f"{start.isoformat()}; the current period starts "
-                f"{chain_rows[-1].new_start.isoformat()}."
+                f"{active_chain_rows[-1].new_start.isoformat()}."
             ),
         }
 
@@ -441,10 +590,12 @@ def classify_member(
         }
 
     # 1) The stored end disagrees with the payment ledger (current
-    #    chain). A restart no longer skips this: the chain's latest
-    #    new_end is still the latest recorded period end, so a stored
-    #    end that disagrees with it was changed outside a renewal.
-    if chain_rows and chain_last_end is not None and chain_last_end != end:
+    #    chain, started rows only — V4-H1: a pending scheduled row's
+    #    future end is never the comparison target). A restart no
+    #    longer skips this: the chain's latest new_end is still the
+    #    latest recorded period end, so a stored end that disagrees
+    #    with it was changed outside a renewal.
+    if active_chain_rows and chain_last_end is not None and chain_last_end != end:
         return {
             **base,
             "classification": "ledger_mismatch",
@@ -458,18 +609,21 @@ def classify_member(
 
     # 2) The ledger agrees, but a renewal applied more days than the
     #    plan allows — the excess is inside the ledger. Scoped to the
-    #    current chain: excess from a pre-restart chain no longer
-    #    affects the stored end, but excess inside the current chain
-    #    does, restart or not.
-    if chain_rows and chain_last_end == end:
+    #    current chain's STARTED rows: excess from a pre-restart chain
+    #    no longer affects the stored end, but excess inside the
+    #    current chain does, restart or not. Creation rows count too
+    #    (V4-M13), and the duration compared against is the snapshot
+    #    from write time, not the plan's live duration. A pending
+    #    scheduled row's excess is not counted: it belongs to a future
+    #    period, and subtracting it from the stored (current) end
+    #    would be wrong.
+    if active_chain_rows and chain_last_end == end:
         excess = 0
         for row in chain_renewals:
             applied = _applied_days(row)
             if applied is None:
                 continue
-            row_duration = (
-                row.plan.duration_days if row.plan is not None else duration
-            )
+            row_duration = _row_duration_days(row, duration)
             if applied > row_duration + _TOLERANCE_DAYS:
                 excess += applied - row_duration
         if excess > 0:
@@ -705,6 +859,13 @@ def register_date_repair_routes(bp):
                 if finding.get("proposed_start")
                 else None
             )
+            # V4-H1: Apply must NEVER set membership_start to a future
+            # date. The scan only proposes started rows' starts, but
+            # a stale scan or a hand-edited ledger must not slip a
+            # future start through here either — drop the start and
+            # still apply the end when one was proposed.
+            if proposed_start is not None and proposed_start > today:
+                proposed_start = None
             if proposed_end is None and proposed_start is None:
                 # Review-only finding (e.g. a future start or an
                 # overlapping ledger): never guessed, fix by hand.
@@ -763,25 +924,48 @@ def register_date_repair_routes(bp):
                     .scalars()
                     .all()
                 )
-                chain_rows = _current_chain_rows(rows)
-                old_latest_start = (
-                    chain_rows[-1].new_start if chain_rows else None
+                chain_rows = _current_chain_rows(
+                    rows,
+                    # V4-L3: same flag-first creation identity as the
+                    # scan, so the chain start agrees with what the
+                    # scan proposed from.
+                    _creation_row_ids_for_ledger(
+                        rows,
+                        member.membership_start,
+                        {
+                            p.id: p.paid_on
+                            for p in db.session.execute(
+                                select(PaymentVerification).where(
+                                    PaymentVerification.member_id == member.id,
+                                    PaymentVerification.status == "verified",
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        },
+                    ),
                 )
+                # V4-M12: the stored start is the current period's
+                # start — move it when it tracked ANY shifted chain
+                # row's old start, not just the latest row's. A
+                # stored start equal to an intermediate shifted row's
+                # old start would otherwise go stale and the next
+                # scan would flag start_ledger_mismatch against the
+                # (future, scheduled) latest start.
+                old_starts = {
+                    r.new_start: r
+                    for r in chain_rows
+                    if r.new_start is not None
+                }
                 _correct_oversized_ledger(
                     chain_rows,
                     member.plan.duration_days if member.plan else 30,
                 )
                 ledger_corrected = True
-                # The stored start is the current period's start
-                # (V3-H4): if it tracked the latest chain row and
-                # that row shifted earlier, move it with the ledger.
-                if (
-                    chain_rows
-                    and old_latest_start is not None
-                    and member.membership_start == old_latest_start
-                    and chain_rows[-1].new_start != old_latest_start
-                ):
-                    member.membership_start = chain_rows[-1].new_start
+                if member.membership_start in old_starts:
+                    _followed = old_starts[member.membership_start]
+                    if _followed.new_start != member.membership_start:
+                        member.membership_start = _followed.new_start
             final_end = proposed_end if proposed_end is not None else old_end
             if member.status not in ("paused", "deleted") and final_end is not None:
                 member.status = "active" if final_end >= today else "expired"

@@ -189,7 +189,12 @@ def test_h4_bulk_renew_writes_current_period_start_for_active_member(client, see
 
 def test_h5_oversized_apply_corrects_ledger_and_converges(client, seed_gym):
     owner = seed_gym["owner"]
-    start = date.today() - timedelta(days=15)
+    # V4-H1: the oversized renewal must have STARTED (new_start <=
+    # today). The old fixture dated it in the future, which made it a
+    # pending scheduled row — under H1 a pending row is not the
+    # ledger's latest end, so that shape now flags ledger_mismatch
+    # (the stored end was pulled into a future period) instead.
+    start = date.today() - timedelta(days=75)
     first_end = start + timedelta(days=30)
     bad_end = first_end + timedelta(days=61)
     m = _member(seed_gym, "Oversized", start, bad_end)

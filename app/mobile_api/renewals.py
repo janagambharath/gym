@@ -330,6 +330,10 @@ def register_renewals_routes(bp):
             # V3-M18: snapshot plan/price before mutation for revert.
             previous_plan_id=previous_plan_id,
             previous_price=previous_price,
+            # V4-M13: snapshot the plan duration in force NOW (the
+            # plan's duration, not renewal_days — an owner override
+            # that applies extra days IS oversized by definition).
+            duration_days=plan.duration_days if plan else renewal_days,
             new_start=new_start,
             new_end=new_end,
             standard_price=standard_price,

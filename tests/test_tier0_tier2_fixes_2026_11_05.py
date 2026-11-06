@@ -152,8 +152,11 @@ def test_recovery_cohort_excludes_signup_creation_rows(seed_gym):
     assert result["recovered_breakdown"]["payment_backed_renewals"] == 1
     assert result["recovered_breakdown"]["direct_amount"] == "500.00"
     assert result["recovered_breakdown"]["direct_renewals"] == 1
-    assert result["recovery_denominator"] == "2000.00"
-    assert result["recovery_rate"] == "40.0"
+    # V4-M2: denominator is outstanding risk + PAID expected value
+    # only (1000) — the direct renewal's expected 1000 is excluded,
+    # so the rate is 800/1000 = 80.0, not 800/2000.
+    assert result["recovery_denominator"] == "1000.00"
+    assert result["recovery_rate"] == "80.0"
 
 
 # ─── H1: one at-risk number everywhere ─────────────────────────────────────

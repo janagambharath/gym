@@ -32,6 +32,16 @@ def upgrade():
 
 
 def downgrade():
+    # V4-L30: guard the drops with the same inspector check upgrade()
+    # uses — a downgrade on a DB where the columns were never added
+    # (or were already dropped) must not fail on a missing column.
+    from sqlalchemy import inspect
+
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    existing = {c["name"] for c in inspector.get_columns("renewal_history")}
     with op.batch_alter_table("renewal_history") as batch_op:
-        batch_op.drop_column("previous_price")
-        batch_op.drop_column("previous_plan_id")
+        if "previous_price" in existing:
+            batch_op.drop_column("previous_price")
+        if "previous_plan_id" in existing:
+            batch_op.drop_column("previous_plan_id")

@@ -72,15 +72,16 @@ def _resolve_member(gym_id: int, device_enroll_number: str) -> Member | None:
 
     V3-M14: a soft-deleted member never resolves — its terminal ID
     reads as unknown, not as a named ex-member in Live Access.
+    V4-M5: route through find_member_by_enroll_number — an exact query
+    misses a member stored pre-fix as "042" when the punch carries
+    canonical "42" (bridge leg).
     """
-    return (
-        Member.query.filter_by(
-            gym_id=gym_id,
-            device_enroll_number=device_enroll_number,
-        )
-        .filter(Member.deleted_at.is_(None))
-        .first()
-    )
+    from app.services.bridge_service import find_member_by_enroll_number
+
+    member = find_member_by_enroll_number(gym_id, device_enroll_number)
+    if member is not None and member.deleted_at is not None:
+        return None
+    return member
 
 
 def _live_member(member: Member | None) -> Member | None:
@@ -146,7 +147,38 @@ def adms_device_status(gym_id: int) -> dict | None:
         "device_online": online,
         "device_name": adms.device_name or adms.device_serial,
         "device_serial": adms.device_serial,
+        # V4-L11: whether the ADMS integration may override a live
+        # bridge's online state — only when token-connected or
+        # serial-fallback is enabled. A disconnected integration must
+        # fall through to the bridge heartbeat instead.
+        "adms_connection_usable": bool(
+            adms.status == "connected" or adms.allow_serial_fallback
+        ),
     }
+
+
+def _rrr_entry_rows_query(gym_id: int):
+    """RRR rows that belong in the Live Access RRR leg (V4-M22).
+
+    Only direct-ADMS punches: bridge/eBioServer punches already project
+    into AccessEvent via the BridgeAttendance path, so counting/showing
+    their RRR rows as well double-counts entries and duplicates feed
+    rows. Only entry direction: att-states 0/3/4 (or unknown/None,
+    which the feed treats as an entry) — exits must not inflate the
+    entry count or appear as entries in the feed.
+    """
+    from sqlalchemy import or_ as _or
+
+    from app.models.rrr import RRRAttendanceEvent
+
+    return RRRAttendanceEvent.query.filter(
+        RRRAttendanceEvent.gym_id == gym_id,
+        RRRAttendanceEvent.source == "adms_direct",
+        _or(
+            RRRAttendanceEvent.direction.is_(None),
+            RRRAttendanceEvent.direction.in_(["0", "3", "4"]),
+        ),
+    )
 
 
 def process_attendance_to_access_event(
@@ -389,10 +421,18 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
     """Return summary counts for the Live Access dashboard card."""
     day_start_utc = utc_start_of_gym_day(gym_timezone)
 
-    inside_now = MemberAccessState.query.filter_by(
-        gym_id=gym_id,
-        current_state="INSIDE",
-    ).count()
+    # V4-M10: inside_now must not count soft-deleted members — a member
+    # deleted while INSIDE keeps a MemberAccessState row until it is
+    # expired on soft-delete / aged out, and must not show as inside.
+    inside_now = (
+        MemberAccessState.query.filter_by(
+            gym_id=gym_id,
+            current_state="INSIDE",
+        )
+        .join(Member, MemberAccessState.member_id == Member.id)
+        .filter(Member.deleted_at.is_(None))
+        .count()
+    )
 
     entries_today = AccessEvent.query.filter(
         AccessEvent.gym_id == gym_id,
@@ -440,9 +480,11 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
     # V3-M13: count ONLY unprojected rows. Every ADMS punch that projected
     # into AccessEvent (the normal case) was already counted above, so
     # adding all RRR rows double-counted entries today (~2x).
+    # V4-M22: the RRR leg is ADMS-direct entry rows only — bridge /
+    # eBioServer punches already have an AccessEvent via the
+    # BridgeAttendance path, so their RRR rows must not be counted here.
     from app.models.rrr import RRRAttendanceEvent
-    adms_entries_today = RRRAttendanceEvent.query.filter(
-        RRRAttendanceEvent.gym_id == gym_id,
+    adms_entries_today = _rrr_entry_rows_query(gym_id).filter(
         RRRAttendanceEvent.punch_time >= day_start_utc,
     ).filter(~_unprojected_rrr_exists(gym_id)).count()
     entries_today = entries_today + adms_entries_today
@@ -462,10 +504,19 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
     # configured (same rule as /access/summary). Without this override
     # the dashboard embedded device_online=False for ADMS-only gyms
     # (no BridgeInstallation row) while Live Access showed online.
+    # V4-L11: apply the override only when the ADMS terminal is actually
+    # online (which already requires a connected integration or
+    # serial-fallback). A disconnected ADMS integration must not
+    # override a live bridge's online state with False.
     adms_status = adms_device_status(gym_id)
-    if adms_status is not None:
-        device_online = adms_status["device_online"]
+    if adms_status is not None and adms_status.get("adms_connection_usable"):
+        # The ADMS device name is the configured terminal's name even
+        # when it is briefly offline; the ONLINE state, however, only
+        # overrides when the terminal is actually seen — a stale ADMS
+        # integration must never flip a live bridge to offline.
         device_name = adms_status["device_name"]
+        if adms_status["device_online"]:
+            device_online = adms_status["device_online"]
 
     return {
         "inside_now": inside_now,
@@ -521,10 +572,20 @@ def get_access_events(
         week_ago = utcnow() - timedelta(days=7)
         query = query.filter(AccessEvent.event_timestamp >= week_ago)
 
-    # Search by member name
+    # Search by member name or enroll number (V4-L12): the two feed legs
+    # must use the SAME predicates — the ADMS leg already searched name
+    # OR biometric ID while this leg searched name only, so an ID search
+    # silently dropped every AccessEvent row.
     if search and search.strip():
+        from sqlalchemy import or_
+
         search_term = f"%{search.strip()}%"
-        query = query.filter(AccessEvent.member_name.ilike(search_term))
+        query = query.filter(
+            or_(
+                AccessEvent.member_name.ilike(search_term),
+                AccessEvent.device_enroll_number.ilike(search_term),
+            )
+        )
 
     # Merged-feed pagination: a row's overall rank can sit ahead of its
     # own leg's page-N window (the other leg may contribute many newer
@@ -566,7 +627,10 @@ def get_access_events(
     adms_total = 0
     # ADMS punches have no exit/denied direction (entry-only feed).
     if event_type not in ("exit", "denied"):
-        adms_query = RRRAttendanceEvent.query.filter_by(gym_id=gym_id)
+        # V4-M22: the RRR leg is ADMS-direct entry rows only — bridge /
+        # eBioServer rows already appear via the AccessEvent leg, and
+        # exit-direction rows are not entries.
+        adms_query = _rrr_entry_rows_query(gym_id)
         if adms_since is not None:
             adms_query = adms_query.filter(
                 RRRAttendanceEvent.punch_time >= adms_since
@@ -602,12 +666,15 @@ def get_access_events(
             .all()
         )
         for evt in adms_rows:
+            # V4-M10: a soft-deleted member must not appear named in the
+            # feed — its punches read as unknown, like the AccessEvent leg.
+            evt_member = _live_member(evt.member)
             adms_events.append({
                 "id": f"adms-{evt.id}",
                 "event_type": "ENTRY",
                 "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
-                "member_id": evt.member_id,
-                "member_name": evt.member.full_name if evt.member else f"User {evt.biometric_user_id}",
+                "member_id": evt_member.id if evt_member else None,
+                "member_name": evt_member.full_name if evt_member else f"User {evt.biometric_user_id}",
                 "biometric_user_id": evt.biometric_user_id,
                 "device_name": evt.device_serial,
                 "verify_method": evt.verify_method,
@@ -652,6 +719,10 @@ def get_members_inside(
             gym_id=gym_id,
             current_state="INSIDE",
         )
+        .join(Member, MemberAccessState.member_id == Member.id)
+        # V4-M10: a soft-deleted member must not appear named in the
+        # Inside Now list, even if its state row was never expired.
+        .filter(Member.deleted_at.is_(None))
         .options(joinedload(MemberAccessState.member))
     )
 
@@ -691,15 +762,22 @@ def get_members_inside(
 
 
 def _serialize_access_event(evt: AccessEvent) -> dict:
-    """Serialize an AccessEvent for JSON response."""
+    """Serialize an AccessEvent for JSON response.
+
+    V4-M10: a soft-deleted member's snapshot name must not leak into the
+    feed — old AccessEvent rows keep member_name/member_id after the
+    member is deleted, so hide both here (the row still shows as an
+    unknown-ID event).
+    """
+    member = _live_member(evt.member) if evt.member_id is not None else None
     return {
         "id": evt.id,
         "event_type": evt.event_type,
         "direction": evt.direction,
         "event_timestamp": evt.event_timestamp.isoformat() if evt.event_timestamp else None,
-        "member_id": evt.member_id,
-        "member_name": evt.member_name,
-        "membership_status": evt.membership_status,
+        "member_id": member.id if member else None,
+        "member_name": evt.member_name if member else None,
+        "membership_status": evt.membership_status if member else None,
         "device_name": evt.device_name,
         "device_enroll_number": evt.device_enroll_number,
         # Alias so both feed legs expose the terminal ID under one key —
@@ -804,7 +882,10 @@ def record_manual_access_event(
         raise ValueError(f"Member {member_id} not found in gym {gym_id}")
 
     # Check expiration / validity
-    if member.status == "expired" or (member.days_until_expiry is not None and member.days_until_expiry < 0):
+    # V4-M16: a paused (frozen) member is denied too — the old code only
+    # checked expired, so staff could tap a frozen member and get a
+    # successful ENTRY that marked them INSIDE, bypassing the freeze.
+    if member.status in ("expired", "paused") or (member.days_until_expiry is not None and member.days_until_expiry < 0):
         actual_event_type = "ACCESS_DENIED"
         direction = "NONE"
     else:

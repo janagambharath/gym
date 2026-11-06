@@ -70,6 +70,18 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     refunded_by_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # V4-L35: reject/cancel audit trail — same pattern. A rejected or
+    # cancelled payment was never verified, so verified_at /
+    # verified_by_id must stay NULL; the decision records its own
+    # time and actor here instead of overwriting the verification.
+    rejected_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    rejected_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    cancelled_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    cancelled_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="payments")
@@ -77,6 +89,8 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     renewal = db.relationship("RenewalHistory", back_populates="payment_verification", uselist=False)
     verified_by = db.relationship("User", foreign_keys=[verified_by_id])
     refunded_by = db.relationship("User", foreign_keys=[refunded_by_id])
+    rejected_by = db.relationship("User", foreign_keys=[rejected_by_id])
+    cancelled_by = db.relationship("User", foreign_keys=[cancelled_by_id])
     created_by = db.relationship("User", foreign_keys=[created_by_id])
 
     @property

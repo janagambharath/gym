@@ -316,15 +316,17 @@ def attendance():
             if known_device is not None:
                 event_device_serial = candidate_serial
 
-    member = (
-        Member.query.filter_by(
-            gym_id=installation.gym_id, device_enroll_number=enroll_number
-        )
-        # V3-M14: a soft-deleted member never resolves — its punches read
-        # as unknown instead of a named ex-member in Live Access.
-        .filter(Member.deleted_at.is_(None))
-        .first()
+    # V4-M5: route through find_member_by_enroll_number — an exact query
+    # misses a member stored pre-fix as "042" when the punch carries
+    # canonical "42", so bridge punches read as unknown and never
+    # auto-link. V3-M14: a soft-deleted member never resolves.
+    from app.services.bridge_service import find_member_by_enroll_number
+
+    member = find_member_by_enroll_number(
+        installation.gym_id, enroll_number
     )
+    if member is not None and member.deleted_at is not None:
+        member = None
     existing = BridgeAttendance.query.filter_by(
         bridge_id=installation.id, event_id=event_id
     ).first()
@@ -449,8 +451,16 @@ def enrollment():
             upsert_terminal_snapshot(
                 integration.id, enroll_number, user_name, source="bridge"
             )
-            linked = auto_link_high_confidence(
-                installation.gym_id, skip_command_for_active=True
+            # V4-M7: the enrollment post used to run the full-gym fuzzy
+            # scan on every enrollment — gate it on the shared throttle.
+            from app.services.enroll_match_service import auto_link_scan_due
+
+            linked = (
+                auto_link_high_confidence(
+                    installation.gym_id, skip_command_for_active=True
+                )
+                if auto_link_scan_due(installation.gym_id)
+                else {"linked": [], "skipped": []}
             )
             db.session.commit()
             return jsonify({"ok": True, "auto_linked": linked})
@@ -605,17 +615,27 @@ def confirm_enrollment():
         )
     # V3-H3: canonical-aware duplicate check — an exact query misses a
     # stored zero-padded holder ("042"), letting a second member take "42".
-    from app.services.bridge_service import find_member_by_enroll_number
+    from app.services.bridge_service import (
+        clear_deleted_enroll_holder,
+        find_member_by_enroll_number,
+    )
 
     duplicate = find_member_by_enroll_number(
         installation.gym_id, enroll_number, exclude_id=member.id
     )
     if duplicate is not None:
-        return _json_error(
-            409,
-            "enroll_number_in_use",
-            "That biometric Enroll Number belongs to another member.",
-        )
+        if duplicate.deleted_at is not None:
+            # V4-M21: free an ID whose only holder is soft-deleted (with
+            # device_enroll_number set) instead of bricking it.
+            clear_deleted_enroll_holder(
+                installation.gym_id, enroll_number, exclude_id=member.id
+            )
+        else:
+            return _json_error(
+                409,
+                "enroll_number_in_use",
+                "That biometric Enroll Number belongs to another member.",
+            )
 
     member.device_enroll_number = enroll_number
     # V3-L6: drop the cached canonical-enroll index so the new number

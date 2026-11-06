@@ -10,6 +10,13 @@ stub connection) over synthetic rows in post-upgrade state.
 
 Rows are (punch_time, received_at) with received_at before CUTOFF
 unless stated. All datetimes UTC.
+
+WARNING (V4-M17) — NEVER run this migration's downgrade() on live
+data. The bounded selector still admits every untouched correct row
+ingested within 1.5h of its punch — the normal promptly-ingested case
+— and shifts it +5.5h (plus its access_events projection). V3-H6
+narrowed the blast radius; it did NOT make the downgrade safe. If an
+exact reversal is ever required, restore from backup.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -200,7 +207,11 @@ def test_residual_small_lag_untouched_row_is_indistinguishable():
     before ingest sits at exactly the same (punch_time, received_at)
     as a corrected row and this predicate selects it. The window is
     now bounded (was: every pre-cutoff row); exact reversal needs a
-    backup restore, not a wider predicate."""
+    backup restore, not a wider predicate.
+
+    V4-M17: this is the normal promptly-ingested case, not an edge
+    case — NEVER run downgrade() on live data.
+    """
     received = datetime(2026, 11, 5, 10, 0, tzinfo=UTC)
     untouched_small_lag = _row(
         datetime(2026, 11, 5, 9, 50, tzinfo=UTC), received)

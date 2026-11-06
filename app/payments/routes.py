@@ -12,7 +12,7 @@ from app.models import Member, PaymentVerification
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
-from app.services.payment_service import delete_payment, reject_payment, verify_payment
+from app.services.payment_service import canonical_payment_reference, delete_payment, reject_payment, verify_payment
 
 from app.utils.decorators import active_gym_required, roles_required
 
@@ -88,7 +88,10 @@ def create():
             amount=form.amount.data,
             paid_on=form.paid_on.data,
             method=form.method.data,
-            reference=form.reference.data,
+            # V4-M19: canonicalise the UTR at write time, like the
+            # mobile create paths — "utr123" and "UTR 123" are one
+            # reference.
+            reference=canonical_payment_reference(form.reference.data),
             status="pending",
             renewal_days=renewal_days,
             notes=form.notes.data,

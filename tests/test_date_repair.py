@@ -120,9 +120,15 @@ def test_ledger_mismatch_uses_ledger_end(client, seed_gym):
 def test_oversized_renewal_flagged_for_review(client, seed_gym):
     owner = seed_gym["owner"]
     # Created for 30d, then one renewal applied 61 days on a 30-day plan.
-    first_end = START + timedelta(days=30)
+    # V4-H1: the oversized renewal must have STARTED (new_start <=
+    # today). The old fixture dated it in the future, which made it a
+    # pending scheduled row — under H1 a pending row is not the
+    # ledger's latest end, so that shape now flags ledger_mismatch
+    # (the stored end was pulled into a future period) instead.
+    start0 = date.today() - timedelta(days=75)
+    first_end = start0 + timedelta(days=29)
     bad_end = first_end + timedelta(days=61)
-    m = _member(seed_gym, "Oversized", START, bad_end)
+    m = _member(seed_gym, "Oversized", start0, bad_end)
     db.session.add_all(
         [
             RenewalHistory(
@@ -130,8 +136,8 @@ def test_oversized_renewal_flagged_for_review(client, seed_gym):
                 member_id=m.id,
                 plan_id=seed_gym["plan"].id,
                 renewed_by_id=owner.id,
-                previous_end=START,
-                new_start=START,
+                previous_end=start0,
+                new_start=start0,
                 new_end=first_end,
                 amount=1000,
             ),

@@ -37,7 +37,14 @@ DEFAULT_RULES = {
 def _canonical_or_raw(value: object) -> str:
     """Canonical enroll number ("042" -> "42"); raw value when the ID is
     non-numeric (M16 — such IDs can never link, but must keep their
-    stored form so punches are not dropped)."""
+    stored form so punches are not dropped).
+
+    Standing rule (V4-L31): never GROUP BY biometric_user_id raw —
+    historical punch/bridge rows keep their raw enroll numbers (the
+    c4a9012b3d4e backfill canonicalizes stored member/template/mapping
+    rows only, never event facts), so canonicalize with this helper
+    first or "042" and "42" split into two groups for one terminal ID.
+    """
     try:
         from app.services.bridge_service import canonical_enroll_number
 
@@ -203,6 +210,41 @@ def _dedupe_key(source: str, device_serial: str | None, external_event_id: str |
     return hashlib.sha256(stable.encode("utf-8")).hexdigest()
 
 
+def _legacy_dedupe_keys(device_serial: str | None, biometric_user_id: str,
+                       punch_time, direction: str | None = None) -> list[str]:
+    """Pre-L8 dedupe keys to probe on a miss (V4-M8, V4-L13).
+
+    * V4-M8: the Yodha punch-time migration recomputed ``dedupe_key`` in
+      the old format — raw serial, no direction suffix. A re-send of a
+      migrated row computes a new-format key that never matches, so the
+      punch would insert as a duplicate. Probing the old 3-part key
+      keeps the migration's re-send guarantee.
+    * V4-L13: the same punch arriving once with direction present and
+      once without (old bridge vs new) computes two different new-format
+      keys. Probing the direction-less new-format key catches that pair.
+    Probing is read-only and cheap (indexed equality lookups); nothing
+    is rewritten.
+    """
+    keys: list[str] = []
+    iso = punch_time.isoformat()
+    # Direction-less new-format key (canonical serial + empty direction).
+    directionless = hashlib.sha256(
+        "|".join(((device_serial or "").strip().upper(), biometric_user_id, iso, "")).encode("utf-8")
+    ).hexdigest()
+    if directionless:
+        keys.append(directionless)
+    # Old-format keys (migration 71e470eb6cb6): raw serial, 3 parts, no
+    # direction. Try the serial as passed and its canonical spelling —
+    # the migration used the stored serial verbatim.
+    for serial_variant in {(device_serial or ""), (device_serial or "").strip().upper()}:
+        old = hashlib.sha256(
+            "|".join((serial_variant, biometric_user_id, iso)).encode("utf-8")
+        ).hexdigest()
+        if old not in keys:
+            keys.append(old)
+    return keys
+
+
 def _mapped_member(gym_id: int, biometric_user_id: str) -> Member | None:
     # M2: the mapping row is gym-scoped, but the member it points at must
     # be verified too — a cross-gym member reference must never be returned
@@ -210,9 +252,13 @@ def _mapped_member(gym_id: int, biometric_user_id: str) -> Member | None:
     # query (which can only return a member of this gym) or None.
     # M11: a soft-deleted member must never resolve — neither via the
     # mapping branch nor via the enroll fallback.
-    mapping = RRRIdentityMapping.query.filter_by(
-        gym_id=gym_id, external_id=biometric_user_id, status="confirmed"
-    ).first()
+    # V4-M6: canonicalize the mapping-branch lookup the same way the
+    # enroll fallback is canonicalized — a stored pre-fix mapping
+    # "042" is invisible to an exact "42" lookup, so a second mapping
+    # row "42" could be created alongside it for the same canonical ID.
+    from app.services.bridge_service import find_confirmed_mapping
+
+    mapping = find_confirmed_mapping(gym_id, biometric_user_id)
     if mapping and mapping.member_id:
         member = mapping.member
         if (
@@ -250,6 +296,20 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     key = _dedupe_key(source, device_serial, external_event_id, biometric_user_id, punch_time, raw_payload,
                       direction=direction)
     existing = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
+    if existing is None:
+        # V4-M8 / V4-L13: probe legacy keys before inserting — a re-send
+        # of a Yodha-migrated row (old-format key) or of a punch first
+        # seen without a direction must dedupe, not insert a duplicate.
+        for legacy_key in _legacy_dedupe_keys(
+            device_serial, biometric_user_id, punch_time, direction=direction
+        ):
+            if legacy_key == key:
+                continue
+            existing = RRRAttendanceEvent.query.filter_by(
+                gym_id=gym_id, dedupe_key=legacy_key
+            ).first()
+            if existing is not None:
+                break
     if existing:
         return existing, False
     member = _mapped_member(gym_id, biometric_user_id)
@@ -269,40 +329,26 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     # unthrottled; ingest just stops paying the full scan per punch.
     if not member:
         # V3-M15: shared per-gym throttle (see enroll_match_service).
-        # The gate stamps when the check runs, so the snapshot fetch
-        # itself is bounded to one per gym per interval even when this
-        # punch's ID is absent from the snapshot.
+        # V4-M7: the ingest scan is scoped to THIS punch's ID only —
+        # auto_link_high_confidence(enroll_number=...) uses the targeted
+        # O(members) matcher instead of the full O(snapshot x members)
+        # fuzzy scan, so one punch never pays for a whole-gym scan.
         from app.services.enroll_match_service import auto_link_scan_due
 
         if auto_link_scan_due(gym_id):
-            snapshot_ids: set[str] = set()
             try:
-                from app.services.enroll_match_service import (
-                    get_adms_snapshot,
-                    get_terminal_snapshot,
-                )
-
-                snapshot = get_terminal_snapshot(gym_id) or get_adms_snapshot(gym_id)
-                if snapshot:
-                    snapshot_ids = {
-                        _canonical_or_raw(u.get("enroll_number"))
-                        for u in snapshot.get("users", [])
-                        if u.get("enroll_number")
-                    }
+                with db.session.begin_nested():
+                    from app.services.enroll_match_service import auto_link_high_confidence
+                    result = auto_link_high_confidence(
+                        gym_id=gym_id, enroll_number=biometric_user_id
+                    )
+                    # If this specific ID got linked, fetch the member
+                    for linked in result.get("linked", []):
+                        if str(linked.get("enroll_number")) == str(biometric_user_id):
+                            member = _mapped_member(gym_id, biometric_user_id)
+                            break
             except Exception:
-                snapshot_ids = set()
-            if biometric_user_id in snapshot_ids:
-                try:
-                    with db.session.begin_nested():
-                        from app.services.enroll_match_service import auto_link_high_confidence
-                        result = auto_link_high_confidence(gym_id=gym_id)
-                        # If this specific ID got linked, fetch the member
-                        for linked in result.get("linked", []):
-                            if str(linked.get("enroll_number")) == str(biometric_user_id):
-                                member = _mapped_member(gym_id, biometric_user_id)
-                                break
-                except Exception:
-                    pass  # Auto-link is best-effort; don't break punch ingestion
+                pass  # Auto-link is best-effort; don't break punch ingestion
     
     event = RRRAttendanceEvent(
         gym_id=gym_id,
@@ -345,6 +391,8 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     """
     from app.services.bridge_service import (
         canonical_enroll_number,
+        clear_deleted_enroll_holder,
+        find_confirmed_mapping,
         find_member_by_enroll_number,
         queue_membership_command,
     )
@@ -358,34 +406,26 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     # Guard 1: member already linked to a different enroll number.
     # Compare canonical forms — a stored non-canonical value ("0103")
     # is the same ID as the canonical "103", not a different one.
-    stored = canonical_enroll_number(member.device_enroll_number) if member.device_enroll_number else None
+    # V4-L10: use _canonical_or_raw, as confirm_match does — a stored
+    # NON-numeric enroll number used to raise a misleading ValueError
+    # ("must contain only digits") from canonical_enroll_number here.
+    stored = _canonical_or_raw(member.device_enroll_number) if member.device_enroll_number else None
     if stored and stored != external_id:
         raise ValueError(
             f"This member already has enroll number {member.device_enroll_number}. "
             "Remove it first to reassign."
         )
-    # Guard 2: enroll number already linked to a different member.
-    # NOTE: the unique constraint covers soft-deleted rows too, so this
-    # check must not filter them out — otherwise the flush throws
-    # UniqueViolation and poisons the caller's session.
-    # V3-H3: canonical-aware lookup — an exact query misses a stored
-    # zero-padded holder ("042"), letting a second member take "42".
-    duplicate = find_member_by_enroll_number(
-        gym_id, external_id, exclude_id=member.id
-    )
-    if duplicate is not None:
-        if duplicate.deleted_at is not None:
-            raise ValueError(
-                f"Enroll number {external_id} is held by a deleted member. "
-                "Clear it from the deleted record before reusing it."
-            )
-        raise ValueError(
-            f"Enroll number {external_id} is already linked to {duplicate.full_name}."
-        )
-    # Guard 3: external_id already mapped to a different member
-    existing_mapping = RRRIdentityMapping.query.filter_by(
-        gym_id=gym_id, external_id=external_id, status="confirmed"
-    ).first()
+    # Guard 3 BEFORE Guard 2 (V4-M21): in the real linked-then-deleted
+    # case the deleted holder keeps device_enroll_number AND may still
+    # hold a confirmed mapping, so Guard 2 used to fire first and the
+    # stale-mapping cleanup in Guard 3 was unreachable — the ID stayed
+    # bricked. Check the mapping first; a stale mapping to a deleted
+    # member is dropped here, and the deleted enroll holder is freed
+    # in the same step (see clear_deleted_enroll_holder) instead of
+    # raising "held by a deleted member".
+    # V4-M6: canonical-aware mapping lookup — a stored pre-fix mapping
+    # "042" is invisible to an exact "42" lookup.
+    existing_mapping = find_confirmed_mapping(gym_id, external_id)
     if existing_mapping is not None and existing_mapping.member_id != member.id:
         # V3-M10: a confirmed mapping pointing at a soft-deleted member
         # is stale — the ID was freed when the member was deleted
@@ -400,12 +440,49 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
         if mapped_member is not None and mapped_member.deleted_at is not None:
             db.session.delete(existing_mapping)
             existing_mapping = None
+            # The deleted holder also keeps device_enroll_number, which
+            # Guard 2 (below) would still trip on — free it now, in the
+            # same step, so the live link can proceed.
+            clear_deleted_enroll_holder(gym_id, external_id, exclude_id=member.id)
         else:
             raise ValueError(
                 f"Biometric ID {external_id} is already linked to another member."
             )
+    # Guard 2: enroll number already linked to a different member.
+    # NOTE: the unique constraint covers soft-deleted rows too, so this
+    # check must not filter them out — otherwise the flush throws
+    # UniqueViolation and poisons the caller's session.
+    # V3-H3: canonical-aware lookup — an exact query misses a stored
+    # zero-padded holder ("042"), letting a second member take "42".
+    duplicate = find_member_by_enroll_number(
+        gym_id, external_id, exclude_id=member.id
+    )
+    if duplicate is not None:
+        if duplicate.deleted_at is not None:
+            # V4-M21: the ID-101 class — a deleted member WITH
+            # device_enroll_number set. The old code raised here and the
+            # ID could never be reused without a manual cleanup. The
+            # explicit owner link is the decision to reuse it: free the
+            # deleted holder's enroll + mappings in one step and proceed.
+            # (Terminal fingerprint purge is still the owner's job —
+            # see clear_deleted_enroll_holder.)
+            clear_deleted_enroll_holder(gym_id, external_id, exclude_id=member.id)
+        else:
+            raise ValueError(
+                f"Enroll number {external_id} is already linked to {duplicate.full_name}."
+            )
 
-    mapping = RRRIdentityMapping.query.filter_by(gym_id=gym_id, external_id=external_id).first()
+    # V4-M6: canonical-aware mapping upsert — a stored pre-fix mapping
+    # "042" for this ID must be reused, not duplicated by a second "42"
+    # row (the raw-string unique constraint would not fire).
+    mapping = find_confirmed_mapping(gym_id, external_id)
+    if mapping is None:
+        mapping = RRRIdentityMapping.query.filter_by(gym_id=gym_id, external_id=external_id).first()
+    if mapping is None:
+        for row in RRRIdentityMapping.query.filter_by(gym_id=gym_id).all():
+            if _canonical_or_raw(row.external_id) == external_id:
+                mapping = row
+                break
     if mapping is None:
         mapping = RRRIdentityMapping(
             gym_id=gym_id, external_id=external_id, member_id=member.id,
@@ -422,6 +499,13 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     from app.services.bridge_service import invalidate_adms_enroll_index
 
     invalidate_adms_enroll_index(gym_id)
+    # V4-M3: the enroll just changed hands — cancel any queued/delivered
+    # commands for this ID that were intended for a different member, so a
+    # stale manual block for the previous holder cannot serve against the
+    # new holder (the active-skip link paths queue nothing to displace it).
+    from app.services.bridge_service import displace_stale_enroll_commands
+
+    displace_stale_enroll_commands(gym_id, external_id, new_member_id=member.id)
     # Backfill unmapped punches for this ID — including rows stored
     # before the H7 ingest canonicalization under a non-canonical form
     # ("042" vs "42"), which an exact-match query would never replay.

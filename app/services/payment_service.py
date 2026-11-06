@@ -6,7 +6,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 
 from app.extensions import db
-from app.models import Member, PaymentVerification, RenewalHistory
+from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
@@ -77,19 +77,58 @@ def active_scheduled_renewals(
     return live
 
 
+def canonical_payment_reference(reference: str | None) -> str | None:
+    """Canonical UTR form (V4-M19): strip, upper-case, drop ALL internal
+    whitespace (``" utr 123 "`` -> ``"UTR123"``).
+
+    Every write path stores the canonical form, so the existing raw
+    partial unique index ``uq_payments_gym_reference_verified`` is
+    already a canonical backstop for new rows. The lookup below
+    additionally compares canonically in SQL so legacy rows stored
+    pre-fix (mixed case / spaced) are still caught.
+    """
+    if reference is None:
+        return None
+    canonical = "".join(str(reference).split()).upper()
+    return canonical or None
+
+
+def _reference_norm_expr():
+    """SQL expression for the canonical form of the stored reference.
+
+    Only spaces are stripped in SQL (``upper(replace(trim(reference),
+    ' ', ''))``) — tabs/newlines inside a legacy reference are not
+    reachable here, but every write path canonicalises in Python
+    first, so new rows never carry them. Both Postgres and SQLite
+    provide upper/replace/trim.
+    """
+    from sqlalchemy import func as _func
+
+    return _func.upper(_func.replace(_func.trim(PaymentVerification.reference), " ", ""))
+
+
 def verified_payment_with_reference(gym_id: int, reference: str):
     """Return the verified payment in this gym carrying *reference* (M9).
 
     A UTR pasted twice must not double-count collections: the creation
     paths reject a second verified payment with the same reference.
     Returns None when the reference is empty or unused.
+
+    V4-M19: the comparison is canonical — ``"UTR123"``, ``"utr123"``
+    and ``"UTR 123"`` are the same reference at every layer.
     """
-    reference = (reference or "").strip()
-    if not reference:
+    canonical = canonical_payment_reference(reference)
+    if not canonical:
         return None
-    return PaymentVerification.query.filter_by(
-        gym_id=gym_id, reference=reference, status="verified"
-    ).first()
+    return (
+        PaymentVerification.query.filter(
+            PaymentVerification.gym_id == gym_id,
+            PaymentVerification.status == "verified",
+            _reference_norm_expr() == canonical,
+        )
+        .order_by(PaymentVerification.id.asc())
+        .first()
+    )
 
 
 def _lock_payment(payment: PaymentVerification) -> PaymentVerification:
@@ -131,7 +170,9 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     # could otherwise both verify and double-count collections. The
     # partial unique index (uq_payments_gym_reference_verified) is the
     # backstop for a race between two concurrent verifies.
-    _reference = (locked_payment.reference or "").strip()
+    # V4-M19: canonicalised — a pending "utr123" clashes with a
+    # verified "UTR123" (or "UTR 123").
+    _reference = canonical_payment_reference(locked_payment.reference)
     if _reference:
         _clash = verified_payment_with_reference(locked_payment.gym_id, _reference)
         if _clash is not None and _clash.id != locked_payment.id:
@@ -206,6 +247,19 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
             member.plan_id = locked_payment.plan_id
         queue_membership_command(member)
 
+    # V4-M13: snapshot the plan duration in force NOW, before the
+    # renewal row is written — the oversized check must compare
+    # against this, not the plan's live duration after a later edit.
+    # No plan: the applied span itself (never flags as oversized).
+    _snapshot_plan = (
+        db.session.get(MembershipPlan, target_plan_id)
+        if target_plan_id is not None
+        else None
+    )
+    _snapshot_duration = (
+        _snapshot_plan.duration_days if _snapshot_plan is not None else renewal_days
+    )
+
     renewal = RenewalHistory(
         gym_id=locked_payment.gym_id,
         member_id=member.id,
@@ -216,6 +270,7 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         previous_end=previous_end,
         previous_plan_id=previous_plan_id,
         previous_price=previous_price,
+        duration_days=_snapshot_duration,
         new_start=new_start,
         new_end=new_end,
         standard_price=locked_payment.standard_price,
@@ -317,8 +372,12 @@ def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None
     if payment.status == "cancelled":
         raise ValueError("Payment is already cancelled.")
     payment.status = "rejected"
-    payment.verified_by_id = verified_by_id
-    payment.verified_at = utcnow()
+    # V4-L35: the verification audit trail is immutable — a rejected
+    # payment was never verified, so verified_at/verified_by_id must
+    # stay untouched (NULL here). The rejection records its own time
+    # and actor, same pattern as the V3-L2 refund fix.
+    payment.rejected_at = utcnow()
+    payment.rejected_by_id = verified_by_id
     invalidate_dashboard_cache(payment.gym_id)
 
 
@@ -347,14 +406,24 @@ def _revert_renewal(member: Member, renewal: RenewalHistory) -> None:
             return
         # A creation row records the pre-signup state: there was no
         # membership before it, so the refunded member is expired —
-        # not a 1-day "active" stub with the door open. Legacy
-        # creation rows (previous_start NULL) are detected the same
-        # way; a genuine first renewal of an imported member carries
-        # a previous_start that differs from new_start, so it is not
-        # mistaken for a creation row.
-        if renewal.previous_end is not None and renewal.previous_end == renewal.new_start and (
-            renewal.previous_start is None or renewal.previous_start == renewal.new_start
-        ):
+        # not a 1-day "active" stub with the door open.
+        # V4-L15: branch on the explicit ``is_creation`` flag first
+        # (set at write time by create_member); the
+        # previous_end == new_start heuristic is only the fallback
+        # for legacy rows that predate the flag. A genuine first
+        # renewal of an imported member that happens to satisfy the
+        # heuristic must not be mistaken for a signup — unless its
+        # previous_start also equals new_start (the create_member
+        # shape), it reverts to the pre-renewal dates instead.
+        _is_creation = bool(getattr(renewal, "is_creation", False)) or (
+            renewal.previous_end is not None
+            and renewal.previous_end == renewal.new_start
+            and (
+                renewal.previous_start is None
+                or renewal.previous_start == renewal.new_start
+            )
+        )
+        if _is_creation:
             member.status = "expired"
             return
         if renewal.previous_end:
@@ -468,9 +537,12 @@ def cancel_payment(payment: PaymentVerification, *, cancelled_by_id: int | None 
     if payment.status == "rejected":
         raise ValueError("Payment is already rejected.")
     payment.status = "cancelled"
+    # V4-L35: same as reject — a cancelled payment was never verified,
+    # so verified_at/verified_by_id stay untouched. The cancellation
+    # records its own time and actor.
     if cancelled_by_id:
-        payment.verified_by_id = cancelled_by_id
-    payment.verified_at = utcnow()
+        payment.cancelled_by_id = cancelled_by_id
+    payment.cancelled_at = utcnow()
     invalidate_dashboard_cache(payment.gym_id)
 
 

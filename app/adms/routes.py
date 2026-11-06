@@ -248,13 +248,25 @@ def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
 
 def _attlog_lines() -> list[str]:
     # Firmware varies: data may be raw body or an application/x-www-form-urlencoded
-    # value named data. Limit the request body before splitting to bound memory use.
-    raw = request.get_data(cache=True, as_text=True)[:262144]
+    # value named data.
+    # V4-M9: the old code silently truncated the body at 256 KB, so a
+    # backlog flush (terminal offline for days) lost every punch past
+    # the cap while cdata still returned OK — the terminal never
+    # re-sent. Process the whole body instead, line by line (the caller
+    # already iterates lazily per line); log oversized bodies so a
+    # pathological upload is visible instead of silently dropped.
+    raw = request.get_data(cache=True, as_text=True)
     form_data = request.form.get("data")
     if form_data:
-        raw = form_data[:262144]
+        raw = form_data
     elif raw.startswith("data="):
         raw = unquote_plus(raw[5:])
+    if len(raw) > 262144:
+        log.warning(
+            "Oversized ATTLOG body (%d bytes, gym unknown at parse time): "
+            "processing all lines instead of truncating (V4-M9)",
+            len(raw),
+        )
     return [line.strip("\r") for line in raw.splitlines() if line.strip()]
 
 
@@ -507,16 +519,21 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
 
 def _ingest_attlog(integration: RRRIntegration) -> int:
     created = 0
+    # V4-M9: count (and log) lines skipped for malformed content instead
+    # of dropping them silently — a skipped line is a lost punch.
+    skipped = 0
     gym = db.session.get(Gym, integration.gym_id)
     gym_timezone = gym.timezone if gym is not None else "Asia/Kolkata"
     for line in _attlog_lines():
         cells = line.split("\t")
         # Standard ATTLOG: PIN, timestamp, status, verification, workcode...
         if len(cells) < 2:
+            skipped += 1
             continue
         person_id = cells[0].strip()[:120]
         punch_time = _parse_device_time(cells[1], gym_timezone)
         if not person_id or punch_time is None:
+            skipped += 1
             continue
         # H7: canonicalize the enroll number at ingest ("042" -> "42").
         # Non-numeric IDs keep their raw form (M16) — stored, never dropped.
@@ -564,6 +581,14 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
             integration.records_synced += 1
             if event.processing_status == "unmapped":
                 integration.unmapped_records += 1
+    if skipped:
+        log.warning(
+            "ATTLOG ingest skipped %d malformed line(s) for gym %s "
+            "(integration %s); those punches were not stored (V4-M9)",
+            skipped,
+            integration.gym_id,
+            integration.id,
+        )
     return created
 
 
@@ -718,8 +743,10 @@ def getrequest(path_token: str | None = None):
         adms_command_is_forbidden,
         cancel_adms_command,
         disable_must_be_cancelled,
+        disable_must_be_cancelled_including_deleted,
         enable_must_be_cancelled,
         resolve_adms_member,
+        resolve_adms_member_for_disable,
     )
 
     delivered = RRRAdmsCommand.query.filter_by(
@@ -775,8 +802,13 @@ def getrequest(path_token: str | None = None):
         # otherwise active member. Automatic membership blocks remain
         # constrained to paused/expired members.
         if candidate.action in ADMS_DISABLE_ACTIONS and candidate.requested_by_id is None:
-            member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
-            if disable_must_be_cancelled(member):
+            # V4-H2: the delete-time block must serve — resolve including
+            # soft-deleted holders and treat deleted as blockable (no
+            # active membership exists to protect). Punches, enables and
+            # tests keep resolve_adms_member's deleted filter. The
+            # owner-override branch below (B-H1) is untouched.
+            member = resolve_adms_member_for_disable(integration.gym_id, candidate.test_enroll_number)
+            if disable_must_be_cancelled_including_deleted(member):
                 cancel_adms_command(candidate)
                 continue
         elif candidate.action in ADMS_DISABLE_ACTIONS:

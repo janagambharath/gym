@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, true
+from sqlalchemy import and_, func, or_, true
 
 from app.extensions import db
 from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
@@ -26,6 +26,11 @@ def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     - Members expiring within 7 days
     - Members already expired (within last 30 days)
     - Members with no recent activity (inactive)
+
+    V4-L4: paused (frozen) members are excluded from BOTH branches —
+    a freeze is not a churned renewal, so counting a paused member
+    as at-risk the day they expire (while contributing ₹0 while
+    expiring) inflated the headline and the recovery-rate denominator.
 
     Returns a forecast breakdown and total, not collected cash.
     """
@@ -54,7 +59,10 @@ def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         .one()
     )
 
-    # Recently expired (last 30 days)
+    # Recently expired (last 30 days). V4-L4: paused members are
+    # excluded here too (the expiring branch already requires
+    # status == "active"); other statuses (expired/inactive) count
+    # exactly as before.
     expired_risk = (
         db.session.query(
             func.count(Member.id).label("count"),
@@ -65,6 +73,7 @@ def revenue_at_risk(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         .filter(
             Member.gym_id == gym_id,
             Member.deleted_at.is_(None),
+            Member.status != "paused",
             Member.membership_end < today,
             Member.membership_end >= expired_cutoff,
         )
@@ -207,6 +216,19 @@ def _row_is_creation(row, first_ids: set) -> bool:
        that), while a genuine first renewal of an imported member is
        backed by a payment dated after the member's start. When the
        payment dates are absent (legacy/test rows) the heuristic stands.
+    3. (V4-L5) The create_member-era shape: create_member also writes
+       ``previous_start == new_start`` (the pre-signup state). A
+       genuine first renewal carries ``previous_start`` = the member's
+       old start, which differs from ``new_start`` — so when
+       ``previous_start`` is present and differs, the row is a renewal
+       even if ``paid_on == membership_start`` (the same-day edge: an
+       imported member created and renewed today). ``previous_start``
+       is NULL on rows that predate the snapshot column; for those the
+       paid_on test alone still applies.
+       Residual: a member imported today whose stored start already
+       equals the renewal start (a one-day prior period) is still
+       shaped exactly like a signup and cannot be told apart from
+       the stored fields alone.
     """
     if getattr(row, "is_creation", False):
         return True
@@ -215,6 +237,9 @@ def _row_is_creation(row, first_ids: set) -> bool:
         or row.previous_end is None
         or row.previous_end != row.new_start
     ):
+        return False
+    previous_start = getattr(row, "previous_start", None)
+    if previous_start is not None and previous_start != row.new_start:
         return False
     paid_on = getattr(row, "paid_on", None)
     member_start = getattr(row, "membership_start", None)
@@ -228,32 +253,53 @@ def _creation_row_ids(gym_id: int) -> set:
 
     Used by the aggregate queries in ``revenue_recovered()``, which
     cannot apply the row-level ``_exclude_creation_rows`` filter.
+
+    V4-L2: the exclusion is computed in SQL — a first-row-per-member
+    subquery plus the flag/heuristic/``paid_on`` refinement — instead
+    of materialising the gym's entire ledger into Python on every
+    dashboard call. The SQL predicate mirrors ``_row_is_creation``
+    exactly: flag first, else first row + ``previous_end == new_start``
+    + (``previous_start`` NULL or ``== new_start``) + (``paid_on``
+    NULL or ``membership_start`` NULL or ``paid_on == membership_start``).
     """
+    first_ids_sq = (
+        db.session.query(func.min(RenewalHistory.id).label("first_id"))
+        .filter(RenewalHistory.gym_id == gym_id)
+        .group_by(RenewalHistory.member_id)
+        .subquery()
+    )
     rows = (
-        db.session.query(
-            RenewalHistory.id,
-            RenewalHistory.member_id,
-            RenewalHistory.previous_end,
-            RenewalHistory.new_start,
-            RenewalHistory.is_creation,
-            PaymentVerification.paid_on,
-            Member.membership_start,
-        )
+        db.session.query(RenewalHistory.id)
         .outerjoin(
             PaymentVerification,
             PaymentVerification.id == RenewalHistory.payment_verification_id,
         )
         .join(Member, Member.id == RenewalHistory.member_id)
-        .filter(RenewalHistory.gym_id == gym_id)
+        .filter(
+            RenewalHistory.gym_id == gym_id,
+            RenewalHistory.id.in_(
+                db.session.query(first_ids_sq.c.first_id)
+            ),
+            or_(
+                RenewalHistory.is_creation.is_(True),
+                and_(
+                    RenewalHistory.previous_end.isnot(None),
+                    RenewalHistory.previous_end == RenewalHistory.new_start,
+                    or_(
+                        RenewalHistory.previous_start.is_(None),
+                        RenewalHistory.previous_start == RenewalHistory.new_start,
+                    ),
+                    or_(
+                        PaymentVerification.paid_on.is_(None),
+                        Member.membership_start.is_(None),
+                        PaymentVerification.paid_on == Member.membership_start,
+                    ),
+                ),
+            ),
+        )
         .all()
     )
-    first_by_member: dict = {}
-    for row in rows:
-        prev = first_by_member.get(row.member_id)
-        if prev is None or row.id < prev.id:
-            first_by_member[row.member_id] = row
-    first_ids = {row.id for row in first_by_member.values()}
-    return {row.id for row in first_by_member.values() if _row_is_creation(row, first_ids)}
+    return {row.id for row in rows}
 
 
 def _exclude_creation_rows(gym_id: int, rows: list) -> list:
@@ -306,6 +352,17 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     ``revenue_at_risk`` is the canonical at-risk total (the same
     number the dashboard and reports return); the rate's denominator is
     exposed separately as ``recovery_denominator``.
+
+    V4-M2: the denominator is outstanding risk + the expected value
+    of PAID renewals only. Direct renewals used to sit in the
+    denominator as unrecovered risk, so a gym that renewed its whole
+    cohort directly scored 0% despite 100% renewal. The rate is
+    labelled payment-backed-only (``recovery_rate_basis``); direct
+    expected value is still exposed in the breakdown so the excluded
+    amount stays visible. Degenerate case: with no outstanding risk
+    and no paid renewals the denominator is 0 and the rate is 0.0
+    by convention — a direct-only gym has no payment-backed recovery
+    to measure, it is not a 0% failure.
     """
     today = today_for_gym(gym_timezone)
     cohort_start = today - timedelta(days=30)
@@ -320,6 +377,7 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
                 "expected_value"
             ),
             RenewalHistory.campaign_id,
+            RenewalHistory.previous_start,
             RenewalHistory.previous_end,
             RenewalHistory.new_start,
             RenewalHistory.payment_verification_id,
@@ -347,8 +405,12 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     direct_rows = [row for row in recovery_rows if row.payment_verification_id is None]
     campaign_rows = [row for row in recovery_rows if row.campaign_id is not None]
     paid_amount = sum((Decimal(str(row.amount or 0)) for row in paid_rows), Decimal("0.00"))
+    # V4-M2: denominator counts PAID expected value only — direct
+    # renewals are renewals, not unrecovered risk.
+    paid_expected = sum((Decimal(str(row.expected_value or 0)) for row in paid_rows), Decimal("0.00"))
+    direct_expected = cohort_expected - paid_expected
 
-    risk_total = Decimal(risk["total"]) + cohort_expected
+    risk_total = Decimal(risk["total"]) + paid_expected
 
     if risk_total > 0:
         rate = (paid_amount / risk_total * 100).quantize(Decimal("0.1"))
@@ -361,7 +423,8 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         "revenue_recovered": str(paid_amount),
         "recorded_amount": str(cohort_actual),
         "recovery_rate": str(rate),
-        "risk_breakdown": {**risk, "renewed_cohort_expected": str(cohort_expected)},
+        "recovery_rate_basis": "payment-backed only — direct renewals excluded from numerator and denominator",
+        "risk_breakdown": {**risk, "renewed_cohort_expected": str(paid_expected), "renewed_cohort_expected_all": str(cohort_expected), "direct_cohort_expected": str(direct_expected)},
         "recovered_breakdown": {
             "total_renewals": len(recovery_rows),
             "total_amount": str(cohort_actual),

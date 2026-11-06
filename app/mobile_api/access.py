@@ -109,9 +109,15 @@ def register_access_routes(bp):
                 None if summary["remote_unlock_available"]
                 else "Complete supervised Direct ADMS setup and reconnect the terminal before remote unlock."
             )
-            summary["device_online"] = bool(summary["adms_online"])
-            summary["device_name"] = summary["adms_device_name"]
-            summary["device_serial"] = adms.device_serial
+            # V4-L11: only let ADMS override the bridge's device state
+            # when the terminal is actually online. A disconnected ADMS
+            # integration used to force device_online=False (and its
+            # name) over a live bridge. When ADMS is offline, the bridge
+            # heartbeat set above stands.
+            if summary["adms_online"]:
+                summary["device_online"] = True
+                summary["device_name"] = summary["adms_device_name"]
+                summary["device_serial"] = adms.device_serial
             # Hide stale legacy bridge queues from the ADMS-only access UI.
             summary["pending_commands"] = RRRAdmsCommand.query.filter(
                 RRRAdmsCommand.integration_id == adms.id,

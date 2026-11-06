@@ -5,7 +5,7 @@ import secrets
 import threading
 import time
 import zoneinfo
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import current_app
 from sqlalchemy import and_, or_, select
@@ -241,9 +241,9 @@ def resolve_bridge_command_member(command: BridgeCommand) -> Member | None:
         # Manual commands may carry only an enroll number; resolve it so the
         # command is judged on the member's real state.  Unresolvable stays
         # unproven and is cancelled below (fail-safe).
-        member = Member.query.filter_by(
-            gym_id=command.gym_id, device_enroll_number=command.enroll_number
-        ).first()
+        # V4-L6: canonical-aware lookup (a stored "042" must match a
+        # canonical "42" command), matching resolve_adms_member.
+        member = find_member_by_enroll_number(command.gym_id, command.enroll_number)
     return member
 
 
@@ -255,11 +255,52 @@ def bridge_command_must_be_cancelled(command: BridgeCommand) -> bool:
     return disable_must_be_cancelled(resolve_bridge_command_member(command))
 
 
+def _set_valid_date_window_is_past(command: BridgeCommand) -> bool:
+    """True when a ``set_valid_date`` command's window already ended (V4-M4).
+
+    A past validity window is a door-CLOSING intent, not an enable: the
+    lease guard must judge it as a disable, or an owner explicitly ending
+    validity for an expired member gets cancelled as a "stale enable" and
+    the terminal keeps the previous future validity in force. A missing or
+    unparseable ``valid_to`` is not a past window (judged as an enable,
+    as before).
+    """
+
+    if command.command_type != "set_valid_date":
+        return False
+    valid_to = (command.valid_to or "").strip()
+    if not valid_to:
+        return False
+    try:
+        valid_to_date = date.fromisoformat(valid_to)
+    except ValueError:
+        return False
+    member = resolve_bridge_command_member(command)
+    gym_timezone = "Asia/Kolkata"
+    if member is not None and member.gym is not None and member.gym.timezone:
+        gym_timezone = member.gym.timezone
+    return valid_to_date < today_for_gym(gym_timezone)
+
+
+def bridge_set_valid_date_is_disable(command: BridgeCommand) -> bool:
+    """Whether a ``set_valid_date`` command closes the door (V4-M4)."""
+
+    return _set_valid_date_window_is_past(command)
+
+
 def bridge_enable_must_be_cancelled(command: BridgeCommand) -> bool:
     """Whether a bridge command is an enable for a non-enableable member."""
 
     if command.command_type not in BRIDGE_ENABLE_COMMAND_TYPES:
         return False
+    if _set_valid_date_window_is_past(command):
+        # Past window = disable intent: cancel unless the member is
+        # blockable. Deleted members count as blockable here (V4-H2) — a
+        # set_valid_date that ends validity is the delete-time block's
+        # bridge twin.
+        return disable_must_be_cancelled_including_deleted(
+            resolve_bridge_command_member(command)
+        )
     return enable_must_be_cancelled(resolve_bridge_command_member(command))
 
 
@@ -343,6 +384,110 @@ def _adms_enroll_index(gym_id: int) -> dict[str, int]:
     return index
 
 
+def find_confirmed_mapping(gym_id: int, external_id: str):
+    """Canonical-aware confirmed-mapping lookup (V4-M6).
+
+    Mappings created pre-fix can store a zero-padded ``external_id``
+    ("042") while every caller passes the canonical form ("42"), so an
+    exact-match lookup misses the row and a second mapping/owner can be
+    created for the same canonical ID. Exact match first (indexed fast
+    path), then a canonical-compare scan of the gym's confirmed rows.
+    Returns the mapping or ``None``.
+    """
+    from app.services.rrr_service import _canonical_or_raw
+
+    mapping = (
+        RRRIdentityMapping.query.filter_by(
+            gym_id=gym_id, external_id=external_id, status="confirmed"
+        )
+        .order_by(RRRIdentityMapping.id.desc())
+        .first()
+    )
+    if mapping is not None:
+        return mapping
+    try:
+        canonical = canonical_enroll_number(external_id)
+    except ValueError:
+        return None
+    for row in (
+        RRRIdentityMapping.query.filter_by(gym_id=gym_id, status="confirmed")
+        .order_by(RRRIdentityMapping.id.desc())
+        .all()
+    ):
+        if _canonical_or_raw(row.external_id) == canonical:
+            return row
+    return None
+
+
+def clear_deleted_enroll_holder(
+    gym_id: int, enroll_number: str, exclude_id: int | None = None
+):
+    """Free a terminal ID held only by a soft-deleted member (V4-M21).
+
+    The real linked-then-deleted case: the deleted member keeps
+    ``device_enroll_number`` (by design, as a fingerprint tombstone)
+    and may still hold a confirmed identity mapping, so Guard 2 fires
+    before Guard 3 can ever free the ID and the ID stays bricked for
+    every live member. An explicit owner link/enroll of that ID to a
+    live member is the audited decision to reuse it: clear the deleted
+    holder's enroll number and delete its mappings in one step, flush
+    so the unique constraint sees the freed value, and return the
+    freed holder (``None`` when the holder is live or absent).
+
+    Caveat: clearing the enroll number does NOT purge the old
+    fingerprint from the terminal itself — the owner must still
+    delete/re-enrol the user on the terminal to retire the old
+    template. This only frees the server-side identity.
+    """
+    holder = find_member_by_enroll_number(gym_id, enroll_number, exclude_id=exclude_id)
+    if holder is None or holder.deleted_at is None:
+        return None
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "V4-M21: freeing enroll %s from deleted member %s (gym %s) for reuse",
+        enroll_number,
+        holder.id,
+        gym_id,
+    )
+    holder.device_enroll_number = None
+    for row in RRRIdentityMapping.query.filter_by(
+        gym_id=gym_id, member_id=holder.id
+    ).all():
+        db.session.delete(row)
+    invalidate_adms_enroll_index(gym_id)
+    db.session.flush()
+    return holder
+
+
+def _other_holder_by_canonical(
+    gym_id: int, canonical: str, exclude_id: int | None
+) -> Member | None:
+    """Scan for another holder of *canonical* besides *exclude_id* (V4-L9).
+
+    The cached index maps one canonical ID to its first (lowest-id)
+    holder only, so when that holder is the excluded member the lookup
+    used to return ``None`` even though a second member holds the same
+    canonical ID (e.g. stored "042" vs "42"). Rare path (guard checks
+    only) — a full gym scan is acceptable here.
+    """
+    rows = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.device_enroll_number.isnot(None))
+        .with_entities(Member.id, Member.device_enroll_number)
+        .all()
+    )
+    for member_id, enroll in rows:
+        if member_id == exclude_id:
+            continue
+        try:
+            if canonical_enroll_number(enroll) == canonical:
+                return db.session.get(Member, member_id)
+        except ValueError:
+            continue
+    return None
+
+
 def find_member_by_enroll_number(
     gym_id: int, enroll_number: str | None, exclude_id: int | None = None
 ) -> Member | None:
@@ -379,14 +524,30 @@ def find_member_by_enroll_number(
     ).first()
     if member is not None and member.id != exclude_id:
         return member
+    # V4-L9: the exact holder may be the excluded member while a second
+    # member holds the same canonical ID under a padded spelling — keep
+    # scanning instead of returning None on the excluded id.
+    if member is not None and member.id == exclude_id:
+        other = _other_holder_by_canonical(gym_id, canonical, exclude_id)
+        if other is not None:
+            return other
     # Legacy fallback: a stored enroll number may carry leading zeros
     # ("042") from before canonicalization. The index maps canonical
     # forms (first holder wins); verify against the live row, rebuild
     # once on a stale entry, then give up.
     for _attempt in range(2):
         member_id = _adms_enroll_index(gym_id).get(canonical)
-        if member_id is None or member_id == exclude_id:
-            return None
+        if member_id is None:
+            # V4-L9: a cached index miss is not definitive — the index
+            # is per-process with a 120 s TTL, so a holder created by
+            # another worker (or after the index was built) is missing
+            # from it. Fall back to a ground-truth DB scan before
+            # concluding the ID has no holder.
+            return _other_holder_by_canonical(gym_id, canonical, exclude_id)
+        if member_id == exclude_id:
+            # V4-L9: the indexed first holder is excluded — a second
+            # holder may still exist under the same canonical ID.
+            return _other_holder_by_canonical(gym_id, canonical, exclude_id)
         candidate = db.session.get(Member, member_id)
         if (
             candidate is not None
@@ -423,13 +584,7 @@ def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None
     except ValueError:
         return None
 
-    mapping = (
-        RRRIdentityMapping.query.filter_by(
-            gym_id=gym_id, external_id=canonical, status="confirmed"
-        )
-        .order_by(RRRIdentityMapping.id.desc())
-        .first()
-    )
+    mapping = find_confirmed_mapping(gym_id, canonical)
     if mapping is not None and mapping.member_id is not None:
         member = db.session.get(Member, mapping.member_id)
         if (
@@ -459,6 +614,235 @@ def cancel_adms_command(
     command.result_code = marker
     command.result_message = error
     command.acknowledged_at = utcnow()
+
+
+# Marker for a command cancelled because its terminal ID changed hands
+# (V4-M3): superseded, not stale-state. The serve-time guards must not
+# treat it as evidence the member was unblockable.
+STALE_COMMAND_SUPERSEDED_MARKER = "CANCELLED_SUPERSEDED"
+
+
+def member_is_proven_blockable_including_deleted(member: Member | None) -> bool:
+    """Disable-branch variant of :func:`member_is_proven_blockable` (V4-H2).
+
+    A soft-deleted member is blockable: no active membership exists to
+    protect, so the delete-time block may serve. Every other state uses
+    the standard fail-safe predicate. Only the disable branches (ADMS
+    getrequest, bridge lease) use this — enables, punches and tests keep
+    the strict predicate.
+    """
+
+    if member is not None and member.deleted_at is not None:
+        return True
+    return member_is_proven_blockable(member)
+
+
+def disable_must_be_cancelled_including_deleted(member: Member | None) -> bool:
+    """Disable-branch guard: cancel unless blockable, deleted included."""
+
+    return not member_is_proven_blockable_including_deleted(member)
+
+
+def resolve_adms_member_for_disable(gym_id: int, enroll_number: str | None) -> Member | None:
+    """Disable-branch resolver (V4-H2): like :func:`resolve_adms_member`,
+    but a soft-deleted holder still resolves, so its delete-time block can
+    serve. A live holder always wins: if the enroll resolves to a live
+    member, that member is returned and the normal guard judges them; only
+    when no live holder exists is a deleted holder returned. Punches,
+    enables and tests must keep using :func:`resolve_adms_member`.
+    """
+
+    member = resolve_adms_member(gym_id, enroll_number)
+    if member is not None:
+        return member
+    if not enroll_number:
+        return None
+    try:
+        canonical = canonical_enroll_number(enroll_number)
+    except ValueError:
+        return None
+    deleted_candidate: Member | None = None
+    mapping = (
+        RRRIdentityMapping.query.filter_by(
+            gym_id=gym_id, external_id=canonical, status="confirmed"
+        )
+        .order_by(RRRIdentityMapping.id.desc())
+        .first()
+    )
+    if mapping is not None and mapping.member_id is not None:
+        mapped = db.session.get(Member, mapping.member_id)
+        if (
+            mapped is not None
+            and mapped.gym_id == gym_id
+            and mapped.deleted_at is not None
+        ):
+            deleted_candidate = mapped
+    candidate = find_member_by_enroll_number(gym_id, canonical)
+    if candidate is not None and candidate.deleted_at is None:
+        return candidate
+    if candidate is not None and candidate.deleted_at is not None:
+        if deleted_candidate is None:
+            deleted_candidate = candidate
+    if deleted_candidate is None:
+        return None
+    # The enroll branch returns only the first holder: a live second holder
+    # (dual-holder legacy rows, V4-L9 class) must win over a deleted first
+    # holder, or the block would land on the new holder.
+    live_rows = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(
+            Member.device_enroll_number.isnot(None),
+            Member.deleted_at.is_(None),
+        )
+        .with_entities(Member.id, Member.device_enroll_number)
+        .all()
+    )
+    for member_id, enroll in live_rows:
+        try:
+            if canonical_enroll_number(enroll) == canonical:
+                return db.session.get(Member, member_id)
+        except ValueError:
+            continue
+    return deleted_candidate
+
+
+def bridge_disable_must_be_cancelled_at_lease(command: BridgeCommand) -> bool:
+    """Lease-time disable guard (V4-H2): like
+    :func:`bridge_command_must_be_cancelled`, but a soft-deleted member is
+    blockable — the delete-time block must be able to serve. Only the
+    lease path uses this; queue/retry/display paths keep the strict guard.
+    """
+
+    if command.command_type not in BRIDGE_DISABLE_COMMAND_TYPES:
+        return False
+    member = resolve_bridge_command_member(command)
+    return disable_must_be_cancelled_including_deleted(member)
+
+
+def bridge_command_enroll_holder_mismatch(command: BridgeCommand) -> bool:
+    """True when a bridge command's enroll number now belongs to a different
+    live member than the command's ``member_id`` (V4-M3).
+
+    The bridge executes by enroll number, so a command queued for a
+    previous holder must never execute against the new holder. A deleted
+    holder is not a mismatch (it cannot be harmed, and the H2 lease guard
+    judges the command's own member). Commands without a member are not
+    member-targeted and are left to their own guards.
+    """
+
+    if command.member_id is None or not command.enroll_number:
+        return False
+    holder = find_member_by_enroll_number(command.gym_id, command.enroll_number)
+    if holder is None or holder.id == command.member_id:
+        return False
+    if holder.deleted_at is not None:
+        return False
+    return True
+
+
+# Queue-time audit actions that record which member an ADMS command was
+# queued for (V4-L8 / V4-M3). The audit row's metadata carries member_id.
+_ADMS_QUEUE_AUDIT_ACTIONS = frozenset({
+    "adms_membership_block_queued",
+    "adms_membership_unblock_queued",
+    "adms_manual_block_queued",
+    "adms_manual_unblock_queued",
+})
+
+
+def adms_command_intended_member_id(command: RRRAdmsCommand) -> int | None:
+    """Member id an ADMS command was queued for, from its queue-time audit
+    row (V4-L8 / V4-M3).
+
+    Returns ``None`` when no queue audit survives (legacy rows, or audit
+    retention purged it). Callers treat unknown intent as NOT matching, so
+    a recycled ID never inherits the previous holder's acked block — a
+    redundant Grp=100 block is idempotent, a missing one is not.
+    """
+
+    from app.models.audit_log import AuditLog
+
+    row = (
+        AuditLog.query.filter_by(
+            resource_type="rrr_adms_command", resource_id=str(command.id)
+        )
+        .filter(AuditLog.action.in_(_ADMS_QUEUE_AUDIT_ACTIONS))
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    member_id = (row.metadata_json or {}).get("member_id")
+    if isinstance(member_id, bool):
+        return None
+    if isinstance(member_id, int):
+        return member_id
+    try:
+        return int(member_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def displace_stale_enroll_commands(
+    gym_id: int, enroll_number: str | None, *, new_member_id: int
+) -> int:
+    """Cancel commands for *enroll_number* intended for a previous holder
+    (V4-M3).
+
+    Called when a terminal ID is (re)linked to a new holder — remap,
+    auto-link, enroll. A stale queued manual block for the previous holder
+    survives the recycle on the active-skip link paths (nothing is queued
+    to displace it), and the ADMS owner branch serves a block for any
+    resolved member. Commands intended for the NEW holder are kept, as are
+    commands with unknown intent (serve-time guards judge automatic
+    blocks; owner manual blocks are B-H1's domain). Bridge leased
+    commands are left to the lease-time holder-mismatch check.
+
+    Returns the number of commands cancelled. Does not commit.
+    """
+
+    try:
+        canonical = canonical_enroll_number(enroll_number)
+    except ValueError:
+        canonical = str(enroll_number or "").strip()
+    if not canonical:
+        return 0
+    cancelled = 0
+    # ADMS: queued + delivered (getrequest re-serves delivered rows until
+    # acked inside the window, so cancelling stops the re-send).
+    adms_rows = RRRAdmsCommand.query.filter(
+        RRRAdmsCommand.gym_id == gym_id,
+        RRRAdmsCommand.test_enroll_number == canonical,
+        RRRAdmsCommand.status.in_(["queued", "delivered"]),
+        RRRAdmsCommand.action.in_(["block", "unblock", "create_user"]),
+    ).all()
+    for row in adms_rows:
+        intended = adms_command_intended_member_id(row)
+        if intended is not None and intended != new_member_id:
+            cancel_adms_command(
+                row,
+                marker=STALE_COMMAND_SUPERSEDED_MARKER,
+                error="Superseded: terminal ID remapped to another member; queue the access change again if still needed.",
+            )
+            cancelled += 1
+    # Bridge: pending commands carry member_id directly.
+    bridge_rows = BridgeCommand.query.filter(
+        BridgeCommand.gym_id == gym_id,
+        BridgeCommand.enroll_number == canonical,
+        BridgeCommand.status == "pending",
+        BridgeCommand.member_id.isnot(None),
+        BridgeCommand.member_id != new_member_id,
+    ).all()
+    for row in bridge_rows:
+        cancel_bridge_command(
+            row,
+            marker=STALE_COMMAND_SUPERSEDED_MARKER,
+            # BridgeCommand has no result_code column — the marker only
+            # survives inside last_error, so it is embedded in the text.
+            error=f"{STALE_COMMAND_SUPERSEDED_MARKER}: Terminal ID remapped to another member; queue the access change again if still needed.",
+        )
+        cancelled += 1
+    return cancelled
 
 
 def _active_installation(gym_id: int) -> BridgeInstallation | None:
@@ -598,6 +982,43 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                     latest.command_text = command_text
                     latest.result_code = None
                     latest.result_message = None
+                elif adms_command_intended_member_id(latest) != member.id:
+                    # V4-L8: the queued command was intended for a previous
+                    # holder of this enroll (recycled ID) — rewrite it for
+                    # this member (name + audit) instead of returning it
+                    # as theirs. Unknown intent rewrites too: a redundant
+                    # Grp=100 block is idempotent, a misattributed one
+                    # renames the terminal user and poisons the audit.
+                    latest.command_text = command_text
+                    latest.result_code = None
+                    latest.result_message = None
+                    latest.requested_by_id = None
+                    audit(
+                        action=f"adms_membership_{action}_queued",
+                        resource_type="rrr_adms_command",
+                        resource_id=latest.id,
+                        gym_id=member.gym_id,
+                        metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True,
+                                  **({"method": "essl_userinfo_group", "group": "100"}
+                                     if action == "block" else {})},
+                    )
+                elif member.deleted_at is not None and latest.requested_by_id is not None:
+                    # V4-H2: a delete-time block aliasing a queued manual
+                    # block must serve through the automatic branch — the
+                    # owner branch cancels it (deleted members never
+                    # resolve there). Demoting is safe: the member is gone,
+                    # so no owner block for a live member is lost.
+                    latest.requested_by_id = None
+                    audit(
+                        action=f"adms_membership_{action}_queued",
+                        resource_type="rrr_adms_command",
+                        resource_id=latest.id,
+                        gym_id=member.gym_id,
+                        metadata={"member_id": member.id, "enroll_number": enroll_number,
+                                  "owner_override_cleared": True,
+                                  **({"method": "essl_userinfo_group", "group": "100"}
+                                     if action == "block" else {})},
+                    )
                 return latest
             # A not-yet-delivered command can be replaced by the newest state.
             latest.action = action
@@ -626,14 +1047,38 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                         error="Legacy DELETE block was canceled; a Grp=100 update has replaced it.",
                     )
                 else:
-                    # The terminal holds it and getrequest re-sends until acked.
-                    return latest
+                    if member.deleted_at is not None and latest.requested_by_id is not None:
+                        # V4-H2: demote like the queued branch above, so
+                        # the re-send takes the automatic branch.
+                        latest.requested_by_id = None
+                        audit(
+                            action=f"adms_membership_{action}_queued",
+                            resource_type="rrr_adms_command",
+                            resource_id=latest.id,
+                            gym_id=member.gym_id,
+                            metadata={"member_id": member.id, "enroll_number": enroll_number,
+                                      "owner_override_cleared": True,
+                                      **({"method": "essl_userinfo_group", "group": "100"}
+                                         if action == "block" else {})},
+                        )
+                    if adms_command_intended_member_id(latest) == member.id:
+                        # The terminal holds it and getrequest re-sends until acked.
+                        return latest
+                    # V4-L8: delivered for a different member — fall
+                    # through and queue a fresh command for this member.
             # A different-state command is already in flight; queue the
             # follow-up.  getrequest serves older IDs first, so the terminal
             # converges on the newest state.
         elif latest.status == "acked" and latest.action == action and not force:
-            return latest
-        # "failed" (or a forced repair) always queues a fresh command below.
+            # V4-L8: an acked block for this enroll is this member's only
+            # when it was queued for them — a recycled ID must not inherit
+            # the previous holder's ack (the terminal may have been
+            # re-enabled between holders). Unknown intent re-queues: a
+            # redundant Grp=100 block is idempotent, a missing one is not.
+            if adms_command_intended_member_id(latest) == member.id:
+                return latest
+        # "failed" (or a forced repair, or an acked/delivered command for a
+        # different member) always queues a fresh command below.
 
     command = RRRAdmsCommand(
         gym_id=member.gym_id,
@@ -1147,11 +1592,25 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
     )
     leased: list[BridgeCommand] = []
     for command in ready:
+        # V4-M3: a command queued for a member who no longer holds this
+        # enroll number must never execute against the new holder — the
+        # bridge executes by enroll number, so judge the CURRENT holder.
+        if bridge_command_enroll_holder_mismatch(command):
+            cancel_bridge_command(
+                command,
+                marker=STALE_COMMAND_SUPERSEDED_MARKER,
+                # BridgeCommand has no result_code column — the marker only
+                # survives inside last_error, so it is embedded in the text.
+                error=f"{STALE_COMMAND_SUPERSEDED_MARKER}: Terminal ID now belongs to a different member; queue the access change again if still needed.",
+            )
+            continue
         # Final guard at the point of no return (fail-safe): hand a disable
         # to the bridge only for a proven-blockable member — paused, or
         # expired with a past end date.  Everything else (active on any
         # date, future/NULL end, missing member) is cancelled here.
-        if bridge_command_must_be_cancelled(command):
+        # V4-H2: a soft-deleted member is blockable — no active membership
+        # exists to protect, and the delete-time block must be servable.
+        if bridge_disable_must_be_cancelled_at_lease(command):
             cancel_bridge_command(command)
             continue
         # Mirror guard for enables (H8): hand an enable to the bridge only
@@ -1159,9 +1618,14 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
         # or in the future.  A stale enable for a paused/expired member
         # must never re-open the door.
         if bridge_enable_must_be_cancelled(command):
-            cancel_bridge_command(
-                command, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
-            )
+            # V4-M4: a past-window set_valid_date was judged as a disable,
+            # so its cancel is a stale DISABLE, not a stale enable.
+            if bridge_set_valid_date_is_disable(command):
+                cancel_bridge_command(command)
+            else:
+                cancel_bridge_command(
+                    command, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
+                )
             continue
         command.lease(secrets.token_urlsafe(32), now + timedelta(seconds=lease_seconds))
         leased.append(command)

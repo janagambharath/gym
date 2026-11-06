@@ -24,7 +24,7 @@ from app.services.audit_service import audit
 from app.services.bridge_service import door_blocked_state, queue_membership_command
 from app.services.document_scan_service import DocumentScanService
 from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
-from app.services.payment_service import PAYMENT_METHODS
+from app.services.payment_service import PAYMENT_METHODS, canonical_payment_reference, verified_payment_with_reference
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.mobile_member_import_service import validate_csv
 from app.utils.helpers import normalize_phone_e164
@@ -517,6 +517,24 @@ def register_members_routes(bp):
             raw_amount = data.get("amount")
             is_paid = data.get("paid", True)
             if raw_amount is not None and str(raw_amount).strip() != "" and is_paid:
+                # V4-M19: canonicalise the UTR before anything is
+                # written, and run the duplicate-reference check
+                # BEFORE inserting the initial payment — the other
+                # create paths check, this one never did, so a
+                # case-variant duplicate sailed through and
+                # double-counted collections.
+                _initial_ref = canonical_payment_reference(
+                    data.get("payment_reference") or data.get("reference") or ""
+                )
+                if _initial_ref is not None and verified_payment_with_reference(
+                    g.gym_id, _initial_ref
+                ) is not None:
+                    db.session.rollback()
+                    return error_response(
+                        "DUPLICATE_REFERENCE",
+                        "A verified payment with this reference already exists for this gym.",
+                        409,
+                    )
                 try:
                     amt = Decimal(str(raw_amount).strip())
                     if amt >= 0:
@@ -550,7 +568,7 @@ def register_members_routes(bp):
                             paid_on=membership_start,
                             method=method,
                             channel="offline",
-                            reference=(data.get("payment_reference") or data.get("reference") or "").strip() or None,
+                            reference=_initial_ref,
                             status="verified",
                             verified_by_id=g.current_user.id,
                             verified_at=utcnow(),
@@ -575,6 +593,12 @@ def register_members_routes(bp):
                             previous_end=membership_start,
                             previous_plan_id=None,
                             previous_price=None,
+                            # V4-M13: snapshot the plan duration in
+                            # force at signup (creation rows are
+                            # oversized-checked too).
+                            duration_days=(
+                                plan.duration_days if plan else renewal_days
+                            ),
                             new_start=membership_start,
                             new_end=membership_end,
                             # V3-M5: mark the signup row explicitly so
@@ -588,8 +612,24 @@ def register_members_routes(bp):
                             notes=payment.notes,
                         )
                         db.session.add(renewal)
-                except Exception as pay_err:
-                    _logger.warning("Could not record initial payment for new member %s: %s", member.id, pay_err)
+                except IntegrityError:
+                    # V4-M1: a payment-insert failure must fail the
+                    # WHOLE create_member — the old code swallowed it
+                    # and left a payment-less member with no creation
+                    # ledger row, so a paid signup vanished from the
+                    # money trail. A duplicate UTR racing past the
+                    # pre-check surfaces as its own 409; anything else
+                    # re-raises to the outer handler (rollback + 400).
+                    db.session.rollback()
+                    if _initial_ref is not None and verified_payment_with_reference(
+                        g.gym_id, _initial_ref
+                    ) is not None:
+                        return error_response(
+                            "DUPLICATE_REFERENCE",
+                            "A verified payment with this reference already exists for this gym.",
+                            409,
+                        )
+                    raise
 
             queue_membership_command(member)
             audit(action="create_member", resource_type="member", resource_id=member.id,
@@ -786,6 +826,17 @@ def register_members_routes(bp):
         from app.services.rrr_service import delete_identity_mappings
 
         delete_identity_mappings(g.gym_id, member.id)
+        # V4-M10: expire the Live Access state row — a member deleted
+        # while INSIDE must stop showing as currently inside immediately,
+        # not only when the nightly stale-inside sweep ages them out.
+        from app.models.member_access_state import MemberAccessState
+
+        _inside_state = MemberAccessState.query.filter_by(
+            gym_id=g.gym_id, member_id=member.id
+        ).first()
+        if _inside_state is not None and _inside_state.current_state == "INSIDE":
+            _inside_state.current_state = "OUTSIDE"
+            _inside_state.last_exit_at = utcnow()
         queue_membership_command(member)
         audit(action="soft_delete_member", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
@@ -929,24 +980,31 @@ def register_members_routes(bp):
         # occurred" instead of a clear message.
         # V3-H3: canonical-aware lookup — an exact query misses a stored
         # zero-padded holder ("042"), letting a second member take "42".
-        from app.services.bridge_service import find_member_by_enroll_number
+        from app.services.bridge_service import (
+            clear_deleted_enroll_holder,
+            find_confirmed_mapping,
+            find_member_by_enroll_number,
+        )
 
         existing = find_member_by_enroll_number(
             g.gym_id, enroll_number, exclude_id=member_id
         )
         if existing:
             if existing.deleted_at is not None:
+                # V4-M21: the ID-101 class — the only holder is a deleted
+                # member WITH device_enroll_number set. The explicit owner
+                # enroll is the decision to reuse the ID: free the deleted
+                # holder's enroll + mappings in one step and proceed.
+                # (Terminal fingerprint purge is still the owner's job.)
+                clear_deleted_enroll_holder(
+                    g.gym_id, enroll_number, exclude_id=member_id
+                )
+            else:
                 return error_response(
                     "DUPLICATE_ENROLL",
-                    f"Enroll #{enroll_number} is held by a deleted member. "
-                    "Clear it from the deleted record before reusing it.",
+                    f"Enroll #{enroll_number} is already assigned to {existing.full_name}.",
                     409,
                 )
-            return error_response(
-                "DUPLICATE_ENROLL",
-                f"Enroll #{enroll_number} is already assigned to {existing.full_name}.",
-                409,
-            )
 
         # V3-M7 (Guard 3): a confirmed identity mapping is authoritative
         # for punch/serve resolution even when device_enroll_number is
@@ -957,17 +1015,28 @@ def register_members_routes(bp):
         # holder's punches and blocks would land on the wrong person).
         from app.models.rrr import RRRIdentityMapping
 
-        existing_mapping = (
-            RRRIdentityMapping.query.filter_by(
-                gym_id=g.gym_id, external_id=enroll_number, status="confirmed"
-            ).first()
-        )
+        # V4-M6/M21: canonical-aware mapping lookup — a stored pre-fix
+        # mapping "042" is invisible to an exact "42" lookup; a stale
+        # mapping to a deleted member is freed (with the holder's enroll)
+        # instead of bricking the ID.
+        existing_mapping = find_confirmed_mapping(g.gym_id, enroll_number)
         if existing_mapping is not None and existing_mapping.member_id != member.id:
-            return error_response(
-                "DUPLICATE_ENROLL",
-                f"Enroll #{enroll_number} is already linked to another member.",
-                409,
+            _mapped = (
+                db.session.get(Member, existing_mapping.member_id)
+                if existing_mapping.member_id is not None
+                else None
             )
+            if _mapped is not None and _mapped.deleted_at is not None:
+                db.session.delete(existing_mapping)
+                clear_deleted_enroll_holder(
+                    g.gym_id, enroll_number, exclude_id=member_id
+                )
+            else:
+                return error_response(
+                    "DUPLICATE_ENROLL",
+                    f"Enroll #{enroll_number} is already linked to another member.",
+                    409,
+                )
 
         # V3-M7: when this member's terminal ID changes, mappings that
         # still point at this member under a DIFFERENT id are stale —
@@ -991,6 +1060,13 @@ def register_members_routes(bp):
         from app.services.bridge_service import invalidate_adms_enroll_index
 
         invalidate_adms_enroll_index(g.gym_id)
+        # V4-M3: the enroll just changed hands — cancel any queued/delivered
+        # commands for this ID intended for a previous holder before the
+        # new holder's command is queued (dedup alone cannot displace a
+        # delivered row, or a bridge row keyed by the old member).
+        from app.services.bridge_service import displace_stale_enroll_commands
+
+        displace_stale_enroll_commands(g.gym_id, enroll_number, new_member_id=member.id)
         queue_membership_command(member)
         audit(action="biometric_enroll", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,

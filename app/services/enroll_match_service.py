@@ -68,7 +68,14 @@ def auto_link_scan_due(gym_id: int) -> bool:
 def _canonical_or_raw(value: object) -> str:
     """Canonical enroll number ("042" -> "42"); raw value when the ID is
     non-numeric (M16 — such IDs can never link, but must keep their
-    stored form so punches are not dropped)."""
+    stored form so punches are not dropped).
+
+    Standing rule (V4-L31): never GROUP BY biometric_user_id raw —
+    historical punch/bridge rows keep their raw enroll numbers (the
+    c4a9012b3d4e backfill canonicalizes stored member/template/mapping
+    rows only, never event facts), so canonicalize with this helper
+    first or "042" and "42" split into two groups for one terminal ID.
+    """
     try:
         from app.services.bridge_service import canonical_enroll_number
 
@@ -311,6 +318,98 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
         return
 
 
+# V4-M7: per-gym cache for suggest_matches (60 s). The PWA match screen
+# polls /rrr/enroll-matches every 3 s and the manual endpoints re-run the
+# O(snapshot x members) fuzzy scan on every call; the snapshot and the
+# member list barely change within a minute, so serve the cached result
+# and only recompute when it expires. Internal auto-link callers use
+# suggest_matches() directly (fresh) — a cached result would re-offer
+# IDs that were just linked.
+_SUGGEST_CACHE_TTL_SECONDS = 60
+_SUGGEST_CACHE: dict[int, tuple[float, dict]] = {}
+
+
+def suggest_matches_cached(gym_id: int) -> dict:
+    """Return suggest_matches(), cached per gym for ~60 s (V4-M7).
+
+    The cached dict is returned as-is; callers must treat it as
+    read-only. A ``"cached": True`` marker is added to served copies so
+    the endpoint can report it.
+    """
+    now_mono = time.monotonic()
+    entry = _SUGGEST_CACHE.get(gym_id)
+    if entry is not None and now_mono - entry[0] < _SUGGEST_CACHE_TTL_SECONDS:
+        result = dict(entry[1])
+        result["cached"] = True
+        return result
+    result = suggest_matches(gym_id)
+    _SUGGEST_CACHE[gym_id] = (now_mono, result)
+    return result
+
+
+def invalidate_suggest_cache(gym_id: int) -> None:
+    """Drop the cached suggestions for *gym_id* after a link changes them."""
+    _SUGGEST_CACHE.pop(gym_id, None)
+
+
+def _suggest_for_enroll(gym_id: int, enroll_number: str) -> dict | None:
+    """Targeted suggestion for ONE terminal ID (V4-M7).
+
+    The ingest-triggered scan only ever needs to link *this punch's* ID,
+    but auto_link_high_confidence always scored the whole gym
+    (O(snapshot x members)). This scores the single snapshot user against
+    the unlinked members only — O(members) — and returns the same
+    suggestion shape as suggest_matches, or None when the ID is not in
+    the snapshot / has no exact match.
+    """
+    snapshot = get_terminal_snapshot(gym_id) or get_adms_snapshot(gym_id)
+    if not snapshot:
+        return None
+    terminal_user = next(
+        (u for u in snapshot.get("users", [])
+         if _canonical_or_raw(u.get("enroll_number")) == enroll_number),
+        None,
+    )
+    if terminal_user is None:
+        return None
+    members = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None), Member.device_enroll_number.is_(None))
+        .all()
+    )
+    linked_enrolls = {
+        _canonical_or_raw(m.device_enroll_number)
+        for m in Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None), Member.device_enroll_number.isnot(None))
+        .all()
+    }
+    if enroll_number in linked_enrolls:
+        return None
+    best: Member | None = None
+    best_score = 0.0
+    tied_best: list[Member] = []
+    for m in members:
+        score = _similarity(terminal_user["name"], m.full_name)
+        if score > best_score:
+            best_score, best = score, m
+            tied_best = [m]
+        elif score == best_score and score > 0:
+            tied_best.append(m)
+    if best is None or best_score < 1.0 or len(tied_best) > 1:
+        return None
+    return {
+        "enroll_number": enroll_number,
+        "terminal_name": terminal_user["name"],
+        "member_id": best.id,
+        "member_name": best.full_name,
+        "member_phone": best.phone,
+        "confidence": 100,
+        "ambiguous": False,
+        "candidate_members": [],
+        "auto_linkable": True,
+    }
+
+
 def suggest_matches(gym_id: int) -> dict:
     """Fuzzy-match unlinked terminal users against unlinked members.
 
@@ -393,7 +492,8 @@ def suggest_matches(gym_id: int) -> dict:
 
 
 def auto_link_high_confidence(
-    gym_id: int, actor_id: int | None = None, skip_command_for_active: bool = False
+    gym_id: int, actor_id: int | None = None, skip_command_for_active: bool = False,
+    enroll_number: str | None = None,
 ) -> dict:
     """Automatically link terminal users to members — exact matches only.
 
@@ -406,9 +506,19 @@ def auto_link_high_confidence(
     should ever auto-link again, and whether links first seen via a
     serial-only session need an extra confirmation step.
 
+    ``enroll_number`` (V4-M7): when set, only that one terminal ID is
+    attempted, via the targeted O(members) matcher — the ingest path
+    passes the punch's own ID so a single punch never pays for a
+    full-gym fuzzy scan.
+
     Returns {"linked": [...], "skipped": [...]}.
     """
-    result = suggest_matches(gym_id)
+    if enroll_number is not None:
+        sugg = _suggest_for_enroll(gym_id, _canonical_or_raw(enroll_number))
+        suggestions = [sugg] if sugg is not None else []
+        result = {"suggestions": suggestions}
+    else:
+        result = suggest_matches(gym_id)
     if result.get("error"):
         return {"linked": [], "skipped": [], "error": result["error"]}
 
@@ -454,6 +564,8 @@ def auto_link_high_confidence(
                 ),
             })
 
+    if linked:
+        invalidate_suggest_cache(gym_id)
     return {"linked": linked, "skipped": skipped}
 
 
@@ -497,20 +609,25 @@ def confirm_match(
     # retries it forever).
     # V3-H3: canonical-aware lookup — an exact query misses a stored
     # zero-padded holder ("042"), letting a second member take "42".
-    from app.services.bridge_service import find_member_by_enroll_number
+    from app.services.bridge_service import (
+        clear_deleted_enroll_holder,
+        find_member_by_enroll_number,
+    )
 
     duplicate = find_member_by_enroll_number(
         gym_id, enroll_number, exclude_id=member.id
     )
     if duplicate is not None:
         if duplicate.deleted_at is not None:
+            # V4-M21: same freed-holder rule as remap_unresolved Guard 2
+            # — the explicit owner confirm reuses an ID whose only holder
+            # is soft-deleted (with device_enroll_number set). Clear the
+            # deleted holder's enroll + mappings instead of bricking it.
+            clear_deleted_enroll_holder(gym_id, enroll_number, exclude_id=member.id)
+        else:
             raise ValueError(
-                f"Enroll number {enroll_number} is held by a deleted member. "
-                "Clear it from the deleted record before reusing it."
+                f"Enroll number {enroll_number} is already linked to {duplicate.full_name}."
             )
-        raise ValueError(
-            f"Enroll number {enroll_number} is already linked to {duplicate.full_name}."
-        )
     integration = RRRIntegration.query.filter_by(
         gym_id=gym_id, connector_type="adms_direct"
     ).first()
@@ -548,5 +665,7 @@ def confirm_match(
     # uncommitted (or vice versa). The outer transaction commits: the
     # cdata handler for ingest, and the direct endpoint callers
     # (mobile + web enroll-match confirm) commit explicitly.
+    # V4-M7: the link changes the suggestion set — drop the cached one.
+    invalidate_suggest_cache(gym_id)
     db.session.flush()
     return member

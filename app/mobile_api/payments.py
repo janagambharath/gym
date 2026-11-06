@@ -21,10 +21,12 @@ from app.services.audit_service import audit
 from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
 from app.services.payment_service import (
     cancel_payment,
+    canonical_payment_reference,
     delete_payment,
     refund_payment,
     reject_payment,
     verify_payment,
+    verified_payment_with_reference,
 )
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
@@ -378,10 +380,10 @@ def register_payments_routes(bp):
         # M9: the same UPI reference pasted twice must not double-count
         # collections — reject when this gym already has a VERIFIED
         # payment with the same reference.
-        reference = (data.get("reference") or "").strip() or None
+        # V4-M19: canonicalised — "UTR123", "utr123" and "UTR 123"
+        # are the same reference.
+        reference = canonical_payment_reference(data.get("reference") or "")
         if reference is not None:
-            from app.services.payment_service import verified_payment_with_reference
-
             if verified_payment_with_reference(g.gym_id, reference) is not None:
                 return error_response(
                     "DUPLICATE_REFERENCE",
@@ -475,6 +477,22 @@ def register_payments_routes(bp):
         if auto_verify:
             try:
                 verify_payment(payment, verified_by_id=g.current_user.id, renewal_days=renewal_days)
+            except IntegrityError:
+                # V4-L1: two concurrent auto_verify creates with the
+                # same UTR both pass the re-check, then the second
+                # commit/flush hits the partial unique index — that
+                # used to surface as a 500. Map it to
+                # DUPLICATE_REFERENCE like the verify endpoint does.
+                db.session.rollback()
+                if reference is not None and verified_payment_with_reference(
+                    g.gym_id, reference
+                ) is not None:
+                    return error_response(
+                        "DUPLICATE_REFERENCE",
+                        "A verified payment with this reference already exists for this gym.",
+                        409,
+                    )
+                raise
             except ValueError as exc:
                 db.session.rollback()
                 if str(exc).startswith("DUPLICATE_REFERENCE"):
@@ -527,6 +545,19 @@ def register_payments_routes(bp):
                             409,
                         )
                     return jsonify(existing.response_body), existing.status_code
+            # V4-L1: the commit-time UTR race (two concurrent creates
+            # with the same reference, second one hitting the partial
+            # unique index) is a DUPLICATE_REFERENCE 409, not a 500.
+            # The clash check decides — any other integrity failure
+            # still re-raises.
+            if reference is not None and verified_payment_with_reference(
+                g.gym_id, reference
+            ) is not None:
+                return error_response(
+                    "DUPLICATE_REFERENCE",
+                    "A verified payment with this reference already exists for this gym.",
+                    409,
+                )
             raise
 
         try:

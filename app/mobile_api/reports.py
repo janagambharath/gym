@@ -122,6 +122,7 @@ def register_reports_routes(bp):
         _renewal_cols = (
             RenewalHistory.id,
             RenewalHistory.member_id,
+            RenewalHistory.previous_start,
             RenewalHistory.previous_end,
             RenewalHistory.new_start,
             RenewalHistory.is_creation,

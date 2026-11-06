@@ -60,16 +60,24 @@ def _member(seed_gym, *, name, enroll=None, deleted=False):
 
 def test_enroll_id_held_by_deleted_member_returns_409_not_500(client, seed_gym):
     """ID 101 held by a soft-deleted member: enrolling another member with
-    it must return a clear 409, never a 500."""
-    _member(seed_gym, name="Old Deleted", enroll="101", deleted=True)
+    it must return a clear 409, never a 500.
+
+    V4-M21 BEHAVIOUR CHANGE: the explicit owner enroll now FREES the ID
+    (the deleted holder's enroll number is cleared and its mappings
+    deleted in one step) instead of bricking it with a 409 — the old
+    409 is what kept the real ID-101 class unusable. The 500-vs-clear-
+    error property this test was written for (never a 500) still holds.
+    """
+    deleted = _member(seed_gym, name="Old Deleted", enroll="101", deleted=True)
     target = _member(seed_gym, name="Manideep")
     res = client.post(
         f"/api/mobile/v1/members/{target.id}/enroll",
         json={"enroll_number": "101"},
         headers=_headers(seed_gym),
     )
-    assert res.status_code == 409, res.get_data(as_text=True)
-    assert "deleted" in res.get_json()["error"]["message"].lower()
+    assert res.status_code == 200, res.get_data(as_text=True)
+    assert db.session.get(Member, target.id).device_enroll_number == "101"
+    assert db.session.get(Member, deleted.id).device_enroll_number is None
 
 
 def test_enroll_id_held_by_live_member_returns_409(client, seed_gym):
@@ -111,7 +119,14 @@ def test_remap_guard1_different_id_still_rejects(seed_gym):
 
 
 def test_remap_guard2_deleted_holder_raises_clear_error(seed_gym):
-    _member(seed_gym, name="Old Deleted", enroll="102", deleted=True)
+    """V4-M21 BEHAVIOUR CHANGE: a deleted holder no longer bricks the ID.
+    Remapping "102" to a live member frees the deleted holder's enroll
+    (cleared) and links the live member — the old ValueError is what kept
+    the real ID-101 class unusable. A LIVE holder still raises (see
+    test_h3_guard2_blocks_second_member_on_padded_holder)."""
+    deleted = _member(seed_gym, name="Old Deleted", enroll="102", deleted=True)
     target = _member(seed_gym, name="New Member")
-    with pytest.raises(ValueError, match="deleted member"):
-        remap_unresolved(seed_gym["gym"].id, "102", target, seed_gym["owner"].id)
+    resolved = remap_unresolved(seed_gym["gym"].id, "102", target, seed_gym["owner"].id)
+    assert resolved == 0
+    assert db.session.get(Member, target.id).device_enroll_number == "102"
+    assert db.session.get(Member, deleted.id).device_enroll_number is None

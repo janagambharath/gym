@@ -1775,9 +1775,16 @@ def undo_member_import_batch(gym_id: int, batch_id: str):
     for m in members:
         if m.payments:
             continue
+        # V4-M18: per-member soft_delete_member audit with the
+        # pre-delete status, so restore can bring a frozen member back
+        # as paused (same as the import-undo path).
+        prev_status = m.status
         m.deleted_at = utcnow()
         m.status = "deleted"
         queue_membership_command(m)
+        audit(action="soft_delete_member", resource_type="member",
+              resource_id=m.id, gym_id=gym.id,
+              metadata={"previous_status": prev_status})
         undone += 1
 
     audit(action="admin_undo_import_batch", resource_type="member_batch", gym_id=gym.id, metadata={"batch_id": batch_id, "undone": undone})

@@ -67,14 +67,19 @@ def _snapshot(integration, gym_id, users):
 
 
 def test_confirm_match_refuses_id_held_by_deleted_member(client, seed_gym):
-    _member(seed_gym, name="Old User", phone="+919999999901",
-            enroll="101", deleted=True)
+    """V4-M21 BEHAVIOUR CHANGE: confirm_match no longer refuses an ID
+    whose only holder is soft-deleted — the explicit owner confirm frees
+    the deleted holder's enroll + mappings in one step (the old refusal
+    is what kept the real ID-101 class unusable). A LIVE holder still
+    raises (see test_h3_guard2_blocks_second_member_on_padded_holder)."""
+    deleted = _member(seed_gym, name="Old User", phone="+919999999901",
+                      enroll="101", deleted=True)
     active = _member(seed_gym, name="Test User", phone="+919999999902",
                      enroll=None)
-    with pytest.raises(ValueError, match="deleted member"):
-        confirm_match(seed_gym["gym"].id, active.id, "101", actor_id=None)
-    # Nothing was dirtied: the active member still has no enroll number.
-    assert db.session.get(Member, active.id).device_enroll_number is None
+    member = confirm_match(seed_gym["gym"].id, active.id, "101", actor_id=None)
+    db.session.commit()
+    assert member.device_enroll_number == "101"
+    assert db.session.get(Member, deleted.id).device_enroll_number is None
 
 
 def test_attlog_survives_autolink_conflict_with_soft_deleted_holder(

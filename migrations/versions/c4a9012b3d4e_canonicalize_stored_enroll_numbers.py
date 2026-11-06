@@ -26,6 +26,15 @@ canonical-compare code paths still resolve those rows correctly.
 Postgres-only (like the Yodha punch-time migration): uses the ``~``
 regex operator and ``ltrim``.
 
+Standing rule (V4-L31): this backfill deliberately leaves historical
+punch/bridge enroll numbers raw — rewriting event facts would change
+dedupe keys. Never GROUP BY ``biometric_user_id`` raw; always
+canonicalize first (see ``_canonical_or_raw`` in
+app/services/rrr_service.py and app/services/enroll_match_service.py),
+or ``"042"`` and ``"42"`` split into two groups for the same terminal
+ID. The two live raw GROUP BY sites at the time of writing are the
+unresolved-mappings queries in app/mobile_api/rrr.py.
+
 Revises: 71e470eb6cb6
 """
 from alembic import op

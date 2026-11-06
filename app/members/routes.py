@@ -254,6 +254,12 @@ def bulk_renew():
                     previous_end=previous_end,
                     previous_plan_id=previous_plan_id,
                     previous_price=previous_price,
+                    # V4-M13: snapshot the plan duration in force NOW.
+                    duration_days=(
+                        member.plan.duration_days
+                        if member.plan is not None
+                        else renewal_days
+                    ),
                     new_start=new_start,
                     new_end=new_end,
                     amount=amount,
@@ -418,6 +424,11 @@ def delete(member_id: int):
     from app.models.mixins import utcnow
 
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
+    # V4-M18: record the pre-delete status — restore must bring a
+    # frozen (paused) member back as paused, not active with the door
+    # opened. The mobile deactivate path already records this; the web
+    # delete, import-undo, and admin undo paths must too.
+    prev_status = member.status
     member.deleted_at = utcnow()
     member.status = "deleted"
     # H9: free the terminal ID (mapping rows deleted; see the mobile
@@ -426,7 +437,8 @@ def delete(member_id: int):
 
     delete_identity_mappings(current_user.gym_id, member.id)
     queue_membership_command(member)
-    audit(action="soft_delete_member", resource_type="member", resource_id=member.id)
+    audit(action="soft_delete_member", resource_type="member", resource_id=member.id,
+          metadata={"previous_status": prev_status})
     invalidate_dashboard_cache(current_user.gym_id)
     db.session.commit()
     flash("Member removed.", "success")

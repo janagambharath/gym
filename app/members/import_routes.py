@@ -292,6 +292,11 @@ def undo_import(batch_id: str):
         # Check if member has verified payments recorded
         if m.payments:
             continue
+        # V4-M18: per-member soft_delete_member audit with the
+        # pre-delete status, so restore can bring a frozen member back
+        # as paused. The batch-level audit below carries no per-member
+        # status and restore cannot read it.
+        prev_status = m.status
         m.deleted_at = utcnow()
         m.status = "deleted"
         # H9: soft-delete frees the terminal ID (mapping rows deleted).
@@ -299,6 +304,12 @@ def undo_import(batch_id: str):
 
         delete_identity_mappings(current_user.gym_id, m.id)
         queue_membership_command(m)
+        audit(
+            action="soft_delete_member",
+            resource_type="member",
+            resource_id=m.id,
+            metadata={"previous_status": prev_status},
+        )
         undone_count += 1
 
     audit(

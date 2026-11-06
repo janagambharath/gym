@@ -920,7 +920,10 @@ def claim_payment():
     amount = plan.price if plan else Decimal("0")
 
     # Optional reference ID from member
-    reference = (data.get("reference") or "").strip() or None
+    # V4-M19: canonicalised — "utr123" clashes with "UTR123".
+    from app.services.payment_service import canonical_payment_reference
+
+    reference = canonical_payment_reference(data.get("reference") or "")
     # M9: the same UPI reference must not be claimed twice once the
     # first payment is verified — a second verified claim would
     # double-count the collection.
@@ -1228,7 +1231,12 @@ def confirm_upi_payment():
     member = g.current_member
     data = request.get_json(silent=True) or {}
     payment_id = data.get("payment_id")
-    client_ref = (data.get("reference") or "").strip() or None
+    # V4-M19: a member-supplied UTR written onto a pending payment is
+    # a write path too — canonicalise it so a later verify-time check
+    # sees the same reference.
+    from app.services.payment_service import canonical_payment_reference
+
+    client_ref = canonical_payment_reference(data.get("reference") or "")
 
     payment = None
     if payment_id:

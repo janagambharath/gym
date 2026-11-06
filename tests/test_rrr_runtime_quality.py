@@ -451,7 +451,10 @@ def test_recovery_rate_uses_matching_expiry_cohort(seed_gym, seed_member):
     # the member's first ledger row but new_start is previous_end + 1, so
     # it is not a signup creation row (B-H3).
     assert result["revenue_at_risk"] == "1000.00"
-    assert result["recovery_denominator"] == "2000.00"
+    # V4-M2: denominator is outstanding risk (1000) + PAID expected
+    # value only — this renewal is direct, so its expected 1000 is
+    # excluded and the denominator is 1000, not 2000.
+    assert result["recovery_denominator"] == "1000.00"
     # V3-H2: this renewal is direct (no verified payment), so the
     # payment-backed headline is zero — the ₹800 is recorded only.
     assert result["revenue_recovered"] == "0.00"
