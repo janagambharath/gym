@@ -57,12 +57,16 @@ def upgrade():
     inspector = inspect(conn)
 
     # 1) Loud audit: canonical duplicates among verified payments.
+    # Empty references are NOT UTRs (cash / no-reference payments) —
+    # they must be excluded: 17 verified rows at Yodha share '' and
+    # are legitimate, not duplicates. (V4-M19 deploy-halt fix, 2026-11-06.)
     dupes = conn.execute(
         text(
             "SELECT gym_id, "
             f"{_NORM} AS norm_ref, COUNT(*) AS n "
             "FROM payment_verifications "
             "WHERE status = 'verified' AND reference IS NOT NULL "
+            "AND trim(reference) <> '' "
             f"GROUP BY gym_id, {_NORM} HAVING COUNT(*) > 1 "
             "ORDER BY gym_id, norm_ref LIMIT 50"
         )
@@ -82,6 +86,7 @@ def upgrade():
     print("[v4-m19-canonical-utr] audit: no canonical duplicate verified references.")
 
     # 2) Repair the f9e8 silent skip: create the raw index if absent.
+    # Empty references excluded — they are not UTRs (see audit above).
     index_names = {ix["name"] for ix in inspector.get_indexes("payment_verifications")}
     if "uq_payments_gym_reference_verified" not in index_names:
         print(
@@ -93,7 +98,7 @@ def upgrade():
             "payment_verifications",
             ["gym_id", "reference"],
             unique=True,
-            postgresql_where=text("status = 'verified'"),
+            postgresql_where=text("status = 'verified' AND trim(reference) <> ''"),
         )
 
     # 3) Canonical expression index (Postgres only).
@@ -104,7 +109,8 @@ def upgrade():
                     "CREATE UNIQUE INDEX uq_payments_gym_reference_verified_norm "
                     "ON payment_verifications "
                     f"(gym_id, ({_NORM})) "
-                    "WHERE status = 'verified' AND reference IS NOT NULL"
+                    "WHERE status = 'verified' AND reference IS NOT NULL "
+                    "AND trim(reference) <> ''"
                 )
             )
             print(
