@@ -68,11 +68,85 @@ def _classify_event(
 
 
 def _resolve_member(gym_id: int, device_enroll_number: str) -> Member | None:
-    """Find the Renewal Desk member by device enroll number."""
-    return Member.query.filter_by(
-        gym_id=gym_id,
-        device_enroll_number=device_enroll_number,
+    """Find the Renewal Desk member by device enroll number.
+
+    V3-M14: a soft-deleted member never resolves — its terminal ID
+    reads as unknown, not as a named ex-member in Live Access.
+    """
+    return (
+        Member.query.filter_by(
+            gym_id=gym_id,
+            device_enroll_number=device_enroll_number,
+        )
+        .filter(Member.deleted_at.is_(None))
+        .first()
+    )
+
+
+def _live_member(member: Member | None) -> Member | None:
+    """Return *member* only when it is a live (non-deleted) member (V3-M14).
+
+    A soft-deleted member keeps ``device_enroll_number`` by design, so
+    stale ``BridgeAttendance.member_id`` / ``RRRAttendanceEvent.member_id``
+    rows can still hand one back. Treat it as unknown: no name/status
+    snapshot in the feed, no ``MemberAccessState`` flip to INSIDE.
+    """
+    if member is not None and member.deleted_at is not None:
+        return None
+    return member
+
+
+def _unprojected_rrr_exists(gym_id: int):
+    """Correlated EXISTS: an AccessEvent projects this RRR row.
+
+    Shared by the summary count (V3-M13) and the feed legs (V3-M11)
+    so both agree on which ADMS punches are already in the feed.
+    """
+    from sqlalchemy import String, cast, exists as _exists
+
+    from app.models.rrr import RRRAttendanceEvent
+
+    return (
+        db.session.query(AccessEvent.id)
+        .filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.source_event_id
+            == "rrr-attendance-" + cast(RRRAttendanceEvent.id, String),
+        )
+        .exists()
+    )
+
+
+def adms_device_status(gym_id: int) -> dict | None:
+    """Direct-ADMS terminal online state for a gym (V3-M12).
+
+    Shared helper so ``/access/summary`` and the dashboard payload
+    (via :func:`get_access_summary`) report the same device state:
+    a direct-ADMS terminal with no bridge row used to read "Offline"
+    on the dashboard while Live Access correctly showed online.
+    Returns None when the gym has no direct-ADMS integration.
+    """
+    from app.models.rrr import RRRIntegration
+    from app.services.rrr_service import (
+        direct_adms_terminal_is_online,
+        direct_adms_terminal_last_seen_at,
+    )
+
+    adms = RRRIntegration.query.filter_by(
+        gym_id=gym_id, connector_type="adms_direct"
     ).first()
+    if not adms:
+        return None
+    last_seen = direct_adms_terminal_last_seen_at(adms)
+    online = direct_adms_terminal_is_online(adms, last_seen_at=last_seen)
+    return {
+        "adms_online": online,
+        "adms_last_seen_at": last_seen.isoformat() if last_seen else None,
+        "adms_device_name": adms.device_name or adms.device_serial,
+        "device_online": online,
+        "device_name": adms.device_name or adms.device_serial,
+        "device_serial": adms.device_serial,
+    }
 
 
 def process_attendance_to_access_event(
@@ -105,6 +179,9 @@ def process_attendance_to_access_event(
         member = db.session.get(Member, attendance.member_id)
     if member is None:
         member = _resolve_member(attendance.gym_id, attendance.device_enroll_number)
+    # V3-M14: a soft-deleted member resolves as unknown — no name/status
+    # snapshot, no MemberAccessState update (see _live_member).
+    member = _live_member(member)
 
     # 4. Get bridge info for display
     bridge = None
@@ -189,6 +266,8 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
     member = attendance.member
     if member is None and attendance.member_id is not None:
         member = db.session.get(Member, attendance.member_id)
+    # V3-M14: a soft-deleted member resolves as unknown.
+    member = _live_member(member)
 
     if existing is not None:
         # An identity may have been linked after the punch first arrived.
@@ -358,12 +437,14 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
 
     # Also count ADMS attendance events (RRRAttendanceEvent) — these are the
     # punches from direct-cloud terminals that don't go through AccessEvent.
-    # Count ALL punches (including unmapped) — the terminal recorded them.
+    # V3-M13: count ONLY unprojected rows. Every ADMS punch that projected
+    # into AccessEvent (the normal case) was already counted above, so
+    # adding all RRR rows double-counted entries today (~2x).
     from app.models.rrr import RRRAttendanceEvent
     adms_entries_today = RRRAttendanceEvent.query.filter(
         RRRAttendanceEvent.gym_id == gym_id,
         RRRAttendanceEvent.punch_time >= day_start_utc,
-    ).count()
+    ).filter(~_unprojected_rrr_exists(gym_id)).count()
     entries_today = entries_today + adms_entries_today
 
     # Last event time — check both tables
@@ -376,6 +457,15 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
         adms_time = last_adms_event.punch_time.isoformat()
         if not last_event_at or adms_time > last_event_at:
             last_event_at = adms_time
+
+    # V3-M12: Direct ADMS is authoritative for device state when
+    # configured (same rule as /access/summary). Without this override
+    # the dashboard embedded device_online=False for ADMS-only gyms
+    # (no BridgeInstallation row) while Live Access showed online.
+    adms_status = adms_device_status(gym_id)
+    if adms_status is not None:
+        device_online = adms_status["device_online"]
+        device_name = adms_status["device_name"]
 
     return {
         "inside_now": inside_now,
@@ -399,7 +489,15 @@ def get_access_events(
     search: str | None = None,
     date_filter: str | None = None,
 ) -> dict:
-    """Return paginated access events for the feed."""
+    """Return paginated access events for the feed.
+
+    Raises ValueError on an unknown ``date_filter`` (V3-L12) — the
+    caller maps it to a 400 instead of silently returning all-time rows.
+    """
+    # V3-L12: an unexpected date_filter used to disable the date filter
+    # on both legs (all-time rows). Fail loudly instead.
+    if date_filter not in ("today", "all", None):
+        raise ValueError(f"Unknown date_filter: {date_filter!r}. Expected 'today' or 'all'.")
     page = max(page, 1)
     per_page = max(per_page, 1)
     query = AccessEvent.query.filter_by(gym_id=gym_id)
@@ -432,8 +530,10 @@ def get_access_events(
     # own leg's page-N window (the other leg may contribute many newer
     # rows), so BOTH legs are fetched from the top through this page and
     # the merged, re-sorted list is sliced. per_page is capped at 100 by
-    # the endpoint; the per-leg fetch is capped at 500 rows.
-    fetch_limit = min(max(page, 1) * max(per_page, 1), 500)
+    # the endpoint; the per-leg fetch is capped at 2000 rows (V3-M11) —
+    # pages past 2000/per_page are not reachable, by design, to bound
+    # the memory of a deep-page request.
+    fetch_limit = min(max(page, 1) * max(per_page, 1), 2000)
     access_total = query.count()
     access_rows = (
         query.order_by(AccessEvent.event_timestamp.desc())
@@ -459,10 +559,8 @@ def get_access_events(
 
     if date_filter == "today":
         adms_since = utc_start_of_gym_day(gym_timezone)
-    elif date_filter == "all" or date_filter is None:
+    else:  # "all" or None — validated above
         adms_since = _utcnow() - timedelta(days=7)
-    else:
-        adms_since = None
 
     adms_events: list[dict] = []
     adms_total = 0
@@ -488,42 +586,22 @@ def get_access_events(
         # count exact under every filter (date/search/type) — counting
         # projected rows separately would drift whenever the two legs'
         # search predicates differ (name vs name-or-biometric-ID).
-        from sqlalchemy import String, cast, exists as _exists
-
-        _projected = (
-            db.session.query(AccessEvent.id)
-            .filter(
-                AccessEvent.gym_id == gym_id,
-                AccessEvent.source_event_id
-                == "rrr-attendance-" + cast(RRRAttendanceEvent.id, String),
-            )
-            .exists()
-        )
+        # V3-M11: the same NOT EXISTS filter applies to the ROWS query,
+        # not just the count. The old code fetched the most recent 500
+        # RAW rows and filtered projected ones out in Python, so an
+        # unprojected punch older than the newest 500 raw rows was
+        # counted in the total but could never appear on any page.
+        _projected = _unprojected_rrr_exists(gym_id)
         adms_total = adms_query.filter(~_projected).count()
 
         # fetch_limit (both legs, from the top) is defined above.
         adms_rows = (
-            adms_query.order_by(RRRAttendanceEvent.punch_time.desc())
+            adms_query.filter(~_projected)
+            .order_by(RRRAttendanceEvent.punch_time.desc())
             .limit(fetch_limit)
             .all()
         )
-        if adms_rows:
-            projected_ids = {
-                row[0]
-                for row in db.session.query(AccessEvent.source_event_id)
-                .filter(
-                    AccessEvent.gym_id == gym_id,
-                    AccessEvent.source_event_id.in_(
-                        [f"rrr-attendance-{row.id}" for row in adms_rows]
-                    ),
-                )
-                .all()
-            }
-        else:
-            projected_ids = set()
         for evt in adms_rows:
-            if f"rrr-attendance-{evt.id}" in projected_ids:
-                continue
             adms_events.append({
                 "id": f"adms-{evt.id}",
                 "event_type": "ENTRY",
@@ -538,7 +616,7 @@ def get_access_events(
 
     # Re-sort merged events by timestamp (most recent first) and take
     # this page's slice. Both legs were fetched from the top through
-    # this page, so the slice is exact (up to the 500-row fetch cap).
+    # this page, so the slice is exact (up to the 2000-row fetch cap).
     merged = sorted(
         events + adms_events,
         key=lambda e: e.get("event_timestamp") or "",

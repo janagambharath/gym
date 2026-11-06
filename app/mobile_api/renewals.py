@@ -256,6 +256,10 @@ def register_renewals_routes(bp):
 
         previous_start = member.membership_start
         previous_end = member.membership_end
+        # V3-M18: snapshot plan/price BEFORE the mutation below so a
+        # refund/delete can restore them.
+        previous_plan_id = member.plan_id
+        previous_price = member.price
         gym_timezone = (
             g.current_user.gym.timezone
             if g.current_user and g.current_user.gym and g.current_user.gym.timezone
@@ -293,12 +297,11 @@ def register_renewals_routes(bp):
         scheduled = new_start > today
         target_plan_id = plan.id if plan else member.plan_id
         if scheduled:
-            existing_schedule = RenewalHistory.query.filter(
-                RenewalHistory.gym_id == g.gym_id,
-                RenewalHistory.member_id == member.id,
-                RenewalHistory.new_start > today,
-            ).first()
-            if existing_schedule:
+            # V3-M16: same live-scheduled check as verify_payment —
+            # stale rows that can never activate do not block.
+            from app.services.payment_service import active_scheduled_renewals
+
+            if active_scheduled_renewals(member, today):
                 db.session.rollback()
                 return error_response(
                     "CONFLICT",
@@ -324,6 +327,9 @@ def register_renewals_routes(bp):
             renewed_by_id=g.current_user.id,
             previous_start=previous_start,
             previous_end=previous_end,
+            # V3-M18: snapshot plan/price before mutation for revert.
+            previous_plan_id=previous_plan_id,
+            previous_price=previous_price,
             new_start=new_start,
             new_end=new_end,
             standard_price=standard_price,

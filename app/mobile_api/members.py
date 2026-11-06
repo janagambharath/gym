@@ -1,24 +1,30 @@
 """Mobile API members endpoints."""
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
+_logger = logging.getLogger(__name__)
+
 from flask import g, jsonify, request
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
 from app.mobile_api.date_rules import grid_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Gym, Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models import Gym, Member, MembershipPlan, MobileIdempotencyKey, PaymentVerification, RenewalHistory
 from app.models.member_access_state import MemberAccessState
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import door_blocked_state, queue_membership_command
 from app.services.document_scan_service import DocumentScanService
+from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
+from app.services.payment_service import PAYMENT_METHODS
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.mobile_member_import_service import validate_csv
 from app.utils.helpers import normalize_phone_e164
@@ -399,6 +405,31 @@ def register_members_routes(bp):
     @roles_required("gym_owner", "staff")
     def create_member():
         data = request.get_json(silent=True) or {}
+        # V3-M23: honour Idempotency-Key like create_payment does — the
+        # Android client retries after a 15s timeout believing the retry
+        # is safe, and without this the retry double-creates the member
+        # (plus a second creation ledger row and payment).
+        idempotency_key = valid_key(request.headers.get("Idempotency-Key"))
+        if idempotency_key == "":
+            return error_response("VALIDATION_ERROR", "Idempotency-Key is too long.", 400)
+        request_hash = request_fingerprint(data)
+        if idempotency_key:
+            existing, matches_request = find_replay(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if existing:
+                if not matches_request:
+                    return error_response(
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "This idempotency key was already used for a different member request.",
+                        409,
+                    )
+                return jsonify(existing.response_body), existing.status_code
+
         full_name = (data.get("full_name") or data.get("name") or "").strip()
         phone = normalize_phone_e164((data.get("phone") or "").strip())
         if not full_name or not phone:
@@ -446,6 +477,21 @@ def register_members_routes(bp):
                     400,
                 )
 
+            # V3-L1: an unknown signup payment method is a 400, matching
+            # create_payment — never silently coerced to "cash". Validated
+            # up front (before the member row exists) so a rejection
+            # leaves nothing behind.
+            _initial_method = None
+            _raw_amount = data.get("amount")
+            if _raw_amount is not None and str(_raw_amount).strip() != "" and data.get("paid", True):
+                _initial_method = str(data.get("payment_method") or data.get("method") or "cash").strip().lower()
+                if _initial_method not in PAYMENT_METHODS:
+                    return error_response(
+                        "VALIDATION_ERROR",
+                        f"payment_method must be one of: {', '.join(sorted(PAYMENT_METHODS))}.",
+                        400,
+                    )
+
             notes_val = (data.get("notes") or "").strip() or None
             address_val = (data.get("address") or "").strip() or None
             member = Member(
@@ -474,9 +520,7 @@ def register_members_routes(bp):
                 try:
                     amt = Decimal(str(raw_amount).strip())
                     if amt >= 0:
-                        method = str(data.get("payment_method") or data.get("method") or "cash").strip().lower()
-                        if method not in {"cash", "upi", "card", "bank_transfer", "other"}:
-                            method = "cash"
+                        method = _initial_method or "cash"
                         standard_price = plan.price if plan else amt
                         discount = max(Decimal("0.00"), standard_price - amt) if standard_price is not None else Decimal("0.00")
                         # Strict: the initial ledger row records the
@@ -522,9 +566,21 @@ def register_members_routes(bp):
                             plan_id=member.plan_id,
                             payment_verification_id=payment.id,
                             renewed_by_id=g.current_user.id,
+                            # V3-M18: previous_start records the
+                            # pre-signup state (== start: no membership
+                            # before this row), so refunding the signup
+                            # reverts to "expired" instead of a 1-day
+                            # active stub. No prior plan/price exists.
+                            previous_start=membership_start,
                             previous_end=membership_start,
+                            previous_plan_id=None,
+                            previous_price=None,
                             new_start=membership_start,
                             new_end=membership_end,
+                            # V3-M5: mark the signup row explicitly so
+                            # money reports can tell it from a genuine
+                            # first renewal of an imported member.
+                            is_creation=True,
                             standard_price=standard_price,
                             discount=discount,
                             amount=amt,
@@ -539,12 +595,47 @@ def register_members_routes(bp):
             audit(action="create_member", resource_type="member", resource_id=member.id,
                   gym_id=g.gym_id, actor_id=g.current_user.id)
             invalidate_dashboard_cache(g.gym_id)
-            db.session.commit()
+            response_body = {"success": True, "data": _serialize_member(member)}
+            if idempotency_key:
+                db.session.add(
+                    MobileIdempotencyKey(
+                        gym_id=g.gym_id,
+                        user_id=g.user_id,
+                        scope="create_member",
+                        key=idempotency_key,
+                        request_hash=request_hash,
+                        status_code=201,
+                        response_body=response_body,
+                    )
+                )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                # A concurrent retry may have won the unique-key race.
+                # Replay its stored response instead of a second member.
+                if idempotency_key:
+                    existing, matches_request = find_replay(
+                        gym_id=g.gym_id,
+                        user_id=g.user_id,
+                        scope="create_member",
+                        key=idempotency_key,
+                        request_hash=request_hash,
+                    )
+                    if existing:
+                        if not matches_request:
+                            return error_response(
+                                "IDEMPOTENCY_KEY_REUSED",
+                                "This idempotency key was already used for a different member request.",
+                                409,
+                            )
+                        return jsonify(existing.response_body), existing.status_code
+                raise
 
             # Reload with plan relationship.
             db.session.refresh(member)
             member.plan  # trigger lazy load
-            return jsonify({"success": True, "data": _serialize_member(member)}), 201
+            return jsonify(response_body), 201
         except Exception as exc:
             db.session.rollback()
             _logger.exception("create_member failed: %s", exc)
@@ -680,6 +771,11 @@ def register_members_routes(bp):
             return error_response("NOT_FOUND", "Member not found.", 404)
 
         member.deleted_at = utcnow()
+        # V3-M4: record the pre-delete status — restore must bring a
+        # frozen (paused) member back as paused, not active with the
+        # door opened. The status is overwritten below, so capture it
+        # here and store it on the audit entry.
+        prev_status = member.status
         member.status = "deleted"
         # H9: free the terminal ID — delete the identity mapping rows so
         # the enroll number can be reused. The member's own
@@ -692,7 +788,8 @@ def register_members_routes(bp):
         delete_identity_mappings(g.gym_id, member.id)
         queue_membership_command(member)
         audit(action="soft_delete_member", resource_type="member", resource_id=member.id,
-              gym_id=g.gym_id, actor_id=g.current_user.id)
+              gym_id=g.gym_id, actor_id=g.current_user.id,
+              metadata={"previous_status": prev_status})
         invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": {"message": "Member deactivated."}})
@@ -830,10 +927,12 @@ def register_members_routes(bp):
         # this check must NOT filter them out — otherwise the commit
         # throws UniqueViolation and the app shows "An unexpected error
         # occurred" instead of a clear message.
-        existing = (
-            Member.query.filter_by(gym_id=g.gym_id, device_enroll_number=enroll_number)
-            .filter(Member.id != member_id)
-            .first()
+        # V3-H3: canonical-aware lookup — an exact query misses a stored
+        # zero-padded holder ("042"), letting a second member take "42".
+        from app.services.bridge_service import find_member_by_enroll_number
+
+        existing = find_member_by_enroll_number(
+            g.gym_id, enroll_number, exclude_id=member_id
         )
         if existing:
             if existing.deleted_at is not None:
@@ -849,7 +948,49 @@ def register_members_routes(bp):
                 409,
             )
 
+        # V3-M7 (Guard 3): a confirmed identity mapping is authoritative
+        # for punch/serve resolution even when device_enroll_number is
+        # not set, so the duplicate check above is not enough. If this ID
+        # is already mapped to a different member, enrolling it here
+        # would make both members resolve to one terminal ID (the mapped
+        # member wins in resolve_adms_member/_mapped_member, so the new
+        # holder's punches and blocks would land on the wrong person).
+        from app.models.rrr import RRRIdentityMapping
+
+        existing_mapping = (
+            RRRIdentityMapping.query.filter_by(
+                gym_id=g.gym_id, external_id=enroll_number, status="confirmed"
+            ).first()
+        )
+        if existing_mapping is not None and existing_mapping.member_id != member.id:
+            return error_response(
+                "DUPLICATE_ENROLL",
+                f"Enroll #{enroll_number} is already linked to another member.",
+                409,
+            )
+
+        # V3-M7: when this member's terminal ID changes, mappings that
+        # still point at this member under a DIFFERENT id are stale —
+        # leaving them would keep the old ID resolving to this member
+        # after it is handed to someone else. Delete them; the mapping
+        # for the new ID (if any) already points at this member and is
+        # kept. Canonical comparison so a stored "0103" is recognised as
+        # the same ID as "103".
+        stale_mappings = RRRIdentityMapping.query.filter_by(
+            gym_id=g.gym_id, member_id=member.id
+        ).all()
+        for row in stale_mappings:
+            try:
+                row_canonical = canonical_enroll_number(row.external_id)
+            except ValueError:
+                row_canonical = str(row.external_id or "").strip()
+            if row_canonical != enroll_number:
+                db.session.delete(row)
+
         member.device_enroll_number = enroll_number
+        from app.services.bridge_service import invalidate_adms_enroll_index
+
+        invalidate_adms_enroll_index(g.gym_id)
         queue_membership_command(member)
         audit(action="biometric_enroll", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
@@ -882,6 +1023,9 @@ def register_members_routes(bp):
         from app.services.rrr_service import delete_identity_mappings
 
         delete_identity_mappings(g.gym_id, member.id)
+        from app.services.bridge_service import invalidate_adms_enroll_index
+
+        invalidate_adms_enroll_index(g.gym_id)
         audit(action="biometric_unenroll", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
               metadata={"old_enroll_number": old_enroll})

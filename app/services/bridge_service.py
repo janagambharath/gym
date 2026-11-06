@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import secrets
+import threading
+import time
 import zoneinfo
 from datetime import datetime, timedelta, timezone
 
@@ -138,7 +140,15 @@ def canonical_enroll_number(value: object) -> str:
 
 
 def desired_command_type(member: Member) -> str:
-    """Translate the online membership state into a terminal access state."""
+    """Translate the online membership state into a terminal access state.
+
+    V3-L7: a NULL ``membership_end`` is "cannot prove expired" — it must
+    never crash this function (``None >= date`` raised TypeError) and
+    must never read as an enable. It returns ``"disable_user"`` here,
+    which the serve/lease guards then cancel with CANCELLED_STALE_STATE
+    (``member_is_proven_blockable`` is False for a NULL end), matching
+    the fail-closed invariant.
+    """
 
     gym_timezone = member.gym.timezone if member.gym else "Asia/Kolkata"
     try:
@@ -147,7 +157,10 @@ def desired_command_type(member: Member) -> str:
         local_today = datetime.now(zoneinfo.ZoneInfo("Asia/Kolkata")).date()
     return (
         "enable_user"
-        if member.status == "active" and not member.deleted_at and member.membership_end >= local_today
+        if member.status == "active"
+        and not member.deleted_at
+        and member.membership_end is not None
+        and member.membership_end >= local_today
         else "disable_user"
     )
 
@@ -272,6 +285,125 @@ def cancel_bridge_command(
     command.acknowledged_at = utcnow()
 
 
+# V3-L6: per-gym canonical-enroll index cache. ``resolve_adms_member``'s
+# legacy fallback used to load EVERY member row of the gym on each miss
+# (a full-table scan per unmapped punch). The index below is built from
+# one lightweight (id, device_enroll_number) column query and cached per
+# gym for a short TTL. NOTE: the review's premise of "the same TTLCache
+# used by resolve_adms_member" was wrong — no TTLCache exists anywhere in
+# this codebase (cachetools is not installed), so this is a small stdlib
+# TTL dict instead. The cache only avoids the scan; it never authorises
+# a resolution on its own — every hit is re-verified against the live
+# member row before it is returned.
+_ADMS_ENROLL_INDEX_TTL_SECONDS = 120
+_adms_enroll_index_cache: dict[int, tuple[float, dict[str, int]]] = {}
+_adms_enroll_index_lock = threading.Lock()
+
+
+def invalidate_adms_enroll_index(gym_id: int) -> None:
+    """Drop the cached canonical-enroll index for *gym_id* (V3-L6).
+
+    Call after any change to a member's ``device_enroll_number`` so the
+    next resolve rebuilds from the database instead of serving a stale
+    mapping for up to the TTL. The TTL itself is only a backstop.
+    """
+
+    with _adms_enroll_index_lock:
+        _adms_enroll_index_cache.pop(gym_id, None)
+
+
+def _adms_enroll_index(gym_id: int) -> dict[str, int]:
+    """Canonical enroll number -> member id for one gym (V3-L6)."""
+
+    now = time.monotonic()
+    with _adms_enroll_index_lock:
+        entry = _adms_enroll_index_cache.get(gym_id)
+        if entry is not None and entry[0] > now:
+            return entry[1]
+    index: dict[str, int] = {}
+    rows = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.device_enroll_number.isnot(None))
+        .order_by(Member.id.asc())
+        .with_entities(Member.id, Member.device_enroll_number)
+        .all()
+    )
+    for member_id, enroll in rows:
+        try:
+            # First holder wins (lowest id), matching the old scan's
+            # first-match behaviour when two rows share one canonical ID.
+            index.setdefault(canonical_enroll_number(enroll), member_id)
+        except ValueError:
+            continue
+    with _adms_enroll_index_lock:
+        _adms_enroll_index_cache[gym_id] = (
+            now + _ADMS_ENROLL_INDEX_TTL_SECONDS,
+            index,
+        )
+    return index
+
+
+def find_member_by_enroll_number(
+    gym_id: int, enroll_number: str | None, exclude_id: int | None = None
+) -> Member | None:
+    """Canonical-aware member lookup by terminal enroll number (V3-H3).
+
+    Stored enroll numbers may carry leading zeros ("042") from before
+    ingest canonicalization, while callers pass the canonical form
+    ("42"). An exact-match-only lookup misses the stored row, so a
+    second member can end up owning the same canonical ID. This does
+    an exact canonical match first, then a canonical-compare fallback
+    via the cached per-gym index (:func:`_adms_enroll_index`) — the
+    same pattern :func:`resolve_adms_member` used to carry inline.
+
+    Does NOT filter soft-deleted members: callers must see deleted
+    holders to give the "held by a deleted member" error instead of a
+    UniqueViolation at flush time (Guard 2 / enroll endpoint).
+    Returns ``None`` when nothing matches (or the only match is the
+    excluded member).
+    """
+    if enroll_number is None:
+        return None
+    try:
+        canonical = canonical_enroll_number(enroll_number)
+    except ValueError:
+        # Non-numeric IDs (M16) keep their raw form — exact match only.
+        member = Member.query.filter_by(
+            gym_id=gym_id, device_enroll_number=str(enroll_number).strip()
+        ).first()
+        if member is not None and member.id != exclude_id:
+            return member
+        return None
+    member = Member.query.filter_by(
+        gym_id=gym_id, device_enroll_number=canonical
+    ).first()
+    if member is not None and member.id != exclude_id:
+        return member
+    # Legacy fallback: a stored enroll number may carry leading zeros
+    # ("042") from before canonicalization. The index maps canonical
+    # forms (first holder wins); verify against the live row, rebuild
+    # once on a stale entry, then give up.
+    for _attempt in range(2):
+        member_id = _adms_enroll_index(gym_id).get(canonical)
+        if member_id is None or member_id == exclude_id:
+            return None
+        candidate = db.session.get(Member, member_id)
+        if (
+            candidate is not None
+            and candidate.gym_id == gym_id
+            and candidate.device_enroll_number is not None
+        ):
+            try:
+                if canonical_enroll_number(candidate.device_enroll_number) == canonical:
+                    return candidate
+            except ValueError:
+                pass
+        # Stale index entry — rebuild once and retry; if the rebuilt
+        # index still disagrees, the ID genuinely has no holder.
+        invalidate_adms_enroll_index(gym_id)
+    return None
+
+
 def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None:
     """Resolve an ADMS command's terminal identity back to a member row.
 
@@ -279,6 +411,9 @@ def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None
     belongs to a different gym is NEVER returned — resolution falls through
     to the gym-scoped ``device_enroll_number`` query, so a cross-gym
     mapping can only ever resolve to a member of this gym, or to None.
+
+    V3-M14: a soft-deleted member never resolves on either branch — its
+    terminal ID must read as unknown, not as a named ex-member.
     """
 
     if not enroll_number:
@@ -297,29 +432,15 @@ def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None
     )
     if mapping is not None and mapping.member_id is not None:
         member = db.session.get(Member, mapping.member_id)
-        if member is not None and member.gym_id == gym_id:
+        if (
+            member is not None
+            and member.gym_id == gym_id
+            and member.deleted_at is None
+        ):
             return member
-    member = Member.query.filter_by(
-        gym_id=gym_id, device_enroll_number=canonical
-    ).first()
-    if member is not None:
+    member = find_member_by_enroll_number(gym_id, canonical)
+    if member is not None and member.deleted_at is None:
         return member
-    # Legacy fallback: a stored enroll number may carry leading zeros
-    # ("042") from before canonicalization, while commands carry the
-    # canonical form ("42"). An exact-match miss here silently cancels a
-    # renewal unblock at serve time, so compare canonical forms before
-    # giving up. This only runs when the exact lookups above already
-    # missed, so it never shadows a correct match.
-    for candidate in (
-        Member.query.filter_by(gym_id=gym_id)
-        .filter(Member.device_enroll_number.isnot(None))
-        .all()
-    ):
-        try:
-            if canonical_enroll_number(candidate.device_enroll_number) == canonical:
-                return candidate
-        except ValueError:
-            continue
     return None
 
 
@@ -542,6 +663,14 @@ def _queue_template_restore_commands(member: Member, integration, enroll_number:
     Returns the number of restore commands queued.
     """
     from app.models.rrr import RRRBiometricTemplate
+
+    # V3-L10: templates are stored under the canonical PIN (see the
+    # upload-time canonicalization in _ingest_userinfo + the backfill
+    # migration), so look the restore up under the canonical form too.
+    try:
+        enroll_number = canonical_enroll_number(enroll_number)
+    except ValueError:
+        pass
 
     templates = RRRBiometricTemplate.query.filter_by(
         gym_id=member.gym_id,

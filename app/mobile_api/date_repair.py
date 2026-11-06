@@ -29,15 +29,20 @@ implied by their plan and their renewal ledger (RenewalHistory):
   the column NOT NULL, so this only fires for legacy/imported rows).
   Proposal: the creation row's recorded start, when one exists.
 - ``start_after_end``: the stored start is after the stored end.
-  Proposal: the ledger's recorded pair (chain start + latest end) when
-  the ledger determines both and no restart breaks the chain; otherwise
-  review-only.
+  Proposal: the ledger's recorded pair (latest chain row's start +
+  latest end) when the ledger determines both and no restart breaks
+  the chain; otherwise review-only.
 - ``start_in_future``: the start is after gym-local today. Review-only:
   a future start can be a legitimate pre-registration, so the scan
   never auto-corrects it.
 - ``start_ledger_mismatch``: the stored start disagrees with the start
-  the renewal ledger records for the current chain (its creation row,
-  or its last restart row). Proposal: that recorded start.
+  the renewal ledger records for the current chain — but only when
+  the stored start matches NO ledger ``new_start`` at all. The
+  renewal flows overwrite ``membership_start`` with each period's
+  start (V3-H4), so the stored start is the CURRENT period's start
+  (the latest chain row's ``new_start``), not the chain start; a
+  stored start equal to any ledger ``new_start`` is legitimate.
+  Proposal: the latest chain row's ``new_start``.
 - ``period_overlap``: two consecutive ledger periods overlap (a later
   period starts strictly before the previous period ends). Review-only:
   which row is wrong is ambiguous. A shared boundary day is tolerated,
@@ -72,7 +77,14 @@ review-confidence); deleted members are excluded entirely.
 Apply recomputes the proposal server-side for each requested member
 and only writes when the member is still flagged with that proposal,
 so a stale scan can never overwrite a member who was fixed meanwhile.
-"""
+Apply refuses members with freeze markers (or paused status) outright
+(V3-H5 freeze guard): a freeze extension must never be stripped by a
+bulk apply — the owner fixes those by hand after unfreezing.
+For ``oversized_renewal`` Apply also corrects the ledger (V3-H5):
+each oversized chain row is shortened to its plan duration and later
+chain rows shift earlier by the same amount, so ``chain_last_end``
+equals the applied end and the next scan converges instead of
+proposing the old oversized end back."""
 from __future__ import annotations
 
 from datetime import date as _date
@@ -140,6 +152,55 @@ def _chain_start_row(rows: list[RenewalHistory]) -> RenewalHistory | None:
     if _is_creation_row(start_row) or _is_restart_row(start_row):
         return start_row
     return None
+
+
+def _current_chain_rows(rows: list[RenewalHistory]) -> list[RenewalHistory]:
+    """Rows of the current chain: from its recorded start row onward.
+
+    Rows before the last restart belong to an old chain and no longer
+    determine the stored dates. Returns all rows when the ledger does
+    not record a chain start (partial/imported ledger).
+    """
+    chain_start = _chain_start_row(rows)
+    if chain_start is None:
+        return list(rows)
+    chain_idx = next((i for i, r in enumerate(rows) if r is chain_start), 0)
+    return rows[chain_idx:]
+
+
+def _correct_oversized_ledger(
+    chain_rows: list[RenewalHistory], duration: int
+) -> None:
+    """Shorten oversized chain rows so the ledger matches the repair.
+
+    Each chain renewal that applied more days than its plan allows is
+    cut back to its plan duration, and every later chain row shifts
+    earlier by the accumulated excess — so chaining is preserved
+    (each period still starts the day after the previous one ends),
+    no row stays oversized, and the chain's last end equals the
+    applied end. Creation rows are never shortened (their applied
+    days are the first period, not a renewal excess). Callers must
+    flush/commit; rows are mutated in place.
+    """
+    shift = 0
+    for row in chain_rows:
+        if row.new_start is None or row.new_end is None:
+            continue
+        if shift:
+            row.new_start = row.new_start - timedelta(days=shift)
+            row.new_end = row.new_end - timedelta(days=shift)
+        if _is_creation_row(row):
+            continue
+        applied = _applied_days(row)
+        if applied is None:
+            continue
+        row_duration = (
+            row.plan.duration_days if row.plan is not None else duration
+        )
+        if applied > row_duration + _TOLERANCE_DAYS:
+            excess = applied - row_duration
+            row.new_end = row.new_end - timedelta(days=excess)
+            shift += excess
 
 
 def _expected_current_end(
@@ -277,13 +338,7 @@ def classify_member(
     # its recorded start row onward). Rows before the last restart belong
     # to an old chain and no longer determine the stored end — but a
     # restart no longer blinds the checks entirely.
-    if chain_start is not None:
-        chain_idx = next(
-            (i for i, r in enumerate(rows) if r is chain_start), 0
-        )
-        chain_rows = rows[chain_idx:]
-    else:
-        chain_rows = rows
+    chain_rows = _current_chain_rows(rows)
     chain_last_end = chain_rows[-1].new_end if chain_rows else None
     chain_renewals = [r for r in chain_rows if not _is_creation_row(r)]
 
@@ -305,13 +360,17 @@ def classify_member(
             and last_end is not None
             and not has_restart
             and chain_start is not None
-            and chain_start.new_start is not None
+            and chain_rows
+            and chain_rows[-1].new_start is not None
         ):
-            finding["proposed_start"] = chain_start.new_start.isoformat()
+            # V3-H4: the proposed start is the CURRENT period's start
+            # (latest chain row), not the chain start — the renewal
+            # flows overwrite membership_start on every renewal.
+            finding["proposed_start"] = chain_rows[-1].new_start.isoformat()
             finding["proposed_end"] = last_end.isoformat()
             finding["reason"] += (
                 " The renewal history records this period as "
-                f"{chain_start.new_start.isoformat()} to "
+                f"{chain_rows[-1].new_start.isoformat()} to "
                 f"{last_end.isoformat()}."
             )
         else:
@@ -333,23 +392,34 @@ def classify_member(
             ),
         }
 
-    # S3) The stored start disagrees with the start the ledger records
-    #     for the current chain (its creation row, or its last restart
-    #     row). The recorded start is a single-row fact, so it is
-    #     proposed even when the chain contains a restart.
+    # S3) The stored start matches NO ledger new_start at all, while
+    #     the ledger does record a chain start (creation or restart
+    #     row) — so the ledger can judge it. V3-H4: the stored start
+    #     is the CURRENT period's start (the renewal flows overwrite
+    #     membership_start = new_start on every renewal), so a stored
+    #     start equal to ANY ledger new_start — creation row or latest
+    #     renewal — is legitimate and is not flagged. A partial
+    #     (imported) ledger with no recorded chain start cannot judge
+    #     the start either: the stored start may legitimately predate
+    #     the surviving rows. Proposal: the latest chain row's
+    #     new_start (current period start).
+    ledger_starts = {
+        r.new_start for r in rows if r.new_start is not None
+    }
     if (
         chain_start is not None
-        and chain_start.new_start is not None
-        and chain_start.new_start != start
+        and chain_rows
+        and chain_rows[-1].new_start is not None
+        and start not in ledger_starts
     ):
         return {
             **base,
             "classification": "start_ledger_mismatch",
-            "proposed_start": chain_start.new_start.isoformat(),
+            "proposed_start": chain_rows[-1].new_start.isoformat(),
             "reason": (
-                f"The renewal history records this period as starting "
-                f"{chain_start.new_start.isoformat()}, but the "
-                f"member's start date is {start.isoformat()}."
+                f"The renewal history records no period starting "
+                f"{start.isoformat()}; the current period starts "
+                f"{chain_rows[-1].new_start.isoformat()}."
             ),
         }
 
@@ -652,6 +722,18 @@ def register_date_repair_routes(bp):
                     {"member_id": member_id, "applied": False, "reason": "not_found"}
                 )
                 continue
+            # V3-H5 freeze guard: REFUSE outright. A freeze marker
+            # means the end was legitimately extended past the
+            # ledger; applying any proposal could strip that
+            # extension. The scan only demotes such findings to
+            # review-confidence and relies on the client leaving
+            # them unselected — the backend must not trust that.
+            # The owner fixes frozen members by hand after unfreezing.
+            if finding.get("freeze_events", 0) > 0 or member.status == "paused":
+                results.append(
+                    {"member_id": member_id, "applied": False, "reason": "frozen"}
+                )
+                continue
             old_end = member.membership_end
             old_start = member.membership_start
             if (proposed_end is None or old_end == proposed_end) and (
@@ -665,6 +747,41 @@ def register_date_repair_routes(bp):
                 member.membership_start = proposed_start
             if proposed_end is not None:
                 member.membership_end = proposed_end
+            # V3-H5: an oversized_renewal repair must also correct
+            # the ledger, or the next scan proposes the old oversized
+            # end back. Shorten each oversized chain row to its plan
+            # duration and shift later rows earlier, so chain_last_end
+            # equals the applied end and the repair converges.
+            ledger_corrected = False
+            if finding["classification"] == "oversized_renewal" and proposed_end is not None:
+                rows = (
+                    db.session.execute(
+                        select(RenewalHistory)
+                        .where(RenewalHistory.member_id == member.id)
+                        .order_by(RenewalHistory.created_at.asc(), RenewalHistory.id.asc())
+                    )
+                    .scalars()
+                    .all()
+                )
+                chain_rows = _current_chain_rows(rows)
+                old_latest_start = (
+                    chain_rows[-1].new_start if chain_rows else None
+                )
+                _correct_oversized_ledger(
+                    chain_rows,
+                    member.plan.duration_days if member.plan else 30,
+                )
+                ledger_corrected = True
+                # The stored start is the current period's start
+                # (V3-H4): if it tracked the latest chain row and
+                # that row shifted earlier, move it with the ledger.
+                if (
+                    chain_rows
+                    and old_latest_start is not None
+                    and member.membership_start == old_latest_start
+                    and chain_rows[-1].new_start != old_latest_start
+                ):
+                    member.membership_start = chain_rows[-1].new_start
             final_end = proposed_end if proposed_end is not None else old_end
             if member.status not in ("paused", "deleted") and final_end is not None:
                 member.status = "active" if final_end >= today else "expired"
@@ -679,24 +796,27 @@ def register_date_repair_routes(bp):
                     "old_end": old_end.isoformat() if old_end else None,
                     "new_end": final_end.isoformat() if final_end else None,
                     "old_start": old_start.isoformat() if old_start else None,
-                    "new_start": proposed_start.isoformat()
-                    if proposed_start is not None
-                    else (old_start.isoformat() if old_start else None),
+                    "new_start": member.membership_start.isoformat()
+                    if member.membership_start
+                    else None,
                     "classification": finding["classification"],
+                    "ledger_corrected": ledger_corrected,
                 },
             )
-            results.append(
-                {
-                    "member_id": member_id,
-                    "applied": True,
-                    "old_end": old_end.isoformat() if old_end else None,
-                    "new_end": final_end.isoformat() if final_end else None,
-                    "old_start": old_start.isoformat() if old_start else None,
-                    "new_start": proposed_start.isoformat()
-                    if proposed_start is not None
-                    else (old_start.isoformat() if old_start else None),
-                }
-            )
+            result_entry = {
+                "member_id": member_id,
+                "applied": True,
+                "old_end": old_end.isoformat() if old_end else None,
+                "new_end": final_end.isoformat() if final_end else None,
+                "old_start": old_start.isoformat() if old_start else None,
+                "new_start": proposed_start.isoformat()
+                if proposed_start is not None
+                else (old_start.isoformat() if old_start else None),
+            }
+            if ledger_corrected:
+                result_entry["ledger_corrected"] = True
+                result_entry["new_start"] = member.membership_start.isoformat()
+            results.append(result_entry)
         invalidate_dashboard_cache(g.gym_id)
         db.session.commit()
         return jsonify({"success": True, "data": {"results": results}})
@@ -758,6 +878,13 @@ def register_date_repair_routes(bp):
             if member is None:
                 results.append(
                     {"member_id": member_id, "applied": False, "reason": "not_found"}
+                )
+                continue
+            # V3-H5 freeze guard, same as Apply: confirming a pushed
+            # end on a frozen member would strip the freeze extension.
+            if finding.get("freeze_events", 0) > 0 or member.status == "paused":
+                results.append(
+                    {"member_id": member_id, "applied": False, "reason": "frozen"}
                 )
                 continue
             old_end = member.membership_end

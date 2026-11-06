@@ -11,6 +11,13 @@ def app():
     app = create_app("testing")
     with app.app_context():
         db.create_all()
+        # V3-M15: the auto-link throttle is process-global but keyed by
+        # gym id, and every test recreates gym 1 in a fresh database —
+        # reset it per test so one test's scan cannot throttle the next
+        # test's OPERLOG post or ATTLOG ingest.
+        from app.services.enroll_match_service import _AUTO_LINK_LAST_RUN
+
+        _AUTO_LINK_LAST_RUN.clear()
         yield app
         db.session.remove()
         db.drop_all()

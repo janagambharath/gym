@@ -1,7 +1,7 @@
 """Mobile API payments endpoints."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from flask import current_app, g, jsonify, request
@@ -107,6 +107,8 @@ def _serialize_payment(p: PaymentVerification) -> dict:
         "created_by": p.created_by.full_name if p.created_by else None,
         "verified_by": p.verified_by.full_name if p.verified_by else None,
         "verified_at": p.verified_at.isoformat() if p.verified_at else None,
+        "refunded_at": p.refunded_at.isoformat() if p.refunded_at else None,
+        "refunded_by": p.refunded_by.full_name if getattr(p, "refunded_by", None) else None,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "receipt": receipt,
         "whatsapp_url": receipt["whatsapp_url"],
@@ -185,20 +187,20 @@ def register_payments_routes(bp):
         total_discount = sum((p.discount for p in today_payments if p.discount), Decimal("0.00"))
         count_payments = len(today_payments)
 
-        # Method breakdown
-        methods = {"upi": Decimal("0.00"), "cash": Decimal("0.00"), "card": Decimal("0.00"), "other": Decimal("0.00")}
+        # Method breakdown (V3-L16): buckets are built from the single
+        # PAYMENT_METHODS enum in payment_service — every validated method
+        # (upi, cash, card, bank_transfer, bank, other) gets its own
+        # bucket, so a bank transfer no longer lands in "other". Server-set
+        # methods outside the enum (member_claim/member_request) fall back
+        # to "other".
+        from app.services.payment_service import PAYMENT_METHODS
+
+        methods = {m: Decimal("0.00") for m in sorted(PAYMENT_METHODS)}
         channels = {"online": Decimal("0.00"), "offline": Decimal("0.00")}
 
         for p in today_payments:
             m = (p.method or "other").lower()
-            if "upi" in m:
-                methods["upi"] += p.amount
-            elif "cash" in m:
-                methods["cash"] += p.amount
-            elif "card" in m:
-                methods["card"] += p.amount
-            else:
-                methods["other"] += p.amount
+            methods[m if m in methods else "other"] += p.amount
 
             ch = (p.channel or "offline").lower()
             if ch == "online":
@@ -430,6 +432,26 @@ def register_payments_routes(bp):
         if raw_start_date is not None and not isinstance(raw_start_date, str):
             return error_response("VALIDATION_ERROR", "renewal_start_date must use YYYY-MM-DD.", 400)
 
+        # V3-L17: validate at create time (chosen over an edit-the-
+        # pending-payment flow): a start so far back the period is
+        # already over could never verify — verify_payment 409s
+        # forever and the owner could never accept the claim.
+        # Mirrors verify_payment's rule exactly.
+        _today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
+        _earliest_start = (
+            member.membership_end + timedelta(days=1)
+            if member.membership_end and member.membership_end >= _today
+            else _today
+        )
+        _new_start = renewal_start_date or _earliest_start
+        _new_end = _new_start + timedelta(days=renewal_days - 1)
+        if _new_start <= _today and _new_end < _today:
+            return error_response(
+                "VALIDATION_ERROR",
+                "This renewal would already be expired. Choose a later start date.",
+                400,
+            )
+
         payment = PaymentVerification(
             gym_id=g.gym_id,
             member_id=member.id,
@@ -455,6 +477,8 @@ def register_payments_routes(bp):
                 verify_payment(payment, verified_by_id=g.current_user.id, renewal_days=renewal_days)
             except ValueError as exc:
                 db.session.rollback()
+                if str(exc).startswith("DUPLICATE_REFERENCE"):
+                    return error_response("DUPLICATE_REFERENCE", str(exc), 409)
                 return error_response("VALIDATION_ERROR", str(exc), 400)
 
         audit(
@@ -535,8 +559,23 @@ def register_payments_routes(bp):
                 metadata={"new_end": str(payment.member.membership_end), "renewal_days": renewal_days},
             )
             db.session.commit()
+        except IntegrityError:
+            # V3-M3 backstop: the partial unique index refused a second
+            # verified payment with the same reference (concurrent verifies
+            # racing past the re-check).
+            db.session.rollback()
+            return error_response(
+                "DUPLICATE_REFERENCE",
+                "A verified payment with this reference already exists for this gym.",
+                409,
+            )
         except ValueError as exc:
             db.session.rollback()
+            # V3-M3: the verify-time duplicate-UTR rejection surfaces as
+            # its own code so clients never mistake it for an idempotent
+            # already-verified success.
+            if str(exc).startswith("DUPLICATE_REFERENCE"):
+                return error_response("DUPLICATE_REFERENCE", str(exc), 409)
             return error_response("CONFLICT", str(exc), 409)
 
         return jsonify({"success": True, "data": {

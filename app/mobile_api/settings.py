@@ -105,13 +105,21 @@ def register_settings_routes(bp):
         gym = g.current_user.gym
 
         # Only owner can update; only safe fields allowed.
-        # B-M2: validate the timezone as a real IANA name BEFORE
+        # B-M2 / V3-L3: validate the timezone as a real IANA name BEFORE
         # applying any update. An invalid value used to persist
         # silently and every tz-sensitive path (including punch-time
         # parsing) fell back to Asia/Kolkata — how Yodha's invalid
-        # timezone caused the +5.5h punch bug.
-        if "timezone" in data and isinstance(data.get("timezone"), str):
-            tz_val = (data.get("timezone") or "").strip()
+        # timezone caused the +5.5h punch bug. A non-string value used
+        # to skip validation entirely (V3-L3); reject it outright.
+        if "timezone" in data:
+            tz_raw = data.get("timezone")
+            if not isinstance(tz_raw, str):
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "timezone must be a string (an IANA timezone name such as 'Asia/Kolkata').",
+                    400,
+                )
+            tz_val = (tz_raw or "").strip()
             if tz_val:
                 try:
                     from zoneinfo import ZoneInfo

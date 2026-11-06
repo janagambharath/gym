@@ -316,9 +316,15 @@ def attendance():
             if known_device is not None:
                 event_device_serial = candidate_serial
 
-    member = Member.query.filter_by(
-        gym_id=installation.gym_id, device_enroll_number=enroll_number
-    ).first()
+    member = (
+        Member.query.filter_by(
+            gym_id=installation.gym_id, device_enroll_number=enroll_number
+        )
+        # V3-M14: a soft-deleted member never resolves — its punches read
+        # as unknown instead of a named ex-member in Live Access.
+        .filter(Member.deleted_at.is_(None))
+        .first()
+    )
     existing = BridgeAttendance.query.filter_by(
         bridge_id=installation.id, event_id=event_id
     ).first()
@@ -582,22 +588,28 @@ def confirm_enrollment():
     ).scalar_one_or_none()
     if member is None or member.deleted_at is not None:
         return _json_error(404, "member_not_found", "Member was not found for this bridge.")
-    if member.device_enroll_number and member.device_enroll_number != enroll_number:
+    # V3-H3: compare canonical forms — a member stored pre-fix as "042"
+    # confirming "42" is the SAME enroll number, not a different one.
+    from app.services.bridge_service import canonical_enroll_number as _canonical
+
+    try:
+        _stored = _canonical(member.device_enroll_number) if member.device_enroll_number else None
+    except ValueError:
+        _stored = str(member.device_enroll_number).strip() if member.device_enroll_number else None
+    if _stored and _stored != enroll_number:
         return _json_error(
             409,
             "enroll_number_change_requires_review",
             "This member already has a biometric Enroll Number. Disable the old terminal user "
             "before assigning a replacement.",
         )
-    duplicate = db.session.execute(
-        select(Member)
-        .where(
-            Member.gym_id == installation.gym_id,
-            Member.device_enroll_number == enroll_number,
-            Member.id != member.id,
-        )
-        .with_for_update()
-    ).scalar_one_or_none()
+    # V3-H3: canonical-aware duplicate check — an exact query misses a
+    # stored zero-padded holder ("042"), letting a second member take "42".
+    from app.services.bridge_service import find_member_by_enroll_number
+
+    duplicate = find_member_by_enroll_number(
+        installation.gym_id, enroll_number, exclude_id=member.id
+    )
     if duplicate is not None:
         return _json_error(
             409,
@@ -606,6 +618,11 @@ def confirm_enrollment():
         )
 
     member.device_enroll_number = enroll_number
+    # V3-L6: drop the cached canonical-enroll index so the new number
+    # resolves immediately instead of after the TTL.
+    from app.services.bridge_service import invalidate_adms_enroll_index
+
+    invalidate_adms_enroll_index(installation.gym_id)
     command = queue_membership_command(member)
     audit(
         action="bridge_enrollment_confirmed",

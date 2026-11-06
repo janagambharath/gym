@@ -449,14 +449,18 @@ def register_rrr_routes(bp):
         if action in {"essl_group_block_test", "essl_group_unblock_test"}:
             matched_member = resolve_adms_member(g.gym_id, enroll_number)
             if matched_member is not None:
-                expected_name = sanitize_terminal_name(matched_member.full_name)
-                if expected_name.casefold() != test_user_name.casefold():
-                    return error_response(
-                        "TEST_MEMBER_NAME_MISMATCH",
-                        "That ID belongs to a Renewal Desk member. For your fake test member, enter the exact name saved in Renewal Desk and shown on the terminal.",
-                        422,
-                    )
-                test_member_id = matched_member.id
+                # V3-M9: refuse at queue time instead of 201-then-cancel.
+                # The serve guard used to cancel this as "belongs to a
+                # member" after a success response, which read as a broken
+                # terminal during commissioning and invited retries. Any
+                # enroll that resolves to a member is a real member's ID,
+                # whatever name was typed. The serve guard stays untouched
+                # as a backstop for commands queued before this fix.
+                return error_response(
+                    "TEST_MEMBER_IS_REAL",
+                    "That ID belongs to a Renewal Desk member. Group tests must use the dedicated fake test account, never a real member's ID.",
+                    409,
+                )
         existing = RRRAdmsCommand.query.filter(
             RRRAdmsCommand.integration_id == integration.id,
             RRRAdmsCommand.status.in_(("queued", "delivered")),
@@ -558,6 +562,25 @@ def register_rrr_routes(bp):
                 return error_response("VALIDATION_ERROR", "enroll_number must be a 1–9 digit number.", 422)
         if action == "create_user":
             member_name = str(payload.get("member_name") or payload.get("name") or "Member").strip()[:24]
+        if action == "create_user":
+            # V3-M6: a create_user carries no Grp field, so the new
+            # terminal user gets firmware-default access — and no
+            # follow-up block is queued. If this enroll belongs to a
+            # member who is not proven enableable (expired, paused,
+            # deleted, NULL end), creating them would open the door for
+            # that member. Refuse at queue time (409) rather than
+            # create-then-block or Grp=100 wire text: a refusal has no
+            # access window and no reliance on a second command acking.
+            # Unmapped enrolls and proven-enableable members are
+            # unaffected. The serve-time create_user exemption (B-H2)
+            # is untouched.
+            mapped_member = resolve_adms_member(g.gym_id, enroll_number)
+            if mapped_member is not None and not member_is_proven_enableable(mapped_member):
+                return error_response(
+                    "MEMBER_NOT_ENABLEABLE",
+                    "That enroll number belongs to a member whose membership is not currently active. Create a terminal user only for active members or unmapped IDs.",
+                    409,
+                )
         if action == "unlock_door":
             raw_delay = payload.get("delay_seconds")
             if raw_delay is not None:
@@ -727,17 +750,55 @@ def register_rrr_routes(bp):
         total = grouped.count()
         total_pages = (total + per_page - 1) // per_page if total else 0
         page_groups = grouped.offset((page - 1) * per_page).limit(per_page).all()
+        # V3-L11: batch the latest-event lookup — one query for all groups
+        # on the page instead of one per group (N+1 at Yodha scale).
+        # (The review describes this as batched member lookups; the
+        # endpoint actually does no member lookup — the per-group query
+        # is the latest RRRAttendanceEvent, batched here the same way.)
+        from sqlalchemy import tuple_ as _tuple_
+
+        bio_ids = [bio_id for bio_id, _, _, _ in page_groups]
+        latest_by_bio: dict[str, object] = {}
+        if bio_ids:
+            max_times = dict(
+                db.session.query(
+                    RRRAttendanceEvent.biometric_user_id,
+                    _func.max(RRRAttendanceEvent.punch_time),
+                )
+                .filter(
+                    RRRAttendanceEvent.gym_id == g.gym_id,
+                    RRRAttendanceEvent.biometric_user_id.in_(bio_ids),
+                    RRRAttendanceEvent.processing_status == "unmapped",
+                )
+                .group_by(RRRAttendanceEvent.biometric_user_id)
+                .all()
+            )
+            pairs = [
+                (bio_id, max_times[bio_id])
+                for bio_id in bio_ids
+                if bio_id in max_times
+            ]
+            if pairs:
+                candidates = (
+                    RRRAttendanceEvent.query.filter(
+                        RRRAttendanceEvent.gym_id == g.gym_id,
+                        RRRAttendanceEvent.processing_status == "unmapped",
+                        _tuple_(
+                            RRRAttendanceEvent.biometric_user_id,
+                            RRRAttendanceEvent.punch_time,
+                        ).in_(pairs),
+                    )
+                    .order_by(
+                        RRRAttendanceEvent.punch_time.desc(),
+                        RRRAttendanceEvent.id.desc(),
+                    )
+                    .all()
+                )
+                for evt in candidates:
+                    latest_by_bio.setdefault(evt.biometric_user_id, evt)
         groups = []
         for bio_id, punch_count, latest_punch, first_punch in page_groups:
-            latest = (
-                RRRAttendanceEvent.query.filter_by(
-                    gym_id=g.gym_id,
-                    biometric_user_id=bio_id,
-                    processing_status="unmapped",
-                )
-                .order_by(RRRAttendanceEvent.punch_time.desc())
-                .first()
-            )
+            latest = latest_by_bio.get(bio_id)
             groups.append({
                 "biometric_user_id": bio_id,
                 "punch_count": punch_count,
@@ -775,6 +836,16 @@ def register_rrr_routes(bp):
         results = []
         for item in mappings:
             external_id = str(item.get("external_id") or "").strip()
+            # V3-H3: the event_source lookup below matches stored
+            # biometric_user_id values, which ingest canonicalizes —
+            # canonicalize the requested ID first ("042" -> "42") or
+            # the source defaults to ebioserver for ADMS gyms.
+            try:
+                from app.services.bridge_service import canonical_enroll_number
+
+                external_id = canonical_enroll_number(external_id)
+            except ValueError:
+                pass
             try:
                 member_id = int(item.get("member_id"))
             except (TypeError, ValueError):
@@ -784,7 +855,9 @@ def register_rrr_routes(bp):
                 results.append({"external_id": external_id, "ok": False, "error": "external_id required"})
                 continue
             member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
-            if member is None:
+            if member is None or member.deleted_at is not None:
+                # V3-M10: never link a biometric ID to a soft-deleted
+                # member — report it as not found, per item.
                 results.append({"external_id": external_id, "ok": False, "error": "Member not found"})
                 continue
             # Per-item savepoint: a failure rolls back only this item,
@@ -821,9 +894,17 @@ def register_rrr_routes(bp):
         except (TypeError, ValueError):
             return error_response("VALIDATION_ERROR", "member_id is required.", 422)
         member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
-        if member is None:
+        if member is None or member.deleted_at is not None:
+            # V3-M10: never link a biometric ID to a soft-deleted member.
             return error_response("NOT_FOUND", "Member was not found.", 404)
         external_id = external_id.strip()
+        # V3-H3: canonicalize before the event_source lookup (see bulk).
+        try:
+            from app.services.bridge_service import canonical_enroll_number
+
+            external_id = canonical_enroll_number(external_id)
+        except ValueError:
+            pass
         event_source = (
             RRRAttendanceEvent.query.filter_by(gym_id=g.gym_id, biometric_user_id=external_id)
             .order_by(RRRAttendanceEvent.id.desc())
@@ -1044,6 +1125,10 @@ def register_rrr_routes(bp):
             )
         except ValueError as exc:
             return error_response("CONFLICT", str(exc), 409)
+        # V3-L14: confirm_match only flushes now (it runs inside
+        # normalize_attendance's savepoint during ingest) — the direct
+        # endpoint caller owns the commit.
+        db.session.commit()
         return jsonify({"success": True, "data": {
             "member_id": member.id,
             "member_name": member.full_name,
@@ -1060,6 +1145,8 @@ def register_rrr_routes(bp):
         from app.services import enroll_match_service
 
         result = enroll_match_service.auto_link_high_confidence(g.gym_id, g.user_id)
+        # V3-L14: auto-link only flushes (via confirm_match) — commit here.
+        db.session.commit()
         return jsonify({"success": True, "data": result})
 
     @bp.get("/rrr/member/<int:member_id>/attendance")
@@ -1293,11 +1380,40 @@ def register_rrr_routes(bp):
 
         restored = 0
         unblocks_queued = 0
+        # V3-M4: pre-delete statuses, from the soft_delete_member audit
+        # entries (recorded at delete time). A member frozen (paused)
+        # before deletion must come back paused with the door closed —
+        # not active with a fresh unblock queued. Members deleted before
+        # this was recorded have no entry and fall back to the old
+        # expired/active logic below.
+        delete_notes = {}
+        if members:
+            from app.models.audit_log import AuditLog
+
+            entries = (
+                AuditLog.query.filter(
+                    AuditLog.gym_id == g.gym_id,
+                    AuditLog.action == "soft_delete_member",
+                    AuditLog.resource_type == "member",
+                    AuditLog.resource_id.in_([str(m.id) for m in members]),
+                )
+                .order_by(AuditLog.created_at.desc())
+                .all()
+            )
+            for e in entries:
+                rid = str(e.resource_id)
+                if rid not in delete_notes:
+                    delete_notes[rid] = (e.metadata_json or {}).get("previous_status")
         for m in members:
             m.deleted_at = None
-            # Set correct status based on membership end date
+            # Set correct status based on membership end date, then on
+            # the pre-delete status. Paused restores keep the door closed
+            # (no unblock queued — the active-only check below handles it).
+            prev_status = delete_notes.get(str(m.id))
             if m.membership_end and local_today and m.membership_end < local_today:
                 m.status = "expired"
+            elif prev_status == "paused":
+                m.status = "paused"
             elif m.status == "deleted":
                 m.status = "active"
             restored += 1

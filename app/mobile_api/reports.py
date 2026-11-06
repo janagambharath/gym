@@ -113,30 +113,54 @@ def register_reports_routes(bp):
 
         revenue_at_risk = Decimal(str(_canonical_at_risk(gym_id, gym_timezone)["total"]))
 
-        # Renewals
-        renewals_completed = (
-            db.session.query(func.count(RenewalHistory.id))
-            .filter(
-                RenewalHistory.gym_id == gym_id,
-                RenewalHistory.created_at >= start_at,
-                RenewalHistory.is_test.is_(False),
+        # Renewals (V3-M1): signup creation rows are not renewals. Both the
+        # completed count and the cohort numerator reuse the revenue
+        # service's creation-row exclusion (explicit flag + paid_on check),
+        # so new signups no longer inflate "completed renewals" or the rate.
+        from app.services.revenue_service import _exclude_creation_rows
+
+        _renewal_cols = (
+            RenewalHistory.id,
+            RenewalHistory.member_id,
+            RenewalHistory.previous_end,
+            RenewalHistory.new_start,
+            RenewalHistory.is_creation,
+            PaymentVerification.paid_on,
+            Member.membership_start,
+        )
+        _renewal_join = (
+            db.session.query(*_renewal_cols)
+            .outerjoin(
+                PaymentVerification,
+                PaymentVerification.id == RenewalHistory.payment_verification_id,
             )
-            .scalar() or 0
+            .join(Member, Member.id == RenewalHistory.member_id)
+        )
+        renewals_completed = len(
+            _exclude_creation_rows(
+                gym_id,
+                _renewal_join.filter(
+                    RenewalHistory.gym_id == gym_id,
+                    RenewalHistory.created_at >= start_at,
+                    RenewalHistory.is_test.is_(False),
+                ).all(),
+            )
         )
         # Measure a completed-expiry cohort: memberships whose old end date
         # fell in the period, plus those still expired today. Do not divide
         # renewal activity by every currently expired member, which mixes
         # unrelated time windows and inflates/deflates the rate.
         renewed_member_ids = {
-            row[0] for row in db.session.query(RenewalHistory.member_id)
-            .filter(
-                RenewalHistory.gym_id == gym_id,
-                RenewalHistory.is_test.is_(False),
-                RenewalHistory.previous_end >= period_start_date,
-                RenewalHistory.previous_end < today,
+            row.member_id
+            for row in _exclude_creation_rows(
+                gym_id,
+                _renewal_join.filter(
+                    RenewalHistory.gym_id == gym_id,
+                    RenewalHistory.is_test.is_(False),
+                    RenewalHistory.previous_end >= period_start_date,
+                    RenewalHistory.previous_end < today,
+                ).all(),
             )
-            .distinct()
-            .all()
         }
         unrenewed_member_ids = {
             row[0] for row in db.session.query(Member.id)

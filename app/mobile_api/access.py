@@ -87,22 +87,18 @@ def register_access_routes(bp):
         ).first()
         if adms:
             from app.models.rrr import RRRAdmsCommand
-            from app.services.rrr_service import (
-                direct_adms_terminal_is_online,
-                direct_adms_terminal_last_seen_at,
-            )
+            from app.services.access_event_service import adms_device_status
 
             summary["adms_integration_id"] = adms.id
             # A prior successful connection is not proof that the terminal
             # can receive commands now. Use the same five-minute authenticated
-            # poll check as Direct Cloud commissioning.
-            summary["adms_online"] = direct_adms_terminal_is_online(adms)
-            adms_last_seen = direct_adms_terminal_last_seen_at(adms)
-            summary["adms_last_seen_at"] = (
-                adms_last_seen.isoformat() if adms_last_seen else None
-            )
+            # poll check as Direct Cloud commissioning (shared helper, also
+            # used by get_access_summary for the dashboard — V3-M12).
+            adms_status = adms_device_status(g.gym_id) or {}
+            summary["adms_online"] = adms_status.get("adms_online", False)
+            summary["adms_last_seen_at"] = adms_status.get("adms_last_seen_at")
             summary["adms_commands_enabled"] = bool(adms.commands_enabled)
-            summary["adms_device_name"] = adms.device_name or adms.device_serial
+            summary["adms_device_name"] = adms_status.get("adms_device_name")
             # Direct ADMS is authoritative when configured, even if a legacy
             # bridge is still paired. Never advertise or operate its TCP path.
             summary["remote_unlock_available"] = bool(
@@ -160,15 +156,22 @@ def register_access_routes(bp):
         if event_type and event_type not in ("entry", "exit", "denied"):
             event_type = None
 
-        result = get_access_events(
-            g.gym_id,
-            gym_timezone,
-            page=page,
-            per_page=per_page,
-            event_type=event_type,
-            search=search,
-            date_filter=date_filter,
-        )
+        try:
+            result = get_access_events(
+                g.gym_id,
+                gym_timezone,
+                page=page,
+                per_page=per_page,
+                event_type=event_type,
+                search=search,
+                date_filter=date_filter,
+            )
+        except ValueError as exc:
+            # V3-L12: unknown date_filter values are a 400, not an
+            # all-time feed.
+            from app.mobile_api.errors import error_response
+
+            return error_response("VALIDATION_ERROR", str(exc), 400)
         result["log"] = result.get("events", [])
         resp = jsonify({"success": True, "data": result})
         resp.headers["Cache-Control"] = "no-store"

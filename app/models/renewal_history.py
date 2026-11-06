@@ -39,8 +39,23 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     )
     previous_start = db.Column(db.Date, nullable=True)
     previous_end = db.Column(db.Date, nullable=True)
+    # V3-M18: pre-renewal plan/price snapshot, so _revert_renewal can
+    # restore them on refund/delete instead of leaving the member on
+    # the renewed plan at the refunded price. NULL on creation rows
+    # (no prior plan/price to restore).
+    previous_plan_id = db.Column(
+        db.Integer, db.ForeignKey("membership_plans.id", ondelete="SET NULL"), nullable=True
+    )
+    previous_price = db.Column(db.Numeric(10, 2), nullable=True)
     new_start = db.Column(db.Date, nullable=False)
     new_end = db.Column(db.Date, nullable=False)
+    # V3-M5: explicit signup marker, set at write time by create_member.
+    # The old heuristic (first row + previous_end == new_start) misfires
+    # on genuine first renewals of imported members backdated onto
+    # previous_end; the flag disambiguates them. Legacy rows are backfilled
+    # by migration (heuristic match) and the heuristic stays as a fallback
+    # for rows that predate the flag.
+    is_creation = db.Column(db.Boolean, nullable=False, default=False)
     standard_price = db.Column(db.Numeric(10, 2), nullable=True)
     discount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
     amount = db.Column(db.Numeric(10, 2), nullable=False, default=Decimal("0.00"))
@@ -49,7 +64,10 @@ class RenewalHistory(TenantMixin, TimestampMixin, db.Model):
     is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="renewals")
-    plan = db.relationship("MembershipPlan")
+    # Two FKs now point at membership_plans (plan_id + previous_plan_id,
+    # the latter added for V3-M18); pin the relationship to plan_id or
+    # SQLAlchemy refuses to configure the mapper (AmbiguousForeignKeys).
+    plan = db.relationship("MembershipPlan", foreign_keys=[plan_id])
     payment_verification = db.relationship(
         "PaymentVerification", back_populates="renewal", foreign_keys=[payment_verification_id]
     )

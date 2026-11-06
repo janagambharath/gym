@@ -441,6 +441,9 @@ def enroll_match_confirm():
         return redirect(url_for("biometric.enroll_match"))
     try:
         member = enroll_match_service.confirm_match(gym_id, member_id, enroll_number, current_user.id)
+        # V3-L14: confirm_match only flushes now — the direct caller
+        # owns the commit.
+        db.session.commit()
         flash(f"{member.full_name} linked to terminal #{member.device_enroll_number}.", "success")
     except ValueError as exc:
         flash(str(exc), "danger")

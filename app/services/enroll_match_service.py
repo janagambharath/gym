@@ -16,6 +16,7 @@ confidence (see ``confirm_match``).
 from __future__ import annotations
 
 import json
+import time
 from difflib import SequenceMatcher
 
 from app.extensions import db
@@ -33,6 +34,47 @@ MATCH_THRESHOLD = 0.55
 # auto_link_high_confidence. A 0.90 device-typed name is not proof of
 # identity (M5).
 AUTO_LINK_THRESHOLD = 0.90
+
+
+# V3-M15: ingest-hot-path throttle for the auto-link fuzzy scan, shared
+# by every auto-link trigger (ATTLOG ingest via normalize_attendance,
+# the OPERLOG post-upload path, and any future caller). At most one scan
+# per gym per interval. PER-PROCESS LIMIT (documented, not fixed): this
+# is a module-level dict, so each gunicorn worker holds its own copy —
+# with N workers a gym can see up to N scans per interval, and worker
+# recycling resets it. That bound is acceptable for a best-effort
+# link (the scan itself is idempotent); moving it to shared state
+# would need Redis/a DB row, which this fix deliberately avoids.
+_AUTO_LINK_MIN_INTERVAL_SECONDS = 300
+_AUTO_LINK_LAST_RUN: dict[int, float] = {}
+
+
+def auto_link_scan_due(gym_id: int) -> bool:
+    """Return True (and stamp the run) when a throttled auto-link scan may run.
+
+    The stamp is taken when the check runs, not when the scan finds a
+    link — otherwise punches for IDs absent from the terminal snapshot
+    would re-fetch the snapshot on every punch, which is the hot-path
+    cost V3-M15 flags.
+    """
+    now_mono = time.monotonic()
+    last_run = _AUTO_LINK_LAST_RUN.get(gym_id, 0.0)
+    if now_mono - last_run < _AUTO_LINK_MIN_INTERVAL_SECONDS:
+        return False
+    _AUTO_LINK_LAST_RUN[gym_id] = now_mono
+    return True
+
+
+def _canonical_or_raw(value: object) -> str:
+    """Canonical enroll number ("042" -> "42"); raw value when the ID is
+    non-numeric (M16 — such IDs can never link, but must keep their
+    stored form so punches are not dropped)."""
+    try:
+        from app.services.bridge_service import canonical_enroll_number
+
+        return canonical_enroll_number(value)
+    except ValueError:
+        return str(value or "").strip()
 
 
 def _normalize_name(name: str | None) -> str:
@@ -81,8 +123,11 @@ def get_terminal_snapshot(gym_id: int) -> dict | None:
         "command_id": cmd.id,
         "source": "bridge",
         "acknowledged_at": cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None,
+        # V3-L13: canonicalize enroll numbers in the snapshot ("042" ->
+        # "42") so the auto-link snapshot check in normalize_attendance
+        # matches the canonical punch ID; non-numeric IDs keep raw form.
         "users": [
-            {"enroll_number": str(u.get("user_id") or u.get("enroll_number") or "").strip(),
+            {"enroll_number": _canonical_or_raw(str(u.get("user_id") or u.get("enroll_number") or "").strip()),
              "name": str(u.get("name") or "").strip()}
             for u in users
             if isinstance(u, dict)
@@ -127,7 +172,7 @@ def get_adms_snapshot(gym_id: int) -> dict | None:
             command_id = cmd.id
             acknowledged_at = cmd.acknowledged_at.isoformat() if cmd.acknowledged_at else None
             users = [
-                {"enroll_number": str(u.get("enroll_number") or "").strip(),
+                {"enroll_number": _canonical_or_raw(str(u.get("enroll_number") or "").strip()),
                  "name": str(u.get("name") or "").strip()}
                 for u in raw_users
                 if isinstance(u, dict)
@@ -150,7 +195,7 @@ def get_adms_snapshot(gym_id: int) -> dict | None:
             for u in oraw:
                 if not isinstance(u, dict):
                     continue
-                en = str(u.get("enroll_number") or "").strip()
+                en = _canonical_or_raw(str(u.get("enroll_number") or "").strip())
                 nm = str(u.get("name") or "").strip()
                 if en and en not in seen:
                     users.append({"enroll_number": en, "name": nm})
@@ -203,7 +248,7 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
     ).first()
     if not integration:
         return
-    enroll_number = str(enroll_number).strip()
+    enroll_number = _canonical_or_raw(str(enroll_number).strip())
     name = str(name).strip()
     if not enroll_number or not name:
         return
@@ -218,7 +263,8 @@ def upsert_terminal_snapshot(gym_id: int, enroll_number: str, name: str, source:
             data = json.loads(cmd.result_data)
             for u in data.get("users", []):
                 if isinstance(u, dict) and u.get("enroll_number"):
-                    users[str(u["enroll_number"]).strip()] = str(u.get("name", "")).strip()
+                    # V3-L13: keep the stored snapshot canonical too.
+                    users[_canonical_or_raw(str(u["enroll_number"]).strip())] = str(u.get("name", "")).strip()
         except (json.JSONDecodeError, TypeError):
             pass
     users[enroll_number] = name
@@ -285,7 +331,7 @@ def suggest_matches(gym_id: int) -> dict:
         .all()
     )
     linked_enrolls = {
-        m.device_enroll_number
+        _canonical_or_raw(m.device_enroll_number)
         for m in Member.query.filter_by(gym_id=gym_id)
         .filter(Member.deleted_at.is_(None), Member.device_enroll_number.isnot(None))
         .all()
@@ -434,7 +480,11 @@ def confirm_match(
     member = Member.query.filter_by(id=member_id, gym_id=gym_id).first()
     if member is None or member.deleted_at is not None:
         raise ValueError("Member not found.")
-    if member.device_enroll_number and member.device_enroll_number != enroll_number:
+    # V3-H3: compare canonical forms — a member stored pre-fix as "042"
+    # confirming "42" is the SAME enroll number, not a different one.
+    # The old exact compare raised a false "already has enroll number
+    # 042" here, before Guard 1 was ever reached.
+    if member.device_enroll_number and _canonical_or_raw(member.device_enroll_number) != enroll_number:
         raise ValueError(
             f"This member already has enroll number {member.device_enroll_number}. "
             "Remove it first to reassign."
@@ -445,10 +495,12 @@ def confirm_match(
     # then the flush throws UniqueViolation and poisons the whole session
     # (see normalize_attendance: the ATTLOG batch 500s and the terminal
     # retries it forever).
-    duplicate = (
-        Member.query.filter_by(gym_id=gym_id, device_enroll_number=enroll_number)
-        .filter(Member.id != member.id)
-        .first()
+    # V3-H3: canonical-aware lookup — an exact query misses a stored
+    # zero-padded holder ("042"), letting a second member take "42".
+    from app.services.bridge_service import find_member_by_enroll_number
+
+    duplicate = find_member_by_enroll_number(
+        gym_id, enroll_number, exclude_id=member.id
     )
     if duplicate is not None:
         if duplicate.deleted_at is not None:
@@ -489,5 +541,12 @@ def confirm_match(
         metadata={"enroll_number": enroll_number, "auto_linked": auto_linked,
                   **({"confidence": confidence} if confidence is not None else {})},
     )
-    db.session.commit()
+    # V3-L14: flush, don't commit. confirm_match runs inside
+    # normalize_attendance's savepoint during ATTLOG ingest — an inner
+    # commit() breaks the savepoint boundary, so a later failure in the
+    # same batch could leave the mapping committed but the punch
+    # uncommitted (or vice versa). The outer transaction commits: the
+    # cdata handler for ingest, and the direct endpoint callers
+    # (mobile + web enroll-match confirm) commit explicitly.
+    db.session.flush()
     return member

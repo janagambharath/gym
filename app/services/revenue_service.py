@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import func, true
 
 from app.extensions import db
 from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
@@ -89,16 +89,24 @@ def revenue_recovered(
 ) -> dict:
     """Calculate revenue recovered through Renewal Desk.
 
-    Recorded renewal value = sum of owner-entered renewal amounts from:
-    - Direct renewals (owner-confirmed)
-    - Campaign-attributed renewals
-    - Reactivations (expired member who renewed)
+    Money truth (V3-H1): signup creation rows are excluded from every
+    figure here — a paid signup is not a recovery, and creation rows
+    carry a payment_verification_id, so even the payment-backed split
+    was signup-contaminated before this exclusion. ``total_amount`` is
+    the recorded (paid + direct) renewal total excluding signups;
+    ``payment_backed_amount`` is the verified-only headline clients
+    should quote; ``recorded_amount`` is the explicit alias for the
+    recorded total.
 
     Args:
         period_days: If set, only count renewals within the last N days.
                      If None, count all-time. These records are not by
                      themselves proof of verified payment or causal lift.
     """
+    creation_ids = _creation_row_ids(gym_id)
+    not_creation = (
+        ~RenewalHistory.id.in_(creation_ids) if creation_ids else true()
+    )
     query = (
         db.session.query(
             func.count(RenewalHistory.id).label("renewal_count"),
@@ -107,6 +115,7 @@ def revenue_recovered(
         .filter(
             RenewalHistory.gym_id == gym_id,
             RenewalHistory.is_test.is_(False),
+            not_creation,
         )
     )
 
@@ -121,10 +130,12 @@ def revenue_recovered(
     # Split payment-backed vs direct (non-payment) renewals so the owner can
     # reconcile "revenue recovered" against "collections" (which only sums
     # verified PaymentVerification rows). Renewals with no backing payment
-    # (direct/bulk renewals) explain the difference.
+    # (direct/bulk renewals) explain the difference. Both splits exclude
+    # signup creation rows (V3-H1).
     base_filters = [
         RenewalHistory.gym_id == gym_id,
         RenewalHistory.is_test.is_(False),
+        not_creation,
     ]
     if period_days is not None:
         today = today_for_gym(gym_timezone)
@@ -148,7 +159,7 @@ def revenue_recovered(
         .one()
     )
 
-    # Campaign-attributed portion
+    # Campaign-attributed portion (signup creation rows excluded, V3-H1).
     campaign_query = (
         db.session.query(
             func.count(RenewalHistory.id).label("count"),
@@ -158,6 +169,7 @@ def revenue_recovered(
             RenewalHistory.gym_id == gym_id,
             RenewalHistory.is_test.is_(False),
             RenewalHistory.campaign_id.isnot(None),
+            not_creation,
         )
     )
 
@@ -172,6 +184,7 @@ def revenue_recovered(
     return {
         "total_renewals": int(result.renewal_count or 0),
         "total_amount": str(result.total_amount),
+        "recorded_amount": str(result.total_amount),
         "payment_backed_renewals": int(paid.count or 0),
         "payment_backed_amount": str(paid.amount),
         "direct_renewals": int(direct.count or 0),
@@ -179,6 +192,68 @@ def revenue_recovered(
         "campaign_renewals": int(campaign_result.count or 0),
         "campaign_amount": str(campaign_result.amount),
     }
+
+
+def _row_is_creation(row, first_ids: set) -> bool:
+    """True when a ledger row is a signup creation row, not a recovery.
+
+    (V3-M5) Three signals, in order of reliability:
+    1. ``is_creation`` — set explicitly at write time by create_member;
+       disambiguates every row written after the flag existed.
+    2. The legacy heuristic — the member's first ledger row with
+       ``previous_end == new_start`` — but only when the backing
+       payment cannot prove otherwise: a creation row's backing payment
+       has ``paid_on == membership_start`` (create_member writes exactly
+       that), while a genuine first renewal of an imported member is
+       backed by a payment dated after the member's start. When the
+       payment dates are absent (legacy/test rows) the heuristic stands.
+    """
+    if getattr(row, "is_creation", False):
+        return True
+    if (
+        row.id not in first_ids
+        or row.previous_end is None
+        or row.previous_end != row.new_start
+    ):
+        return False
+    paid_on = getattr(row, "paid_on", None)
+    member_start = getattr(row, "membership_start", None)
+    if paid_on is None or member_start is None:
+        return True
+    return paid_on == member_start
+
+
+def _creation_row_ids(gym_id: int) -> set:
+    """IDs of signup (creation) ledger rows for one gym.
+
+    Used by the aggregate queries in ``revenue_recovered()``, which
+    cannot apply the row-level ``_exclude_creation_rows`` filter.
+    """
+    rows = (
+        db.session.query(
+            RenewalHistory.id,
+            RenewalHistory.member_id,
+            RenewalHistory.previous_end,
+            RenewalHistory.new_start,
+            RenewalHistory.is_creation,
+            PaymentVerification.paid_on,
+            Member.membership_start,
+        )
+        .outerjoin(
+            PaymentVerification,
+            PaymentVerification.id == RenewalHistory.payment_verification_id,
+        )
+        .join(Member, Member.id == RenewalHistory.member_id)
+        .filter(RenewalHistory.gym_id == gym_id)
+        .all()
+    )
+    first_by_member: dict = {}
+    for row in rows:
+        prev = first_by_member.get(row.member_id)
+        if prev is None or row.id < prev.id:
+            first_by_member[row.member_id] = row
+    first_ids = {row.id for row in first_by_member.values()}
+    return {row.id for row in first_by_member.values() if _row_is_creation(row, first_ids)}
 
 
 def _exclude_creation_rows(gym_id: int, rows: list) -> list:
@@ -190,8 +265,11 @@ def _exclude_creation_rows(gym_id: int, rows: list) -> list:
     new period after the previous end (``earliest_start = previous_end + 1``,
     or today when expired), so a row matching BOTH signals — the member's
     first ledger row AND ``previous_end == new_start`` — is a signup, not
-    a recovery. Requiring both avoids misreading a backdated first renewal
-    of an imported member (who has no creation row) as a signup.
+    a recovery. Rows carrying the explicit ``is_creation`` flag (V3-M5)
+    are dropped outright; for unflagged rows the heuristic additionally
+    requires the backing payment's ``paid_on`` to equal the member's
+    start (see ``_row_is_creation``) so a backdated first renewal of an
+    imported member is no longer mis-excluded.
     """
     if not rows:
         return []
@@ -206,15 +284,7 @@ def _exclude_creation_rows(gym_id: int, rows: list) -> list:
         .group_by(RenewalHistory.member_id)
         .all()
     }
-    return [
-        row
-        for row in rows
-        if not (
-            row.id in first_ids
-            and row.previous_end is not None
-            and row.previous_end == row.new_start
-        )
-    ]
+    return [row for row in rows if not _row_is_creation(row, first_ids)]
 
 
 def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
@@ -226,11 +296,14 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     the numerator includes only those matched renewals. This avoids dividing
     all recent renewals by a current-risk snapshot from a different period.
 
-    Money truth (C1 / B-H3): signup creation rows are excluded from the
-    cohort entirely — a new signup is not a recovered renewal — and the
-    recovered breakdown splits payment-backed renewals from direct
-    (unrecorded-payment) renewals so clients can display verified-only
-    money. ``revenue_at_risk`` is the canonical at-risk total (the same
+    Money truth (C1 / B-H3, V3-H2): signup creation rows are excluded from
+    the cohort entirely — a new signup is not a recovered renewal — and
+    the headline ``revenue_recovered`` and the recovery rate are computed
+    from payment-backed renewals ONLY. Direct (unrecorded-payment)
+    renewals are still counted in the separately-named
+    ``recorded_amount`` / breakdown ``total_amount`` so the two can be
+    reconciled, but they are no longer presented as recovered money.
+    ``revenue_at_risk`` is the canonical at-risk total (the same
     number the dashboard and reports return); the rate's denominator is
     exposed separately as ``recovery_denominator``.
     """
@@ -250,7 +323,15 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
             RenewalHistory.previous_end,
             RenewalHistory.new_start,
             RenewalHistory.payment_verification_id,
+            RenewalHistory.is_creation,
+            PaymentVerification.paid_on,
+            Member.membership_start,
         )
+        .outerjoin(
+            PaymentVerification,
+            PaymentVerification.id == RenewalHistory.payment_verification_id,
+        )
+        .join(Member, Member.id == RenewalHistory.member_id)
         .filter(
             RenewalHistory.gym_id == gym_id,
             RenewalHistory.is_test.is_(False),
@@ -260,39 +341,40 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         .all()
     )
     recovery_rows = _exclude_creation_rows(gym_id, cohort_rows)
-    cohort_actual = sum((Decimal(str(row.amount or 0)) for row in recovery_rows), Decimal("0"))
-    cohort_expected = sum((Decimal(str(row.expected_value or 0)) for row in recovery_rows), Decimal("0"))
+    cohort_actual = sum((Decimal(str(row.amount or 0)) for row in recovery_rows), Decimal("0.00"))
+    cohort_expected = sum((Decimal(str(row.expected_value or 0)) for row in recovery_rows), Decimal("0.00"))
     paid_rows = [row for row in recovery_rows if row.payment_verification_id is not None]
     direct_rows = [row for row in recovery_rows if row.payment_verification_id is None]
     campaign_rows = [row for row in recovery_rows if row.campaign_id is not None]
+    paid_amount = sum((Decimal(str(row.amount or 0)) for row in paid_rows), Decimal("0.00"))
 
     risk_total = Decimal(risk["total"]) + cohort_expected
 
     if risk_total > 0:
-        rate = (cohort_actual / risk_total * 100).quantize(Decimal("0.1"))
+        rate = (paid_amount / risk_total * 100).quantize(Decimal("0.1"))
     else:
         rate = Decimal("0.0")
 
     return {
         "revenue_at_risk": risk["total"],
         "recovery_denominator": str(risk_total),
-        "revenue_recovered": str(cohort_actual),
+        "revenue_recovered": str(paid_amount),
+        "recorded_amount": str(cohort_actual),
         "recovery_rate": str(rate),
         "risk_breakdown": {**risk, "renewed_cohort_expected": str(cohort_expected)},
         "recovered_breakdown": {
             "total_renewals": len(recovery_rows),
             "total_amount": str(cohort_actual),
+            "recorded_amount": str(cohort_actual),
             "payment_backed_renewals": len(paid_rows),
-            "payment_backed_amount": str(
-                sum((Decimal(str(row.amount or 0)) for row in paid_rows), Decimal("0"))
-            ),
+            "payment_backed_amount": str(paid_amount),
             "direct_renewals": len(direct_rows),
             "direct_amount": str(
-                sum((Decimal(str(row.amount or 0)) for row in direct_rows), Decimal("0"))
+                sum((Decimal(str(row.amount or 0)) for row in direct_rows), Decimal("0.00"))
             ),
             "campaign_renewals": len(campaign_rows),
             "campaign_amount": str(
-                sum((Decimal(str(row.amount or 0)) for row in campaign_rows), Decimal("0"))
+                sum((Decimal(str(row.amount or 0)) for row in campaign_rows), Decimal("0.00"))
             ),
         },
     }

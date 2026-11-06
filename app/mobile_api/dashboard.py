@@ -59,6 +59,20 @@ def register_dashboard_routes(bp):
             recovery_rate_data = calc_recovery_rate(g.gym_id, gym_timezone)
         except Exception:
             current_app.logger.warning("Could not load revenue recovered for dashboard gym=%s", g.gym_id)
+            # V3-L5: never silently null the money blocks — a failed
+            # computation is an explicit error marker, not "zero recovered".
+            revenue_recovered_data = {
+                "error": {
+                    "code": "REVENUE_UNAVAILABLE",
+                    "message": "Revenue recovered metrics could not be computed.",
+                }
+            }
+            recovery_rate_data = {
+                "error": {
+                    "code": "REVENUE_UNAVAILABLE",
+                    "message": "Recovery rate metrics could not be computed.",
+                }
+            }
 
         # Today's Revenue Actions
         todays_actions = []
@@ -114,6 +128,7 @@ def register_dashboard_routes(bp):
                     "total_replied": campaign.total_replied,
                     "total_renewed": campaign.total_renewed,
                     "total_revenue_recovered": str(campaign.total_revenue_recovered),
+                    "total_recorded_revenue": str(campaign.total_recorded_revenue or 0),
                     "sent_at": campaign.sent_at.isoformat() if campaign.sent_at else None,
                 }
         except Exception:

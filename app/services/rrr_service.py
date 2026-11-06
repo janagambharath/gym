@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -47,13 +46,11 @@ def _canonical_or_raw(value: object) -> str:
         return str(value or "").strip()
 
 
-# H11: ingest-hot-path throttle for the auto-link fuzzy scan. The scan is
-# snapshot x unlinked-members SequenceMatcher work; at Yodha scale
-# (2,855 IDs) running it on EVERY unmapped punch burns the batch. At most
-# one run per gym per interval, and only when the punch's own ID is in
-# the terminal snapshot (otherwise the scan cannot link this punch).
-_AUTO_LINK_MIN_INTERVAL_SECONDS = 300
-_AUTO_LINK_LAST_RUN: dict[int, float] = {}
+# V3-M15: the auto-link scan throttle lives in enroll_match_service
+# (auto_link_scan_due) so every trigger — ATTLOG ingest here, the
+# OPERLOG post-upload path, manual scans — shares one per-gym gate.
+# PER-PROCESS LIMIT (documented, not fixed): see auto_link_scan_due —
+# each gunicorn worker holds its own copy of the last-run dict.
 
 
 def delete_identity_mappings(gym_id: int, member_id: int) -> int:
@@ -191,11 +188,17 @@ def ensure_default_rules(gym_id: int) -> list[RRRRule]:
 
 
 def _dedupe_key(source: str, device_serial: str | None, external_event_id: str | None,
-                biometric_user_id: str, punch_time, raw_payload: str = "") -> str:
+                biometric_user_id: str, punch_time, raw_payload: str = "",
+                direction: str | None = None) -> str:
     # The same physical punch may arrive through eBioServer and a direct SDK
     # connector. Source IDs differ, so deduplicate by physical device/user/time.
+    # V3-L8: canonicalize the serial (upper-case, strip) so a terminal
+    # whose serial is spelled differently per upload does not double-count
+    # the same punch; include direction so an entry+exit at the same second
+    # no longer collapse into one row.
     stable = "|".join((
-        device_serial or "", biometric_user_id, punch_time.isoformat(),
+        (device_serial or "").strip().upper(), biometric_user_id,
+        punch_time.isoformat(), str(direction or ""),
     ))
     return hashlib.sha256(stable.encode("utf-8")).hexdigest()
 
@@ -218,11 +221,15 @@ def _mapped_member(gym_id: int, biometric_user_id: str) -> Member | None:
             and member.deleted_at is None
         ):
             return member
-    return (
-        Member.query.filter_by(gym_id=gym_id, device_enroll_number=biometric_user_id)
-        .filter(Member.deleted_at.is_(None))
-        .first()
-    )
+    # V3-H3: canonical-aware enroll fallback — a member stored pre-fix
+    # as "042" is invisible to an exact "42" lookup, so its punches
+    # would attribute to whichever other member the mapping points at.
+    from app.services.bridge_service import find_member_by_enroll_number
+
+    member = find_member_by_enroll_number(gym_id, biometric_user_id)
+    if member is not None and member.deleted_at is None:
+        return member
+    return None
 
 
 def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, punch_time,
@@ -240,7 +247,8 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     # stored IDs, dedupe keys and mappings all agree. Non-numeric IDs
     # keep their raw form (M16).
     biometric_user_id = _canonical_or_raw(biometric_user_id)
-    key = _dedupe_key(source, device_serial, external_event_id, biometric_user_id, punch_time, raw_payload)
+    key = _dedupe_key(source, device_serial, external_event_id, biometric_user_id, punch_time, raw_payload,
+                      direction=direction)
     existing = RRRAttendanceEvent.query.filter_by(gym_id=gym_id, dedupe_key=key).first()
     if existing:
         return existing, False
@@ -260,9 +268,13 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     # all). The OPERLOG post-upload path and the manual scan still run
     # unthrottled; ingest just stops paying the full scan per punch.
     if not member:
-        now_mono = time.monotonic()
-        last_run = _AUTO_LINK_LAST_RUN.get(gym_id, 0.0)
-        if now_mono - last_run >= _AUTO_LINK_MIN_INTERVAL_SECONDS:
+        # V3-M15: shared per-gym throttle (see enroll_match_service).
+        # The gate stamps when the check runs, so the snapshot fetch
+        # itself is bounded to one per gym per interval even when this
+        # punch's ID is absent from the snapshot.
+        from app.services.enroll_match_service import auto_link_scan_due
+
+        if auto_link_scan_due(gym_id):
             snapshot_ids: set[str] = set()
             try:
                 from app.services.enroll_match_service import (
@@ -280,7 +292,6 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
             except Exception:
                 snapshot_ids = set()
             if biometric_user_id in snapshot_ids:
-                _AUTO_LINK_LAST_RUN[gym_id] = now_mono
                 try:
                     with db.session.begin_nested():
                         from app.services.enroll_match_service import auto_link_high_confidence
@@ -332,9 +343,18 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     or ID already linked to a different member). Queues the membership
     command so the terminal state matches (expired members get blocked).
     """
-    from app.services.bridge_service import canonical_enroll_number, queue_membership_command
+    from app.services.bridge_service import (
+        canonical_enroll_number,
+        find_member_by_enroll_number,
+        queue_membership_command,
+    )
 
     external_id = canonical_enroll_number(external_id)
+    # V3-M10: never link a biometric ID to a soft-deleted member — the
+    # mapping would be confirmed but _mapped_member would never resolve
+    # it, and Guard 3 would then brick the ID for every live member.
+    if member.deleted_at is not None:
+        raise ValueError("Member is deleted and cannot be linked to a biometric ID.")
     # Guard 1: member already linked to a different enroll number.
     # Compare canonical forms — a stored non-canonical value ("0103")
     # is the same ID as the canonical "103", not a different one.
@@ -348,10 +368,10 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     # NOTE: the unique constraint covers soft-deleted rows too, so this
     # check must not filter them out — otherwise the flush throws
     # UniqueViolation and poisons the caller's session.
-    duplicate = (
-        Member.query.filter_by(gym_id=gym_id, device_enroll_number=external_id)
-        .filter(Member.id != member.id)
-        .first()
+    # V3-H3: canonical-aware lookup — an exact query misses a stored
+    # zero-padded holder ("042"), letting a second member take "42".
+    duplicate = find_member_by_enroll_number(
+        gym_id, external_id, exclude_id=member.id
     )
     if duplicate is not None:
         if duplicate.deleted_at is not None:
@@ -367,9 +387,23 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
         gym_id=gym_id, external_id=external_id, status="confirmed"
     ).first()
     if existing_mapping is not None and existing_mapping.member_id != member.id:
-        raise ValueError(
-            f"Biometric ID {external_id} is already linked to another member."
+        # V3-M10: a confirmed mapping pointing at a soft-deleted member
+        # is stale — the ID was freed when the member was deleted
+        # (delete_identity_mappings), or the link predates that cleanup.
+        # Drop the stale row and let the live link proceed instead of
+        # bricking the ID with "already linked to another member".
+        mapped_member = (
+            db.session.get(Member, existing_mapping.member_id)
+            if existing_mapping.member_id is not None
+            else None
         )
+        if mapped_member is not None and mapped_member.deleted_at is not None:
+            db.session.delete(existing_mapping)
+            existing_mapping = None
+        else:
+            raise ValueError(
+                f"Biometric ID {external_id} is already linked to another member."
+            )
 
     mapping = RRRIdentityMapping.query.filter_by(gym_id=gym_id, external_id=external_id).first()
     if mapping is None:
@@ -383,6 +417,11 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
         mapping.status = "confirmed"
         mapping.confirmed_by_id = user_id
     member.device_enroll_number = external_id
+    # V3-L6: the canonical-enroll index cache must not keep resolving
+    # the member's old ID to them after a remap.
+    from app.services.bridge_service import invalidate_adms_enroll_index
+
+    invalidate_adms_enroll_index(gym_id)
     # Backfill unmapped punches for this ID — including rows stored
     # before the H7 ingest canonicalization under a non-canonical form
     # ("042" vs "42"), which an exact-match query would never replay.

@@ -142,14 +142,18 @@ def test_recovery_cohort_excludes_signup_creation_rows(seed_gym):
     )
 
     result = recovery_rate(gym.id, gym.timezone)
-    assert result["revenue_recovered"] == "1300.00"
+    # V3-H2: the headline and the rate are payment-backed only — the
+    # ₹500 direct renewal is recorded, not recovered.
+    assert result["revenue_recovered"] == "800.00"
+    assert result["recorded_amount"] == "1300.00"
     assert result["recovered_breakdown"]["total_renewals"] == 2
+    assert result["recovered_breakdown"]["total_amount"] == "1300.00"
     assert result["recovered_breakdown"]["payment_backed_amount"] == "800.00"
     assert result["recovered_breakdown"]["payment_backed_renewals"] == 1
     assert result["recovered_breakdown"]["direct_amount"] == "500.00"
     assert result["recovered_breakdown"]["direct_renewals"] == 1
     assert result["recovery_denominator"] == "2000.00"
-    assert result["recovery_rate"] == "65.0"
+    assert result["recovery_rate"] == "40.0"
 
 
 # ─── H1: one at-risk number everywhere ─────────────────────────────────────

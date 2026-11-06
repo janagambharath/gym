@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Index
+from sqlalchemy import CheckConstraint, Index, text
 
 from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin
@@ -13,6 +13,18 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     __table_args__ = (
         Index("ix_payments_gym_status", "gym_id", "status"),
         Index("ix_payments_gym_member", "gym_id", "member_id"),
+        # V3-M3: at most one VERIFIED payment per (gym, reference). The
+        # partial index is the backstop behind the verify-time re-check in
+        # verify_payment: two pending payments sharing a UTR can no longer
+        # both become verified, even under a race.
+        Index(
+            "uq_payments_gym_reference_verified",
+            "gym_id",
+            "reference",
+            unique=True,
+            postgresql_where=text("status = 'verified'"),
+            sqlite_where=text("status = 'verified'"),
+        ),
         CheckConstraint(
             "status IN ('pending', 'processing', 'verified', 'rejected', 'failed', 'cancelled', 'refunded')",
             name="ck_payments_status",
@@ -51,12 +63,20 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     renewal_days = db.Column(db.Integer, nullable=False, default=30)
     notes = db.Column(db.Text, nullable=True)
     verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # V3-L2: refund audit trail — verified_at/verified_by_id are immutable
+    # once set; a refund records its own time/actor here instead of
+    # overwriting the verification.
+    refunded_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    refunded_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     is_test = db.Column(db.Boolean, nullable=False, default=False, index=True)
 
     member = db.relationship("Member", back_populates="payments")
     plan = db.relationship("MembershipPlan")
     renewal = db.relationship("RenewalHistory", back_populates="payment_verification", uselist=False)
     verified_by = db.relationship("User", foreign_keys=[verified_by_id])
+    refunded_by = db.relationship("User", foreign_keys=[refunded_by_id])
     created_by = db.relationship("User", foreign_keys=[created_by_id])
 
     @property

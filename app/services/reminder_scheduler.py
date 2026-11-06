@@ -210,7 +210,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
                 from app.services.bridge_service import queue_membership_command
                 from app.models import Member
                 from app.models.rrr import RRRAdmsCommand, RRRIntegration
-                from sqlalchemy import or_, select
+                from sqlalchemy import and_, or_, select
                 from app.services.bridge_service import (
                     member_is_proven_blockable,
                     resolve_adms_enroll_number,
@@ -233,11 +233,25 @@ def _scheduled_reminder_job(app: Flask) -> None:
                         RRRIdentityMapping.gym_id == gym.id,
                         RRRIdentityMapping.status == "confirmed",
                     )
+                    # V3-M8: paused members are proven blockable by
+                    # design (freeze = block the door), so their failed
+                    # blocks must reconcile too — previously only
+                    # "expired" was scanned and a failed freeze block
+                    # left the member with door access indefinitely.
+                    # The end-date filter applies to expired members
+                    # only: a paused member is blockable on any dates,
+                    # and member_is_proven_blockable is re-checked per
+                    # member below before anything is re-queued.
                     expired_linked = (
                         Member.query.filter(
                             Member.gym_id == gym.id,
-                            Member.status == "expired",
-                            Member.membership_end < today_for_gym(gym.timezone),
+                            or_(
+                                and_(
+                                    Member.status == "expired",
+                                    Member.membership_end < today_for_gym(gym.timezone),
+                                ),
+                                Member.status == "paused",
+                            ),
                             Member.deleted_at.is_(None),
                             or_(
                                 Member.device_enroll_number.isnot(None),
@@ -289,6 +303,7 @@ def _scheduled_reminder_job(app: Flask) -> None:
             try:
                 from app.models import Member
                 from app.models.bridge import BridgeCommand
+                from sqlalchemy import and_, or_
                 from app.services.bridge_service import (
                     _active_installation,
                     desired_command_type,
@@ -299,11 +314,19 @@ def _scheduled_reminder_job(app: Flask) -> None:
 
                 installation = _active_installation(gym.id)
                 if installation is not None:
+                    # V3-M8: same widening as the ADMS branch above —
+                    # paused members are proven blockable, so a failed
+                    # freeze block must be re-driven here too.
                     expired_linked = (
                         Member.query.filter(
                             Member.gym_id == gym.id,
-                            Member.status == "expired",
-                            Member.membership_end < today_for_gym(gym.timezone),
+                            or_(
+                                and_(
+                                    Member.status == "expired",
+                                    Member.membership_end < today_for_gym(gym.timezone),
+                                ),
+                                Member.status == "paused",
+                            ),
                             Member.deleted_at.is_(None),
                             Member.device_enroll_number.is_not(None),
                         ).all()

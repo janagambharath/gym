@@ -34,6 +34,7 @@ def _serialize_campaign(c: Campaign) -> dict:
         "total_replied": c.total_replied,
         "total_renewed": c.total_renewed,
         "total_revenue_recovered": str(c.total_revenue_recovered),
+        "total_recorded_revenue": str(c.total_recorded_revenue or 0),
         "sent_at": c.sent_at.isoformat() if c.sent_at else None,
         "completed_at": c.completed_at.isoformat() if c.completed_at else None,
         "created_by": c.created_by.full_name if c.created_by else None,

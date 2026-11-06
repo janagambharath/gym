@@ -25,6 +25,58 @@ PAYMENT_METHODS = {"upi", "cash", "card", "bank_transfer", "bank", "other"}
 PAYMENT_CHANNELS = {"online", "offline"}
 
 
+def _is_stale_scheduled_row(row: RenewalHistory, member: Member) -> bool:
+    """A scheduled row that can never activate.
+
+    ``apply_due_scheduled_renewals`` only activates a row whose
+    ``previous_end`` still matches the member's current end. Once any
+    other renewal, bulk renew, or hand edit moves the member's end,
+    the row is permanently dead: it must not block future scheduling
+    (V3-M16 stuck state) and must not count as "a future renewal".
+    """
+    return row.previous_end != member.membership_end
+
+
+def active_scheduled_renewals(
+    member: Member,
+    today,
+    *,
+    exclude_payment_verification_id: int | None = None,
+) -> list[RenewalHistory]:
+    """Live (non-stale) scheduled future renewals for *member*.
+
+    Mirrors the direct path: every RenewalHistory row with
+    ``new_start > today``, regardless of whether it is linked to a
+    payment (V3-M16 — the old verify check inner-joined
+    PaymentVerification, so a direct scheduled renewal was invisible
+    to it). Only the payment being verified is excluded. Stale rows
+    (previous_end no longer matches the member's current end) are
+    ignored: they can never activate, so they must not block a new
+    scheduling. They are left in place as inert history — deleting
+    them would erase the record of a paid future renewal that a
+    later immediate renewal superseded.
+    """
+    rows = (
+        RenewalHistory.query.filter(
+            RenewalHistory.member_id == member.id,
+            RenewalHistory.new_start > today,
+        )
+        .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())
+        .all()
+    )
+    live = []
+    for row in rows:
+        if (
+            exclude_payment_verification_id is not None
+            and row.payment_verification_id == exclude_payment_verification_id
+        ):
+            continue
+        if _is_stale_scheduled_row(row, member):
+            continue
+        live.append(row)
+    return live
+
+
 def verified_payment_with_reference(gym_id: int, reference: str):
     """Return the verified payment in this gym carrying *reference* (M9).
 
@@ -73,6 +125,21 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     if locked_payment.status not in ("pending", "processing"):
         raise ValueError(f"Payment {locked_payment.id} is {locked_payment.status}.")
 
+    # V3-M3: verify-time re-check under the FOR UPDATE lock. The create
+    # paths only reject a duplicate when a VERIFIED payment already
+    # carries the reference, so two pending payments sharing one UTR
+    # could otherwise both verify and double-count collections. The
+    # partial unique index (uq_payments_gym_reference_verified) is the
+    # backstop for a race between two concurrent verifies.
+    _reference = (locked_payment.reference or "").strip()
+    if _reference:
+        _clash = verified_payment_with_reference(locked_payment.gym_id, _reference)
+        if _clash is not None and _clash.id != locked_payment.id:
+            raise ValueError(
+                f"DUPLICATE_REFERENCE: payment {_clash.id} is already verified "
+                f"with reference {_reference}."
+            )
+
     member = (
         db.session.execute(
             select(Member).where(Member.id == locked_payment.member_id).with_for_update()
@@ -87,6 +154,10 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
 
     previous_start = member.membership_start
     previous_end = member.membership_end
+    # V3-M18: snapshot plan/price before mutation so a refund/delete
+    # can restore them.
+    previous_plan_id = member.plan_id
+    previous_price = member.price
     gym_timezone = (
         member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
     )
@@ -105,22 +176,14 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     # current access period on its start date. This lets an existing paid
     # period run to expiry and prevents a selected gap from keeping the door
     # open. Only one verified future renewal may be waiting for a member.
+    # V3-M16: mirror the direct path — a direct scheduled renewal
+    # (payment_verification_id IS NULL) counts too, and stale rows
+    # that can never activate do not block.
     scheduled = new_start > today
     if scheduled:
-        existing_schedule = (
-            RenewalHistory.query.join(
-                PaymentVerification,
-                RenewalHistory.payment_verification_id == PaymentVerification.id,
-            )
-            .filter(
-                RenewalHistory.member_id == member.id,
-                RenewalHistory.new_start > today,
-                RenewalHistory.payment_verification_id != locked_payment.id,
-                PaymentVerification.status == "verified",
-            )
-            .first()
-        )
-        if existing_schedule:
+        if active_scheduled_renewals(
+            member, today, exclude_payment_verification_id=locked_payment.id
+        ):
             raise ValueError("This member already has a verified future renewal scheduled.")
 
     locked_payment.renewal_start_date = new_start
@@ -151,6 +214,8 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         renewed_by_id=verified_by_id,
         previous_start=previous_start,
         previous_end=previous_end,
+        previous_plan_id=previous_plan_id,
+        previous_price=previous_price,
         new_start=new_start,
         new_end=new_end,
         standard_price=locked_payment.standard_price,
@@ -258,14 +323,39 @@ def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None
 
 
 def _revert_renewal(member: Member, renewal: RenewalHistory) -> None:
-    """Roll a member's membership back to the pre-renewal state."""
+    """Roll a member's membership back to the pre-renewal state.
+
+    V3-M18: restores plan/price from the snapshot on the renewal row
+    (when present), and refunding a signup no longer leaves a 1-day
+    active stub: a creation row (previous_end == new_start, the
+    pre-signup state) reverts to status "expired" instead of "active".
+    """
     if member.membership_end == renewal.new_end:
         member.membership_end = renewal.previous_end
         if renewal.previous_start is not None:
             member.membership_start = renewal.previous_start
+        # V3-M18: restore the pre-renewal plan/price. NULL means the
+        # row predates the snapshot (or is a creation row with no
+        # prior plan/price) — leave the member's current values.
+        if renewal.previous_plan_id is not None:
+            member.plan_id = renewal.previous_plan_id
+        if renewal.previous_price is not None:
+            member.price = renewal.previous_price
         # B-M3: a paused member stays paused through a refund/delete
         # revert — only the explicit unfreeze flow clears paused.
         if member.status == "paused":
+            return
+        # A creation row records the pre-signup state: there was no
+        # membership before it, so the refunded member is expired —
+        # not a 1-day "active" stub with the door open. Legacy
+        # creation rows (previous_start NULL) are detected the same
+        # way; a genuine first renewal of an imported member carries
+        # a previous_start that differs from new_start, so it is not
+        # mistaken for a creation row.
+        if renewal.previous_end is not None and renewal.previous_end == renewal.new_start and (
+            renewal.previous_start is None or renewal.previous_start == renewal.new_start
+        ):
+            member.status = "expired"
             return
         if renewal.previous_end:
             gym_tz = member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
@@ -286,34 +376,37 @@ def _unwind_campaign_attribution(renewal: RenewalHistory) -> None:
     recipient.renewed_at = None
     recipient.renewal_amount = None
     recipient.renewal_id = None
+    recipient.is_payment_backed = None
     recipient.status = "sent"
     db.session.flush()
     campaign = db.session.get(Campaign, campaign_id)
     if campaign:
+        from app.services.campaign_service import recompute_campaign_revenue
+
         campaign.total_renewed = (
             CampaignRecipient.query.filter_by(campaign_id=campaign.id)
             .filter(CampaignRecipient.renewed_at.isnot(None))
             .count()
         )
-        campaign.total_revenue_recovered = (
-            db.session.query(func.coalesce(func.sum(CampaignRecipient.renewal_amount), 0))
-            .filter(
-                CampaignRecipient.campaign_id == campaign.id,
-                CampaignRecipient.renewed_at.isnot(None),
-                CampaignRecipient.renewal_amount.isnot(None),
-            )
-            .scalar()
-        )
+        recompute_campaign_revenue(campaign)
 
 
 def delete_payment(payment: PaymentVerification) -> None:
     """Delete a payment record and revert any renewal history.
 
-    Works for both verified and unverified payments — the owner explicitly
-    requested delete-anything behavior. Renewal history is still reverted
-    and the terminal is updated to reflect the reverted membership.
+    (V3-L4) Only UNVERIFIED payments may be deleted. A verified payment
+    is money that was collected and counted — deleting it (and its
+    renewal row) erases the money trail entirely. Refund it instead,
+    which keeps the record with status='refunded' and reverts the
+    membership. Unverified (pending/rejected/cancelled/failed) payments
+    carry no collected money and can still be deleted.
     """
     payment = _lock_payment(payment)
+    if payment.status == "verified":
+        raise ValueError(
+            "Cannot delete a verified payment — it is part of the money trail. "
+            "Refund it instead."
+        )
     gym_id = payment.gym_id
     member = (
         db.session.execute(
@@ -356,8 +449,11 @@ def refund_payment(payment: PaymentVerification, *, refunded_by_id: int) -> None
         db.session.delete(renewal)
 
     payment.status = "refunded"
-    payment.verified_by_id = refunded_by_id
-    payment.verified_at = utcnow()
+    # V3-L2: the verification audit trail is immutable — verified_at /
+    # verified_by_id keep the original verification. The refund records
+    # its own time and actor separately.
+    payment.refunded_at = utcnow()
+    payment.refunded_by_id = refunded_by_id
     queue_membership_command(member)
     invalidate_dashboard_cache(payment.gym_id)
 

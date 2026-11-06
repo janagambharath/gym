@@ -270,7 +270,7 @@ def test_soft_delete_frees_mapping_and_mapped_member_ignores_deleted(client, see
 # ─── H11: auto-link throttled off the hot path ───────────────────────────
 
 def test_auto_link_runs_once_per_interval_and_only_for_snapshot_ids(seed_gym):
-    from app.services import rrr_service
+    from app.services import enroll_match_service
     from app.services.rrr_service import normalize_attendance
 
     gym = seed_gym["gym"]
@@ -288,23 +288,25 @@ def test_auto_link_runs_once_per_interval_and_only_for_snapshot_ids(seed_gym):
     ))
     db.session.commit()
 
-    rrr_service._AUTO_LINK_LAST_RUN.clear()
+    # V3-M15: the throttle moved from rrr_service to enroll_match_service
+    # (shared by ATTLOG ingest and the OPERLOG path).
+    enroll_match_service._AUTO_LINK_LAST_RUN.clear()
     event, _ = normalize_attendance(
         gym_id=gym.id, source="adms_direct", biometric_user_id="77",
         punch_time=datetime.now(timezone.utc),
     )
-    assert rrr_service._AUTO_LINK_LAST_RUN.get(gym.id) is not None
+    assert enroll_match_service._AUTO_LINK_LAST_RUN.get(gym.id) is not None
     db.session.refresh(member)
     assert member.device_enroll_number == "77"
 
-    first_run = rrr_service._AUTO_LINK_LAST_RUN[gym.id]
+    first_run = enroll_match_service._AUTO_LINK_LAST_RUN[gym.id]
     # A second unmapped punch inside the interval must NOT re-run the
     # fuzzy scan, even for an ID that is not in the snapshot.
     normalize_attendance(
         gym_id=gym.id, source="adms_direct", biometric_user_id="99",
         punch_time=datetime.now(timezone.utc),
     )
-    assert rrr_service._AUTO_LINK_LAST_RUN[gym.id] == first_run
+    assert enroll_match_service._AUTO_LINK_LAST_RUN[gym.id] == first_run
 
 
 # ─── B-H9: unresolved mappings pagination ────────────────────────────────
@@ -385,9 +387,11 @@ def test_bulk_renew_uses_gym_local_today_and_previous_start(client, seed_gym):
     )
     assert res.status_code == 302
     db.session.refresh(member)
-    ny_today = today_for_gym("America/New_York")
-    assert member.membership_start == ny_today
-    assert member.membership_end == ny_today + timedelta(days=29)
+    # V3-L15: expired members default to previous_end + 1 (continuity),
+    # not forced to today — a renewal paid days ago keeps its paid days.
+    # V3-H4: membership_start is the current period's start.
+    assert member.membership_start == date.today() - timedelta(days=4)
+    assert member.membership_end == member.membership_start + timedelta(days=29)
     history = RenewalHistory.query.filter_by(member_id=member.id).one()
     assert history.previous_start == old_start
     assert history.previous_end == date.today() - timedelta(days=5)

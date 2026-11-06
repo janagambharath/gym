@@ -84,6 +84,12 @@ class Campaign(TenantMixin, TimestampMixin, db.Model):
     total_revenue_recovered = db.Column(
         db.Numeric(12, 2), nullable=False, default=Decimal("0.00")
     )
+    # V3-M2: total_revenue_recovered is now the payment-backed headline
+    # (verified payments only). total_recorded_revenue keeps the old
+    # all-attributed total so clients can still reconcile the two.
+    total_recorded_revenue = db.Column(
+        db.Numeric(12, 2), nullable=False, default=Decimal("0.00")
+    )
 
     # Error tracking
     error_message = db.Column(db.Text, nullable=True)
@@ -142,6 +148,10 @@ class CampaignRecipient(TimestampMixin, db.Model):
     payment_claimed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     renewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     renewal_amount = db.Column(db.Numeric(10, 2), nullable=True)
+    # V3-M2: True when the attributed renewal was backed by a verified
+    # payment; False for direct (unpaid) renewals; NULL for rows
+    # attributed before this flag existed (treated as not payment-backed).
+    is_payment_backed = db.Column(db.Boolean, nullable=True, default=None)
     renewal_id = db.Column(
         db.Integer,
         db.ForeignKey("renewal_history.id", ondelete="SET NULL"),

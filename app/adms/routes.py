@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import time
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote_plus
 
@@ -210,9 +211,17 @@ def _touch(integration: RRRIntegration, *, method: str | None = None, full: bool
         device.is_selected = True
 
 
+# V3-L9: rate-limit for unparseable-timestamp warnings — at most one
+# per minute globally, so a firmware sending a bad format cannot flood
+# the logs with one warning per punch row.
+_UNPARSEABLE_TIME_LAST_LOG = 0.0
+_UNPARSEABLE_TIME_LOG_INTERVAL_SECONDS = 60.0
+
+
 def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
+    global _UNPARSEABLE_TIME_LAST_LOG
     value = value.strip()
-    for format_string in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+    for format_string in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
         try:
             local = datetime.strptime(value, format_string)
         except ValueError:
@@ -227,6 +236,13 @@ def _parse_device_time(value: str, gym_timezone: str) -> datetime | None:
             from zoneinfo import ZoneInfo
             tz = ZoneInfo("Asia/Kolkata")
         return local.replace(tzinfo=tz).astimezone(timezone.utc)
+    # V3-L9: a row that falls through here used to be silently skipped —
+    # the punch was lost with no log. Warn (rate-limited) so a new
+    # firmware format surfaces instead of vanishing.
+    now_mono = time.monotonic()
+    if now_mono - _UNPARSEABLE_TIME_LAST_LOG >= _UNPARSEABLE_TIME_LOG_INTERVAL_SECONDS:
+        _UNPARSEABLE_TIME_LAST_LOG = now_mono
+        log.warning("Unparseable device time %r; punch row skipped", value[:64])
     return None
 
 
@@ -408,6 +424,17 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
                         k, _, v = part.partition("=")
                         fields[k.strip().upper()] = v.strip()
                 pin = fields.get("PIN", "")
+                # V3-L10: store templates under the canonical PIN ("042"
+                # -> "42") — the restore lookup queries the canonical
+                # form, so a zero-padded stored PIN was never found and
+                # the unblock silently skipped the fingerprint restore.
+                # Non-numeric PINs keep their raw form.
+                try:
+                    from app.services.bridge_service import canonical_enroll_number
+
+                    pin = canonical_enroll_number(pin) if pin else pin
+                except ValueError:
+                    pass
                 fid = int(fields.get("FID", fields.get("FINGERID", "0")) or "0")
                 tmp = fields.get("TMP", fields.get("TEMPLATE", ""))
                 if pin and tmp:
@@ -574,15 +601,27 @@ def cdata(path_token: str | None = None):
     db.session.commit()
     if operlog_enrollments:
         try:
-            from app.services.enroll_match_service import auto_link_high_confidence
+            from app.services.enroll_match_service import (
+                auto_link_high_confidence,
+                auto_link_scan_due,
+            )
             # The terminal enrollment snapshot and device acknowledgement
             # state are committed before this best-effort operation. A
             # linking/audit error must not poison the session used to ack the
             # upload or make the terminal retry the same OPERLOG forever.
-            auto_link_high_confidence(
-                gym_id=integration.gym_id,
-                skip_command_for_active=True,
-            )
+            # V3-M15: the OPERLOG path used to run the full auto-link scan
+            # on EVERY bulk-enrollment upload with no throttle — a burst
+            # re-ran the snapshot x members scan per upload. It now
+            # shares the per-gym gate with ATTLOG ingest.
+            # V3-L14: confirm_match only flushes now, so commit the
+            # links here; without this the auto-link would silently
+            # roll back at teardown.
+            if auto_link_scan_due(integration.gym_id):
+                auto_link_high_confidence(
+                    gym_id=integration.gym_id,
+                    skip_command_for_active=True,
+                )
+                db.session.commit()
         except Exception as e:
             db.session.rollback()
             log.warning("OPERLOG auto-link failed after upload commit: %s", e)

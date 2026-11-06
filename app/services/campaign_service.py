@@ -940,8 +940,46 @@ def track_campaign_reply(gym_id: int, sender_phone: str) -> bool:
 # ── Campaign attribution ──────────────────────────────────────────────
 
 
+def recompute_campaign_revenue(campaign) -> None:
+    """Recompute a campaign's revenue totals from its recipients.
+
+    (V3-M2) ``total_revenue_recovered`` is the payment-backed headline:
+    only attributed renewals backed by a verified payment count.
+    ``total_recorded_revenue`` is the all-attributed total, kept so the
+    two can be reconciled. Recipients attributed before the flag existed
+    (``is_payment_backed IS NULL``) count as recorded, not recovered.
+    """
+    campaign.total_recorded_revenue = (
+        db.session.query(func.coalesce(func.sum(CampaignRecipient.renewal_amount), 0))
+        .filter(
+            CampaignRecipient.campaign_id == campaign.id,
+            CampaignRecipient.renewed_at.isnot(None),
+            CampaignRecipient.renewal_amount.isnot(None),
+        )
+        .scalar()
+    )
+    campaign.total_revenue_recovered = (
+        db.session.query(func.coalesce(func.sum(CampaignRecipient.renewal_amount), 0))
+        .filter(
+            CampaignRecipient.campaign_id == campaign.id,
+            CampaignRecipient.renewed_at.isnot(None),
+            CampaignRecipient.renewal_amount.isnot(None),
+            CampaignRecipient.is_payment_backed.is_(True),
+        )
+        .scalar()
+    )
+    # Flush so the recomputed totals are durable even if the caller only
+    # refreshes the campaign row instead of committing (a refresh would
+    # otherwise discard these still-pending assignments).
+    db.session.flush()
+
+
 def attribute_renewal_to_campaign(
-    member_id: int, gym_id: int, renewal_id: int, renewal_amount: Decimal
+    member_id: int,
+    gym_id: int,
+    renewal_id: int,
+    renewal_amount: Decimal,
+    payment_backed: bool | None = None,
 ) -> int | None:
     """Link this renewal to a recent campaign for operational tracking.
 
@@ -950,8 +988,22 @@ def attribute_renewal_to_campaign(
 
     This is a timing-based association, not evidence the campaign caused the
     renewal. Returns the campaign_id when associated, None otherwise.
+
+    (V3-M2) ``payment_backed`` records whether the renewal was backed by
+    a verified payment. When omitted it is inferred from the renewal row
+    (``payment_verification_id IS NOT NULL``) — so the verify_payment
+    path attributes as payment-backed and the direct-renewal path as
+    recorded-only. ``renewal_amount`` is always stored as the recorded
+    amount; only payment-backed rows feed ``total_revenue_recovered``.
     """
     now = utcnow()
+    if payment_backed is None:
+        from app.models import RenewalHistory
+
+        _renewal = db.session.get(RenewalHistory, renewal_id)
+        payment_backed = bool(
+            _renewal is not None and _renewal.payment_verification_id is not None
+        )
 
     # Find campaign recipients for this member, most recent first
     recipients = (
@@ -977,6 +1029,7 @@ def attribute_renewal_to_campaign(
                 recipient.renewed_at = now
                 recipient.renewal_amount = renewal_amount
                 recipient.renewal_id = renewal_id
+                recipient.is_payment_backed = payment_backed
                 recipient.status = "renewed"
 
                 # Update campaign counters
@@ -985,19 +1038,11 @@ def attribute_renewal_to_campaign(
                     .filter(CampaignRecipient.renewed_at.isnot(None))
                     .count()
                 )
-                campaign.total_revenue_recovered = (
-                    db.session.query(func.coalesce(func.sum(CampaignRecipient.renewal_amount), 0))
-                    .filter(
-                        CampaignRecipient.campaign_id == campaign.id,
-                        CampaignRecipient.renewed_at.isnot(None),
-                        CampaignRecipient.renewal_amount.isnot(None),
-                    )
-                    .scalar()
-                )
+                recompute_campaign_revenue(campaign)
 
                 _logger.info(
-                    "Linked renewal %s to campaign %s for member %s (₹%s)",
-                    renewal_id, campaign.id, member_id, renewal_amount,
+                    "Linked renewal %s to campaign %s for member %s (₹%s, payment_backed=%s)",
+                    renewal_id, campaign.id, member_id, renewal_amount, payment_backed,
                 )
                 return campaign.id
 
@@ -1027,6 +1072,7 @@ def get_campaign_results(campaign_id: int, gym_id: int) -> dict[str, Any] | None
         "total_replied": campaign.total_replied,
         "total_renewed": campaign.total_renewed,
         "total_revenue_recovered": str(campaign.total_revenue_recovered),
+        "total_recorded_revenue": str(campaign.total_recorded_revenue or 0),
         "attribution_window_days": campaign.attribution_window_days,
         "created_by": campaign.created_by.full_name if campaign.created_by else None,
         "error_message": campaign.error_message,

@@ -34,7 +34,12 @@
                 <label class="form-label" for="amount">Amount per member</label>
                 <input class="form-control" id="amount" name="amount" type="number" min="0" step="0.01" value="{{ default_amount }}">
             </div>
-            <div class="col-md-6">
+            <div class="col-md-3">
+                <label class="form-label" for="start_date">Start date (optional)</label>
+                <input class="form-control" id="start_date" name="start_date" type="date">
+                <div class="form-text">Blank = day after the member's current expiry. A per-member date below overrides this.</div>
+            </div>
+            <div class="col-md-3">
                 <label class="form-label" for="notes">Notes</label>
                 <input class="form-control" id="notes" name="notes" maxlength="2000" value="Bulk renewal">
             </div>
@@ -52,6 +57,7 @@
                         <th>Plan</th>
                         <th>Current expiry</th>
                         <th>Status</th>
+                        <th>Start date (optional)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -65,9 +71,10 @@
                     <td>{{ member.plan.name if member.plan else 'No plan' }}</td>
                     <td>{{ member.membership_end.strftime('%d %b %Y') }}</td>
                     <td><span class="badge status-{{ member.status }}">{{ member.status }}</span></td>
+                    <td><input class="form-control form-control-sm" name="start_date_{{ member.id }}" type="date" aria-label="Start date for {{ member.full_name }}"></td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-secondary">No members found.</td></tr>
+                <tr><td colspan="7" class="text-secondary">No members found.</td></tr>
                 {% endfor %}
                 </tbody>
             </table>

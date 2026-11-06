@@ -1201,10 +1201,11 @@ class WhatsAppOption2TestCase(unittest.TestCase):
         db.session.refresh(self.unopted_member)
         self.assertEqual(self.member_one.status, "active")
         self.assertEqual(self.unopted_member.status, "active")
-        self.assertEqual(self.member_one.membership_start, date.today())
-        self.assertEqual(self.unopted_member.membership_start, date.today())
-        self.assertEqual(self.member_one.membership_end, date.today() + timedelta(days=29))
-        self.assertEqual(self.unopted_member.membership_end, date.today() + timedelta(days=29))
+        # V3-L15: expired members default to previous_end + 1, not today.
+        self.assertEqual(self.member_one.membership_start, previous_one + timedelta(days=1))
+        self.assertEqual(self.unopted_member.membership_start, previous_three + timedelta(days=1))
+        self.assertEqual(self.member_one.membership_end, previous_one + timedelta(days=30))
+        self.assertEqual(self.unopted_member.membership_end, previous_three + timedelta(days=30))
 
         renewals = RenewalHistory.query.filter(
             RenewalHistory.member_id.in_([self.member_one.id, self.unopted_member.id])

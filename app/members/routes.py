@@ -23,6 +23,7 @@ from app.models import (
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
+from app.services.payment_service import active_scheduled_renewals
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.bridge_service import queue_membership_command
 from app.utils.decorators import active_gym_required, roles_required
@@ -140,23 +141,105 @@ def bulk_renew():
                     "danger",
                 )
                 return redirect(url_for("members.bulk_renew"))
+        # V3-L15: an optional start date, per member
+        # (start_date_<id>) or one shared date for the whole batch
+        # (start_date). Blank = previous_end + 1 (continuity), for
+        # expired members too — no longer forced to today, so a
+        # renewal paid days ago keeps its paid days. Invalid or
+        # period-shortening starts reject the whole batch before
+        # any mutation.
+        requested_starts = {}
+        for member in members:
+            raw_start = (
+                request.form.get(f"start_date_{member.id}")
+                or request.form.get("start_date")
+                or ""
+            ).strip()
+            if not raw_start:
+                requested_starts[member.id] = None
+                continue
+            parsed = _parse_start_date(raw_start)
+            if parsed is None:
+                flash(
+                    f"Cannot renew {member.full_name}: start date "
+                    f"'{raw_start}' is not a valid YYYY-MM-DD date.",
+                    "danger",
+                )
+                return redirect(url_for("members.bulk_renew"))
+            requested_starts[member.id] = parsed
+        for member in members:
+            requested = requested_starts[member.id]
+            if requested is None:
+                continue
+            if requested > today:
+                flash(
+                    f"Cannot renew {member.full_name}: start date "
+                    f"{requested.isoformat()} is in the future — bulk "
+                    "renew writes the current period, it cannot "
+                    "schedule a future one.",
+                    "danger",
+                )
+                return redirect(url_for("members.bulk_renew"))
+            earliest = (
+                member.membership_end + timedelta(days=1)
+                if member.membership_end and member.membership_end >= today
+                else None
+            )
+            if earliest is not None and requested < earliest:
+                flash(
+                    f"Cannot renew {member.full_name}: start date "
+                    f"{requested.isoformat()} is before "
+                    f"{earliest.isoformat()} and would shorten the "
+                    "current paid membership.",
+                    "danger",
+                )
+                return redirect(url_for("members.bulk_renew"))
+        # V3-M17: refuse members with a live pending scheduled future
+        # renewal — a bulk renew would move their end, the scheduled
+        # row could then never activate, and it would block all
+        # future direct renewals with a 409. Stale scheduled rows
+        # (previous_end no longer matching) do not block: they are
+        # already dead and the checks ignore them.
+        for member in members:
+            if active_scheduled_renewals(member, today):
+                flash(
+                    f"Cannot renew {member.full_name}: this member "
+                    "already has a future renewal scheduled. Cancel "
+                    "or let that renewal run before bulk-renewing.",
+                    "danger",
+                )
+                return redirect(url_for("members.bulk_renew"))
         renewed_ids = []
         for member in members:
             # H4-legacy: capture previous_start BEFORE any mutation —
             # the else branch below rewrites membership_start.
             previous_start = member.membership_start
             previous_end = member.membership_end
-            if previous_end and previous_end >= today:
+            # V3-M18: snapshot plan/price before mutation.
+            previous_plan_id = member.plan_id
+            previous_price = member.price
+            requested = requested_starts[member.id]
+            if requested is not None:
+                new_start = requested
+            elif previous_end:
+                # V3-L15: continuity for expired members too
+                # (previous_end + 1), not forced to today.
                 new_start = previous_end + timedelta(days=1)
             else:
                 new_start = today
-                member.membership_start = new_start
+            # V3-H4: ONE convention for membership_start — it is the
+            # current period's start. The active branch used to leave
+            # it untouched while the payment/renewal flows overwrite
+            # it on every renewal; now bulk renew writes it too.
+            member.membership_start = new_start
             new_end = new_start + timedelta(days=renewal_days - 1)
             member.membership_end = new_end
             # M3 family: a paused member stays paused through a renewal
             # — only the explicit unfreeze flow clears paused.
+            # V3-L15: a backdated start can end before today, so the
+            # status follows the new end, not the act of renewing.
             if member.status != "paused":
-                member.status = "active"
+                member.status = "active" if new_end >= today else "expired"
             # Pin the expected renewal value for revenue-at-risk reporting.
             member.price = amount
             queue_membership_command(member)
@@ -169,6 +252,8 @@ def bulk_renew():
                     renewed_by_id=current_user.id,
                     previous_start=previous_start,
                     previous_end=previous_end,
+                    previous_plan_id=previous_plan_id,
+                    previous_price=previous_price,
                     new_start=new_start,
                     new_end=new_end,
                     amount=amount,
@@ -442,6 +527,17 @@ def _selected_member_ids() -> list[int]:
         except (TypeError, ValueError):
             continue
     return member_ids
+
+
+def _parse_start_date(raw_value: str | None) -> date | None:
+    """Parse a YYYY-MM-DD start date; None when blank or invalid."""
+    raw = (raw_value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
 
 
 def _parse_renewal_days(raw_value: str | None) -> int | None:
