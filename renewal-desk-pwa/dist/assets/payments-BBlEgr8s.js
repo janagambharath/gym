@@ -1,0 +1,8 @@
+import{f as y,a as f,u as g,b as u,n as $,g as p,x as h,o as w,j as k,t as L,E as b}from"./index-8YfHVAgj.js";let s=1,c=1,i=[];const _={async mount(a){s=1,i=[],await d(a),y(a,()=>d(a,!0))}};async function d(a,n=!1){n||(a.innerHTML=`${f({title:"My Payments",showBack:!0})}<div class="scroll-view" id="mp-list">${g()}</div>`),n||u(a,{onBack:()=>$.pop()});let t;if(n){const e=await Promise.all(Array.from({length:s},(l,v)=>p(`/api/member/v1/payments?page=${v+1}&per_page=20`)));t=e.find(l=>!l.ok)||e[e.length-1],t.ok&&(i=e.flatMap(l=>l.data.payments||[]))}else t=await p(`/api/member/v1/payments?page=${s}&per_page=20`),t.ok&&(i=[...i,...t.data.payments||[]]);if(a.dataset.screenDisposed==="true"||n&&!t.ok)return;const o=a.querySelector("#mp-list"),m=t.ok?t.data.pagination?.total??null:null;c=t.ok?t.data.pagination?.total_pages??1:1;const r=i;if(!Array.isArray(r)||r.length===0){o.innerHTML=h({icon:"wallet",title:"No payments",text:"Your payment history will appear here"});return}o.innerHTML=`<div class="scroll-content"><div class="card" style="margin:var(--sp-lg)">${r.map(e=>`
+    <div class="list-item"><div class="list-item-content">
+      <div class="list-item-title">${w(e.amount)}</div>
+      <div class="list-item-subtitle">${k(e.method||"")} · ${L(e.paid_on||e.created_at)}</div>
+    </div>${b(e.status||"paid")}</div>`).join("")}</div>
+    ${m!=null?`<div style="text-align:center;font-size:var(--fs-sm);color:var(--muted);padding:var(--sp-sm)">Showing ${r.length} of ${m} payments</div>`:""}
+    ${s<c?'<div style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="mp-more">Load more</button></div>':""}
+  </div>`,o.querySelector("#mp-more")?.addEventListener("click",()=>{s++,d(a)})}export{_ as default};

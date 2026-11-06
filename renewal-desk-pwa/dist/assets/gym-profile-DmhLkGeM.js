@@ -1,0 +1,9 @@
+import{a as u,b as g,g as l,r,s as i,n as d}from"./index-BZNT0j-X.js";const c={async mount(e){e.innerHTML=`${u({title:"Gym Profile",showBack:!0})}<div class="scroll-view"><div class="scroll-content form-scroll-content" id="gp-form-wrap"><div style="padding:var(--sp-lg)">Loading…</div></div></div>`,g(e,{onBack:()=>d.pop()});const m=e.querySelector("#gp-form-wrap"),s=await l("/api/mobile/v1/settings"),t=s.ok?s.data.settings||s.data:{};m.innerHTML=`
+    <form id="gp-form" style="display:flex;flex-direction:column;gap:var(--sp-md);padding:var(--sp-lg)">
+      ${r({id:"gp-name",label:"Gym Name",value:t.name||"",required:!0})}
+      ${r({id:"gp-email",label:"Email",type:"email",value:t.email||""})}
+      ${r({id:"gp-phone",label:"Phone",type:"tel",value:t.phone||""})}
+      ${r({id:"gp-address",label:"Address",type:"textarea",value:t.address||""})}
+      ${r({id:"gp-timezone",label:"Timezone",value:t.timezone||"Asia/Kolkata"})}
+      <button type="submit" class="btn btn-primary btn-lg btn-full" id="gp-save">Save Changes</button>
+    </form>`,e.querySelector("#gp-form").addEventListener("submit",async p=>{p.preventDefault();const a=e.querySelector("#gp-save");a.disabled=!0,a.textContent="Saving…";const o={name:e.querySelector("#gp-name").value.trim(),email:e.querySelector("#gp-email").value.trim(),phone:e.querySelector("#gp-phone").value.trim(),address:e.querySelector("#gp-address").value.trim(),timezone:e.querySelector("#gp-timezone").value.trim()||"Asia/Kolkata"};if(!o.name){i("Gym name is required","error"),a.disabled=!1,a.textContent="Save Changes";return}const n=await l("/api/mobile/v1/settings",{method:"PATCH",body:o});a.disabled=!1,a.textContent="Save Changes",n.ok?(i("Gym profile updated","success"),d.pop()):i(n.error?.message||"Could not save","error")})}};export{c as default};

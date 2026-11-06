@@ -25,7 +25,8 @@ export default { async mount(el) {
   async function load() {
   const scroll = el.querySelector('#rpt-scroll');
   const res = await apiRequest(`/api/mobile/v1/reports/summary?period=${period}`);
-  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load reports</div><div class="empty-state-text">${res.error.message}</div></div>`; return; }
+  // V3-L27: the error state had no retry — same pattern as the router retry.
+  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load reports</div><div class="empty-state-text">${res.error.message}</div><button class="btn btn-primary" id="rpt-retry" style="margin-top:var(--sp-md)">Try Again</button></div>`; scroll.querySelector('#rpt-retry')?.addEventListener('click', load); return; }
   const d = res.data;
   const windowLabel = PERIODS.find(p => p.value === period)?.windowLabel || 'Last 30 days';
   const section = (title, data) => `<div style="padding:0 var(--sp-lg) var(--sp-lg)">

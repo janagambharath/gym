@@ -6,16 +6,54 @@ export default {
   async mount(el) { await load(el); },
   // Stop the 3s scan poll when the router pauses/unmounts this screen (M21).
   pause() { stopPoll(); },
-  unmount() { stopPoll(); },
+  unmount() { stopPoll(); scanInFlight = false; },
+  // Navigating away mid-scan used to kill the poll permanently (V3-M20):
+  // the button stayed disabled on "Scanning…" with no poll ever restarting.
+  // Resume re-starts the poll from the persisted try count.
+  resume(el) {
+    if (!scanInFlight || !el?.isConnected) return;
+    const button = el.querySelector('#rrr-scan');
+    const status = el.querySelector('#rrr-scan-status');
+    if (!button || !button.disabled) { scanInFlight = false; return; }
+    if (status && !status.textContent) status.textContent = 'Waiting for the terminal to respond…';
+    startPoll(el);
+  },
 };
 
 const esc = escapeHtml;
 let pollTimer = null;
+// Scan state survives pause()/unmount() so resume() can pick up where the
+// poll left off instead of stranding the screen on "Scanning…".
+let scanInFlight = false;
+let scanTries = 0;
 
 const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
 
+function startPoll(el) {
+  stopPoll();
+  pollTimer = setInterval(async () => {
+    scanTries += 1;
+    const r = await apiRequest('/api/mobile/v1/rrr/enroll-matches');
+    if (r.ok && (r.data.snapshot || r.data.suggestions?.length)) {
+      stopPoll();
+      scanInFlight = false;
+      render(el, r.data);
+      return;
+    }
+    if (scanTries >= 20) {
+      stopPoll();
+      scanInFlight = false;
+      const button = el.querySelector('#rrr-scan');
+      const status = el.querySelector('#rrr-scan-status');
+      if (button) { button.disabled = false; button.textContent = 'Scan terminal users'; }
+      if (status) status.textContent = 'Still waiting — the terminal may be offline. It will respond when it reconnects; refresh this page then.';
+    }
+  }, 3000);
+}
+
 async function load(el) {
   stopPoll();
+  scanInFlight = false;
   el.innerHTML = '<div class="rrr-loading">Loading terminal user matches…</div>';
   const result = await apiRequest('/api/mobile/v1/rrr/enroll-matches');
   if (!result.ok) {
@@ -111,22 +149,8 @@ async function startScan(el) {
     return;
   }
   // Poll for the snapshot to arrive.
-  let tries = 0;
-  stopPoll();
+  scanInFlight = true;
+  scanTries = 0;
   status.textContent = 'Waiting for the terminal to respond…';
-  pollTimer = setInterval(async () => {
-    tries += 1;
-    const r = await apiRequest('/api/mobile/v1/rrr/enroll-matches');
-    if (r.ok && (r.data.snapshot || r.data.suggestions?.length)) {
-      stopPoll();
-      render(el, r.data);
-      return;
-    }
-    if (tries >= 20) {
-      stopPoll();
-      button.disabled = false;
-      button.textContent = 'Scan terminal users';
-      status.textContent = 'Still waiting — the terminal may be offline. It will respond when it reconnects; refresh this page then.';
-    }
-  }, 3000);
+  startPoll(el);
 }

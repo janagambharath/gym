@@ -7,7 +7,35 @@ import { saveSession, loadSession, clearSession, loadMemberSession, saveMemberSe
 import { configureDisplayPreferences } from './utils.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
-const API_BASE_URL = 'https://gym-production-910c.up.railway.app';
+// V3-L32: the base URL comes from the build environment (VITE_API_BASE_URL,
+// same env pattern as the Android runtime.ts fix) — no other URL is
+// hardcoded anywhere. With no env set, the current production URL stays
+// the fallback.
+const PRODUCTION_API_BASE_URL = 'https://gym-production-910c.up.railway.app';
+function resolveApiBaseUrl() {
+  const raw = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || '';
+  const trimmed = String(raw).trim();
+  if (!trimmed) return PRODUCTION_API_BASE_URL;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.username || parsed.password) return PRODUCTION_API_BASE_URL;
+    if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') return PRODUCTION_API_BASE_URL;
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return PRODUCTION_API_BASE_URL;
+  }
+}
+const API_BASE_URL = resolveApiBaseUrl();
+
+/** Turn an error payload of any shape into a displayable string. */
+function errorMessage(err, fallback) {
+  if (typeof err === 'string' && err) return err;
+  if (err && typeof err.message === 'string' && err.message) return err.message;
+  if (err && typeof err === 'object') {
+    try { return JSON.stringify(err); } catch { /* fall through */ }
+  }
+  return fallback;
+}
 
 // ─── Internal State ──────────────────────────────────────────────────
 /** @type {import('./session.js').Session|undefined} */
@@ -337,7 +365,9 @@ export async function uploadFormData(path, formData, timeoutMs = 60000) {
       else return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
     }
     const envelope = await response.json().catch(() => ({}));
-    if (!response.ok || !envelope.success) return { ok: false, error: { message: envelope.error?.message || envelope.error || 'Upload failed.' } };
+    // V3-L33: envelope.error can be an object — interpolating it raw
+    // rendered as "[object Object]". Stringify with the message first.
+    if (!response.ok || !envelope.success) return { ok: false, error: { message: errorMessage(envelope.error, 'Upload failed.') } };
     return { ok: true, data: envelope.data };
   } catch (err) {
     if (err?.name === 'AbortError') return { ok: false, error: { message: 'Upload timed out. Check your connection and retry.' } };

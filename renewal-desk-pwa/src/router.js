@@ -19,8 +19,6 @@ class Router {
     this.currentTab = null;
     /** @type {Map<string, { screenId: string, params: Record<string,string>, element: HTMLElement, screen: Screen|null }[]>} */
     this.tabStacks = new Map();
-    /** @type {{ type: 'push'|'tab', tabId?: string, screenId?: string }[]} */
-    this.history = [];
     /** @type {(() => void)|null} */
     this.onAuthRequired = null;
     /** @type {Set<string>} */
@@ -52,7 +50,15 @@ class Router {
       // Anchor the base entry so OS back/gesture walks our stack instead of
       // exiting the app. Every push() adds an entry; popstate pops one level.
       try { window.history.replaceState({ rdDepth: 0 }, ''); } catch { /* ignore */ }
-      window.addEventListener('popstate', () => { this._popStack(); });
+      window.addEventListener('popstate', () => {
+        const before = this.stack.length;
+        this._popStack();
+        // V3-L35: at a tab root there is nothing to pop — re-anchor so the
+        // OS back gesture stays in the app instead of exiting it.
+        if (this.stack.length === before && this.stack.length <= 1) {
+          try { window.history.pushState({ rdDepth: this.stack.length }, ''); } catch { /* ignore */ }
+        }
+      });
     }
   }
 
@@ -82,8 +88,15 @@ class Router {
     }
 
     const loader = this.routes.get(screenId);
+    const prevScreen = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
     if (!loader) {
+      // V3-M22: an unknown screen used to fail silently (console.error only)
+      // leaving a dead tap. Render the same "Something went wrong" state as
+      // a chunk-load failure, with a retry.
       console.error(`[Router] Unknown screen: ${screenId}`);
+      activateScreen(prevScreen?.element, false);
+      try { prevScreen?.screen?.pause?.(); } catch { /* ignore */ }
+      this._renderLoadError(screenId, params, opts, 'This page doesn\'t exist in this version of the app. Go back and try again.');
       return;
     }
 
@@ -94,21 +107,11 @@ class Router {
       module = await loader();
     } catch (err) {
       console.error(`[Router] chunk load failed for ${screenId}`, err);
-      const el = document.createElement('div');
-      el.className = 'screen';
-      el.dataset.screenId = screenId;
-      el.style.zIndex = String(10 + this.stack.length);
-      el.innerHTML = `<div style="padding:48px 24px;text-align:center"><div style="font-weight:700;font-size:18px;margin-bottom:8px">Something went wrong</div><div style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">This page couldn't load. Your app may be on an older version — try again.</div><button class="btn btn-primary" id="router-retry">Try Again</button></div>`;
-      this.container.appendChild(el);
-      this.stack.push({ screenId, params, element: el, screen: null });
-      if (typeof window !== 'undefined' && window.history) {
-        try { window.history.pushState({ rdDepth: this.stack.length }, ''); } catch { /* ignore */ }
-      }
-      el.querySelector('#router-retry')?.addEventListener('click', () => {
-        this.push(screenId, params, { replace: true, animate: false }).catch((e) => console.error('[Router] retry failed', e));
-      });
-      if (this.currentTab) this.tabStacks.set(this.currentTab, [...this.stack]);
-      this._notifyDepth();
+      // Pause the previous screen so its live-refresh timers stop firing
+      // behind the error screen (V3-M22).
+      activateScreen(prevScreen?.element, false);
+      try { prevScreen?.screen?.pause?.(); } catch { /* ignore */ }
+      this._renderLoadError(screenId, params, opts, 'This page couldn\'t load. Your app may be on an older version — try again.');
       return;
     }
     const screen = module.default;
@@ -119,7 +122,6 @@ class Router {
     el.dataset.screenId = screenId;
     el.style.zIndex = String(10 + this.stack.length);
 
-    const prevScreen = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
     activateScreen(prevScreen?.element, false);
     prevScreen?.screen?.pause?.();
     el.dataset.screenActive = 'true';
@@ -175,6 +177,36 @@ class Router {
     }
   }
 
+  /** Render the "Something went wrong" + retry state shared by the
+   *  unknown-screen and chunk-load-failure paths (V3-M22). */
+  _renderLoadError(screenId, params, opts, message) {
+    // A retry with replace:true must drop the previous error screen first.
+    if (opts.replace && this.stack.length > 0) {
+      const old = this.stack.pop();
+      disposeScreen(old?.element);
+      try { old?.screen?.unmount?.(); } catch { /* ignore */ }
+      old?.element?.remove();
+    }
+    const el = document.createElement('div');
+    el.className = 'screen';
+    el.dataset.screenId = screenId;
+    el.style.zIndex = String(10 + this.stack.length);
+    el.innerHTML = `<div style="padding:48px 24px;text-align:center"><div style="font-weight:700;font-size:18px;margin-bottom:8px">Something went wrong</div><div style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">${message}</div><button class="btn btn-primary" id="router-retry">Try Again</button></div>`;
+    this.container.appendChild(el);
+    this.stack.push({ screenId, params, element: el, screen: null });
+    if (typeof window !== 'undefined' && window.history) {
+      try {
+        if (opts.replace) window.history.replaceState({ rdDepth: this.stack.length }, '');
+        else window.history.pushState({ rdDepth: this.stack.length }, '');
+      } catch { /* ignore */ }
+    }
+    el.querySelector('#router-retry')?.addEventListener('click', () => {
+      this.push(screenId, params, { replace: true, animate: false }).catch((e) => console.error('[Router] retry failed', e));
+    });
+    if (this.currentTab) this.tabStacks.set(this.currentTab, [...this.stack]);
+    this._notifyDepth();
+  }
+
   /** Go back one screen (via browser history; popstate performs the pop). */
   async pop() {
     if (this.stack.length <= 1) return;
@@ -214,27 +246,21 @@ class Router {
     }
   }
 
-  /** Go back one screen or back to previous tab/dashboard */
+  /** Go back one screen within the current tab, or stay at the tab root.
+   *  V3-L35: in-app back used to jump to the *previous tab* at a tab root
+   *  (via the tab-switch history) — back now returns to the tab root and
+   *  stops there; the tab bar is the tab switcher. */
   async back() {
     if (this.stack.length > 1) {
       await this.pop();
-    } else if (this.history.length > 0) {
-      const prev = this.history.pop();
-      if (prev?.tabId && prev.tabId !== this.currentTab && this.onSwitchTab) {
-        this.onSwitchTab(prev.tabId);
-      } else if (this.onSwitchTab) {
-        this.onSwitchTab('dashboard');
-      }
-    } else if (this.currentTab && this.currentTab !== 'dashboard' && this.onSwitchTab) {
-      this.onSwitchTab('dashboard');
     }
-    // Never fall through to window.history.back() — in the PWA that can
-    // exit the app entirely. At root, back is a no-op.
+    // At a tab root, back is a no-op — never fall through to
+    // window.history.back(), which can exit the app, and never switch tabs.
   }
 
   /** Check if a back action is available */
   canGoBack() {
-    return this.stack.length > 1 || this.history.length > 0 || (this.currentTab != null && this.currentTab !== 'dashboard');
+    return this.stack.length > 1;
   }
 
   /**
@@ -272,7 +298,8 @@ class Router {
         this.stack.push(entry);
       }
       activateScreen(this.current?.element, true);
-      this.current?.screen?.resume?.(this.current.element);
+      // V3-L18: a throwing resume() used to break the whole tab switch.
+      try { this.current?.screen?.resume?.(this.current.element); } catch (err) { console.error('[Router] resume failed', err); }
     } else {
       await this.push(rootScreenId, params, { animate: false });
     }

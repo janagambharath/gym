@@ -132,6 +132,14 @@ export default {
       if (sess?.userName && userEl) userEl.textContent = sess.userName;
       const roleEl = el.querySelector('#settings-role-badge');
       if (sess?.userRole && roleEl) roleEl.innerHTML = renderBadge(sess.userRole);
+      // V3-L30: the live refresh updated name/role but never the biometric
+      // link-banner toggle — a change made on another device (or the gym
+      // profile screen) stayed stale until remount.
+      const bannerToggle = el.querySelector('#show-biometric-link-banner');
+      const bannerValue = fresh.data.gym?.show_biometric_link_banner;
+      if (bannerToggle && typeof bannerValue === 'boolean' && !bannerToggle.disabled) {
+        bannerToggle.checked = bannerValue;
+      }
     }, 30000);
   }
 };

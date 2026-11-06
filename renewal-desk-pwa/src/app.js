@@ -171,9 +171,8 @@ function syncTabBarVisibility(depth) {
 async function switchTab(tabId, recordHistory = true) {
   const config = TAB_CONFIG[tabId];
   if (!config) return;
-  if (recordHistory && activeTab && activeTab !== tabId) {
-    router.history.push({ type: 'tab', tabId: activeTab });
-  }
+  // V3-L35: back() no longer consumes a tab-switch history (in-app back
+  // stays at the tab root), so nothing records it anymore.
   activeTab = tabId;
   showTabBar(tabId);
   await router.switchTab(tabId, config.screen, config.params || {});

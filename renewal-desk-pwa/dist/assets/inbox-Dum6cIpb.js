@@ -1,0 +1,9 @@
+import{a as c,u as m,b as v,g as p,x as b,D as u,j as l,Q as y,n as s}from"./index-C9y_aAuQ.js";const g={async mount(n){n.innerHTML=`${c({title:"Inbox",showBack:!0})}<div class="scroll-view" id="ib-list">${m()}</div>`,v(n,{onBack:()=>s.pop()});const r=await p("/api/mobile/v1/inbox"),d=n.querySelector("#ib-list"),i=r.ok?r.data.messages||r.data||[]:[];if(!Array.isArray(i)||i.length===0){d.innerHTML=b({icon:"inbox",title:"Inbox empty",text:"No messages yet"});return}const o=e=>!!(e.conversation_id||e.member_id||e.payment_id||e.lead_id);d.innerHTML=`<div class="scroll-content"><div class="card" style="margin:var(--sp-lg)">${i.map((e,t)=>`
+    <div class="list-item" data-idx="${t}" style="cursor:${o(e)?"pointer":"default"}">
+      ${u(e.sender_name||e.from||"?")}
+      <div class="list-item-content">
+        <div class="list-item-title">${l(e.sender_name||e.from||"Unknown")}</div>
+        <div class="list-item-subtitle truncate">${l(e.preview||e.text||e.message||"")}</div>
+      </div>
+      <span style="font-size:var(--fs-xs);color:var(--muted)">${y(e.created_at)}</span>
+    </div>`).join("")}</div></div>`,d.querySelectorAll("[data-idx]").forEach(e=>{e.addEventListener("click",()=>{const t=i[Number(e.dataset.idx)];if(t)if(t.conversation_id)s.push("bot-conversation-detail",{conversationId:String(t.conversation_id)});else if(t.member_id)s.push("member-detail",{memberId:String(t.member_id)});else if(t.payment_id)s.push("payment-detail",{paymentId:String(t.payment_id)});else if(t.lead_id)s.push("bot-lead-detail",{leadId:String(t.lead_id)});else{let a=e.querySelector(".ib-full-body");if(a){a.remove();return}a=document.createElement("div"),a.className="ib-full-body",a.style.cssText="padding:var(--sp-sm) var(--sp-lg);font-size:var(--fs-sm);color:var(--text-secondary);white-space:pre-wrap",a.textContent=t.text||t.message||t.preview||"",e.after(a)}})})}};export{g as default};

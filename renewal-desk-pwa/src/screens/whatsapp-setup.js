@@ -2,6 +2,9 @@
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml } from '../utils.js';
+// V3-L29: the visibilitychange listener must be removed on unmount, or it
+// keeps refetching (and holding `el`) after the screen is gone.
+let onVisible = null;
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Connect WhatsApp',showBack:true})}<div class="scroll-view" id="ws-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
@@ -46,6 +49,11 @@ export default { async mount(el) {
   }
   await renderStatus();
   // Refetch when the tab becomes visible again (returning from Meta).
-  const onVisible = () => { if (!document.hidden && el.isConnected) renderStatus(); };
+  if (onVisible) document.removeEventListener('visibilitychange', onVisible);
+  onVisible = () => { if (!document.hidden && el.isConnected) renderStatus(); };
   document.addEventListener('visibilitychange', onVisible);
-}};
+},
+  unmount() {
+    if (onVisible) { document.removeEventListener('visibilitychange', onVisible); onVisible = null; }
+  },
+};

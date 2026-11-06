@@ -14,24 +14,151 @@ export default {
     let currentTab = 'all'; // 'all' | 'entry' | 'exit' | 'denied'
     let summaryData = null;
     let requestId = 0;
+    // Feed pagination (V3-M21): page/total survive background refreshes.
+    let page = 1, totalEvents = 0, totalPages = 1, allEvents = [];
+    let insideMembers = [], insideTotal = 0;
+    let feedErrorShown = false;
+
+    // One feed row — shared by the full render and load-more appends so
+    // appended rows look and behave exactly like the first page.
+    function eventRowHtml(l) {
+      const type = (l.event_type || 'ENTRY').toUpperCase();
+      const isEntry = type === 'ENTRY' || type === 'ATTENDANCE';
+      const isDenied = type === 'ACCESS_DENIED';
+      const bg = isDenied ? 'var(--critical-surface)' : (isEntry ? 'var(--success-surface)' : 'var(--gray-100)');
+      const iconColor = isDenied ? 'var(--critical)' : (isEntry ? 'var(--success)' : 'var(--muted)');
+      const iconName = isDenied ? 'alert' : (isEntry ? 'forward' : 'back');
+      const badgeType = isDenied ? 'expired' : (isEntry ? 'active' : 'info');
+      const badgeText = isDenied ? 'Denied' : (type === 'ATTENDANCE' ? 'Check In' : (isEntry ? 'Entry' : 'Exit'));
+      // Terminal ID for unmapped punches — the ADMS leg sends
+      // biometric_user_id, the AccessEvent leg sends
+      // device_enroll_number (now also aliased). Without it
+      // staff only see "Unknown" and can't tell IDs apart.
+      const bioId = l.biometric_user_id || l.device_enroll_number;
+      const isUnknown = !l.member_id && bioId;
+      const title = l.member_id
+        ? escapeHtml(l.member_name || 'Unknown')
+        : (bioId ? `Unknown · ID ${escapeHtml(bioId)}` : 'Unknown');
+      return `
+        <div class="list-item" style="cursor:pointer" data-event-member-id="${l.member_id || ''}" data-bio-id="${(!l.member_id && bioId) ? escapeHtml(bioId) : ''}">
+          <div style="width:34px;height:34px;border-radius:var(--r-full);background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            ${icon(iconName, 16, iconColor)}
+          </div>
+          <div class="list-item-content">
+            <div class="list-item-title">${title}${isUnknown ? ' <span style="font-size:11px;color:#3b82f6;font-weight:700">· tap to assign</span>' : ''}</div>
+            <div class="list-item-subtitle">${formatDateTime(l.event_timestamp || l.timestamp || l.created_at)}${l.device_name ? ` · ${escapeHtml(l.device_name)}` : ''}</div>
+          </div>
+          <span class="badge badge-${badgeType}">${badgeText}</span>
+        </div>
+      `;
+    }
+
+    function wireEventRows(container) {
+      container.querySelectorAll('[data-event-member-id]').forEach(row => {
+        if (row.dataset.wired) return;
+        row.dataset.wired = '1';
+        row.addEventListener('click', () => {
+          const mid = row.dataset.eventMemberId;
+          const bioId = row.dataset.bioId;
+          if (mid) {
+            navigate.push('member-detail', { memberId: mid });
+          } else if (bioId) {
+            openQuickAssign(bioId);
+          }
+        });
+      });
+
+      // Check Out buttons — live targets are the Inside-now rows (V3-L23).
+      container.querySelectorAll('[data-checkout-id]').forEach(btn => {
+        if (btn.dataset.wired) return;
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const mid = btn.dataset.checkoutId;
+          const name = btn.dataset.checkoutName;
+          btn.disabled = true;
+          btn.textContent = 'Checking out...';
+          const res = await checkInMember(mid, 'EXIT');
+          if (res.ok) {
+            showToast(`${name} checked out`, 'success');
+            await loadData();
+          } else {
+            showToast(res.error?.message || 'Check-out failed', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Check Out';
+          }
+        });
+      });
+    }
+
+    async function loadMoreEvents() {
+      if (page >= totalPages) return;
+      const btn = el.querySelector('#ac-load-more');
+      if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+      const next = page + 1;
+      const res = await apiRequest(`/api/mobile/v1/access/events?page=${next}&per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`);
+      if (!res.ok) {
+        showToast(res.error?.message || 'Could not load more events.', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Load more events'; }
+        return;
+      }
+      page = res.data?.pagination?.page ?? next;
+      totalPages = res.data?.pagination?.total_pages ?? totalPages;
+      totalEvents = res.data?.pagination?.total ?? totalEvents;
+      const more = res.data?.events || res.data?.log || [];
+      allEvents = [...allEvents, ...more];
+      // Append rows in place — a full re-render would reset scroll.
+      const card = el.querySelector('#ac-events-card');
+      if (card) {
+        card.insertAdjacentHTML('beforeend', more.map(eventRowHtml).join(''));
+        wireEventRows(card);
+      }
+      const count = el.querySelector('#ac-feed-count');
+      if (count) count.textContent = `Showing ${allEvents.length} of ${totalEvents} events`;
+      const wrap = el.querySelector('#ac-more-wrap');
+      if (wrap) wrap.style.display = page < totalPages ? '' : 'none';
+      if (btn) { btn.disabled = false; btn.textContent = 'Load more events'; }
+    }
 
     async function loadData() {
       const id = ++requestId;
       const scroll = el.querySelector('#ac-scroll');
       if (!scroll) return;
 
-      // Parallel fetch summary + current tab feed
-      const summaryPromise = apiRequest('/api/mobile/v1/access/summary');
-      const feedPromise = apiRequest(`/api/mobile/v1/access/events?per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`);
-
-      const [summaryRes, feedRes] = await Promise.all([summaryPromise, feedPromise]);
+      // Parallel fetch summary + inside-now + current tab feed. A background
+      // refresh re-fetches pages 1..page so a loaded-more feed keeps its
+      // place (members-list pattern) instead of snapping back to page 1.
+      const feedUrl = (p) => `/api/mobile/v1/access/events?page=${p}&per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`;
+      const [summaryRes, insideRes, ...feedPages] = await Promise.all([
+        apiRequest('/api/mobile/v1/access/summary'),
+        apiRequest('/api/mobile/v1/access/inside?per_page=50'),
+        ...Array.from({ length: page }, (_, i) => apiRequest(feedUrl(i + 1))),
+      ]);
       if (id !== requestId || el.dataset.screenDisposed === 'true') return;
-      if ((!summaryRes.ok || !feedRes.ok) && summaryData) return;
+      const feedRes = feedPages.find(r => !r.ok) || feedPages[feedPages.length - 1];
+      if (!summaryRes.ok && !feedRes.ok && summaryData) return;
+      // A background feed failure used to return silently, leaving a stale
+      // feed with no error — surface it once until a refresh succeeds.
+      if (!feedRes.ok) {
+        if (!feedErrorShown) { feedErrorShown = true; showToast('Could not refresh the access feed — showing the last loaded events.', 'error'); }
+        if (summaryData) return;
+      } else {
+        feedErrorShown = false;
+      }
       const s = summaryRes.ok ? summaryRes.data : (summaryData || {});
       summaryData = s;
 
+      // /access/events never returns a members list — inside-now comes from
+      // the dedicated /access/inside endpoint (the old feedRes.data.members
+      // read was always []).
       const events = feedRes.ok ? (feedRes.data?.events || feedRes.data?.log || []) : [];
-      const insideMembers = feedRes.ok ? (feedRes.data?.members || []) : [];
+      const pg = feedRes.ok ? (feedRes.data?.pagination || {}) : {};
+      totalEvents = pg.total ?? events.length;
+      totalPages = pg.total_pages ?? 1;
+      page = pg.page ?? page;
+      allEvents = feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events);
+      insideMembers = insideRes.ok ? (insideRes.data?.members || []) : [];
+      insideTotal = insideRes.ok ? (insideRes.data?.pagination?.total ?? insideMembers.length) : 0;
 
       const lastEventText = s.last_event_at ? formatDateTime(s.last_event_at) : (s.last_heartbeat ? `Heartbeat: ${formatDateTime(s.last_heartbeat)}` : '');
 
@@ -131,6 +258,21 @@ export default {
             ` : ''}
           </div>
 
+          <!-- Inside Now (V3-M21) — from /access/inside, not the feed -->
+          ${insideMembers.length ? `
+            <div class="card" style="margin:var(--sp-md) var(--sp-lg) 0">
+              <div style="padding:var(--sp-md) var(--sp-md) var(--sp-xs);font-weight:var(--fw-bold);font-size:var(--fs-sm)">Inside now (${insideTotal})</div>
+              ${insideMembers.map(m => `
+                <div class="list-item" style="cursor:pointer" data-event-member-id="${m.id}">
+                  ${renderAvatar(m.full_name || 'Member', 'sm')}
+                  <div class="list-item-content">
+                    <div class="list-item-title">${escapeHtml(m.full_name)}</div>
+                    <div class="list-item-subtitle">Entered ${m.entered_at ? formatDateTime(m.entered_at) : '—'}</div>
+                  </div>
+                  <button class="btn btn-secondary btn-sm" data-checkout-id="${m.id}" data-checkout-name="${escapeHtml(m.full_name)}">Check Out</button>
+                </div>`).join('')}
+            </div>` : ''}
+
           <!-- Filter Tabs -->
           <div style="display:flex;gap:var(--sp-xs);padding:0 var(--sp-lg) var(--sp-md);overflow-x:auto;-webkit-overflow-scrolling:touch">
             ${[
@@ -147,42 +289,12 @@ export default {
 
           <!-- List Section -->
           ${`
-            ${events.length > 0 ? `
-              <div class="card" style="margin:0 var(--sp-lg)">
-                ${events.map(l => {
-                  const type = (l.event_type || 'ENTRY').toUpperCase();
-                  const isEntry = type === 'ENTRY' || type === 'ATTENDANCE';
-                  const isExit = type === 'EXIT';
-                  const isDenied = type === 'ACCESS_DENIED';
-                  const bg = isDenied ? 'var(--critical-surface)' : (isEntry ? 'var(--success-surface)' : 'var(--gray-100)');
-                  const iconColor = isDenied ? 'var(--critical)' : (isEntry ? 'var(--success)' : 'var(--muted)');
-                  const iconName = isDenied ? 'alert' : (isEntry ? 'forward' : 'back');
-                  const badgeType = isDenied ? 'expired' : (isEntry ? 'active' : 'info');
-                  const badgeText = isDenied ? 'Denied' : (type === 'ATTENDANCE' ? 'Check In' : (isEntry ? 'Entry' : 'Exit'));
-                  // Terminal ID for unmapped punches — the ADMS leg sends
-                  // biometric_user_id, the AccessEvent leg sends
-                  // device_enroll_number (now also aliased). Without it
-                  // staff only see "Unknown" and can't tell IDs apart.
-                  const bioId = l.biometric_user_id || l.device_enroll_number;
-                  const isUnknown = !l.member_id && bioId;
-                  const title = l.member_id
-                    ? escapeHtml(l.member_name || 'Unknown')
-                    : (bioId ? `Unknown · ID ${escapeHtml(bioId)}` : 'Unknown');
-
-                  return `
-                    <div class="list-item" style="cursor:pointer" data-event-member-id="${l.member_id || ''}" data-bio-id="${(!l.member_id && bioId) ? escapeHtml(bioId) : ''}">
-                      <div style="width:34px;height:34px;border-radius:var(--r-full);background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                        ${icon(iconName, 16, iconColor)}
-                      </div>
-                      <div class="list-item-content">
-                        <div class="list-item-title">${title}${isUnknown ? ' <span style="font-size:11px;color:#3b82f6;font-weight:700">· tap to assign</span>' : ''}</div>
-                        <div class="list-item-subtitle">${formatDateTime(l.event_timestamp || l.timestamp || l.created_at)}${l.device_name ? ` · ${escapeHtml(l.device_name)}` : ''}</div>
-                      </div>
-                      <span class="badge badge-${badgeType}">${badgeText}</span>
-                    </div>
-                  `;
-                }).join('')}
+            ${allEvents.length > 0 ? `
+              <div class="card" id="ac-events-card" style="margin:0 var(--sp-lg)">
+                ${allEvents.map(eventRowHtml).join('')}
               </div>
+              <div id="ac-feed-count" style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${allEvents.length} of ${totalEvents} events</div>
+              ${page < totalPages ? `<div id="ac-more-wrap" style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="ac-load-more">Load more events</button></div>` : ''}
             ` : renderEmptyState({ icon: 'access', title: 'No events', text: 'Live access and check-in events will appear here' })}
           `}
         </div>
@@ -192,15 +304,19 @@ export default {
       scroll.querySelectorAll('[data-tab]').forEach(btn => {
         btn.addEventListener('click', () => {
           currentTab = btn.dataset.tab;
+          page = 1; allEvents = [];
           scroll.innerHTML = renderListSkeleton();
           loadData();
         });
       });
 
+      // Load more (V3-M21)
+      scroll.querySelector('#ac-load-more')?.addEventListener('click', loadMoreEvents);
+
       // Quick stat clicks
-      scroll.querySelector('#stat-entries')?.addEventListener('click', () => { currentTab = 'entry'; loadData(); });
-      scroll.querySelector('#stat-exits')?.addEventListener('click', () => { currentTab = 'exit'; loadData(); });
-      scroll.querySelector('#banner-denied')?.addEventListener('click', () => { currentTab = 'denied'; loadData(); });
+      scroll.querySelector('#stat-entries')?.addEventListener('click', () => { currentTab = 'entry'; page = 1; allEvents = []; loadData(); });
+      scroll.querySelector('#stat-exits')?.addEventListener('click', () => { currentTab = 'exit'; page = 1; allEvents = []; loadData(); });
+      scroll.querySelector('#banner-denied')?.addEventListener('click', () => { currentTab = 'denied'; page = 1; allEvents = []; loadData(); });
 
       // Remote Turnstile / Door Unlock
       const unlockBtn = scroll.querySelector('#btn-remote-unlock');
@@ -287,45 +403,11 @@ export default {
         }
       });
 
-      // Bind member link navigation
-      scroll.querySelectorAll('[data-member-link]').forEach(row => {
-        row.addEventListener('click', () => {
-          const mid = row.dataset.memberLink;
-          if (mid) navigate.push('member-detail', { memberId: mid });
-        });
-      });
-
-      scroll.querySelectorAll('[data-event-member-id]').forEach(row => {
-        row.addEventListener('click', () => {
-          const mid = row.dataset.eventMemberId;
-          const bioId = row.dataset.bioId;
-          if (mid) {
-            navigate.push('member-detail', { memberId: mid });
-          } else if (bioId) {
-            openQuickAssign(bioId);
-          }
-        });
-      });
-
-      // Bind Check Out buttons
-      scroll.querySelectorAll('[data-checkout-id]').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const mid = btn.dataset.checkoutId;
-          const name = btn.dataset.checkoutName;
-          btn.disabled = true;
-          btn.textContent = 'Checking out...';
-          const res = await checkInMember(mid, 'EXIT');
-          if (res.ok) {
-            showToast(`${name} checked out`, 'success');
-            await loadData();
-          } else {
-            showToast(res.error?.message || 'Check-out failed', 'error');
-            btn.disabled = false;
-            btn.textContent = 'Check Out';
-          }
-        });
-      });
+      // Member rows + Check Out buttons (inside-now list and feed rows).
+      // NOTE (V3-L23): the old [data-member-link] binding was dead — no
+      // element ever carried that attribute (rows use
+      // data-event-member-id) — so it was removed, not re-bound.
+      wireEventRows(scroll);
     }
 
     function openCheckinModal() {
@@ -355,7 +437,9 @@ export default {
       let debounceTimeout = null;
 
       async function fetchAndRenderMembers(query = '') {
-        const url = `/api/mobile/v1/members?page_size=20${query ? `&q=${encodeURIComponent(query)}` : '&status=active'}`;
+        // V3-L22: the search query used to drop the status=active filter,
+        // so searching could surface expired members for check-in.
+        const url = `/api/mobile/v1/members?page_size=20&status=active${query ? `&q=${encodeURIComponent(query)}` : ''}`;
         const res = await apiRequest(url);
         if (!res.ok) {
           listContainer.innerHTML = `<div style="text-align:center;padding:var(--sp-md);color:var(--critical)">Failed to load members</div>`;
@@ -484,19 +568,27 @@ async function openQuickAssign(bioId) {
   overlay.querySelector('#qa-close').addEventListener('click', close);
   
   let members = [];
+  let qaPage = 1;
+  let qaTotal = 0;
+  let qaQuery = '';
+  let qaLoading = false;
+  let qaLinking = false;
   const resultsEl = overlay.querySelector('#qa-results');
   const searchEl = overlay.querySelector('#qa-search');
-  
-  const renderResults = (q) => {
-    const query = (q || '').toLowerCase().trim();
-    const filtered = query
-      ? members.filter(m => m.full_name.toLowerCase().includes(query) || (m.phone || '').includes(query)).slice(0, 30)
-      : members.slice(0, 30);
-    resultsEl.innerHTML = filtered.length
-      ? filtered.map(m => `<div class="qa-row" data-qa-pick="${m.id}"><b>${escapeHtml(m.full_name)}</b>${m.phone ? `<span>${escapeHtml(m.phone)}</span>` : ''}</div>`).join('')
+
+  const renderResults = () => {
+    const rows = members.map(m => `<div class="qa-row" data-qa-pick="${m.id}"><b>${escapeHtml(m.full_name)}</b>${m.phone ? `<span>${escapeHtml(m.phone)}</span>` : ''}</div>`).join('');
+    const more = members.length < qaTotal
+      ? `<button id="qa-more" style="width:100%;padding:12px;border:none;background:none;color:#2563eb;font-weight:700;font-size:14px;cursor:pointer">Show more (${members.length} of ${qaTotal})</button>`
+      : (members.length ? `<div style="padding:10px;text-align:center;color:#94a3b8;font-size:12px">Showing ${members.length} of ${qaTotal} members</div>` : '');
+    resultsEl.innerHTML = (members.length || more)
+      ? rows + more
       : '<div class="qa-empty">No members found</div>';
     resultsEl.querySelectorAll('[data-qa-pick]').forEach(row => {
       row.addEventListener('click', async () => {
+        // V3-L21: a double-tap used to fire the link twice.
+        if (qaLinking) return;
+        qaLinking = true;
         const memberId = Number(row.dataset.qaPick);
         row.style.background = '#dcfce7';
         const res = await apiRequest('/api/mobile/v1/rrr/mappings/bulk-resolve', {
@@ -508,27 +600,43 @@ async function openQuickAssign(bioId) {
           // Refresh the access feed to show the name
           if (window.__refreshAccess) window.__refreshAccess();
         } else {
-          showToast('Link failed — try again');
+          showToast(res.error?.message || 'Link failed — try again', 'error');
           row.style.background = '';
+          qaLinking = false;
         }
       });
     });
+    resultsEl.querySelector('#qa-more')?.addEventListener('click', () => {
+      qaPage += 1;
+      loadQaMembers(false);
+    });
   };
-  
+
+  async function loadQaMembers(reset) {
+    if (qaLoading) return;
+    qaLoading = true;
+    if (reset) { qaPage = 1; members = []; }
+    const res = await apiRequest(`/api/mobile/v1/members?page=${qaPage}&page_size=30${qaQuery ? `&q=${encodeURIComponent(qaQuery)}` : ''}`);
+    qaLoading = false;
+    if (res.ok) {
+      const got = res.data.members || [];
+      qaTotal = res.data.pagination?.total ?? (reset ? got.length : members.length + got.length);
+      const seen = new Set(members.map(m => m.id));
+      members = reset ? got : [...members, ...got.filter(m => !seen.has(m.id))];
+    }
+    renderResults();
+  }
+
   let memberSearchTimer;
   searchEl.addEventListener('input', () => {
     clearTimeout(memberSearchTimer);
-    memberSearchTimer = setTimeout(async () => {
-      const q = searchEl.value.trim();
-      const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=30${q ? `&q=${encodeURIComponent(q)}` : ''}`);
-      members = res.ok ? (res.data.members || []) : [];
-      renderResults(searchEl.value);
+    memberSearchTimer = setTimeout(() => {
+      qaQuery = searchEl.value.trim();
+      loadQaMembers(true);
     }, 300);
   });
 
-  const res = await apiRequest('/api/mobile/v1/members?page=1&page_size=30');
-  members = res.ok ? (res.data.members || []) : [];
-  renderResults('');
+  loadQaMembers(true);
   // Focus synchronously (no setTimeout) so iOS opens the keyboard —
   // setTimeout breaks the user-gesture chain.
   searchEl.focus();

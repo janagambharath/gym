@@ -16,6 +16,16 @@ export default {
     const settingsRes = await apiRequest('/api/mobile/v1/settings');
     const plans = settingsRes.ok ? (settingsRes.data.plans || []) : [];
     const defaultPlan = plans[0];
+    // V3-L24: the end date must be computed in gym-local calendar space,
+    // not device-local time (new Date(startDate) is device-midnight and
+    // toISOString() is UTC — a device behind the gym tz could shift the
+    // end date a day early). Same UTC-noon calendar math as renew-member;
+    // the start date itself already comes from getGymTodayISO() (gym tz).
+    const addDays = (value, days) => {
+      const [year, month, day] = value.split('-').map(Number);
+      const date = new Date(Date.UTC(year, month - 1, day + days, 12));
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+    };
 
     el.innerHTML = `
       ${renderHeader({ title: 'Add Member', showBack: true })}
@@ -116,9 +126,7 @@ export default {
       if (planId) {
         const plan = plans.find(p => p.id === planId);
         if (plan?.duration_days) {
-          const d = new Date(startDate);
-          d.setDate(d.getDate() + Number(plan.duration_days) - 1);
-          endDate = d.toISOString().slice(0, 10);
+          endDate = addDays(startDate, Number(plan.duration_days) - 1);
         }
       }
 

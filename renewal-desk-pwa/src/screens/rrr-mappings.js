@@ -52,6 +52,10 @@ async function load(el) {
   }
 
   allMembers = membersRes.ok ? (membersRes.data.members || []) : [];
+  // V3-L34: a failed member-list fetch used to fail silently, leaving the
+  // picker with only the first-page cache and no explanation.
+  const memberLoadFailed = !membersRes.ok;
+  if (memberLoadFailed) showToast('Could not load the member list — search may miss members. Check your connection and retry.', 'error');
   // Paginated shape: data.groups already grouped server-side.
   const pg = unresolved.data.pagination || {};
   totalGroups = pg.total ?? 0;
@@ -67,13 +71,19 @@ async function load(el) {
   for (const bid of selections.keys()) {
     if (!groupIds.has(bid)) selections.delete(bid);
   }
-  render(el);
+  render(el, memberLoadFailed);
 }
 
 async function loadMore(el) {
   if (page >= totalPages) return;
+  const btn = el.querySelector('#bm-more');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
   const res = await apiRequest(`/api/mobile/v1/rrr/mappings/unresolved?page=${page + 1}&per_page=50`);
-  if (!res.ok) return;
+  if (!res.ok) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Load more IDs'; }
+    showToast(res.error?.message || 'Could not load more IDs.', 'error');
+    return;
+  }
   page = res.data.pagination?.page ?? page + 1;
   totalPages = res.data.pagination?.total_pages ?? totalPages;
   const more = (res.data.groups || []).map(g => ({
@@ -82,30 +92,67 @@ async function loadMore(el) {
     latest: g.latest_punch_time,
   }));
   groups = [...groups, ...more];
-  render(el);
+  // V3-L20: append the new cards in place — a full re-render reset scroll
+  // to the top and closed the open picker.
+  const list = el.querySelector('#bm-list');
+  if (list) {
+    list.insertAdjacentHTML('beforeend', more.map(cardHtml).join(''));
+    list.querySelectorAll('.bm-card').forEach(card => {
+      if (card.dataset.wired) return;
+      card.dataset.wired = '1';
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.bm-picker')) return;
+        togglePicker(el, card.dataset.bid);
+      });
+    });
+    wireSaveButtons(list);
+  }
+  const countLine = el.querySelector('#bm-count-line');
+  if (countLine) countLine.textContent = `Showing ${groups.length} of ${totalGroups} unmapped IDs`;
+  const moreWrap = el.querySelector('#bm-more-wrap');
+  if (moreWrap) moreWrap.style.display = page < totalPages ? '' : 'none';
+  if (btn) { btn.disabled = false; btn.textContent = 'Load more IDs'; }
 }
 
 // Server-side member search for the picker (M31): the member list is
 // paginated, so client-side filtering over the first page can never find
 // members beyond it.
 let memberSearchTimer;
+// V3-L19: sequence searches — a slow earlier response must never overwrite
+// a newer one.
+let memberSearchSeq = 0;
 async function searchMembers(query, bid, el) {
+  const seq = ++memberSearchSeq;
   const results = el.querySelector(`[data-results="${CSS.escape(bid)}"]`);
   if (!results) return;
   const q = (query || '').trim();
-  const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=20${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+  const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=50${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+  if (seq !== memberSearchSeq) return; // a newer search superseded this one
   const members = res.ok ? (res.data.members || []) : [];
+  const total = res.ok ? (res.data.pagination?.total ?? members.length) : 0;
   // Merge search results into allMembers — wirePicks looks the tapped
   // member up in allMembers, so a searched member who was never in the
   // first-50 load could never be selected (tap did nothing).
+  const seen = new Set(allMembers.map(m => m.id));
   for (const m of members) {
-    if (!allMembers.some(x => x.id === m.id)) allMembers.push(m);
+    if (!seen.has(m.id)) { allMembers.push(m); seen.add(m.id); }
   }
-  results.innerHTML = resultsHtml(members);
+  // V3-L34: searches accumulate forever across keystrokes — cap the cache,
+  // never dropping a member with a pending selection.
+  if (allMembers.length > 200) {
+    const selectedIds = new Set([...selections.values()].map(m => m.id));
+    const selected = allMembers.filter(m => selectedIds.has(m.id));
+    const rest = allMembers.filter(m => !selectedIds.has(m.id)).slice(-(200 - selected.length));
+    allMembers = [...selected, ...rest];
+  }
+  results.innerHTML = resultsHtml(members)
+    + (total > members.length
+      ? `<div class="bm-no-results">Showing ${members.length} of ${total} members — refine your search to find more.</div>`
+      : '');
   wirePicks(el);
 }
 
-function render(el) {
+function render(el, memberLoadFailed = false) {
   const totalPunches = groups.reduce((s, g) => s + g.count, 0);
   
   el.innerHTML = `<main class="rrr-page bulk-map-page">
@@ -125,8 +172,9 @@ function render(el) {
     <div class="bm-list" id="bm-list">
       ${groups.map(cardHtml).join('')}
     </div>
-    <div style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${groups.length} of ${totalGroups} unmapped IDs</div>
-    ${page < totalPages ? `<div style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="bm-more">Load more IDs</button></div>` : ''}
+    ${memberLoadFailed ? `<div class="bm-hint" style="background:#fef3c7"><span class="bm-hint-icon">⚠️</span><p style="color:#92400e">Member list failed to load — search may miss members. Check your connection and reload.</p></div>` : ''}
+    <div id="bm-count-line" style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${groups.length} of ${totalGroups} unmapped IDs</div>
+    <div id="bm-more-wrap" style="text-align:center;padding:var(--sp-md);${page < totalPages ? '' : 'display:none'}"><button class="btn btn-secondary" id="bm-more">Load more IDs</button></div>
     
     <div class="bm-footer" id="bm-footer" style="display:none">
       <div class="bm-footer-info"><span id="bm-count">0</span> ready to link</div>
@@ -207,12 +255,13 @@ function render(el) {
   });
   
   el.querySelectorAll('.bm-card').forEach(card => {
+    card.dataset.wired = '1';
     card.addEventListener('click', (e) => {
       if (e.target.closest('.bm-picker')) return;
       togglePicker(el, card.dataset.bid);
     });
   });
-  
+
   wireSaveButtons(el);
   updateFooter(el);
 }
@@ -301,6 +350,7 @@ function refreshCards(el) {
   list.innerHTML = groups.map(cardHtml).join('');
   
   el.querySelectorAll('.bm-card').forEach(card => {
+    card.dataset.wired = '1';
     card.addEventListener('click', (e) => {
       if (e.target.closest('.bm-picker')) return;
       togglePicker(el, card.dataset.bid);

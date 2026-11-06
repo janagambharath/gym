@@ -89,7 +89,13 @@ export default { async mount(el, params) {
       const endDate = startDate ? addDays(startDate, days - 1) : '';
       el.querySelector('#rp-end-preview').textContent = endDate ? `Membership ends ${formatDate(endDate)} (${days} days).` : '';
     };
-    el.querySelector('#rp-start-date').min = minStartDate;
+    // Only active members get a minimum start date (protects their paid
+    // period). Expired members can backdate — e.g. paid Nov 1, recorded
+    // Nov 5 — mirroring renew-member.js (V3-M19). The server still rejects
+    // a renewal that would already be expired.
+    if (selectedMember?.membership_end && selectedMember.membership_end >= today) {
+      el.querySelector('#rp-start-date').min = minStartDate;
+    }
     el.querySelector('#rp-start-date').addEventListener('change', updateEndPreview);
     el.querySelector('#rp-plan')?.addEventListener('change', updateEndPreview);
     updateEndPreview();

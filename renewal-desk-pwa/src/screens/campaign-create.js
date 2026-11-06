@@ -36,6 +36,10 @@ export default { async mount(el) {
       const msg = templ?.body || templ?.message || templ?.text || templ?.content
         || el.querySelector('#cc-msg')?.value.trim() || '';
       el.querySelector('#cc-preview-text').textContent = msg || 'No message entered yet — pick a template or type a message above.';
+    } else {
+      // V3-L26: a failed preview used to fail silently — the button just
+      // did nothing. Surface the error (the endpoint exists; keep the button).
+      showToast(r.error?.message || 'Could not load the preview. Try again.', 'error');
     }
   });
   el.querySelector('#cc-form').addEventListener('submit',async(e)=>{
