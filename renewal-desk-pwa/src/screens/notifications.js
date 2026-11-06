@@ -1,6 +1,6 @@
 /* Notifications Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatRelativeTime } from '../utils.js';
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Notifications',showBack:true})}
@@ -53,7 +53,10 @@ export default { async mount(el) {
         else if (n.conversation_id) navigate.push('bot-conversation-detail', { conversationId: String(n.conversation_id) });
       });
     });
-    container.querySelector('#nf-more')?.addEventListener('click', () => { page += 1; loadNotifications(true); });
+    // V4-L19: loadNotifications advances the page itself, only after
+    // a successful fetch — pre-incrementing here silently skipped a
+    // failed page.
+    container.querySelector('#nf-more')?.addEventListener('click', () => { loadNotifications(true); });
   }
 
   function renderFooter() {
@@ -68,16 +71,21 @@ export default { async mount(el) {
   async function loadNotifications(append) {
     if (loading) return;
     loading = true;
-    const res = await apiRequest(`/api/mobile/v1/notifications?page=${page}&page_size=20`);
+    // V4-L19: fetch the NEXT page without moving `page` first — the page
+    // advances only when the fetch succeeds, so a failed page is retried
+    // instead of silently skipped.
+    const fetchPage = append ? page + 1 : page;
+    const res = await apiRequest(`/api/mobile/v1/notifications?page=${fetchPage}&page_size=20`);
     loading = false;
     if (!res.ok) {
-      if (!append) list.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load notifications</div><div class="empty-state-text">${escapeHtml(res.error?.message || 'Check your connection and try again.')}</div><button class="btn btn-primary" id="nf-retry" style="margin-top:var(--sp-md)">Try Again</button></div>`;
+      if (append) { showToast(res.error?.message || 'Could not load more notifications.', 'error'); renderFooter(); return; }
+      list.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load notifications</div><div class="empty-state-text">${escapeHtml(res.error?.message || 'Check your connection and try again.')}</div><button class="btn btn-primary" id="nf-retry" style="margin-top:var(--sp-md)">Try Again</button></div>`;
       list.querySelector('#nf-retry')?.addEventListener('click', () => { page = 1; notifs = []; loadNotifications(false); });
       return;
     }
     const pg = res.data.pagination || {};
     total = pg.total ?? (res.data.notifications || res.data || []).length;
-    page = pg.page ?? page;
+    page = pg.page ?? fetchPage;
     const fresh = res.data.notifications || res.data || [];
     if (!Array.isArray(fresh)) return;
     const base = append ? notifs.length : 0;

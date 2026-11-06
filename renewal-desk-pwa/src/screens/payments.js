@@ -50,13 +50,15 @@ export default {
       loading = true;
       const listEl = el.querySelector('#payments-list');
       if (!background && !append) listEl.innerHTML = renderListSkeleton();
-      let url = `/api/mobile/v1/payments?page=${page}&page_size=20`;
+      // V4-L19: fetch the NEXT page without moving `page` first.
+      const fetchPage = append ? page + 1 : page;
+      let url = `/api/mobile/v1/payments?page=${fetchPage}&page_size=20`;
       if (filter !== 'all') url += `&status=${filter}`;
       if (search.trim()) url += `&q=${encodeURIComponent(search.trim())}`;
       // Background refresh re-fetches every page loaded so far (like
       // members.js) — refetching only page 1 would drop pages 2+.
       const pageUrls = background
-        ? Array.from({ length: page }, (_, i) => url.replace(`page=${page}&`, `page=${i + 1}&`))
+        ? Array.from({ length: fetchPage }, (_, i) => url.replace(`page=${fetchPage}&`, `page=${i + 1}&`))
         : [url];
       const [res, sumRes] = await Promise.all([
         Promise.all(pageUrls.map(u => apiRequest(u))).then(results => {
@@ -70,12 +72,16 @@ export default {
       loading = false;
       if (!res.ok) {
         if (res.error.status === 401) return handleLogout();
+        // V4-L19: an append failure must toast and keep the loaded list —
+        // rendering the error state here used to wipe it.
+        if (append) { showToast(res.error?.message || 'Could not load more payments.', 'error'); return; }
         if (!background) listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
       const newPayments = res.data.payments || [];
       payments = append ? [...payments, ...newPayments] : newPayments;
       total = res.data.pagination?.total ?? payments.length;
+      if (append) page = fetchPage;
 
       if (sumRes?.ok) {
         const s = sumRes.data;
@@ -109,7 +115,10 @@ export default {
       listEl.querySelectorAll('[data-payment-id]').forEach(card => {
         card.addEventListener('click', () => navigate.push('payment-detail', { paymentId: card.dataset.paymentId }));
       });
-      listEl.querySelector('#pay-more')?.addEventListener('click', () => { page++; loadPayments(false, true); });
+      // V4-L19: loadPayments advances the page itself, only after a
+      // successful fetch — pre-incrementing here silently skipped a
+      // failed page.
+      listEl.querySelector('#pay-more')?.addEventListener('click', () => { loadPayments(false, true); });
     }
 
     // Infinite scroll: load the next server page as the owner reaches the end.
@@ -117,7 +126,7 @@ export default {
       const listEl = e.currentTarget;
       if (loading || payments.length >= total) return;
       if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 200) {
-        page++; loadPayments(false, true);
+        loadPayments(false, true);
       }
     });
 

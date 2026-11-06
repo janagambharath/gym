@@ -16,6 +16,7 @@ let selections = new Map(); // biometric_id -> member object
 let openPicker = null; // biometric_id with open picker
 let seenTenantId = null;
 let page = 1;
+let membersTotal = 0; // gym-wide member total, for the picker count line (V4-L23)
 let totalGroups = 0;
 let totalPages = 1;
 
@@ -52,6 +53,7 @@ async function load(el) {
   }
 
   allMembers = membersRes.ok ? (membersRes.data.members || []) : [];
+  membersTotal = membersRes.ok ? (membersRes.data.pagination?.total ?? allMembers.length) : allMembers.length;
   // V3-L34: a failed member-list fetch used to fail silently, leaving the
   // picker with only the first-page cache and no explanation.
   const memberLoadFailed = !membersRes.ok;
@@ -91,12 +93,17 @@ async function loadMore(el) {
     count: g.punch_count || 0,
     latest: g.latest_punch_time,
   }));
-  groups = [...groups, ...more];
+  // V4-L20: a new punch between pages can shift the window and return a
+  // group already shown — drop repeats before appending (and before
+  // rendering, so no duplicate card is ever inserted).
+  const seenGroupIds = new Set(groups.map(g => g.id));
+  const fresh = more.filter(g => !seenGroupIds.has(g.id));
+  groups = [...groups, ...fresh];
   // V3-L20: append the new cards in place — a full re-render reset scroll
   // to the top and closed the open picker.
   const list = el.querySelector('#bm-list');
   if (list) {
-    list.insertAdjacentHTML('beforeend', more.map(cardHtml).join(''));
+    list.insertAdjacentHTML('beforeend', fresh.map(cardHtml).join(''));
     list.querySelectorAll('.bm-card').forEach(card => {
       if (card.dataset.wired) return;
       card.dataset.wired = '1';
@@ -324,9 +331,13 @@ function cardHtml(g) {
 }
 
 function pickerHtml(bid) {
+  // V4-L23: the picker used to show the first 20 members with no count —
+  // disclose how many are shown out of the gym's total.
+  const shown = allMembers.slice(0, 20);
+  const total = membersTotal || allMembers.length;
   return `<div class="bm-picker" data-picker="${esc(bid)}">
     <input class="bm-search" data-search="${esc(bid)}" type="search" placeholder="Type member name…" autocomplete="off">
-    <div class="bm-results" data-results="${esc(bid)}">${resultsHtml(allMembers.slice(0, 20))}</div>
+    <div class="bm-results" data-results="${esc(bid)}">${resultsHtml(shown)}${total > shown.length ? `<div class="bm-no-results">Showing ${shown.length} of ${total} members — type to search for more.</div>` : ''}</div>
   </div>`;
 }
 

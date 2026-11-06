@@ -16,7 +16,24 @@ export default {
     let requestId = 0;
     // Feed pagination (V3-M21): page/total survive background refreshes.
     let page = 1, totalEvents = 0, totalPages = 1, allEvents = [];
-    let insideMembers = [], insideTotal = 0;
+    let insideMembers = [], insideTotal = 0, insidePage = 1, insideTotalPages = 1;
+    // V4-L20: dedupe feed rows by event id — a new punch landing between
+    // two fetched pages can otherwise appear twice.
+    const eventKey = (l) => l.id ?? `${l.member_id || ''}|${l.biometric_user_id || l.device_enroll_number || ''}|${l.event_timestamp || l.timestamp || l.created_at || ''}`;
+    const dedupeEvents = (rows) => { const seen = new Set(); return rows.filter((r) => { const k = eventKey(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
+    // One Inside-now row — shared by the full render and the load-more
+    // append so appended rows look and behave exactly like the first page.
+    function insideRowHtml(m) {
+      return `
+        <div class="list-item" style="cursor:pointer" data-event-member-id="${m.id}">
+          ${renderAvatar(m.full_name || 'Member', 'sm')}
+          <div class="list-item-content">
+            <div class="list-item-title">${escapeHtml(m.full_name)}</div>
+            <div class="list-item-subtitle">Entered ${m.entered_at ? formatDateTime(m.entered_at) : '—'}</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" data-checkout-id="${m.id}" data-checkout-name="${escapeHtml(m.full_name)}">Check Out</button>
+        </div>`;
+    }
     let feedErrorShown = false;
 
     // One feed row — shared by the full render and load-more appends so
@@ -106,11 +123,15 @@ export default {
       totalPages = res.data?.pagination?.total_pages ?? totalPages;
       totalEvents = res.data?.pagination?.total ?? totalEvents;
       const more = res.data?.events || res.data?.log || [];
-      allEvents = [...allEvents, ...more];
+      // V4-L20: drop rows already shown (a new punch between pages shifts
+      // the window and the same event can come back on the next page).
+      const seenKeys = new Set(allEvents.map(eventKey));
+      const fresh = more.filter((e) => { const k = eventKey(e); if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
+      allEvents = [...allEvents, ...fresh];
       // Append rows in place — a full re-render would reset scroll.
       const card = el.querySelector('#ac-events-card');
       if (card) {
-        card.insertAdjacentHTML('beforeend', more.map(eventRowHtml).join(''));
+        card.insertAdjacentHTML('beforeend', fresh.map(eventRowHtml).join(''));
         wireEventRows(card);
       }
       const count = el.querySelector('#ac-feed-count');
@@ -118,6 +139,35 @@ export default {
       const wrap = el.querySelector('#ac-more-wrap');
       if (wrap) wrap.style.display = page < totalPages ? '' : 'none';
       if (btn) { btn.disabled = false; btn.textContent = 'Load more events'; }
+    }
+
+    async function loadMoreInside() {
+      if (insidePage >= insideTotalPages) return;
+      const btn = el.querySelector('#ac-inside-more');
+      if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+      const next = insidePage + 1;
+      const res = await apiRequest(`/api/mobile/v1/access/inside?page=${next}&per_page=50`);
+      if (!res.ok) {
+        showToast(res.error?.message || 'Could not load more members inside.', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Load more'; }
+        return;
+      }
+      insidePage = res.data?.pagination?.page ?? next;
+      insideTotalPages = res.data?.pagination?.total_pages ?? insideTotalPages;
+      insideTotal = res.data?.pagination?.total ?? insideTotal;
+      const seenInside = new Set(insideMembers.map((m) => m.id));
+      const fresh = (res.data?.members || []).filter((m) => { if (seenInside.has(m.id)) return false; seenInside.add(m.id); return true; });
+      insideMembers = [...insideMembers, ...fresh];
+      const list = el.querySelector('#ac-inside-list');
+      if (list) {
+        list.insertAdjacentHTML('beforeend', fresh.map(insideRowHtml).join(''));
+        wireEventRows(list);
+      }
+      const count = el.querySelector('#ac-inside-count');
+      if (count) count.textContent = `Showing ${insideMembers.length} of ${insideTotal} inside now`;
+      const wrap = el.querySelector('#ac-inside-more-wrap');
+      if (wrap) wrap.style.display = insidePage < insideTotalPages ? '' : 'none';
+      if (btn) { btn.disabled = false; btn.textContent = 'Load more'; }
     }
 
     async function loadData() {
@@ -129,14 +179,26 @@ export default {
       // refresh re-fetches pages 1..page so a loaded-more feed keeps its
       // place (members-list pattern) instead of snapping back to page 1.
       const feedUrl = (p) => `/api/mobile/v1/access/events?page=${p}&per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`;
-      const [summaryRes, insideRes, ...feedPages] = await Promise.all([
+      // V4-L16: inside-now is paginated too — re-fetch pages 1..insidePage
+      // on background refresh so loaded-more rows keep their place.
+      const insideUrl = (p) => `/api/mobile/v1/access/inside?page=${p}&per_page=50`;
+      const [summaryRes, ...rest] = await Promise.all([
         apiRequest('/api/mobile/v1/access/summary'),
-        apiRequest('/api/mobile/v1/access/inside?per_page=50'),
+        ...Array.from({ length: insidePage }, (_, i) => apiRequest(insideUrl(i + 1))),
         ...Array.from({ length: page }, (_, i) => apiRequest(feedUrl(i + 1))),
       ]);
       if (id !== requestId || el.dataset.screenDisposed === 'true') return;
-      const feedRes = feedPages.find(r => !r.ok) || feedPages[feedPages.length - 1];
-      if (!summaryRes.ok && !feedRes.ok && summaryData) return;
+      const insidePages = rest.slice(0, insidePage);
+      const insideRes = insidePages[insidePages.length - 1];
+      const feedPages = rest.slice(insidePage);
+      // V4-M23: feedRes is the CURRENT page (the last fetched). Picking the
+      // first failed page as feedRes zeroed totalEvents on a failed middle
+      // page ("Showing N of 0 events"). The total below falls back to the
+      // last good page instead. The silent return that used to sit here,
+      // before the toast, is deleted — the toast IS the error state, so a
+      // down server on a background refresh must surface, not vanish.
+      const feedRes = feedPages[feedPages.length - 1];
+      const lastGoodFeedPage = [...feedPages].reverse().find((r) => r.ok);
       // A background feed failure used to return silently, leaving a stale
       // feed with no error — surface it once until a refresh succeeds.
       if (!feedRes.ok) {
@@ -153,12 +215,20 @@ export default {
       // read was always []).
       const events = feedRes.ok ? (feedRes.data?.events || feedRes.data?.log || []) : [];
       const pg = feedRes.ok ? (feedRes.data?.pagination || {}) : {};
-      totalEvents = pg.total ?? events.length;
-      totalPages = pg.total_pages ?? 1;
+      // V4-M23 second leg: a failed current page must not zero the total —
+      // fall back to the last good page's total (or the previous total).
+      totalEvents = pg.total ?? lastGoodFeedPage?.data?.pagination?.total ?? totalEvents;
+      // V4-M23: same guard for totalPages — a failed page must not hide
+      // the Load-more button by collapsing the page count to 1.
+      totalPages = pg.total_pages ?? totalPages;
       page = pg.page ?? page;
-      allEvents = feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events);
-      insideMembers = insideRes.ok ? (insideRes.data?.members || []) : [];
-      insideTotal = insideRes.ok ? (insideRes.data?.pagination?.total ?? insideMembers.length) : 0;
+      allEvents = dedupeEvents(feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events));
+      // V4-L16: inside-now keeps its own page/total; a failed inside fetch
+      // keeps the previous total instead of collapsing the count to 0.
+      insideMembers = [...new Map(insidePages.flatMap((r) => (r.ok ? (r.data?.members || []) : [])).map((m) => [m.id, m])).values()];
+      insideTotal = insideRes.ok ? (insideRes.data?.pagination?.total ?? insideMembers.length) : insideTotal;
+      insideTotalPages = insideRes.ok ? (insideRes.data?.pagination?.total_pages ?? insideTotalPages) : insideTotalPages;
+      insidePage = insideRes.ok ? (insideRes.data?.pagination?.page ?? insidePage) : insidePage;
 
       const lastEventText = s.last_event_at ? formatDateTime(s.last_event_at) : (s.last_heartbeat ? `Heartbeat: ${formatDateTime(s.last_heartbeat)}` : '');
 
@@ -262,15 +332,9 @@ export default {
           ${insideMembers.length ? `
             <div class="card" style="margin:var(--sp-md) var(--sp-lg) 0">
               <div style="padding:var(--sp-md) var(--sp-md) var(--sp-xs);font-weight:var(--fw-bold);font-size:var(--fs-sm)">Inside now (${insideTotal})</div>
-              ${insideMembers.map(m => `
-                <div class="list-item" style="cursor:pointer" data-event-member-id="${m.id}">
-                  ${renderAvatar(m.full_name || 'Member', 'sm')}
-                  <div class="list-item-content">
-                    <div class="list-item-title">${escapeHtml(m.full_name)}</div>
-                    <div class="list-item-subtitle">Entered ${m.entered_at ? formatDateTime(m.entered_at) : '—'}</div>
-                  </div>
-                  <button class="btn btn-secondary btn-sm" data-checkout-id="${m.id}" data-checkout-name="${escapeHtml(m.full_name)}">Check Out</button>
-                </div>`).join('')}
+              <div id="ac-inside-list">${insideMembers.map(insideRowHtml).join('')}</div>
+              <div id="ac-inside-count" style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${insideMembers.length} of ${insideTotal} inside now</div>
+              ${insidePage < insideTotalPages ? `<div id="ac-inside-more-wrap" style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="ac-inside-more">Load more</button></div>` : ''}
             </div>` : ''}
 
           <!-- Filter Tabs -->
@@ -312,6 +376,8 @@ export default {
 
       // Load more (V3-M21)
       scroll.querySelector('#ac-load-more')?.addEventListener('click', loadMoreEvents);
+      // V4-L16: load the next inside-now page in place.
+      scroll.querySelector('#ac-inside-more')?.addEventListener('click', loadMoreInside);
 
       // Quick stat clicks
       scroll.querySelector('#stat-entries')?.addEventListener('click', () => { currentTab = 'entry'; page = 1; allEvents = []; loadData(); });

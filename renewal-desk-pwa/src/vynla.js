@@ -459,6 +459,10 @@ async function renderMembership(background = false) {
 }
 
 async function renderAttendance(page=1,prior=[],background=false) {
+  // V4-L18: re-rendering the whole page used to jump the member back to
+  // the top on "Load older visits" — remember the scroll position and
+  // restore it after the re-render (page 1 loads start at the top).
+  const savedScrollY = page > 1 ? window.scrollY : null;
   const version = beginPage('attendance');
   if(page===1 && !background)shell('<div style="padding:48px;text-align:center">Loading attendance…</div>');
   const results = background
@@ -478,11 +482,15 @@ async function renderAttendance(page=1,prior=[],background=false) {
   const data=result.data||{},summary=data.summary||{},events=[...prior,...(data.events||[])];
   const rows=events.map((event)=>{const type=String(event.event_type||'').toUpperCase();const label=type==='ENTRY'?'Gym entry':type==='EXIT'?'Gym exit':type.includes('DENIED')?'Access denied':'Attendance recorded';const color=type==='ENTRY'?'#059669':type.includes('DENIED')?'#dc2626':'#475569';return `<article style="display:flex;align-items:center;gap:12px;background:#fff;border-radius:14px;padding:14px;margin-top:9px"><div style="width:10px;height:10px;border-radius:50%;background:${color}"></div><div style="flex:1"><strong>${label}</strong><div style="margin-top:4px;color:#64748b;font-size:13px">${pageDateTime(event.timestamp)}${event.device_name?` · ${esc(event.device_name)}`:''}</div></div></article>`;}).join('');
   memberPage('attendance',`<section style="padding:22px"><h1 style="font-size:26px">Attendance</h1><p style="margin:5px 0 16px;color:#64748b">Your visits recorded by your gym’s access system.</p><article style="display:flex;background:#fff;border-radius:16px;padding:15px;text-align:center"><div style="flex:1"><strong style="font-size:24px">${summary.today_entries||0}</strong><div style="color:#64748b;font-size:12px">Entries today</div></div><div style="flex:1"><strong style="font-size:24px">${summary.today_exits||0}</strong><div style="color:#64748b;font-size:12px">Exits today</div></div><div style="flex:1"><strong style="font-size:14px">${summary.is_inside?'Inside':'Outside'}</strong><div style="color:#64748b;font-size:12px">Current state</div></div></article><div style="margin-top:14px">${rows||'<article style="background:#fff;border-radius:16px;padding:22px;text-align:center;color:#64748b">No visits have been recorded yet.</article>'}</div>${page<data.pagination?.total_pages?`<button id="older" style="width:100%;margin-top:14px;padding:13px;border:1px solid #cbd5e1;border-radius:11px;background:#fff;font-weight:700">Load older visits</button>`:''}<p style="font-size:12px;color:#94a3b8;margin-top:14px">Last visit: ${pageDateTime(summary.last_visit)}</p></section>`);
+  if (savedScrollY != null) window.scrollTo(0, savedScrollY);
   const olderBtn = document.querySelector('#older');
   olderBtn?.addEventListener('click',()=>{ if (olderBtn.disabled) return; olderBtn.disabled=true; renderAttendance(page+1,events); });
 }
 
 async function renderPayments(page=1,prior=[],background=false) {
+  // V4-L18: same scroll-jump fix as renderAttendance — "Load older
+  // payments" re-renders the whole page.
+  const savedScrollY = page > 1 ? window.scrollY : null;
   const version = beginPage('payments');
   if(page===1 && !background)shell('<div style="padding:48px;text-align:center">Loading payments…</div>');
   const results = background
@@ -501,6 +509,7 @@ async function renderPayments(page=1,prior=[],background=false) {
   if(!result.ok){if(page===1){if(result.status===401){clearSession();renderLogin(result.error);}else memberLoadError('payments',result.error,()=>renderPayments(page,prior));}else alert(result.error);return;}
   const data=result.data||{},payments=[...prior,...(data.payments||[])];
   memberPage('payments',`<section style="padding:22px"><h1 style="font-size:26px">Payments</h1><p style="color:#64748b">Payment claims and confirmations from your gym.</p>${payments.length?payments.map((p)=>`<article style="background:#fff;border-radius:15px;padding:16px;margin-top:10px"><div style="display:flex;justify-content:space-between;gap:12px"><strong>${money(p.amount)}</strong><span style="font-size:12px;font-weight:700;color:${String(p.status).toLowerCase()==='verified'?'#059669':String(p.status).toLowerCase()==='pending'?'#b45309':'#475569'}">${esc(String(p.status||'unknown').replaceAll('_',' ').toUpperCase())}</span></div><div style="color:#64748b;font-size:13px;margin-top:7px">${esc(p.method||p.channel||'Payment')} · ${pageDate(p.paid_on||p.created_at)}</div>${p.reference?`<div style="color:#64748b;font-size:12px;margin-top:4px">Reference: ${esc(p.reference)}</div>`:''}${p.notes?`<div style="color:#64748b;font-size:12px;margin-top:4px">${esc(p.notes)}</div>`:''}</article>`).join(''):'<article style="background:#fff;border-radius:16px;padding:22px;text-align:center;color:#64748b">No payment records yet.</article>'}${page<data.pagination?.total_pages?'<button id="older" style="width:100%;margin-top:14px;padding:13px;border:1px solid #cbd5e1;border-radius:11px;background:#fff;font-weight:700">Load older payments</button>':''}</section>`);
+  if (savedScrollY != null) window.scrollTo(0, savedScrollY);
   const olderBtn = document.querySelector('#older');
   olderBtn?.addEventListener('click',()=>{ if (olderBtn.disabled) return; olderBtn.disabled=true; renderPayments(page+1,payments); });
 }

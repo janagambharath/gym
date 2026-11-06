@@ -2,7 +2,7 @@
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
-import { formatCurrency, getGymTodayISO, escapeHtml } from '../utils.js';
+import { formatCurrency, getGymTodayISO, escapeHtml, uuid } from '../utils.js';
 import { icon } from '../icons.js';
 
 export default {
@@ -13,6 +13,10 @@ export default {
     try {
       if (params?.prefill) prefill = typeof params.prefill === 'string' ? JSON.parse(params.prefill) : params.prefill;
     } catch { prefill = {}; }
+    // V4-M14: one key per form mount, reused across retries — same as
+    // record-payment.js / renew-member.js. Without it a timeout retry
+    // double-creates the member (backend honours the key, V3-M23).
+    const idempotencyKey = uuid();
     const settingsRes = await apiRequest('/api/mobile/v1/settings');
     const plans = settingsRes.ok ? (settingsRes.data.plans || []) : [];
     const defaultPlan = plans[0];
@@ -147,7 +151,7 @@ export default {
       };
 
       try {
-        const res = await apiRequest('/api/mobile/v1/members', { method: 'POST', body });
+        const res = await apiRequest('/api/mobile/v1/members', { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKey } });
         if (res.ok) {
           showToast('Member added!', 'success');
           navigate.replace('member-detail', { member: JSON.stringify(res.data) });

@@ -123,7 +123,10 @@ class Router {
     el.style.zIndex = String(10 + this.stack.length);
 
     activateScreen(prevScreen?.element, false);
-    prevScreen?.screen?.pause?.();
+    // V4-L17: a throwing pause() used to abort navigation here (the other
+    // two call sites already guard it). A paused screen must never block
+    // the push.
+    try { prevScreen?.screen?.pause?.(); } catch { /* ignore */ }
     el.dataset.screenActive = 'true';
 
     if (opts.animate && this.stack.length > 0) {

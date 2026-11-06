@@ -12,16 +12,46 @@ import { configureDisplayPreferences } from './utils.js';
 // hardcoded anywhere. With no env set, the current production URL stays
 // the fallback.
 const PRODUCTION_API_BASE_URL = 'https://gym-production-910c.up.railway.app';
+// V4-L21: an unset VITE_API_BASE_URL used to silently fall back to the
+// production URL. The fallback is KEPT (the Railway prod build sets no
+// env var, so throwing here would break the live deploy) but it is now
+// LOUD: a console warning on every build that falls back, a dev-only
+// on-screen banner, and an exported flag any screen can check.
+// REQUIRED VAR for a deliberate target: VITE_API_BASE_URL — set it in the
+// build environment (e.g. Railway variables) to point the PWA at a
+// staging/dev backend instead of production.
+export let apiBaseUrlIsFallback = false;
+function warnApiBaseFallback(reason) {
+  apiBaseUrlIsFallback = true;
+  console.warn(`[Renewal Desk] VITE_API_BASE_URL ${reason} — falling back to production API ${PRODUCTION_API_BASE_URL}. Set VITE_API_BASE_URL in the build environment to target another backend.`);
+  // Banner only in non-production builds: real gym owners must never see
+  // a developer warning.
+  try {
+    if (typeof document === 'undefined') return;
+    if (typeof import.meta !== 'undefined' && import.meta.env?.MODE === 'production') return;
+    const show = () => {
+      if (document.getElementById('rd-api-base-warn')) return;
+      const b = document.createElement('div');
+      b.id = 'rd-api-base-warn';
+      b.textContent = 'Dev warning: VITE_API_BASE_URL is not set — using the production API.';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#fef3c7;color:#92400e;font-size:12px;padding:6px 10px;text-align:center';
+      document.body.prepend(b);
+    };
+    if (document.body) show();
+    else document.addEventListener('DOMContentLoaded', show, { once: true });
+  } catch { /* ignore */ }
+}
 function resolveApiBaseUrl() {
   const raw = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || '';
   const trimmed = String(raw).trim();
-  if (!trimmed) return PRODUCTION_API_BASE_URL;
+  if (!trimmed) { warnApiBaseFallback('is not set'); return PRODUCTION_API_BASE_URL; }
   try {
     const parsed = new URL(trimmed);
-    if (parsed.username || parsed.password) return PRODUCTION_API_BASE_URL;
-    if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') return PRODUCTION_API_BASE_URL;
+    if (parsed.username || parsed.password) { warnApiBaseFallback(`contains credentials (${trimmed})`); return PRODUCTION_API_BASE_URL; }
+    if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') { warnApiBaseFallback(`is not https/localhost (${trimmed})`); return PRODUCTION_API_BASE_URL; }
     return parsed.toString().replace(/\/$/, '');
   } catch {
+    warnApiBaseFallback(`is not a valid URL (${trimmed})`);
     return PRODUCTION_API_BASE_URL;
   }
 }

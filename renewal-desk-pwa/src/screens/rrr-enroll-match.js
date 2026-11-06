@@ -31,13 +31,17 @@ const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 
 function startPoll(el) {
   stopPoll();
+  // V4-M7: the poll used to re-run the FULL fuzzy scan (O(snapshot x
+  // members)) every 3 s for up to 60 s. It now hits the cheap
+  // snapshot-presence check; the full suggestions load once, when the
+  // terminal user list has actually arrived.
   pollTimer = setInterval(async () => {
     scanTries += 1;
-    const r = await apiRequest('/api/mobile/v1/rrr/enroll-matches');
-    if (r.ok && (r.data.snapshot || r.data.suggestions?.length)) {
+    const r = await apiRequest('/api/mobile/v1/rrr/enroll-snapshot-status');
+    if (r.ok && r.data.has_snapshot) {
       stopPoll();
       scanInFlight = false;
-      render(el, r.data);
+      await load(el);
       return;
     }
     if (scanTries >= 20) {

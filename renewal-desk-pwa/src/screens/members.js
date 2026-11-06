@@ -2,7 +2,7 @@
 import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState, showToast } from '../components.js';
 import { icon } from '../icons.js';
 import { debounce, escapeHtml, formatInteger } from '../utils.js';
 
@@ -52,7 +52,10 @@ export default {
     listEl.addEventListener('scroll', () => {
       if (loading || members.length >= total) return;
       if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 200) {
-        page++; loadMembers(true);
+        // V4-L19: loadMembers advances the page itself, only after a
+        // successful fetch — pre-incrementing here silently skipped a
+        // failed page.
+        loadMembers(true);
       }
     });
 
@@ -62,24 +65,30 @@ export default {
       const id = ++requestId;
       loading = true;
       if (!append && !background) listEl.innerHTML = renderListSkeleton();
-      let url = `/api/mobile/v1/members?page=${page}&page_size=20`;
+      // V4-L19: fetch the NEXT page without moving `page` first.
+      const fetchPage = append ? page + 1 : page;
+      let url = `/api/mobile/v1/members?page=${fetchPage}&page_size=20`;
       if (query) url += `&q=${encodeURIComponent(query)}`;
       if (filter === 'expiring') url += `&expiring_within_days=7`;
       else if (filter === 'not_enrolled') url += `&biometric=not_enrolled`;
       else if (filter !== 'all') url += `&status=${filter}`;
       const results = background
-        ? await Promise.all(Array.from({ length: page }, (_, index) => apiRequest(url.replace(`page=${page}&`, `page=${index + 1}&`))))
+        ? await Promise.all(Array.from({ length: fetchPage }, (_, index) => apiRequest(url.replace(`page=${fetchPage}&`, `page=${index + 1}&`))))
         : [await apiRequest(url)];
       if (id !== requestId) return;
       const res = results.find(result => !result.ok) || results[0];
       loading = false;
       if (!res.ok) {
         if (res.error.status === 401) return handleLogout();
+        // V4-L19: an append failure must toast and keep the loaded list —
+        // rendering the error state here used to wipe it.
+        if (append) { showToast(res.error?.message || 'Could not load more members.', 'error'); return; }
         if (!background) listEl.innerHTML = renderErrorState(res.error.message);
         return;
       }
       const newMembers = results.flatMap(result => result.data.members || []);
       total = res.data.pagination?.total || 0;
+      if (append) page = fetchPage;
       members = append ? [...members, ...newMembers] : newMembers;
       if (members.length === 0) {
         listEl.innerHTML = renderEmptyState({ icon: 'members', title: 'No members found', text: query ? 'Try a different search term' : 'Add your first member to get started', actionText: !query ? 'Add Member' : undefined, actionId: 'add-empty' });
