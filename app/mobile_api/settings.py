@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 
 from flask import current_app, g, jsonify, request, url_for
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -12,6 +13,11 @@ from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, MembershipPlan, QRSettings
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.services.mobile_billing_service import entitlement_for
 from app.services.storage_service import delete_local_upload, save_gym_qr
 from app.utils.helpers import normalize_public_media_url
@@ -307,6 +313,18 @@ def register_settings_routes(bp):
         if existing:
             return error_response("CONFLICT", f"A plan named '{name}' already exists.", 409)
 
+        # A retry after a successful create must replay the stored
+        # plan instead of 409ing on the duplicate name.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_plan",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         plan = MembershipPlan(
             gym_id=g.gym_id,
             name=name,
@@ -325,8 +343,31 @@ def register_settings_routes(bp):
             metadata={"name": name, "price": str(price), "duration_days": duration_days},
         )
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        return jsonify({"success": True, "data": _serialize_plan(plan)}), 201
+        response_body = {"success": True, "data": _serialize_plan(plan)}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_plan",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_plan",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body), 201
 
     @bp.route("/plans/<int:plan_id>", methods=["PATCH"])
     @token_required

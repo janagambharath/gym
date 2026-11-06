@@ -107,6 +107,7 @@ from datetime import timedelta
 
 from flask import g, jsonify, request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
@@ -115,6 +116,11 @@ from app.models import Gym, Member, PaymentVerification, RenewalHistory
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.services.timezone_service import today_for_gym
 
 _TOLERANCE_DAYS = 1
@@ -923,6 +929,19 @@ def register_date_repair_routes(bp):
             return error_response(
                 "VALIDATION_ERROR", "member_ids must be a non-empty list.", 400
             )
+        # A retry after an apply must replay the stored per-member
+        # results: re-running would report the already-fixed members
+        # as "not_flagged" instead of the applied corrections, and
+        # could propose a different end from a changed ledger.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="date_repair_apply",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
 
         findings = {f["member_id"]: f for f in _scan_gym(g.gym_id)}
         gym_tz = (
@@ -1111,8 +1130,31 @@ def register_date_repair_routes(bp):
                 result_entry["new_start"] = member.membership_start.isoformat()
             results.append(result_entry)
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        return jsonify({"success": True, "data": {"results": results}})
+        response_body = {"success": True, "data": {"results": results}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="date_repair_apply",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="date_repair_apply",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.route("/date-repair/confirm", methods=["POST"])
     @token_required
@@ -1142,6 +1184,18 @@ def register_date_repair_routes(bp):
                 "member did not pay for time past the expected end.",
                 400,
             )
+        # Same retry hazard as Apply: a re-run would report the
+        # already-confirmed members as "already_correct" / "not_flagged"
+        # instead of the applied corrections.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="date_repair_confirm",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
 
         findings = {f["member_id"]: f for f in _scan_gym(g.gym_id)}
         gym_tz = (
@@ -1213,5 +1267,28 @@ def register_date_repair_routes(bp):
                 }
             )
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        return jsonify({"success": True, "data": {"results": results}})
+        response_body = {"success": True, "data": {"results": results}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="date_repair_confirm",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="date_repair_confirm",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)

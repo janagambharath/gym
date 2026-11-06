@@ -8,11 +8,17 @@ from urllib.parse import urlparse
 
 from flask import current_app, g, jsonify, request
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Member
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.models.rrr import RRRAttendanceEvent, RRRAdmsCommand, RRRDevice, RRRIdentityMapping, RRRIntegration, RRROpportunity, RRRRule
 from app.services.audit_service import audit
 from app.services.bridge_service import (
@@ -109,6 +115,19 @@ def register_rrr_routes(bp):
         if row is None:
             return error_response("NOT_FOUND", "Opportunity was not found.", 404)
         payload = request.get_json(silent=True) or {}
+        # A retry after a close-with-revenue must replay the stored
+        # outcome, not re-apply it (a second close would rewrite
+        # closed_at / outcome_revenue). Key is bound to this row.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_rrr_opportunity",
+            headers=request.headers,
+            payload={**payload, "opportunity_id": opportunity_id},
+        )
+        if replay is not None:
+            return replay
+
         status = str(payload.get("status") or "").lower()
         if status not in {"open", "actioned", "closed", "dismissed"}:
             return error_response("VALIDATION_ERROR", "Invalid opportunity status.", 422)
@@ -138,8 +157,31 @@ def register_rrr_routes(bp):
             row.closed_at = None
         audit(action="rrr_opportunity_updated", resource_type="rrr_opportunity", resource_id=row.id,
               gym_id=g.gym_id, actor_id=g.user_id, metadata={"status": status})
-        db.session.commit()
-        return jsonify({"success": True, "data": {"id": row.id, "status": row.status}})
+        response_body = {"success": True, "data": {"id": row.id, "status": row.status}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_rrr_opportunity",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="update_rrr_opportunity",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.get("/rrr/rules")
     @token_required
@@ -833,6 +875,19 @@ def register_rrr_routes(bp):
             return error_response("VALIDATION_ERROR", "mappings list is required.", 422)
         if len(mappings) > 100:
             return error_response("VALIDATION_ERROR", "Max 100 mappings per call.", 422)
+        # A retry after a bulk link must replay the stored per-item
+        # results: re-running would report the already-linked items
+        # as conflicts instead of the original outcome.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bulk_resolve_mappings",
+            headers=request.headers,
+            payload=payload,
+        )
+        if replay is not None:
+            return replay
+
         results = []
         for item in mappings:
             external_id = str(item.get("external_id") or "").strip()
@@ -880,9 +935,32 @@ def register_rrr_routes(bp):
             except Exception as e:
                 savepoint.rollback()
                 results.append({"external_id": external_id, "ok": False, "error": str(e)[:100]})
-        db.session.commit()
         ok_count = sum(1 for r in results if r["ok"])
-        return jsonify({"success": True, "data": {"linked": ok_count, "total": len(results), "results": results}})
+        response_body = {"success": True, "data": {"linked": ok_count, "total": len(results), "results": results}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bulk_resolve_mappings",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="bulk_resolve_mappings",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.post("/rrr/mappings/<string:external_id>")
     @token_required
@@ -893,6 +971,19 @@ def register_rrr_routes(bp):
             member_id = int(payload.get("member_id"))
         except (TypeError, ValueError):
             return error_response("VALIDATION_ERROR", "member_id is required.", 422)
+        # A retry after a successful link must replay instead of
+        # re-running remap (which would re-replay punches / re-queue
+        # the membership command). Key is bound to this terminal ID.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="resolve_mapping",
+            headers=request.headers,
+            payload={**payload, "external_id": external_id},
+        )
+        if replay is not None:
+            return replay
+
         member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
         if member is None or member.deleted_at is not None:
             # V3-M10: never link a biometric ID to a soft-deleted member.
@@ -919,8 +1010,31 @@ def register_rrr_routes(bp):
             return error_response("CONFLICT", str(ve), 409)
         audit(action="rrr_identity_mapped", resource_type="member", resource_id=member.id, gym_id=g.gym_id,
               actor_id=g.user_id, metadata={"external_id": external_id, "events_replayed": resolved})
-        db.session.commit()
-        return jsonify({"success": True, "data": {"member_id": member.id, "events_resolved": resolved}})
+        response_body = {"success": True, "data": {"member_id": member.id, "events_resolved": resolved}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="resolve_mapping",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="resolve_mapping",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.post("/rrr/members/<int:member_id>/access")
     @limiter.limit("30 per hour")
@@ -944,6 +1058,21 @@ def register_rrr_routes(bp):
         action = str(payload.get("action") or "").strip().lower()
         if action not in {"block", "unblock"}:
             return error_response("VALIDATION_ERROR", "action must be 'block' or 'unblock'.", 422)
+        # A retry after a queued block/unblock must replay instead of
+        # queueing a second terminal command (a double block is
+        # harmless on the terminal, but a double unblock after a
+        # re-block in between would reopen the wrong member state).
+        # Key is bound to this member + action.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="manual_member_access",
+            headers=request.headers,
+            payload={**payload, "member_id": member_id},
+        )
+        if replay is not None:
+            return replay
+
         member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
         if member is None or member.deleted_at is not None:
             return error_response("NOT_FOUND", "Member was not found.", 404)
@@ -995,12 +1124,37 @@ def register_rrr_routes(bp):
                     "Direct ADMS is configured but not commissioned for access commands. No bridge command was sent.",
                     409,
                 )
-            db.session.commit()
             # ADMS membership blocks now use the tested reversible Group update.
+            # Flush first: the payload carries the queued command's id.
+            db.session.flush()
             data_out = {"command": _adms_command_payload(command)}
             if action == "block":
                 data_out["note"] = ADMS_GROUP_BLOCK_NOTE
-            return jsonify({"success": True, "data": data_out}), 201
+            response_body = {"success": True, "data": data_out}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="manual_member_access",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=201,
+                response_body=response_body,
+            )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="manual_member_access",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
+            return jsonify(response_body), 201
         # Use the bridge only when no direct-ADMS integration is configured.
         bridge_command = queue_manual_bridge_member_command(member, action, g.user_id)
         if bridge_command is None:
@@ -1009,7 +1163,8 @@ def register_rrr_routes(bp):
                 "Biometric commands are not available: finish device commissioning and bind this member's enroll number first.",
                 409,
             )
-        db.session.commit()
+        # Flush first: the payload carries the queued command's id.
+        db.session.flush()
         data_out = {
             "command": {
                 "id": bridge_command.id,
@@ -1023,7 +1178,31 @@ def register_rrr_routes(bp):
                 "Block switches this member's terminal time-zone to the deny schedule. "
                 "Unblock restores it — no re-enrollment needed."
             )
-        return jsonify({"success": True, "data": data_out}), 201
+        response_body = {"success": True, "data": data_out}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="manual_member_access",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="manual_member_access",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body), 201
 
     # ── Smart enroll matching ──────────────────────────────────────────
     # Terminal already has users enrolled (names typed on the device)? Don't
@@ -1155,6 +1334,18 @@ def register_rrr_routes(bp):
         enroll_number = str(data.get("enroll_number") or "").strip()
         if not enroll_number:
             return error_response("VALIDATION_ERROR", "enroll_number is required.", 422)
+        # A retry after a successful confirm must replay instead of
+        # re-linking (which would hit the already-linked conflict).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="enroll_match_confirm",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         try:
             member = enroll_match_service.confirm_match(
                 g.gym_id, member_id, enroll_number, g.user_id
@@ -1164,13 +1355,36 @@ def register_rrr_routes(bp):
         # V3-L14: confirm_match only flushes now (it runs inside
         # normalize_attendance's savepoint during ingest) — the direct
         # endpoint caller owns the commit.
-        db.session.commit()
-        return jsonify({"success": True, "data": {
+        response_body = {"success": True, "data": {
             "member_id": member.id,
             "member_name": member.full_name,
             "enroll_number": member.device_enroll_number,
             "message": f"{member.full_name} linked to terminal user {member.device_enroll_number}.",
-        }})
+        }}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="enroll_match_confirm",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="enroll_match_confirm",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.post("/rrr/enroll-matches/auto-link")
     @limiter.limit("30 per hour")
@@ -1285,6 +1499,22 @@ def register_rrr_routes(bp):
         from app.services.audit_service import audit
         from app.services.timezone_service import today_for_gym
 
+        # POST only: a retry after queueing blocks for every expired
+        # member must replay the stored counts, not queue a second
+        # block per member. The GET branch is a plain read and never
+        # takes a key.
+        idempotency_key, request_hash, replay = (None, "", None)
+        if request.method == "POST":
+            idempotency_key, request_hash, replay = begin_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="bulk_remove_expired",
+                headers=request.headers,
+                payload={},
+            )
+            if replay is not None:
+                return replay
+
         # M8: "today" is gym-local, not UTC — the UTC date lags IST by
         # 5:30, and the day boundary is exactly where the fail-safe
         # guard's blockability decision lives.
@@ -1348,20 +1578,7 @@ def register_rrr_routes(bp):
             else:
                 skipped_not_ready += 1
 
-        db.session.commit()
-
-        audit(
-            action="bulk_remove_expired",
-            resource_type="gym",
-            resource_id=g.gym_id,
-            gym_id=g.gym_id,
-            actor_id=g.user_id,
-            metadata={"members_queued": queued, "total_expired": len(all_targets),
-                      "skipped_not_blockable": skipped,
-                      "skipped_terminal_not_ready": skipped_not_ready},
-        )
-
-        return jsonify({"success": True, "data": {
+        response_body = {"success": True, "data": {
             "queued": queued,
             "total": len(all_targets),
             "skipped_not_blockable": skipped,
@@ -1375,7 +1592,43 @@ def register_rrr_routes(bp):
                    if skipped_not_ready else "")
                 + " Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint."
             ),
-        }})
+        }}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bulk_remove_expired",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="bulk_remove_expired",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        audit(
+            action="bulk_remove_expired",
+            resource_type="gym",
+            resource_id=g.gym_id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"members_queued": queued, "total_expired": len(all_targets),
+                      "skipped_not_blockable": skipped,
+                      "skipped_terminal_not_ready": skipped_not_ready},
+        )
+
+        return jsonify(response_body)
 
     @bp.post("/rrr/members/<int:member_id>/remove-from-terminal")
     @limiter.limit("60 per hour")
@@ -1386,6 +1639,18 @@ def register_rrr_routes(bp):
         from app.models.member import Member
         from app.services.bridge_service import queue_membership_command
         from app.services.audit_service import audit
+
+        # A retry after a queued block must replay instead of queueing
+        # a second terminal command. Key is bound to this member.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="remove_member_from_terminal",
+            headers=request.headers,
+            payload={"member_id": member_id},
+        )
+        if replay is not None:
+            return replay
 
         member = Member.query.filter_by(id=member_id, gym_id=g.gym_id).first()
         if not member:
@@ -1410,7 +1675,33 @@ def register_rrr_routes(bp):
                 "No commissioned terminal is available to receive this block command.",
                 409,
             )
-        db.session.commit()
+        response_body = {"success": True, "data": {
+            "queued": bool(cmd),
+            "message": f"Queued terminal block for {member.full_name or member.id}. Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint.",
+        }}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="remove_member_from_terminal",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="remove_member_from_terminal",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
 
         audit(
             action="remove_member_from_terminal",
@@ -1422,10 +1713,7 @@ def register_rrr_routes(bp):
                       "method": "membership_state_block"},
         )
 
-        return jsonify({"success": True, "data": {
-            "queued": bool(cmd),
-            "message": f"Queued terminal block for {member.full_name or member.id}. Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint.",
-        }})
+        return jsonify(response_body)
 
     @bp.post("/rrr/restore-deleted-members")
     @limiter.limit("5 per hour")
@@ -1438,6 +1726,19 @@ def register_rrr_routes(bp):
         from app.services.bridge_service import queue_membership_command
         from app.services.reminder_service import today_for_gym
         from app.models.gym import Gym
+
+        # The body is empty, so the key alone identifies the action:
+        # a retry after a restore must replay the stored counts, not
+        # restore (and re-unblock) an already-restored set.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="restore_deleted_members",
+            headers=request.headers,
+            payload={},
+        )
+        if replay is not None:
+            return replay
 
         gym = Gym.query.get(g.gym_id)
         local_today = today_for_gym(gym.timezone or "Asia/Kolkata") if gym else None
@@ -1510,7 +1811,34 @@ def register_rrr_routes(bp):
                         "restore: could not queue unblock for member %s", m.id
                     )
 
-        db.session.commit()
+        response_body = {"success": True, "data": {
+            "restored": restored,
+            "unblocks_queued": unblocks_queued,
+            "message": f"Restored {restored} members.",
+        }}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="restore_deleted_members",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="restore_deleted_members",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
 
         audit(
             action="bulk_restore_members",
@@ -1521,11 +1849,7 @@ def register_rrr_routes(bp):
             metadata={"restored": restored, "unblocks_queued": unblocks_queued},
         )
 
-        return jsonify({"success": True, "data": {
-            "restored": restored,
-            "unblocks_queued": unblocks_queued,
-            "message": f"Restored {restored} members.",
-        }})
+        return jsonify(response_body)
 
     @bp.delete("/rrr/attendance/unmapped")
     @token_required

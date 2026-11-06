@@ -19,7 +19,14 @@ from app.services.campaign_service import (
     send_campaign,
     validate_imported_contacts,
 )
-from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
+from app.services.idempotency_service import (
+    begin_idempotency,
+    find_replay,
+    record_idempotency,
+    replay_after_conflict,
+    request_fingerprint,
+    valid_key,
+)
 
 
 def _serialize_campaign(c: Campaign) -> dict:
@@ -238,6 +245,24 @@ def register_campaign_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def send_campaign_endpoint(campaign_id: int):
+        # A retry after a successful send must replay the stored
+        # summary, not 400 "Campaign is already sent" — the client
+        # cannot tell a lost success from a failure. NOTE: send_campaign
+        # commits internally and sends WhatsApp messages synchronously,
+        # so the key record below is a second commit: it protects the
+        # sequential retry (timeout / lost response), while a
+        # concurrent same-key double-send is still guarded only by the
+        # campaign status machine, not by this key.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="send_campaign",
+            headers=request.headers,
+            payload={"campaign_id": campaign_id},
+        )
+        if replay is not None:
+            return replay
+
         result = send_campaign(campaign_id, g.gym_id)
         if not result.get("success"):
             return error_response(
@@ -245,7 +270,31 @@ def register_campaign_routes(bp):
                 result.get("error", "Failed to send campaign."),
                 400,
             )
-        return jsonify({"success": True, "data": result})
+        response_body = {"success": True, "data": result}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="send_campaign",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="send_campaign",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.route("/campaigns/<int:campaign_id>/recipients", methods=["GET"])
     @token_required

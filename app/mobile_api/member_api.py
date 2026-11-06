@@ -647,6 +647,68 @@ def refresh_member_session():
     })
 
 
+@member_bp.route("/auth/account", methods=["DELETE"])
+@member_token_required
+def delete_member_account():
+    """Self-service member account deletion.
+
+    Deletes ONLY the requesting member's own record — the route takes no
+    member id and the member is resolved from the Bearer <redacted> token
+    (member_token_required sets g.current_member), so one member can never
+    delete another member's account. Mirrors the owner-side soft-delete
+    (deactivate_member): the member row is soft-deleted, the terminal
+    identity mappings are freed, a door-block command is queued, and the
+    live-access state is expired. All refresh-token families for the
+    member are revoked so the session cannot be refreshed afterwards.
+    No schema change is needed, so no migration.
+    """
+    from app.models.member_access_state import MemberAccessState
+    from app.models.mixins import utcnow
+    from app.services.analytics_service import invalidate_dashboard_cache
+    from app.services.bridge_service import queue_membership_command
+    from app.services.rrr_service import delete_identity_mappings
+
+    member = _locked_current_member()
+    prev_status = member.status
+
+    # Revoke every refresh-token family for this member first — a deleted
+    # member must not be able to rotate a fresh access token.
+    MemberRefreshToken.query.filter_by(member_id=member.id).delete()
+
+    member.deleted_at = utcnow()
+    member.status = "deleted"
+    # Queue the delete-time block BEFORE the mappings are deleted (same
+    # ordering as owner deactivate_member: a mapping-only member has no
+    # other terminal identity once the mappings are gone).
+    queue_membership_command(member)
+    delete_identity_mappings(member.gym_id, member.id)
+    _inside_state = MemberAccessState.query.filter_by(
+        gym_id=member.gym_id, member_id=member.id
+    ).first()
+    if _inside_state is not None and _inside_state.current_state == "INSIDE":
+        _inside_state.current_state = "OUTSIDE"
+        _inside_state.last_exit_at = utcnow()
+    audit(
+        action="member_self_delete_account",
+        resource_type="member",
+        resource_id=member.id,
+        gym_id=member.gym_id,
+        actor_id=None,
+        metadata={
+            "member_id": member.id,
+            "previous_status": prev_status,
+            "self_service": True,
+        },
+    )
+    invalidate_dashboard_cache(member.gym_id)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "data": {"message": "Member account deleted successfully."},
+    })
+
+
 # ── Gym Branding ─────────────────────────────────────────────────────
 
 

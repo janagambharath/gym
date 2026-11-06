@@ -18,7 +18,14 @@ from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, Member, MembershipPlan, MobileIdempotencyKey, PaymentVerification, RenewalHistory
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
-from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
+from app.services.idempotency_service import (
+    begin_idempotency,
+    find_replay,
+    record_idempotency,
+    replay_after_conflict,
+    request_fingerprint,
+    valid_key,
+)
 from app.services.payment_service import (
     cancel_payment,
     canonical_payment_reference,
@@ -597,6 +604,20 @@ def register_payments_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def verify_payment_endpoint(payment_id: int):
+        # A timeout retry after a successful verify must replay the
+        # stored success, not 409 "already verified" (the client cannot
+        # tell a lost success from a failure). The fingerprint binds
+        # the key to THIS payment — the body is empty.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="verify_payment",
+            headers=request.headers,
+            payload={"payment_id": payment_id},
+        )
+        if replay is not None:
+            return replay
+
         payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)
@@ -613,6 +634,20 @@ def register_payments_routes(bp):
                 gym_id=g.gym_id, actor_id=g.current_user.id,
                 metadata={"new_end": str(payment.member.membership_end), "renewal_days": renewal_days},
             )
+            response_body = {"success": True, "data": {
+                "message": "Payment verified and renewal scheduled." if renewal.new_start > today_for_gym(payment.member.gym.timezone or "Asia/Kolkata") else "Payment verified and membership renewed.",
+                "renewal_start_date": renewal.new_start.isoformat(),
+                "membership_end": renewal.new_end.isoformat(),
+            }}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="verify_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=200,
+                response_body=response_body,
+            )
             db.session.commit()
         except IntegrityError as exc:
             # V3-M3 backstop: the partial unique index refused a second
@@ -624,6 +659,18 @@ def register_payments_routes(bp):
             from app.services.payment_service import is_duplicate_reference_error
 
             db.session.rollback()
+            # A concurrent retry with the same key may have won the
+            # unique-key race — replay its stored response instead of
+            # reporting a duplicate reference.
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="verify_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
             if not is_duplicate_reference_error(exc):
                 raise
             return error_response(
@@ -640,16 +687,22 @@ def register_payments_routes(bp):
                 return error_response("DUPLICATE_REFERENCE", str(exc), 409)
             return error_response("CONFLICT", str(exc), 409)
 
-        return jsonify({"success": True, "data": {
-            "message": "Payment verified and renewal scheduled." if renewal.new_start > today_for_gym(payment.member.gym.timezone or "Asia/Kolkata") else "Payment verified and membership renewed.",
-            "renewal_start_date": renewal.new_start.isoformat(),
-            "membership_end": renewal.new_end.isoformat(),
-        }})
+        return jsonify(response_body)
 
     @bp.route("/payments/<int:payment_id>/reject", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
     def reject_payment_endpoint(payment_id: int):
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="reject_payment",
+            headers=request.headers,
+            payload={"payment_id": payment_id},
+        )
+        if replay is not None:
+            return replay
+
         payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)
@@ -657,17 +710,50 @@ def register_payments_routes(bp):
             reject_payment(payment, verified_by_id=g.current_user.id)
             audit(action="reject_payment", resource_type="payment_verification", resource_id=payment.id,
                   gym_id=g.gym_id, actor_id=g.current_user.id)
-            db.session.commit()
+            response_body = {"success": True, "data": {"message": "Payment rejected."}}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="reject_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=200,
+                response_body=response_body,
+            )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="reject_payment",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
         except ValueError as exc:
             db.session.rollback()
             return error_response("CONFLICT", str(exc), 409)
 
-        return jsonify({"success": True, "data": {"message": "Payment rejected."}})
+        return jsonify(response_body)
 
     @bp.route("/payments/<int:payment_id>/cancel", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
     def cancel_payment_endpoint(payment_id: int):
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="cancel_payment",
+            headers=request.headers,
+            payload={"payment_id": payment_id},
+        )
+        if replay is not None:
+            return replay
+
         payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)
@@ -680,17 +766,50 @@ def register_payments_routes(bp):
                 gym_id=g.gym_id,
                 actor_id=g.current_user.id,
             )
-            db.session.commit()
+            response_body = {"success": True, "data": {"message": "Payment cancelled successfully."}}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="cancel_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=200,
+                response_body=response_body,
+            )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="cancel_payment",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
         except ValueError as exc:
             db.session.rollback()
             return error_response("CONFLICT", str(exc), 409)
 
-        return jsonify({"success": True, "data": {"message": "Payment cancelled successfully."}})
+        return jsonify(response_body)
 
     @bp.route("/payments/<int:payment_id>", methods=["DELETE"])
     @token_required
     @roles_required("gym_owner")
     def delete_payment_endpoint(payment_id: int):
+
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="delete_payment",
+            headers=request.headers,
+            payload={"payment_id": payment_id},
+        )
+        if replay is not None:
+            return replay
 
         payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
         if payment is None:
@@ -704,7 +823,30 @@ def register_payments_routes(bp):
                 gym_id=g.gym_id,
                 actor_id=g.current_user.id,
             )
-            db.session.commit()
+            response_body = {"success": True, "data": {"message": "Payment deleted successfully."}}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="delete_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=200,
+                response_body=response_body,
+            )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="delete_payment",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
         except ValueError as exc:
             db.session.rollback()
             return error_response("CONFLICT", str(exc), 409)
@@ -713,12 +855,22 @@ def register_payments_routes(bp):
             current_app.logger.exception("Failed to delete payment %s: %s", payment_id, exc)
             return error_response("DB_ERROR", "Failed to delete payment.", 500)
 
-        return jsonify({"success": True, "data": {"message": "Payment deleted successfully."}})
+        return jsonify(response_body)
 
     @bp.route("/payments/<int:payment_id>/refund", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
     def refund_payment_endpoint(payment_id: int):
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="refund_payment",
+            headers=request.headers,
+            payload={"payment_id": payment_id},
+        )
+        if replay is not None:
+            return replay
+
         payment = PaymentVerification.query.filter_by(id=payment_id, gym_id=g.gym_id).first()
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)
@@ -731,7 +883,30 @@ def register_payments_routes(bp):
                 gym_id=g.gym_id,
                 actor_id=g.current_user.id,
             )
-            db.session.commit()
+            response_body = {"success": True, "data": {"message": "Payment refunded successfully."}}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="refund_payment",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=200,
+                response_body=response_body,
+            )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="refund_payment",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
         except ValueError as exc:
             db.session.rollback()
             return error_response("CONFLICT", str(exc), 409)
@@ -740,5 +915,5 @@ def register_payments_routes(bp):
             current_app.logger.exception("Failed to refund payment %s: %s", payment_id, exc)
             return error_response("DB_ERROR", "Failed to refund payment.", 500)
 
-        return jsonify({"success": True, "data": {"message": "Payment refunded successfully."}})
+        return jsonify(response_body)
 

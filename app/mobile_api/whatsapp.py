@@ -4,6 +4,7 @@ from functools import wraps
 import re
 
 from flask import current_app, g, jsonify, request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
@@ -14,6 +15,11 @@ from app.mobile_api.token_service import consume_handshake_token, create_handsha
 from app.models import Member, QRSettings, ReminderLog, User
 from app.services.audit_service import audit
 from app.services.error_messages import friendly_error
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.services.reminder_service import create_manual_test_log, ensure_default_template, send_reminder
 from app.services.whatsapp_service import WhatsAppService
 
@@ -139,6 +145,21 @@ def register_whatsapp_routes(bp):
         )
         if member is None:
             return error_response("NOT_FOUND", "Member not found.", 404)
+        # A retry after a successful send must replay instead of
+        # sending the member a second reminder. NOTE: the WhatsApp
+        # send happens before the final commit, so this protects the
+        # sequential retry (timeout / lost response); a concurrent
+        # same-key double-send can still deliver twice.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="whatsapp_send_reminder",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         # Verified Meta templates are used; no opt-in barrier required
         if not member.whatsapp_opted_in:
             member.whatsapp_opted_in = True
@@ -185,7 +206,34 @@ def register_whatsapp_routes(bp):
                 actor_id=g.current_user.id,
                 metadata={"member_id": member.id},
             )
-            db.session.commit()
+            if log.status == "sent":
+                response_body = {
+                    "success": True,
+                    "data": {"message": f"Reminder sent to {member.full_name}.", "status": "sent"},
+                }
+                record_idempotency(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="whatsapp_send_reminder",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                    status_code=200,
+                    response_body=response_body,
+                )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="whatsapp_send_reminder",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
         except Exception as exc:
             db.session.rollback()
             current_app.logger.exception("Mobile WhatsApp send failed for member %s", member.id)
@@ -339,14 +387,54 @@ def register_whatsapp_routes(bp):
         if not message:
             return error_response("VALIDATION_ERROR", "Announcement message cannot be empty.", 400)
 
+        # A retry after a successful broadcast must replay instead of
+        # messaging the whole audience twice. Same caveat as campaign
+        # send: the WhatsApp sends happen inside the service before
+        # this record is committed, so this protects the sequential
+        # retry (timeout / lost response), not a concurrent double-send.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="whatsapp_broadcast",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         result = send_broadcast_announcement(gym, announcement_text=message, audience=audience)
         if not result.get("success"):
             return error_response("BROADCAST_FAILED", result.get("error", "Broadcast failed"), 400)
 
-        return jsonify({
+        response_body = {
             "success": True,
             "data": result,
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="whatsapp_broadcast",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="whatsapp_broadcast",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     @bp.route("/whatsapp/connection-status", methods=["GET"])
     @token_required

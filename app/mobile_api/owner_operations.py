@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import g, jsonify, request
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
@@ -20,6 +21,11 @@ from app.models.bot import BotLead
 from app.models.mixins import utcnow
 from app.models.rrr import RRRAttendanceEvent, RRRIntegration
 from app.services.audit_service import audit
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.services.rrr_service import dashboard_for_gym
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 from app.utils.helpers import normalize_phone_e164
@@ -209,6 +215,20 @@ def register_owner_operation_routes(bp):
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         now = utcnow()
         today = today_for_gym(gym_timezone, now=now)
+        # A retry after a successful close must replay the stored
+        # close instead of rewriting closed_at / closed_by. The close
+        # is an upsert keyed by (gym, date), so the fingerprint binds
+        # the key to today's date via the payload.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="owner_cash_close",
+            headers=request.headers,
+            payload={**payload, "close_date": today.isoformat()},
+        )
+        if replay is not None:
+            return replay
+
         start_at = utc_start_of_gym_day(gym_timezone, local_date=today)
         end_at = utc_start_of_gym_day(gym_timezone, local_date=today + timedelta(days=1))
         methods, _ = _payment_breakdown(g.gym_id, start_at, end_at)
@@ -221,8 +241,31 @@ def register_owner_operation_routes(bp):
         close.expected_cash, close.counted_cash, close.variance = expected, counted, counted - expected
         close.notes, close.closed_by_id, close.closed_at = notes, g.user_id, now
         audit(action="owner_cash_close", resource_type="gym_cash_close", resource_id=close.id, gym_id=g.gym_id, actor_id=g.user_id, metadata={"date": today.isoformat(), "expected_cash": str(expected), "counted_cash": str(counted)})
-        db.session.commit()
-        return jsonify({"success": True, "data": {"date": today.isoformat(), "expected_cash": str(expected), "counted_cash": str(counted), "variance": str(close.variance)}})
+        response_body = {"success": True, "data": {"date": today.isoformat(), "expected_cash": str(expected), "counted_cash": str(counted), "variance": str(close.variance)}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="owner_cash_close",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="owner_cash_close",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.get("/owner/leads")
     @token_required
@@ -254,12 +297,47 @@ def register_owner_operation_routes(bp):
             trial_at = _parse_datetime(payload.get("trial_scheduled_for"), "trial_scheduled_for")
         except ValueError as exc:
             return error_response("VALIDATION_ERROR", str(exc), 422)
+        # A retry after a successful create must replay the stored
+        # lead instead of creating a duplicate row.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_owner_lead",
+            headers=request.headers,
+            payload=payload,
+        )
+        if replay is not None:
+            return replay
+
         lead = BotLead(gym_id=g.gym_id, name=name, phone=phone, source=source, intent=str(payload.get("intent") or "membership").strip()[:128] or None, interested_plan=str(payload.get("interested_plan") or "").strip()[:160] or None, trial_requested=bool(payload.get("trial_requested")), status="trial_requested" if payload.get("trial_requested") else "new", notes=str(payload.get("notes") or "").strip()[:4000] or None, next_follow_up_at=follow_up, trial_scheduled_for=trial_at)
         db.session.add(lead)
         db.session.flush()
         audit(action="owner_lead_created", resource_type="bot_lead", resource_id=lead.id, gym_id=g.gym_id, actor_id=g.user_id, metadata={"source": source})
-        db.session.commit()
-        return jsonify({"success": True, "data": {"lead": _lead_payload(lead)}}), 201
+        response_body = {"success": True, "data": {"lead": _lead_payload(lead)}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_owner_lead",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_owner_lead",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body), 201
 
     @bp.patch("/owner/leads/<int:lead_id>")
     @token_required
@@ -269,6 +347,20 @@ def register_owner_operation_routes(bp):
         if lead is None:
             return error_response("NOT_FOUND", "Lead was not found.", 404)
         payload = request.get_json(silent=True) or {}
+        # A retry after a successful update must replay, not re-apply
+        # (re-applying a "mark_trial_attended" would rewrite the
+        # attended timestamp; a status flip retried after the owner
+        # moved it on would flip it back).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_owner_lead",
+            headers=request.headers,
+            payload={**payload, "lead_id": lead_id},
+        )
+        if replay is not None:
+            return replay
+
         try:
             if "status" in payload:
                 status = str(payload["status"] or "").lower()
@@ -294,5 +386,28 @@ def register_owner_operation_routes(bp):
         except (ValueError, TypeError) as exc:
             return error_response("VALIDATION_ERROR", str(exc), 422)
         audit(action="owner_lead_updated", resource_type="bot_lead", resource_id=lead.id, gym_id=g.gym_id, actor_id=g.user_id, metadata={"status": lead.status})
-        db.session.commit()
-        return jsonify({"success": True, "data": {"lead": _lead_payload(lead)}})
+        response_body = {"success": True, "data": {"lead": _lead_payload(lead)}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_owner_lead",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="update_owner_lead",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)

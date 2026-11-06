@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import timezone
 from flask import g, jsonify, request
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
 from app.mobile_api.middleware import roles_required, token_required
@@ -31,6 +32,11 @@ from app.services.bridge_service import (
     bridge_enable_must_be_cancelled,
     cancel_bridge_command,
     queue_gym_reconciliation,
+)
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
 )
 
 
@@ -220,6 +226,22 @@ def register_access_routes(bp):
         if not member:
             return jsonify({"success": False, "error": {"message": "Member not found"}}), 404
 
+        # A retry after a successful check-in must replay the stored
+        # event instead of recording a second ENTRY (which would flip
+        # the member's inside/outside state and double-count
+        # attendance). NOTE: record_manual_access_event commits
+        # internally, so the key record below is a second commit —
+        # sequential-retry protection, not concurrent.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="access_checkin",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         actor_name = g.current_user.full_name if hasattr(g, "current_user") and g.current_user else "Front Desk"
         evt = record_manual_access_event(
             gym_id=g.gym_id,
@@ -229,11 +251,35 @@ def register_access_routes(bp):
         )
         is_entry = evt.event_type in ("ENTRY", "ATTENDANCE")
         msg = f"{member.full_name} checked in successfully" if is_entry else (f"Access denied: {member.full_name} membership is expired" if evt.event_type == "ACCESS_DENIED" else f"{member.full_name} checked out")
-        return jsonify({
+        response_body = {
             "success": True,
             "data": _serialize_access_event(evt),
             "message": msg,
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="access_checkin",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="access_checkin",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.route("/access/remote-unlock", methods=["POST"])
     @bp.route("/access/unlock", methods=["POST"])

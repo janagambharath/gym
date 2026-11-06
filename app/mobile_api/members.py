@@ -23,7 +23,14 @@ from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import door_blocked_state, queue_membership_command
 from app.services.document_scan_service import DocumentScanService
-from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
+from app.services.idempotency_service import (
+    begin_idempotency,
+    find_replay,
+    record_idempotency,
+    replay_after_conflict,
+    request_fingerprint,
+    valid_key,
+)
 from app.services.payment_service import PAYMENT_METHODS, canonical_payment_reference, verified_payment_with_reference
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.mobile_member_import_service import validate_csv
@@ -84,6 +91,19 @@ def register_members_routes(bp):
     def batch_create_members():
         """Atomically import reviewed candidate members and discover upcoming renewals."""
         data = request.get_json(silent=True) or {}
+        # A retry after a 2,000-row import must replay instead of
+        # creating the members twice (the phone-duplicate guard would
+        # otherwise 422 the whole retry as "already belongs").
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="batch_create_members",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         candidates = data.get("members") or []
         if not candidates:
             return error_response("VALIDATION_ERROR", "No members provided for import.", 400)
@@ -229,9 +249,7 @@ def register_members_routes(bp):
         )
 
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-
-        return jsonify({
+        response_body = {
             "success": True,
             "data": {
                 "imported": len(created_members),
@@ -239,7 +257,32 @@ def register_members_routes(bp):
                 "revenue_at_risk": str(revenue_at_risk),
                 "message": f"Successfully imported {len(created_members)} members.",
             },
-        }), 201
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="batch_create_members",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="batch_create_members",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body), 201
 
     @bp.route("/members/import/preview", methods=["POST"])
     @token_required
@@ -254,6 +297,18 @@ def register_members_routes(bp):
     @roles_required("gym_owner", "staff")
     def import_members():
         data = request.get_json(silent=True) or {}
+        # Same retry hazard as batch-create: the CSV re-import would
+        # duplicate every row (the duplicate guard 422s the retry).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="import_members",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         preview = validate_csv(g.gym_id, g.current_user.gym.timezone, data.get("csv_text", ""))
         if preview["file_errors"] or preview["summary"]["invalid"] or preview["summary"]["duplicates"]:
             return error_response(
@@ -285,8 +340,31 @@ def register_members_routes(bp):
             metadata={"created": len(rows)},
         )
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        return jsonify({"success": True, "data": {"imported": len(rows), "skipped": 0}}), 201
+        response_body = {"success": True, "data": {"imported": len(rows), "skipped": 0}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="import_members",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="import_members",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body), 201
 
     @bp.route("/members", methods=["GET"])
     @token_required
@@ -731,6 +809,21 @@ def register_members_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def update_member(member_id: int):
+        data = request.get_json(silent=True) or {}
+        # The replay check runs BEFORE the lookup (like deactivate):
+        # a retry after a successful edit must replay even if the
+        # member was since deleted, and the key is bound to this
+        # member so it cannot replay another member's edit.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_member",
+            headers=request.headers,
+            payload={**data, "member_id": member_id},
+        )
+        if replay is not None:
+            return replay
+
         member = (
             Member.query.filter_by(id=member_id, gym_id=g.gym_id)
             .filter(Member.deleted_at.is_(None))
@@ -739,7 +832,6 @@ def register_members_routes(bp):
         if member is None:
             return error_response("NOT_FOUND", "Member not found.", 404)
 
-        data = request.get_json(silent=True) or {}
         # Strict date repair: membership dates (and the plan that
         # defines them) are owner-only. Staff may still edit name,
         # phone and other non-date fields below, but a staff date
@@ -852,9 +944,35 @@ def register_members_routes(bp):
                   "new_plan_id": member.plan_id,
               })
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        db.session.refresh(member)
-        return jsonify({"success": True, "data": _serialize_member(member)})
+        # Serialize from the flushed in-memory state (identical to the
+        # post-commit refresh the old code did) so the replay record
+        # can commit atomically with the edit.
+        db.session.flush()
+        response_body = {"success": True, "data": _serialize_member(member)}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_member",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="update_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.route("/members/<int:member_id>/deactivate", methods=["POST"])
     @token_required
@@ -981,6 +1099,21 @@ def register_members_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def freeze_member(member_id: int):
+        data = request.get_json(silent=True) or {}
+        # Pre-check BEFORE the already-paused guard: a retry after a
+        # successful freeze must replay the stored success, not 400
+        # ALREADY_PAUSED — and without it the retry would extend the
+        # end a second time. Key is bound to this member.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="freeze_member",
+            headers=request.headers,
+            payload={**data, "member_id": member_id},
+        )
+        if replay is not None:
+            return replay
+
         member = (
             Member.query.filter_by(id=member_id, gym_id=g.gym_id)
             .filter(Member.deleted_at.is_(None))
@@ -992,7 +1125,6 @@ def register_members_routes(bp):
         if member.status == "paused":
             return error_response("ALREADY_PAUSED", "Member is already paused.", 400)
 
-        data = request.get_json(silent=True) or {}
         try:
             days = int(data.get("days") or data.get("freeze_days") or 14)
             if days < 1 or days > 365:
@@ -1050,19 +1182,54 @@ def register_members_routes(bp):
             metadata={"freeze_days": days, "reason": reason, "new_membership_end": member.membership_end.isoformat() if member.membership_end else None},
         )
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        db.session.refresh(member)
-
-        return jsonify({
+        db.session.flush()
+        response_body = {
             "success": True,
             "data": _serialize_member(member),
             "message": f"{member.full_name}'s membership is paused for {days} days. Gate access disabled.",
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="freeze_member",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="freeze_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     @bp.route("/members/<int:member_id>/unfreeze", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
     def unfreeze_member(member_id: int):
+        # Pre-check BEFORE the not-paused guard, mirroring freeze: a
+        # retry after a successful resume must replay, not 400.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="unfreeze_member",
+            headers=request.headers,
+            payload={"member_id": member_id},
+        )
+        if replay is not None:
+            return replay
+
         member = (
             Member.query.filter_by(id=member_id, gym_id=g.gym_id)
             .filter(Member.deleted_at.is_(None))
@@ -1096,14 +1263,37 @@ def register_members_routes(bp):
             metadata={"status": member.status},
         )
         invalidate_dashboard_cache(g.gym_id)
-        db.session.commit()
-        db.session.refresh(member)
-
-        return jsonify({
+        db.session.flush()
+        response_body = {
             "success": True,
             "data": _serialize_member(member),
             "message": f"{member.full_name}'s membership resumed ({member.status}). Gate access updated.",
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="unfreeze_member",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="unfreeze_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     @bp.route("/members/<int:member_id>/enroll", methods=["POST"])
     @token_required
@@ -1121,6 +1311,18 @@ def register_members_routes(bp):
             return error_response("NOT_FOUND", "Member not found.", 404)
 
         data = request.get_json(silent=True) or {}
+        # A retry after a successful enroll must replay instead of
+        # re-running the backfill / stale-command displacement.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="enroll_member",
+            headers=request.headers,
+            payload={**data, "member_id": member_id},
+        )
+        if replay is not None:
+            return replay
+
         raw_enroll = data.get("enroll_number") or data.get("device_enroll_number")
         if not raw_enroll:
             return error_response("VALIDATION_ERROR", "enroll_number is required.", 400)
@@ -1235,16 +1437,51 @@ def register_members_routes(bp):
         audit(action="biometric_enroll", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
               metadata={"enroll_number": enroll_number})
-        db.session.commit()
-        db.session.refresh(member)
-        return jsonify({"success": True, "data": _serialize_member(member),
-                        "message": f"{member.full_name} enrolled as #{enroll_number}."})
+        db.session.flush()
+        response_body = {"success": True, "data": _serialize_member(member),
+                         "message": f"{member.full_name} enrolled as #{enroll_number}."}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="enroll_member",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="enroll_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.route("/members/<int:member_id>/unenroll", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
     def unenroll_member_biometric(member_id: int):
         """Remove the biometric device enrollment number from a member."""
+        # Pre-check BEFORE the not-enrolled guard: a retry after a
+        # successful unenroll must replay, not 400 NOT_ENROLLED.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="unenroll_member",
+            headers=request.headers,
+            payload={"member_id": member_id},
+        )
+        if replay is not None:
+            return replay
+
         member = (
             Member.query.filter_by(id=member_id, gym_id=g.gym_id)
             .filter(Member.deleted_at.is_(None))
@@ -1269,10 +1506,33 @@ def register_members_routes(bp):
         audit(action="biometric_unenroll", resource_type="member", resource_id=member.id,
               gym_id=g.gym_id, actor_id=g.current_user.id,
               metadata={"old_enroll_number": old_enroll})
-        db.session.commit()
-        db.session.refresh(member)
-        return jsonify({"success": True, "data": _serialize_member(member),
-                        "message": f"{member.full_name} removed from biometric device."})
+        db.session.flush()
+        response_body = {"success": True, "data": _serialize_member(member),
+                         "message": f"{member.full_name} removed from biometric device."}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="unenroll_member",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="unenroll_member",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
 
 def _parse_date(val) -> date | None:

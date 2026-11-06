@@ -6,6 +6,7 @@ import string
 import urllib.parse
 
 from flask import current_app, g, jsonify, request
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
@@ -13,6 +14,11 @@ from app.mobile_api.middleware import roles_required, token_required
 from app.mobile_api.token_service import revoke_all_user_tokens
 from app.models import User
 from app.services.audit_service import audit
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.utils.helpers import normalize_phone_e164
 
 
@@ -70,6 +76,19 @@ def register_staff_routes(bp):
     @roles_required("gym_owner")
     def create_staff():
         data = request.get_json(silent=True) or {}
+        # A retry after a successful create must replay the stored
+        # response — including the SAME generated temp password — not
+        # 409 on the duplicate email, and never a second account.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_staff",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         full_name = (data.get("full_name") or data.get("name") or "").strip()
         email = (data.get("email") or "").strip().lower()
         role = (data.get("role") or "staff").strip().lower()
@@ -112,8 +131,6 @@ def register_staff_routes(bp):
             actor_id=g.current_user.id,
             metadata={"email": email, "role": role},
         )
-        db.session.commit()
-
         gym_name = g.current_user.gym.name if g.current_user.gym else "Renewal Desk"
         invite_wa_url = _make_whatsapp_invite_url(gym_name, full_name, email, password, phone)
 
@@ -121,11 +138,36 @@ def register_staff_routes(bp):
         serialized["temp_password"] = password
         serialized["invite_whatsapp_url"] = invite_wa_url
 
-        return jsonify({
+        response_body = {
             "success": True,
             "data": serialized,
             "message": f"Staff account created for {full_name}.",
-        }), 201
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_staff",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_staff",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body), 201
 
     @bp.route("/staff/<int:user_id>", methods=["PATCH"])
     @token_required
@@ -136,6 +178,19 @@ def register_staff_routes(bp):
             return error_response("NOT_FOUND", "Staff member not found.", 404)
 
         data = request.get_json(silent=True) or {}
+        # A retry after a successful update must replay, not re-apply
+        # (re-applying is mostly harmless, but a demote-then-retry
+        # after the owner re-promoted would demote again).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_staff",
+            headers=request.headers,
+            payload={**data, "user_id": user_id},
+        )
+        if replay is not None:
+            return replay
+
         if "full_name" in data:
             name = (data["full_name"] or "").strip()
             if not name:
@@ -163,13 +218,36 @@ def register_staff_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
         )
-        db.session.commit()
-
-        return jsonify({
+        response_body = {
             "success": True,
             "data": _serialize_staff(user),
             "message": "Staff member updated successfully.",
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_staff",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="update_staff",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     @bp.route("/staff/<int:user_id>/reset-password", methods=["POST"])
     @token_required
@@ -180,6 +258,19 @@ def register_staff_routes(bp):
             return error_response("NOT_FOUND", "Staff member not found.", 404)
 
         data = request.get_json(silent=True) or {}
+        # A retry after a successful reset must replay the SAME new
+        # password, not generate (and set) a second one — the first
+        # password is what the owner already shared.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="reset_staff_password",
+            headers=request.headers,
+            payload={**data, "user_id": user_id},
+        )
+        if replay is not None:
+            return replay
+
         # Caller-supplied password preferred; otherwise generate a secure one
         # (the PWA reset flow sends no body). Either way, min 12 chars.
         new_password = data.get("new_password") or data.get("password") or _generate_temp_password(16)
@@ -200,12 +291,10 @@ def register_staff_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
         )
-        db.session.commit()
-
         gym_name = g.current_user.gym.name if g.current_user.gym else "Renewal Desk"
         invite_wa_url = _make_whatsapp_invite_url(gym_name, user.full_name, user.email, new_password, None)
 
-        return jsonify({
+        response_body = {
             "success": True,
             "data": {
                 "id": user.id,
@@ -213,7 +302,32 @@ def register_staff_routes(bp):
                 "invite_whatsapp_url": invite_wa_url,
             },
             "message": f"Password reset for {user.full_name}.",
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="reset_staff_password",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="reset_staff_password",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     @bp.route("/staff/<int:user_id>", methods=["DELETE"])
     @token_required
@@ -226,6 +340,19 @@ def register_staff_routes(bp):
         if user.id == g.current_user.id:
             return error_response("FORBIDDEN", "You cannot remove your own account.", 403)
 
+        # A retry after a successful deactivate must replay, not 404
+        # (the row still exists but is_active is False — the lookup
+        # above still finds it, so this is belt-and-braces).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="delete_staff",
+            headers=request.headers,
+            payload={"user_id": user_id},
+        )
+        if replay is not None:
+            return replay
+
         # Deactivate and disassociate
         user.is_active = False
         audit(
@@ -235,9 +362,32 @@ def register_staff_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
         )
-        db.session.commit()
-
-        return jsonify({
+        response_body = {
             "success": True,
             "data": {"message": f"{user.full_name} has been deactivated."},
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="delete_staff",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="delete_staff",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)

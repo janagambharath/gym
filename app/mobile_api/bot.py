@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from flask import current_app, g, jsonify, request
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.mobile_api.errors import error_response
@@ -21,6 +22,11 @@ from app.models.bot import (
 )
 from app.models.gym import Gym
 from app.services.entitlement_service import WHATSAPP_BOT_FEATURE, is_feature_enabled
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.services.whatsapp_service import WhatsAppService
 
 
@@ -238,6 +244,19 @@ def register_bot_routes(bp):
         lead = BotLead.query.filter_by(gym_id=g.gym_id, id=lead_id).first_or_404()
         data = request.get_json() or {}
 
+        # A retry after a status change must replay, not re-apply
+        # (e.g. a "converted" lead re-marked after the owner moved it
+        # back would silently re-convert it).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_bot_lead",
+            headers=request.headers,
+            payload={**data, "lead_id": lead_id},
+        )
+        if replay is not None:
+            return replay
+
         if "status" in data:
             lead.status = data["status"]
         if "notes" in data:
@@ -245,8 +264,7 @@ def register_bot_routes(bp):
         if "name" in data:
             lead.name = data["name"]
 
-        db.session.commit()
-        return jsonify({
+        response_body = {
             "success": True,
             "data": {
                 "message": "Lead updated successfully",
@@ -256,7 +274,31 @@ def register_bot_routes(bp):
                     "notes": lead.notes,
                 },
             },
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_bot_lead",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="update_bot_lead",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     # ─── Conversations & Handover ─────────────────────────────────────
 
@@ -428,6 +470,19 @@ def register_bot_routes(bp):
                 400,
             )
 
+        # A retry after a handover must replay instead of appending a
+        # second BotEvent for the same takeover. Key is bound to this
+        # conversation + action.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bot_handover",
+            headers=request.headers,
+            payload={**data, "conv_id": conv_id},
+        )
+        if replay is not None:
+            return replay
+
         if action == "take_over":
             conv.handover_status = "human_active"
             conv.active_staff_id = g.user_id
@@ -447,14 +502,37 @@ def register_bot_routes(bp):
             )
         )
 
-        db.session.commit()
-        return jsonify({
+        response_body = {
             "success": True,
             "data": {
                 "handover_status": conv.handover_status,
                 "message": f"Handover status updated to {conv.handover_status}",
             },
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bot_handover",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="bot_handover",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.route("/bot/conversations/<int:conv_id>/message", methods=["POST"])
     @token_required
@@ -464,6 +542,21 @@ def register_bot_routes(bp):
         conv = BotConversation.query.filter_by(gym_id=g.gym_id, id=conv_id).first_or_404()
         data = request.get_json() or {}
         body = (data.get("body") or "").strip()
+
+        # A retry after a successful send must replay instead of
+        # sending the member the same staff message twice. NOTE: the
+        # WhatsApp send happens before the commit, so this protects
+        # the sequential retry (timeout / lost response), not a
+        # concurrent same-key double-send.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bot_send_message",
+            headers=request.headers,
+            payload={**data, "conv_id": conv_id},
+        )
+        if replay is not None:
+            return replay
 
         if not body:
             return jsonify({"success": False, "error": {"code": "VALIDATION_ERROR", "message": "Message body is required"}}), 400
@@ -511,9 +604,9 @@ def register_bot_routes(bp):
                 payload={"staff_user_id": g.user_id},
             )
         )
-        db.session.commit()
-
-        return jsonify({
+        # Flush first: the response carries the stored message id.
+        db.session.flush()
+        response_body = {
             "success": True,
             "data": {
                 "message": {
@@ -523,7 +616,32 @@ def register_bot_routes(bp):
                     "created_at": msg.created_at.isoformat() if msg.created_at else None,
                 },
             },
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="bot_send_message",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="bot_send_message",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     # ─── Bot Config ───────────────────────────────────────────────────
 
@@ -602,6 +720,18 @@ def register_bot_routes(bp):
         if len(answer) > 2000:
             return error_response("VALIDATION_ERROR", "Answer is too long (max 2000 chars).", 400)
 
+        # A retry after a successful create must replay the stored
+        # FAQ instead of creating a duplicate question.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_bot_faq",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         faq = BotFAQ(
             gym_id=g.gym_id,
             question=question,
@@ -610,9 +740,8 @@ def register_bot_routes(bp):
             priority=data.get("priority", 0),
         )
         db.session.add(faq)
-        db.session.commit()
-
-        return jsonify({
+        db.session.flush()
+        response_body = {
             "success": True,
             "data": {
                 "id": faq.id,
@@ -620,7 +749,32 @@ def register_bot_routes(bp):
                 "answer": faq.answer,
                 "enabled": faq.enabled,
             },
-        }), 201
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="create_bot_faq",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="create_bot_faq",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body), 201
 
     @bp.route("/bot/faqs/<int:faq_id>", methods=["DELETE"])
     @token_required
@@ -644,6 +798,19 @@ def register_bot_routes(bp):
             return error_response("NOT_FOUND", "FAQ not found.", 404)
 
         data = request.get_json(silent=True) or {}
+        # A retry after a successful update must replay, not re-apply
+        # (re-applying is mostly harmless, but an "enabled" flip
+        # retried after the owner flipped it back would flip it again).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_bot_faq",
+            headers=request.headers,
+            payload={**data, "faq_id": faq_id},
+        )
+        if replay is not None:
+            return replay
+
         if "question" in data:
             q = (data["question"] or "").strip()
             if not q:
@@ -657,8 +824,7 @@ def register_bot_routes(bp):
         if "enabled" in data:
             faq.enabled = bool(data["enabled"])
 
-        db.session.commit()
-        return jsonify({
+        response_body = {
             "success": True,
             "data": {
                 "id": faq.id,
@@ -666,7 +832,31 @@ def register_bot_routes(bp):
                 "answer": faq.answer,
                 "enabled": faq.enabled,
             },
-        })
+        }
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="update_bot_faq",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="update_bot_faq",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     # ─── Bot Testing Sandbox ──────────────────────────────────────────
 

@@ -17,7 +17,14 @@ from app.models import Member, MobileIdempotencyKey, RenewalHistory
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
-from app.services.idempotency_service import find_replay, request_fingerprint, valid_key
+from app.services.idempotency_service import (
+    begin_idempotency,
+    find_replay,
+    record_idempotency,
+    replay_after_conflict,
+    request_fingerprint,
+    valid_key,
+)
 from app.services.timezone_service import today_for_gym
 
 
@@ -448,6 +455,19 @@ def register_renewals_routes(bp):
         """
         from app.services.payment_service import force_activate_scheduled_renewal
 
+        # A timeout retry after activation must replay the stored
+        # outcome, not re-activate (and re-charge the ledger) — the
+        # body is empty, so the fingerprint binds the key to this row.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="activate_scheduled_renewal",
+            headers=request.headers,
+            payload={"renewal_id": renewal_id},
+        )
+        if replay is not None:
+            return replay
+
         renewal = RenewalHistory.query.filter_by(id=renewal_id, gym_id=g.gym_id).first()
         if renewal is None:
             return error_response("NOT_FOUND", "Scheduled renewal not found.", 404)
@@ -455,12 +475,7 @@ def register_renewals_routes(bp):
             outcome = force_activate_scheduled_renewal(
                 renewal, actor_id=g.current_user.id
             )
-            db.session.commit()
-        except ValueError as exc:
-            db.session.rollback()
-            return error_response("CONFLICT", str(exc), 409)
-        return jsonify(
-            {
+            response_body = {
                 "success": True,
                 "data": {
                     "renewal_id": renewal.id,
@@ -470,4 +485,30 @@ def register_renewals_routes(bp):
                     "new_end": renewal.new_end.isoformat() if renewal.new_end else None,
                 },
             }
-        )
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="activate_scheduled_renewal",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=200,
+                response_body=response_body,
+            )
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                replayed = replay_after_conflict(
+                    gym_id=g.gym_id,
+                    user_id=g.user_id,
+                    scope="activate_scheduled_renewal",
+                    key=idempotency_key,
+                    request_hash=request_hash,
+                )
+                if replayed is not None:
+                    return replayed
+                raise
+        except ValueError as exc:
+            db.session.rollback()
+            return error_response("CONFLICT", str(exc), 409)
+        return jsonify(response_body)
