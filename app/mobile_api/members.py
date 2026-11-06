@@ -825,14 +825,24 @@ def register_members_routes(bp):
         except ValueError as ve:
             return error_response("VALIDATION_ERROR", str(ve), 400)
 
-        # Check no other member has this enroll number in this gym
+        # Check no other member has this enroll number in this gym.
+        # NOTE: the unique constraint covers soft-deleted rows too, so
+        # this check must NOT filter them out — otherwise the commit
+        # throws UniqueViolation and the app shows "An unexpected error
+        # occurred" instead of a clear message.
         existing = (
             Member.query.filter_by(gym_id=g.gym_id, device_enroll_number=enroll_number)
             .filter(Member.id != member_id)
-            .filter(Member.deleted_at.is_(None))
             .first()
         )
         if existing:
+            if existing.deleted_at is not None:
+                return error_response(
+                    "DUPLICATE_ENROLL",
+                    f"Enroll #{enroll_number} is held by a deleted member. "
+                    "Clear it from the deleted record before reusing it.",
+                    409,
+                )
             return error_response(
                 "DUPLICATE_ENROLL",
                 f"Enroll #{enroll_number} is already assigned to {existing.full_name}.",

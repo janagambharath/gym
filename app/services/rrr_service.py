@@ -335,8 +335,11 @@ def remap_unresolved(gym_id: int, external_id: str, member: Member, user_id: int
     from app.services.bridge_service import canonical_enroll_number, queue_membership_command
 
     external_id = canonical_enroll_number(external_id)
-    # Guard 1: member already linked to a different enroll number
-    if member.device_enroll_number and member.device_enroll_number != external_id:
+    # Guard 1: member already linked to a different enroll number.
+    # Compare canonical forms — a stored non-canonical value ("0103")
+    # is the same ID as the canonical "103", not a different one.
+    stored = canonical_enroll_number(member.device_enroll_number) if member.device_enroll_number else None
+    if stored and stored != external_id:
         raise ValueError(
             f"This member already has enroll number {member.device_enroll_number}. "
             "Remove it first to reassign."

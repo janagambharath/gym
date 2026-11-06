@@ -1,6 +1,7 @@
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml, formatDate } from '../utils.js';
+import { showToast } from '../components.js';
 
 export default { async mount(el) { await load(el); } };
 
@@ -94,6 +95,12 @@ async function searchMembers(query, bid, el) {
   const q = (query || '').trim();
   const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=20${q ? `&q=${encodeURIComponent(q)}` : ''}`);
   const members = res.ok ? (res.data.members || []) : [];
+  // Merge search results into allMembers — wirePicks looks the tapped
+  // member up in allMembers, so a searched member who was never in the
+  // first-50 load could never be selected (tap did nothing).
+  for (const m of members) {
+    if (!allMembers.some(x => x.id === m.id)) allMembers.push(m);
+  }
   results.innerHTML = resultsHtml(members);
   wirePicks(el);
 }
@@ -232,6 +239,11 @@ function wireSaveButtons(el) {
       } else {
         btn.disabled = false;
         btn.textContent = 'Save link';
+        // Surface the backend reason instead of silently reverting —
+        // a guard rejection (e.g. ID held by a deleted member) used to
+        // look like nothing happened.
+        const itemErr = res?.data?.results?.find(r => String(r.external_id) === String(bid))?.error;
+        showToast(itemErr || res?.error?.message || 'Could not link — try again.', 'error');
       }
     });
   });
@@ -368,6 +380,9 @@ async function linkAll(el) {
     const failed = (res.data.results || []).filter(r => !r.ok);
     if (failed.length) {
       if (progressText) progressText.textContent = `✓ Linked ${linked}, ${failed.length} failed: IDs ${failed.map(f => f.external_id).join(', ')}`;
+      // Show the first failure reason so staff know why (e.g. ID held
+      // by a deleted member) instead of just which IDs failed.
+      if (failed[0]?.error) showToast(failed[0].error, 'error');
       // Keep failed selections so user can retry (selections already has them)
       // Remove successfully linked from selections
       for (const r of (res.data.results || [])) {

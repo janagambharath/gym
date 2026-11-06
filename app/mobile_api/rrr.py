@@ -829,10 +829,13 @@ def register_rrr_routes(bp):
             .order_by(RRRAttendanceEvent.id.desc())
             .first()
         )
-        resolved = remap_unresolved(
-            g.gym_id, external_id, member, g.user_id,
-            source=event_source.source if event_source else None,
-        )
+        try:
+            resolved = remap_unresolved(
+                g.gym_id, external_id, member, g.user_id,
+                source=event_source.source if event_source else None,
+            )
+        except ValueError as ve:
+            return error_response("CONFLICT", str(ve), 409)
         audit(action="rrr_identity_mapped", resource_type="member", resource_id=member.id, gym_id=g.gym_id,
               actor_id=g.user_id, metadata={"external_id": external_id, "events_replayed": resolved})
         db.session.commit()
