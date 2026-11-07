@@ -133,6 +133,30 @@ def register_reports_routes(bp):
             )
             .scalar()
         )
+        # V8-L13: refunds were invisible — a refund flips the payment
+        # to status "refunded", so it vanishes from every period's
+        # collected figure (including the period it was collected in)
+        # and no refunded line existed anywhere, so collected could
+        # never be reconciled against bank deposits. This line is
+        # keyed on refunded_at (the period the money went back), so
+        # the owner can see what left in this period. Money totals
+        # are unchanged: refunded money is still not counted as
+        # collected.
+        _refunded_rows = (
+            db.session.query(
+                func.coalesce(func.sum(PaymentVerification.amount), 0),
+                func.count(PaymentVerification.id),
+            )
+            .filter(
+                PaymentVerification.gym_id == gym_id,
+                PaymentVerification.status == "refunded",
+                PaymentVerification.refunded_at >= start_at,
+                PaymentVerification.is_test.is_(False),
+            )
+            .one()
+        )
+        revenue_refunded = _refunded_rows[0]
+        revenue_refunded_count = _refunded_rows[1]
 
         # Revenue at risk — H1 canonical definition (revenue_service):
         # active members expiring within 7 days PLUS members expired in the
@@ -241,6 +265,8 @@ def register_reports_routes(bp):
                     "collected": str(revenue_collected),
                     "pending": str(revenue_pending),
                     "processing": str(revenue_processing),
+                    "refunded": str(revenue_refunded),
+                    "refunded_count": int(revenue_refunded_count or 0),
                     "at_risk": str(revenue_at_risk),
                 },
                 "renewals": {

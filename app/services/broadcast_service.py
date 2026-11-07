@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 from flask import current_app
@@ -22,7 +22,12 @@ _logger = logging.getLogger(__name__)
 def get_target_members(gym_id: int, audience: str = "active") -> list[Member]:
     """Return the list of members for the given audience criteria."""
     query = Member.query.filter_by(gym_id=gym_id).filter(Member.deleted_at.is_(None))
-    today = date.today()
+    # V8-L8: server-local date.today() mis-segmented members in the
+    # 00:00–05:30 IST window — a member expiring today IST was
+    # excluded from "active" and included in "expired" before
+    # gym-local expiry. Windows use the gym's local today.
+    gym = db.session.get(Gym, gym_id)
+    today = today_for_gym(gym.timezone if gym and gym.timezone else "Asia/Kolkata")
 
     if audience == "active":
         return query.filter(Member.status == "active", Member.membership_end >= today).all()

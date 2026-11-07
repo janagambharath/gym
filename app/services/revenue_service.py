@@ -419,7 +419,50 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
     paid_expected = sum((Decimal(str(row.expected_value or 0)) for row in paid_rows), Decimal("0.00"))
     direct_expected = cohort_expected - paid_expected
 
-    risk_total = Decimal(risk["total"]) + paid_amount
+    # V8-M7: the denominator double-counted members renewed 23-30
+    # days ago. Such a member's renewal amount is in ``paid_amount``
+    # (previous_end inside the last 30 days) AND in ``risk["total"``
+    # (the new period ends within 7 days, at the pinned price — the
+    # amount just paid). The same ₹X landed in the denominator twice,
+    # numerator once, so a 100%-recovery gym scored below 100%.
+    # Subtract the at-risk value of exactly the members whose paid
+    # renewal is already in the cohort, recomputed with the same
+    # criteria (and the same pinned-price fallback) as
+    # ``revenue_at_risk`` — never the paid amount itself, so a
+    # price change between renewal and now still reconciles.
+    # ``revenue_at_risk`` itself is unchanged (canonical headline).
+    paid_member_ids = {row.member_id for row in paid_rows}
+    overlap_amount = Decimal("0.00")
+    if paid_member_ids:
+        risk_value = func.coalesce(func.nullif(Member.price, 0), MembershipPlan.price, 0)
+        overlap_rows = (
+            db.session.query(risk_value.label("value"))
+            .select_from(Member)
+            .outerjoin(MembershipPlan, MembershipPlan.id == Member.plan_id)
+            .filter(
+                Member.gym_id == gym_id,
+                Member.deleted_at.is_(None),
+                Member.id.in_(paid_member_ids),
+                or_(
+                    and_(
+                        Member.status == "active",
+                        Member.membership_end >= today,
+                        Member.membership_end <= cohort_end,
+                    ),
+                    and_(
+                        Member.status != "paused",
+                        Member.membership_end < today,
+                        Member.membership_end >= cohort_start,
+                    ),
+                ),
+            )
+            .all()
+        )
+        overlap_amount = sum(
+            (Decimal(str(row.value or 0)) for row in overlap_rows), Decimal("0.00")
+        )
+
+    risk_total = Decimal(risk["total"]) + paid_amount - overlap_amount
 
     if risk_total > 0:
         rate = (paid_amount / risk_total * 100).quantize(Decimal("0.1"))
@@ -433,7 +476,7 @@ def recovery_rate(gym_id: int, gym_timezone: str = "Asia/Kolkata") -> dict:
         "recorded_amount": str(cohort_actual),
         "recovery_rate": str(rate),
         "recovery_rate_basis": "payment-backed only — direct renewals excluded from numerator and denominator; actual collected amounts on both sides, so discounted renewals count at what was collected",
-        "risk_breakdown": {**risk, "renewed_cohort_expected": str(paid_expected), "renewed_cohort_expected_all": str(cohort_expected), "direct_cohort_expected": str(direct_expected)},
+        "risk_breakdown": {**risk, "renewed_cohort_expected": str(paid_expected), "renewed_cohort_expected_all": str(cohort_expected), "direct_cohort_expected": str(direct_expected), "double_counted_risk_removed": str(overlap_amount)},
         "recovered_breakdown": {
             "total_renewals": len(recovery_rows),
             "total_amount": str(cohort_actual),

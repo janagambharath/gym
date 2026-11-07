@@ -22,6 +22,7 @@ from app.services.campaign_service import (
 from app.services.idempotency_service import (
     begin_idempotency,
     find_replay,
+    legacy_replay,
     record_idempotency,
     replay_after_conflict,
     request_fingerprint,
@@ -163,13 +164,14 @@ def register_campaign_routes(bp):
                 request_hash=request_hash,
             )
             if existing:
-                if not matches_request:
-                    return error_response(
-                        "IDEMPOTENCY_KEY_REUSED",
-                        "This idempotency key was already used for a different campaign request.",
-                        409,
-                    )
-                return jsonify(existing.response_body), existing.status_code
+                # V8-L5: replay through the decrypting helper, not the
+                # raw stored body — a credential stored as enc1:
+                # ciphertext must decrypt on replay (or the row is
+                # dropped and the request executes fresh), never be
+                # returned as ciphertext.
+                replay = legacy_replay(existing, matches_request)
+                if replay is not None:
+                    return replay
 
         name = (data.get("name") or "").strip()
         campaign_type = (data.get("campaign_type") or "recovery").strip()
@@ -230,13 +232,14 @@ def register_campaign_routes(bp):
                     request_hash=request_hash,
                 )
                 if existing:
-                    if not matches_request:
-                        return error_response(
-                            "IDEMPOTENCY_KEY_REUSED",
-                            "This idempotency key was already used for a different campaign request.",
-                            409,
-                        )
-                    return jsonify(existing.response_body), existing.status_code
+                    # V8-L5: replay through the decrypting helper, not the
+                    # raw stored body — a credential stored as enc1:
+                    # ciphertext must decrypt on replay (or the row is
+                    # dropped and the request executes fresh), never be
+                    # returned as ciphertext.
+                    replay = legacy_replay(existing, matches_request)
+                    if replay is not None:
+                        return replay
             raise
 
         return jsonify(response_body), 201

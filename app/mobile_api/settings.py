@@ -1,6 +1,7 @@
 """Mobile API settings endpoint."""
 from __future__ import annotations
 
+import hashlib
 from decimal import Decimal, InvalidOperation
 
 from flask import current_app, g, jsonify, request, url_for
@@ -15,6 +16,7 @@ from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.idempotency_service import (
     begin_idempotency,
+    file_upload_payload,
     record_idempotency,
     replay_after_conflict,
 )
@@ -182,6 +184,17 @@ def register_settings_routes(bp):
                 "data": _serialize_payment_settings(qr, g.current_user.gym),
             })
 
+        # V8-M1: writing the gym's UPI ID is owner-only, like the
+        # adjacent QR-image upload. A staff account (creds start as
+        # temp passwords) could otherwise silently redirect every
+        # member UPI renewal to its own VPA. Reads stay open to staff.
+        if g.current_user.role != "gym_owner":
+            return error_response(
+                "FORBIDDEN",
+                "Only the gym owner can change payment details.",
+                403,
+            )
+
         data = request.get_json(silent=True) or {}
         if not qr:
             qr = QRSettings(gym_id=g.gym_id, payment_label=g.current_user.gym.name)
@@ -259,6 +272,34 @@ def register_settings_routes(bp):
         if not upload or not upload.filename:
             return error_response("VALIDATION_ERROR", "Select a PNG, JPG, or WebP QR image.", 400)
 
+        # V8-L29 — the PWA sends an Idempotency-Key on QR upload; honour
+        # it. Fingerprint is (endpoint + SHA-256 of the bytes + size):
+        # the content hash is the identity (see file_upload_payload —
+        # the filename is deliberately excluded, so the same QR
+        # re-sent under another name replays instead of re-storing;
+        # save_gym_qr mints a fresh uuid filename per store, so a
+        # re-store would orphan the first file). The stream is rewound
+        # so save_gym_qr can read it again. Only the success response
+        # is recorded, so a validation failure never stores a key.
+        # The replayed body carries a signed QR URL whose max_age
+        # (24h, see signed_qr_file) equals the idempotency TTL, so a
+        # replayed URL is still usable.
+        raw_bytes = upload.stream.read()
+        upload.stream.seek(0)
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="payment_qr_upload",
+            headers=request.headers,
+            payload=file_upload_payload(
+                "settings/payment/qr",
+                sha256_hex=hashlib.sha256(raw_bytes).hexdigest(),
+                size_bytes=len(raw_bytes),
+            ),
+        )
+        if replay is not None:
+            return replay
+
         old_path = qr.qr_image_path
         try:
             qr.qr_image_path = save_gym_qr(upload, g.gym_id)
@@ -274,13 +315,36 @@ def register_settings_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
         )
-        db.session.commit()
+        response_body = {"success": True, "data": _serialize_payment_settings(qr, g.current_user.gym)}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="payment_qr_upload",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="payment_qr_upload",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
         if old_path and old_path != qr.qr_image_path and not old_path.startswith(("http://", "https://")):
             try:
                 delete_local_upload(old_path)
             except Exception:
                 current_app.logger.exception("Could not remove replaced QR upload for gym %s", g.gym_id)
-        return jsonify({"success": True, "data": _serialize_payment_settings(qr, g.current_user.gym)})
+        return jsonify(response_body)
 
     # ─── Plan Management ─────────────────────────────────────────────
 
@@ -709,7 +773,9 @@ def register_settings_routes(bp):
                 422,
             )
         # H5: destructive/door commands need an explicit confirmation flag.
-        if command_type in {"unlock_door", "restart", "clear_log"} and not (
+        # V8-L12: delete_user joins the set — it deletes the terminal user
+        # including the fingerprint, as destructive as clear_log.
+        if command_type in {"unlock_door", "restart", "clear_log", "delete_user"} and not (
             data.get("confirm") is True or data.get("confirmed") is True
         ):
             return error_response(

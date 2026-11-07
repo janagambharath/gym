@@ -739,7 +739,11 @@ def _register_cli(app: Flask) -> None:
             run_due_reminders_for_gym,
         )
         from app.services.payment_service import apply_due_scheduled_renewals
-        from app.services.access_event_service import auto_reset_stale_inside_members
+        from app.services.access_event_service import (
+            auto_reset_stale_inside_members,
+            backfill_missing_bridge_projections,
+            backfill_missing_rrr_projections,
+        )
 
         totals = {"queued": 0, "sent": 0, "failed": 0, "skipped": 0}
         access_totals = {"auto_exited": 0}
@@ -832,6 +836,27 @@ def _register_cli(app: Flask) -> None:
                     _gym_errors += 1
                     db.session.rollback()
                     app.logger.exception("Stale-inside reset failed for gym %s", gym.id)
+
+                # V8-L18: projection repair (V7-L16 bridge + V8-M8 RRR)
+                # belongs in this CLI too — it is the manual fallback if
+                # the scheduler is ever off, and it previously ran only
+                # in the APScheduler job. Same per-gym containment as
+                # every step above: one gym's failure must not abort the
+                # rest, and the heartbeat is still recorded (finally).
+                try:
+                    backfilled = backfill_missing_bridge_projections(gym.id)
+                    backfilled += backfill_missing_rrr_projections(gym.id)
+                    if backfilled:
+                        db.session.commit()
+                        app.logger.info(
+                            json.dumps(
+                                {"event": "projection_backfill", "gym_id": gym.id, "count": backfilled}
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Projection backfill failed for gym %s", gym.id)
 
                 if _gym_errors:
                     gym_errors[gym.id] = _gym_errors

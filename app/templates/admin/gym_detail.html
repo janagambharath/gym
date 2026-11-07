@@ -506,6 +506,13 @@
 
 <!-- ─── TAB 8: BIOMETRIC BRIDGE ────────────────────────────────────────── -->
 {% elif active_tab == 'biometric' %}
+{% if rotated_bridge_key %}
+<div class="alert alert-warning mb-3">
+    <strong>Bridge API Key rotated (shown once — copy it now):</strong>
+    <code class="fs-6 fw-bold">{{ rotated_bridge_key }}</code>
+    <div class="small mt-1 text-muted">Save this key in the gym bridge config. It will not be shown again.</div>
+</div>
+{% endif %}
 <div class="row g-4">
     <!-- Pairing & Hardware Box -->
     <div class="col-lg-5">
@@ -514,7 +521,7 @@
             <div class="p-3">
                 <div class="p-3 border rounded bg-light-subtle text-center mb-3">
                     <small class="text-muted text-uppercase fw-bold d-block mb-1">Active Pairing Code</small>
-                    {% set _pairing = session.get('bridge_pairing_' ~ gym.id) %}
+                    {% set _pairing = bridge_pairing_code %}
                     <div class="h2 fw-bold font-monospace text-primary mb-1">{{ _pairing or '••••••' }}</div>
                     {% if not _pairing %}<div class="small text-muted mb-2">Code shown once at generation — press Refresh for a new one.</div>{% endif %}
                     <form method="post" action="{{ url_for('admin.generate_bridge_pairing', gym_id=gym.id) }}">
@@ -679,6 +686,13 @@
 
 <!-- ─── TAB 9: STAFF & ACCOUNTS ────────────────────────────────────────── -->
 {% elif active_tab == 'staff' %}
+{% if reset_temp_pass %}
+<div class="alert alert-warning mb-3">
+    <strong>Temporary password for {{ reset_temp_email }} (shown once — copy it now):</strong>
+    <code class="fs-6 fw-bold">{{ reset_temp_pass }}</code>
+    <div class="small mt-1 text-muted">It will not be shown again. The user must change it on next sign-in.</div>
+</div>
+{% endif %}
 <div class="panel shadow-sm">
     <div class="panel-header"><h5 class="mb-0"><i class="bi bi-person-badge text-primary me-2"></i>User & Staff Accounts</h5></div>
     <div class="table-responsive">

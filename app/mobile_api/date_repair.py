@@ -497,7 +497,38 @@ def classify_member(
             )
         return finding
 
-    if member.plan is None or member.membership_end is None:
+    # V8-M4: a plan-less member used to be invisible to Date Repair
+    # (this returned None), so campaign-imported contacts with
+    # invented dates were never flagged or fixed. A member with real
+    # stored dates but no plan is now a review-only finding — no
+    # proposal, so Apply leaves it for a manual per-member edit
+    # (assign a plan, then the normal checks run). Members with no
+    # stored end stay unclassifiable, as before.
+    if member.plan is None:
+        if member.membership_end is None:
+            return None
+        return {
+            "member_id": member.id,
+            "full_name": member.full_name,
+            "phone": member.phone,
+            "plan_name": None,
+            "plan_duration_days": None,
+            "membership_start": member.membership_start.isoformat(),
+            "membership_end": member.membership_end.isoformat(),
+            "span_days": (member.membership_end - member.membership_start).days,
+            "ledger_periods": len(rows),
+            "freeze_events": (member.notes or "").count("[Paused on"),
+            "confidence": "review",
+            "classification": "no_plan",
+            "reason": (
+                "The member has membership dates but no plan assigned "
+                "(e.g. imported contact), so the period cannot be "
+                "checked against a plan duration. Assign a plan to "
+                "enable date checks."
+            ),
+        }
+
+    if member.membership_end is None:
         return None
 
     start = member.membership_start

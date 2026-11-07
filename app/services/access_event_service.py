@@ -590,6 +590,105 @@ def _update_member_access_state(
     state.last_event_timestamp = access_event.event_timestamp
 
 
+# ── V8-L16 whole-second twin keys ─────────────────────────────────────
+
+def _parse_timestamp_value(value):
+    """Parse a serialized (ISO string) or raw timestamp to datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _twin_second_key(enroll_number, event_timestamp, event_type, direction):
+    """Whole-second twin key (V8-L16): enroll + type + direction + the
+    timestamp truncated to the second (UTC).
+
+    This is the V7-M9 twin identity — ``_find_punch_twin`` already
+    matches on the same wall-clock second — applied to the merged
+    feed/summary, where the full-precision ``_punch_key`` cannot see
+    the twin: the bridge leg preserves fractional seconds while the
+    ADMS leg is whole-second, so the same physical punch carries two
+    different full-precision keys and renders/counted twice.
+    """
+    ts = _parse_timestamp_value(event_timestamp)
+    if ts is None:
+        return None
+    ts = _as_utc(ts).replace(microsecond=0)
+    return f"{enroll_number or ''}|{ts.isoformat()}|{event_type or ''}|{direction or ''}"
+
+
+def _rrr_second_twin_count(gym_id: int, day_start_utc, *, entry: bool) -> int:
+    """Unprojected RRR rows for today that are V7-M9 twins of an
+    AccessEvent (V8-L16).
+
+    Only a WHOLE-second RRR punch can be such a twin: ADMS device
+    times are whole-second by construction (``_parse_device_time``
+    parses ``%H:%M:%S``), so a whole-second RRR punch in the same
+    second as a fractional-second bridge AccessEvent is the same
+    physical punch seen twice. A fractional-second RRR punch in the
+    same second is a genuinely distinct punch — V4-L12's pair (two
+    ``_now()`` calls, both fractional) must stay distinct, so it is
+    never counted here. Returns how many of today's unprojected RRR
+    rows to subtract from the summary count.
+    """
+    from app.models.rrr import RRRAttendanceEvent
+
+    if entry:
+        rrr_rows = (
+            _rrr_entry_rows_query(gym_id)
+            .filter(RRRAttendanceEvent.punch_time >= day_start_utc)
+            .filter(~_unprojected_rrr_exists(gym_id))
+            .all()
+        )
+        ae_types = ("ENTRY", "ATTENDANCE")
+    else:
+        rrr_rows = (
+            _rrr_exit_rows_query(gym_id)
+            .filter(RRRAttendanceEvent.punch_time >= day_start_utc)
+            .filter(~_unprojected_rrr_exists(gym_id))
+            .all()
+        )
+        ae_types = ("EXIT",)
+    if not rrr_rows:
+        return 0
+    ae_keys = {
+        _twin_second_key(
+            evt.device_enroll_number,
+            evt.event_timestamp,
+            evt.event_type,
+            evt.direction,
+        )
+        for evt in AccessEvent.query.filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.event_type.in_(ae_types),
+            AccessEvent.event_timestamp >= day_start_utc,
+        ).all()
+    }
+    count = 0
+    for row in rrr_rows:
+        if row.punch_time is None:
+            continue
+        ts = _as_utc(row.punch_time)
+        if ts.microsecond != 0:
+            continue  # fractional-second RRR punch: distinct, not a twin
+        try:
+            att_state = int(row.direction) if row.direction is not None else None
+        except (TypeError, ValueError):
+            att_state = None
+        event_type, direction = _classify_event(att_state, is_invalid=False)
+        if (
+            _twin_second_key(row.biometric_user_id, ts, event_type, direction)
+            in ae_keys
+        ):
+            count += 1
+    return count
+
+
 # ── Query helpers for the mobile API ──────────────────────────────────
 
 
@@ -663,6 +762,11 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
     adms_entries_today = _rrr_entry_rows_query(gym_id).filter(
         RRRAttendanceEvent.punch_time >= day_start_utc,
     ).filter(~_unprojected_rrr_exists(gym_id)).count()
+    # V8-L16: a twin-skipped RRR row (bridge projected first, ADMS leg
+    # whole-second vs bridge fractional) is unprojected forever, so it
+    # is counted here AND its bridge AccessEvent is counted above —
+    # entries_today double-counts it. Subtract the whole-second twins.
+    adms_entries_today -= _rrr_second_twin_count(gym_id, day_start_utc, entry=True)
     entries_today = entries_today + adms_entries_today
 
     # V5-L12: same unprojected backfill for exits — an ADMS exit whose
@@ -671,6 +775,7 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
     adms_exits_today = _rrr_exit_rows_query(gym_id).filter(
         RRRAttendanceEvent.punch_time >= day_start_utc,
     ).filter(~_unprojected_rrr_exists(gym_id)).count()
+    adms_exits_today -= _rrr_second_twin_count(gym_id, day_start_utc, entry=False)
     exits_today = exits_today + adms_exits_today
 
     # Last event time — check both tables
@@ -878,6 +983,25 @@ def get_access_events(
     seen_punch_keys: set[str] = set()
     deduped_merged: list[dict] = []
     duplicates_removed = 0
+    # V8-L16: whole-second twin keys for the AccessEvent leg. A
+    # twin-skipped RRR row (bridge projected first) stays unprojected
+    # forever, so the merged feed relies on punch_key equality — but the
+    # bridge timestamp carries fractional seconds while the ADMS punch
+    # is whole-second, so the keys differ and the twin renders twice.
+    # Drop an RRR-leg row only when its punch is whole-second AND an
+    # AccessEvent shares its enroll+type+direction+whole-second: a
+    # fractional-second RRR punch in the same second is a genuinely
+    # distinct punch (V4-L12's pair) and must stay.
+    ae_second_keys = {
+        _twin_second_key(
+            row.get("device_enroll_number") or row.get("biometric_user_id"),
+            row.get("event_timestamp"),
+            row.get("event_type"),
+            row.get("direction"),
+        )
+        for row in events
+    }
+    ae_second_keys.discard(None)
     for row in merged:
         key = row.get("punch_key") or _punch_key(
             row.get("biometric_user_id") or row.get("device_enroll_number"),
@@ -888,12 +1012,33 @@ def get_access_events(
         if key in seen_punch_keys:
             duplicates_removed += 1
             continue
+        if row.get("source") == "adms_direct":
+            ts = _parse_timestamp_value(row.get("event_timestamp"))
+            if ts is not None and _as_utc(ts).microsecond == 0:
+                second_key = _twin_second_key(
+                    row.get("biometric_user_id") or row.get("device_enroll_number"),
+                    row.get("event_timestamp"),
+                    row.get("event_type"),
+                    row.get("direction"),
+                )
+                if second_key in ae_second_keys:
+                    duplicates_removed += 1
+                    continue
         seen_punch_keys.add(key)
         deduped_merged.append(row)
     merged = deduped_merged
     start = (page - 1) * per_page
     page_events = merged[start:start + per_page]
 
+    # V8-L16 (documented, not fixed): duplicates_removed only counts
+    # twins found inside the 2000-row fetch window, so on deep pages a
+    # twin-skipped RRR row beyond the cap still inflates total /
+    # total_pages. A precise fix needs a cross-dialect SQL twin count
+    # (whole-second EXISTS over the full filtered window, Postgres
+    # date_trunc vs SQLite strftime) — not attempted here because the
+    # common case (twins within the fetched window, i.e. every recent
+    # page) is now subtracted, and the residual only affects pages
+    # near the 2000-row cap.
     total = access_total + adms_total - duplicates_removed
     return {
         "events": page_events,
@@ -1151,6 +1296,68 @@ def backfill_missing_bridge_projections(
     return created
 
 
+def backfill_missing_rrr_projections(
+    gym_id: int,
+    *,
+    limit: int = 100,
+    since_days: int = 7,
+) -> int:
+    """Re-project direct-ADMS punches that have no AccessEvent (V8-M8).
+
+    Mirror of :func:`backfill_missing_bridge_projections` for the RRR
+    leg. ``_ingest_attlog`` swallows projection exceptions (log-only,
+    ack preserved), and ``process_rrr_attendance_to_access_event``'s
+    existing-branch repair only runs on a terminal re-send — an acked
+    ATTLOG batch is never re-sent, so a failed ADMS projection used to
+    stay failed forever: the unprojected RRR feed leg still showed the
+    punch and the summary still counted it, but ``MemberAccessState``
+    never flipped INSIDE, member-app ``last_visit``/``today_entries``
+    missed it (they query AccessEvent only), and Retain nudges keyed
+    off Inside/attendance missed it. Same shape as the bridge sweep:
+    scoped to the last 7 days (the feed window), per-row savepoint-
+    contained, idempotent (``process_rrr_attendance_to_access_event``
+    dedupes on ``source_event_id``). Twin-skipped rows are re-examined
+    on every sweep — the twin branch returns None (not counted as
+    created) but re-fills the twin's identity + INSIDE state when the
+    member has since been linked. The caller is responsible for
+    committing. Returns the number of projections created.
+    """
+    from datetime import timedelta
+
+    from app.models.rrr import RRRAttendanceEvent
+
+    cutoff = utcnow() - timedelta(days=since_days)
+    rows = (
+        RRRAttendanceEvent.query.filter(
+            RRRAttendanceEvent.gym_id == gym_id,
+            RRRAttendanceEvent.source == "adms_direct",
+            RRRAttendanceEvent.punch_time >= cutoff,
+            ~_unprojected_rrr_exists(gym_id),
+        )
+        .order_by(RRRAttendanceEvent.punch_time.asc())
+        .limit(limit)
+        .all()
+    )
+    created = 0
+    for row in rows:
+        try:
+            with db.session.begin_nested():
+                if process_rrr_attendance_to_access_event(row) is not None:
+                    created += 1
+        except Exception:
+            logger.exception(
+                "RRR projection backfill failed for rrr attendance %s",
+                row.id,
+            )
+    if created:
+        logger.info(
+            "Backfilled %d missing RRR punch projection(s) for gym %s",
+            created,
+            gym_id,
+        )
+    return created
+
+
 def has_legacy_attendance_events(gym_id: int) -> bool:
     """Return True if the gym has ATTENDANCE events (att_state=null).
 
@@ -1199,10 +1406,22 @@ def record_manual_access_event(
         direction=direction,
         event_timestamp=now,
         received_timestamp=now,
-        device_enroll_number=member.device_enroll_number or str(member.id),
+        # V8-H1: verify_method is db.Integer (models/access_event.py:61)
+        # — the old "MANUAL_CHECKIN" string stored fine on SQLite (type
+        # affinity) but 500s on production Postgres (22P02) on flush, so
+        # EVERY manual check-in failed live. None = no device verification.
+        # V8-L17: never fabricate a terminal enroll number from the member
+        # id. device_enroll_number is NOT NULL, so None would need a
+        # migration; "" is the no-enrollment marker instead — it cannot
+        # collide with any real enroll number (canonical enrolls are
+        # non-empty digit strings), so a manual row can no longer
+        # masquerade as terminal ID = member id in feed search or in
+        # _find_punch_twin (a same-second real punch from enroll N used to
+        # twin-match — and overwrite — the manual row for member-id N).
+        device_enroll_number=member.device_enroll_number or "",
         source_event_id=f"manual-{uuid.uuid4().hex[:16]}",
         att_state=ATT_STATE_CHECK_OUT if direction == "OUT" else ATT_STATE_CHECK_IN,
-        verify_method="MANUAL_CHECKIN",
+        verify_method=None,
         is_invalid=(actual_event_type == "ACCESS_DENIED"),
         member_name=member.full_name,
         membership_status=member.status,

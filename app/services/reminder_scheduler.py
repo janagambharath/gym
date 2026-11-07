@@ -269,6 +269,32 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     "Bridge projection backfill failed for gym %s", gym.id
                 )
 
+            # V8-M8: mirror of the bridge backfill above, for direct-ADMS
+            # (RRR) punches whose projection threw at ingest. The ATTLOG
+            # ack is preserved on projection failure and the terminal
+            # never re-sends, so without this sweep the punch stays
+            # unprojected forever (visible in the feed leg, but no INSIDE
+            # flip, no member-app last_visit/today_entries, no Retain
+            # nudge). Same shape: last 7 days, per-row contained.
+            try:
+                from app.services.access_event_service import (
+                    backfill_missing_rrr_projections as _backfill_rrr,
+                )
+
+                backfilled = _backfill_rrr(gym.id)
+                if backfilled:
+                    db.session.commit()
+                    app.logger.info(
+                        "Backfilled %s RRR punch projections for gym %s",
+                        backfilled,
+                        gym.id,
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception(
+                    "RRR projection backfill failed for gym %s", gym.id
+                )
+
             # Reconcile failed blocks: expired members whose block command
             # never acked (terminal offline, timeout, etc.) get re-queued.
             # Without this, a single failed block leaves the member with

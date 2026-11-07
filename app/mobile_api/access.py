@@ -28,7 +28,7 @@ from app.services.audit_service import audit
 from app.services.bridge_service import (
     STALE_ENABLE_ERROR,
     STALE_ENABLE_MARKER,
-    bridge_command_must_be_cancelled,
+    bridge_disable_must_be_cancelled_at_lease,
     bridge_enable_must_be_cancelled,
     cancel_bridge_command,
     queue_gym_reconciliation,
@@ -441,7 +441,11 @@ def register_access_routes(bp):
             # Fail-safe: never resurrect a disable unless the member is
             # proven blockable (paused, or expired with a past end date).
             # Stamp the cancellation so the skip is auditable.
-            if bridge_command_must_be_cancelled(cmd):
+            # V8-M5: judge disables with the including-deleted lease
+            # guard (the V7-L9 fix on the admin path), not the strict
+            # guard — a failed delete-time block for a soft-deleted
+            # member must be re-driven, not re-stamped cancelled.
+            if bridge_disable_must_be_cancelled_at_lease(cmd):
                 cancel_bridge_command(cmd)
                 continue
             # H8 mirror: never resurrect a stale enable either.

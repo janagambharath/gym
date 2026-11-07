@@ -15,7 +15,7 @@ from app.services.audit_service import audit
 from app.services.bridge_service import (
     STALE_ENABLE_ERROR,
     STALE_ENABLE_MARKER,
-    bridge_command_must_be_cancelled,
+    bridge_disable_must_be_cancelled_at_lease,
     bridge_enable_must_be_cancelled,
     cancel_bridge_command,
     queue_membership_command,
@@ -178,13 +178,18 @@ def retry_command(command_id: str):
         return redirect(url_for("biometric.commands"))
 
     if command.status == "failed" and (
-        bridge_command_must_be_cancelled(command)
+        bridge_disable_must_be_cancelled_at_lease(command)
         or bridge_enable_must_be_cancelled(command)
     ):
         # Fail-safe: a disable is retried only for a proven-blockable member
         # (paused, or expired with a past end date), and an enable only for
         # a proven-enableable member (active, end today or later).  Stamp
         # the cancellation.
+        # V8-M5: judge disables with the including-deleted lease guard
+        # (the V7-L9 fix on the admin path), not the strict guard — a
+        # failed delete-time block for a soft-deleted member must be
+        # re-driven, not re-stamped cancelled. Non-disable commands are
+        # unaffected: the lease guard returns False for them.
         if bridge_enable_must_be_cancelled(command):
             cancel_bridge_command(
                 command, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR

@@ -1100,24 +1100,41 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                     )
                 return latest
             # A not-yet-delivered command can be replaced by the newest state.
-            latest.action = action
-            latest.test_enroll_number = enroll_number
-            latest.command_text = command_text
-            latest.result_code = None
-            latest.result_message = None
-            latest.requested_by_id = None
-            # V7-M1/V7-L10: re-stamp intent on the row itself.
-            latest.intended_member_id = member.id
-            audit(
-                action=f"adms_membership_{action}_queued",
-                resource_type="rrr_adms_command",
-                resource_id=latest.id,
-                gym_id=member.gym_id,
-                metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True,
-                          **({"method": "essl_userinfo_group", "group": "100"}
-                             if action == "block" else {})},
-            )
-            return latest
+            # V8-L11: EXCEPT a queued create_user — a membership queue must
+            # never silently discard a pending enrollment. Fall through and
+            # queue the membership command as a fresh row behind it (the
+            # terminal serves in FIFO order, so enrollment lands first);
+            # the preservation is audited, not silent.
+            if latest.action == "create_user":
+                audit(
+                    action=f"adms_membership_{action}_queued",
+                    resource_type="rrr_adms_command",
+                    resource_id=latest.id,
+                    gym_id=member.gym_id,
+                    metadata={"member_id": member.id, "enroll_number": enroll_number,
+                              "create_user_preserved": True,
+                              **({"method": "essl_userinfo_group", "group": "100"}
+                                 if action == "block" else {})},
+                )
+            else:
+                latest.action = action
+                latest.test_enroll_number = enroll_number
+                latest.command_text = command_text
+                latest.result_code = None
+                latest.result_message = None
+                latest.requested_by_id = None
+                # V7-M1/V7-L10: re-stamp intent on the row itself.
+                latest.intended_member_id = member.id
+                audit(
+                    action=f"adms_membership_{action}_queued",
+                    resource_type="rrr_adms_command",
+                    resource_id=latest.id,
+                    gym_id=member.gym_id,
+                    metadata={"member_id": member.id, "enroll_number": enroll_number, "replaced": True,
+                              **({"method": "essl_userinfo_group", "group": "100"}
+                                 if action == "block" else {})},
+                )
+                return latest
         if latest.status == "delivered":
             if latest.action == action:
                 if action == "block" and adms_command_is_forbidden(latest):
@@ -1273,6 +1290,12 @@ def queue_manual_adms_member_command(
                                   **({"method": "essl_userinfo_group", "group": "100"}
                                      if action == "block" else {})},
                     )
+                elif adms_command_intended_member_id(latest) is None:
+                    # V8-L10: a legacy row with unknown intent must be
+                    # re-stamped like the automatic path does — otherwise
+                    # displace + the V6-M6 intent check can never catch
+                    # it when this enroll is recycled to a new holder.
+                    latest.intended_member_id = member.id
                 return latest
             # A not-yet-delivered command is replaced by the owner's newest
             # explicit choice (block→unblock or unblock→block).

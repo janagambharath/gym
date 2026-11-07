@@ -587,8 +587,39 @@ def create_campaign(
     today = today_for_gym(gym_timezone)
     cooldown_cutoff = utcnow() - timedelta(days=7)
 
-    # Ingest / link imported contacts directly into recipients
+    # Ingest / link imported contacts directly into recipients.
+    # V8-M4: this used to write member dates outside every renewal
+    # flow — invented 30-day spans for new members (no plan, no
+    # ledger row, invisible to Date Repair) and silent end rewrites
+    # for existing members (no re-chain, no audit, no door command,
+    # status forced expired even for a future date). Now:
+    #  * the preview validation runs on create — invalid rows
+    #    (missing name/phone, unparseable or, for recovery, future
+    #    or missing expiry, duplicates) create NO member and mutate
+    #    NO existing member; only validated rows are ingested;
+    #  * a new member records only the one fact the import actually
+    #    knows — the expiry date — as a single-day marker period
+    #    (start == end == expiry, or today when no expiry was
+    #    supplied), plus a proper is_creation RenewalHistory row, so
+    #    the intake is on the ledger and excluded from recovery
+    #    money like any other signup; the member stays plan-less and
+    #    is now flagged review-only by Date Repair (no_plan);
+    #  * an existing member's end is rewritten only when the import
+    #    does not shorten a live (active, future-ending) period — a
+    #    paying member is never silently expired by a CSV — and the
+    #    rewrite re-chains live scheduled renewals, queues the door
+    #    command and audits (skips are audited too, never silent).
     if imported_contacts:
+        from app.services.bridge_service import queue_membership_command
+        from app.services.payment_service import rechain_scheduled_renewals
+
+        validation = validate_imported_contacts(
+            gym_id, imported_contacts, campaign_type, gym_timezone
+        )
+        valid_by_phone = {
+            row["phone"]: row for row in validation["valid_rows"]
+        }
+        seen_phones: set[str] = set()
         for contact in imported_contacts:
             name_val = str(contact.get("name") or "").strip()
             raw_phone = str(contact.get("phone") or "").strip()
@@ -600,26 +631,121 @@ def create_campaign(
             except Exception:
                 continue
 
+            # Not validated (or a duplicate of an earlier row): skip
+            # entirely — no member, no mutation, no recipient.
+            valid_row = valid_by_phone.get(norm_phone)
+            if valid_row is None or norm_phone in seen_phones:
+                continue
+            seen_phones.add(norm_phone)
+
             member = Member.query.filter_by(gym_id=gym_id, phone=norm_phone).first()
-            raw_exp = contact.get("expiry_date")
+            raw_exp = valid_row.get("expiry_date")
             exp_date = _parse_date(raw_exp) if raw_exp else None
 
             if not member:
+                marker_start = exp_date if exp_date else today
+                marker_end = exp_date if exp_date else today
                 member = Member(
                     gym_id=gym_id,
                     full_name=name_val,
                     phone=norm_phone,
                     status="expired" if campaign_type == "recovery" else "active",
-                    membership_start=exp_date - timedelta(days=30) if exp_date else today,
-                    membership_end=exp_date if exp_date else today,
+                    membership_start=marker_start,
+                    membership_end=marker_end,
                     whatsapp_opted_in=True,
                     whatsapp_opted_in_at=utcnow(),
                 )
                 db.session.add(member)
                 db.session.flush()
+                renewal_amt = None
+                if valid_row.get("renewal_amount"):
+                    try:
+                        renewal_amt = Decimal(
+                            str(valid_row.get("renewal_amount")).replace(",", "").replace("₹", "")
+                        )
+                    except Exception:
+                        renewal_amt = None
+                # Ledger row for the intake: previous_end == new_start
+                # + is_creation, mirroring create_member, so money
+                # reports treat this as a signup, never a recovery.
+                db.session.add(
+                    RenewalHistory(
+                        gym_id=gym_id,
+                        member_id=member.id,
+                        plan_id=None,
+                        renewed_by_id=created_by_id,
+                        previous_start=marker_start,
+                        previous_end=marker_start,
+                        new_start=marker_start,
+                        new_end=marker_end,
+                        duration_days=max(1, (marker_end - marker_start).days + 1),
+                        standard_price=renewal_amt,
+                        amount=renewal_amt or Decimal("0.00"),
+                        channel="offline",
+                        notes="Imported contact — campaign intake (no plan assigned)",
+                        is_creation=True,
+                    )
+                )
+                queue_membership_command(member)
+                audit(
+                    action="campaign_import_member_created",
+                    resource_type="member",
+                    resource_id=member.id,
+                    gym_id=gym_id,
+                    actor_id=created_by_id,
+                    metadata={
+                        "campaign_id": campaign.id,
+                        "membership_start": marker_start.isoformat(),
+                        "membership_end": marker_end.isoformat(),
+                        "plan_id": None,
+                    },
+                )
             elif campaign_type == "recovery" and exp_date:
-                member.membership_end = exp_date
-                member.status = "expired"
+                _live_end = (
+                    member.membership_end is not None
+                    and member.status == "active"
+                    and member.membership_end >= today
+                    and exp_date < member.membership_end
+                )
+                if _live_end:
+                    # Never shorten a live paid period from a CSV.
+                    audit(
+                        action="campaign_import_member_date_skipped",
+                        resource_type="member",
+                        resource_id=member.id,
+                        gym_id=gym_id,
+                        actor_id=created_by_id,
+                        metadata={
+                            "campaign_id": campaign.id,
+                            "reason": "import expiry would shorten a live active period",
+                            "current_end": member.membership_end.isoformat(),
+                            "imported_end": exp_date.isoformat(),
+                        },
+                    )
+                elif member.membership_end != exp_date:
+                    _old_end = member.membership_end
+                    member.membership_end = exp_date
+                    member.status = "expired" if exp_date < today else "active"
+                    rechain_scheduled_renewals(
+                        member,
+                        old_end=_old_end,
+                        today=today,
+                        actor_id=created_by_id,
+                    )
+                    queue_membership_command(member)
+                    audit(
+                        action="campaign_import_member_dates_updated",
+                        resource_type="member",
+                        resource_id=member.id,
+                        gym_id=gym_id,
+                        actor_id=created_by_id,
+                        metadata={
+                            "campaign_id": campaign.id,
+                            "old_end": _old_end.isoformat() if _old_end else None,
+                            "new_end": exp_date.isoformat(),
+                            "status": member.status,
+                        },
+                    )
 
             # Check cooldown exclusion
             if exclude_recent:
@@ -630,9 +756,9 @@ def create_campaign(
                     continue
 
             renewal_amt = None
-            if contact.get("renewal_amount"):
+            if valid_row.get("renewal_amount"):
                 try:
-                    renewal_amt = Decimal(str(contact.get("renewal_amount")).replace(",", "").replace("₹", ""))
+                    renewal_amt = Decimal(str(valid_row.get("renewal_amount")).replace(",", "").replace("₹", ""))
                 except Exception:
                     pass
 

@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_, select
 
 from app.extensions import db
-from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
+from app.models import AuditLog, Member, MembershipPlan, PaymentVerification, RenewalHistory
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
@@ -633,19 +633,32 @@ def apply_due_scheduled_renewals(gym) -> int:
                         member.id,
                         exc,
                     )
-                    audit(
-                        action="scheduled_renewal_expired_unactivated",
-                        resource_type="renewal_history",
-                        resource_id=renewal.id,
-                        gym_id=gym.id,
-                        actor_id=None,
-                        metadata={
-                            "member_id": member.id,
-                            "new_start": renewal.new_start.isoformat(),
-                            "new_end": renewal.new_end.isoformat(),
-                            "reason": str(exc),
-                        },
+                    # V8-L9: a dead row re-audited on EVERY scheduler
+                    # run — the audit log filled with one identical
+                    # row per run per dead renewal. Audit once: a
+                    # prior audit for this row means the owner was
+                    # already told, and the row is unchanged since.
+                    _already_audited = (
+                        AuditLog.query.filter_by(
+                            action="scheduled_renewal_expired_unactivated",
+                            resource_id=str(renewal.id),
+                        ).first()
+                        is not None
                     )
+                    if not _already_audited:
+                        audit(
+                            action="scheduled_renewal_expired_unactivated",
+                            resource_type="renewal_history",
+                            resource_id=renewal.id,
+                            gym_id=gym.id,
+                            actor_id=None,
+                            metadata={
+                                "member_id": member.id,
+                                "new_start": renewal.new_start.isoformat(),
+                                "new_end": renewal.new_end.isoformat(),
+                                "reason": str(exc),
+                            },
+                        )
                     continue
                 if outcome in ("activated", "already_applied"):
                     activated += 1

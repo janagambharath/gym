@@ -21,6 +21,7 @@ from app.services.audit_service import audit
 from app.services.idempotency_service import (
     begin_idempotency,
     find_replay,
+    legacy_replay,
     record_idempotency,
     replay_after_conflict,
     request_fingerprint,
@@ -308,13 +309,14 @@ def register_payments_routes(bp):
                 request_hash=request_hash,
             )
             if existing:
-                if not matches_request:
-                    return error_response(
-                        "IDEMPOTENCY_KEY_REUSED",
-                        "This idempotency key was already used for a different payment request.",
-                        409,
-                    )
-                return jsonify(existing.response_body), existing.status_code
+                # V8-L5: replay through the decrypting helper, not the
+                # raw stored body — a credential stored as enc1:
+                # ciphertext must decrypt on replay (or the row is
+                # dropped and the request executes fresh), never be
+                # returned as ciphertext.
+                replay = legacy_replay(existing, matches_request)
+                if replay is not None:
+                    return replay
 
         member_id = data.get("member_id")
         if not member_id:
@@ -351,6 +353,12 @@ def register_payments_routes(bp):
             return error_response("VALIDATION_ERROR", "Invalid amount.", 400)
         if amount < 0:
             return error_response("VALIDATION_ERROR", "Amount cannot be negative.", 400)
+        # V8-L14: no upper bound (fat-finger risk) — a typo'd ₹1,50,000
+        # payment verified and inflated payment_backed_amount until
+        # noticed and refunded. Same ₹99,999,999.99 cap direct renew
+        # uses (renewals.py), so the two creation paths agree.
+        if not amount.is_finite() or amount > Decimal("99999999.99"):
+            return error_response("VALIDATION_ERROR", "Amount must be at most 99999999.99.", 400)
 
         # Discount calculation
         raw_discount = data.get("discount")
@@ -411,6 +419,18 @@ def register_payments_routes(bp):
                 )
 
         auto_verify = bool(data.get("auto_verify", False))
+        # V8-M2: a ₹0 auto-verified payment is a free membership with
+        # no owner gate and no payment evidence. Staff cash collection
+        # stays possible (auto_verify for a real amount), but an
+        # auto-verify with no money behind it is rejected outright.
+        # The verify endpoint below applies the same rule to the
+        # two-step path (create ₹0 pending, then verify it).
+        if auto_verify and amount <= 0:
+            return error_response(
+                "VALIDATION_ERROR",
+                "Auto-verified payments must have an amount greater than zero.",
+                400,
+            )
 
         try:
             renewal_days = int(data.get("renewal_days", plan.duration_days if plan else 30))
@@ -459,6 +479,17 @@ def register_payments_routes(bp):
         # forever and the owner could never accept the claim.
         # Mirrors verify_payment's rule exactly.
         _today = today_for_gym(g.current_user.gym.timezone or "Asia/Kolkata")
+        # V8-L15: paid_on was accepted unvalidated — a future or
+        # far-past date was stored, and for legacy unflagged first
+        # rows the creation heuristic reads paid_on vs the row's own
+        # new_start, so a typo'd paid_on flipped signup↔recovery
+        # classification. Sane window: never in the future, never
+        # more than 5 years back. Default (no paid_on supplied) is
+        # still today, set at parse time above.
+        if paid_on > _today:
+            return error_response("VALIDATION_ERROR", "paid_on cannot be in the future.", 400)
+        if paid_on < _today - timedelta(days=5 * 365):
+            return error_response("VALIDATION_ERROR", "paid_on is implausibly old.", 400)
         _earliest_start = (
             member.membership_end + timedelta(days=1)
             if member.membership_end and member.membership_end >= _today
@@ -470,6 +501,24 @@ def register_payments_routes(bp):
             return error_response(
                 "VALIDATION_ERROR",
                 "This renewal would already be expired. Choose a later start date.",
+                400,
+            )
+        # V8-L6: apply the V7-M4 floor at create time too — the start
+        # may not overlap the previous paid period (previous_end + 1),
+        # even for an expired member. Until now the floor was only
+        # enforced at verify_payment, so a pending payment could sit
+        # overlapping and then fail verification with a 400. This runs
+        # after the already-expired check above so that check keeps
+        # its pinned message for a start that is both overlapping and
+        # already over; either way the payment is rejected here.
+        if (
+            renewal_start_date is not None
+            and member.membership_end
+            and renewal_start_date < member.membership_end + timedelta(days=1)
+        ):
+            return error_response(
+                "VALIDATION_ERROR",
+                f"Renewal start date must be {(member.membership_end + timedelta(days=1)).isoformat()} or later so it does not overlap the previous paid period.",
                 400,
             )
 
@@ -565,13 +614,14 @@ def register_payments_routes(bp):
                     request_hash=request_hash,
                 )
                 if existing:
-                    if not matches_request:
-                        return error_response(
-                            "IDEMPOTENCY_KEY_REUSED",
-                            "This idempotency key was already used for a different payment request.",
-                            409,
-                        )
-                    return jsonify(existing.response_body), existing.status_code
+                    # V8-L5: replay through the decrypting helper, not the
+                    # raw stored body — a credential stored as enc1:
+                    # ciphertext must decrypt on replay (or the row is
+                    # dropped and the request executes fresh), never be
+                    # returned as ciphertext.
+                    replay = legacy_replay(existing, matches_request)
+                    if replay is not None:
+                        return replay
             # V4-L1: the commit-time UTR race (two concurrent creates
             # with the same reference, second one hitting the partial
             # unique index) is a DUPLICATE_REFERENCE 409, not a 500.
@@ -625,6 +675,16 @@ def register_payments_routes(bp):
             return error_response("CONFLICT", "Payment is already verified.", 409)
         if payment.status not in ("pending", "processing"):
             return error_response("CONFLICT", f"Payment is {payment.status}.", 409)
+        # V8-M2: the two-step version of the ₹0 free-membership hole —
+        # create a ₹0 payment pending, then verify it. Staff may not
+        # verify a zero-amount payment; the owner still can (a genuine
+        # complimentary renewal is an owner decision, audited).
+        if payment.amount is not None and payment.amount <= 0 and g.current_user.role != "gym_owner":
+            return error_response(
+                "FORBIDDEN",
+                "Only the gym owner can verify a zero-amount payment.",
+                403,
+            )
 
         renewal_days = payment.renewal_days or (payment.member.plan.duration_days if payment.member.plan else 30)
         try:

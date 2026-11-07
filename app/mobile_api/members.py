@@ -28,6 +28,7 @@ from app.services.document_scan_service import DocumentScanService
 from app.services.idempotency_service import (
     begin_idempotency,
     find_replay,
+    legacy_replay,
     record_idempotency,
     replay_after_conflict,
     request_fingerprint,
@@ -72,6 +73,26 @@ def register_members_routes(bp):
         if not images:
             return error_response("VALIDATION_ERROR", "Please provide at least one document image to scan.", 400)
 
+        # V8-L29 — a retry after a successful scan must replay the
+        # stored candidates instead of paying for a second OpenRouter
+        # vision call. The fingerprint is the full request payload
+        # (the base64 images are the identity — re-encoding the same
+        # page differently is a new scan, which is safe, just not
+        # free). Only the success response is recorded, so a failed
+        # scan never stores a key. NOTE: /members/import already
+        # honours keys (scope "import_members"); /members/import/preview
+        # is read-only validation with no mutation or external call,
+        # so it takes no key.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="scan_member_records",
+            headers=request.headers,
+            payload=data,
+        )
+        if replay is not None:
+            return replay
+
         result = DocumentScanService.scan_member_documents(
             gym_id=g.gym_id,
             gym_timezone=g.current_user.gym.timezone,
@@ -85,7 +106,32 @@ def register_members_routes(bp):
                 400,
             )
 
-        return jsonify({"success": True, "data": result["data"]})
+        response_body = {"success": True, "data": result["data"]}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="scan_member_records",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="scan_member_records",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+
+        return jsonify(response_body)
 
     @bp.route("/members/batch-create", methods=["POST"])
     @token_required
@@ -519,13 +565,14 @@ def register_members_routes(bp):
                 request_hash=request_hash,
             )
             if existing:
-                if not matches_request:
-                    return error_response(
-                        "IDEMPOTENCY_KEY_REUSED",
-                        "This idempotency key was already used for a different member request.",
-                        409,
-                    )
-                return jsonify(existing.response_body), existing.status_code
+                # V8-L5: replay through the decrypting helper, not the
+                # raw stored body — a credential stored as enc1:
+                # ciphertext must decrypt on replay (or the row is
+                # dropped and the request executes fresh), never be
+                # returned as ciphertext.
+                replay = legacy_replay(existing, matches_request)
+                if replay is not None:
+                    return replay
 
         full_name = (data.get("full_name") or data.get("name") or "").strip()
         phone = normalize_phone_e164((data.get("phone") or "").strip())
@@ -802,13 +849,14 @@ def register_members_routes(bp):
                         request_hash=request_hash,
                     )
                     if existing:
-                        if not matches_request:
-                            return error_response(
-                                "IDEMPOTENCY_KEY_REUSED",
-                                "This idempotency key was already used for a different member request.",
-                                409,
-                            )
-                        return jsonify(existing.response_body), existing.status_code
+                        # V8-L5: replay through the decrypting helper, not the
+                        # raw stored body — a credential stored as enc1:
+                        # ciphertext must decrypt on replay (or the row is
+                        # dropped and the request executes fresh), never be
+                        # returned as ciphertext.
+                        replay = legacy_replay(existing, matches_request)
+                        if replay is not None:
+                            return replay
                 raise
 
             # Reload with plan relationship.
@@ -1026,13 +1074,14 @@ def register_members_routes(bp):
                 request_hash=request_hash,
             )
             if existing:
-                if not matches_request:
-                    return error_response(
-                        "IDEMPOTENCY_KEY_REUSED",
-                        "This idempotency key was already used for a different deactivate request.",
-                        409,
-                    )
-                return jsonify(existing.response_body), existing.status_code
+                # V8-L5: replay through the decrypting helper, not the
+                # raw stored body — a credential stored as enc1:
+                # ciphertext must decrypt on replay (or the row is
+                # dropped and the request executes fresh), never be
+                # returned as ciphertext.
+                replay = legacy_replay(existing, matches_request)
+                if replay is not None:
+                    return replay
 
         member = (
             Member.query.filter_by(id=member_id, gym_id=g.gym_id)
@@ -1107,13 +1156,14 @@ def register_members_routes(bp):
                     request_hash=request_hash,
                 )
                 if existing:
-                    if not matches_request:
-                        return error_response(
-                            "IDEMPOTENCY_KEY_REUSED",
-                            "This idempotency key was already used for a different deactivate request.",
-                            409,
-                        )
-                    return jsonify(existing.response_body), existing.status_code
+                    # V8-L5: replay through the decrypting helper, not the
+                    # raw stored body — a credential stored as enc1:
+                    # ciphertext must decrypt on replay (or the row is
+                    # dropped and the request executes fresh), never be
+                    # returned as ciphertext.
+                    replay = legacy_replay(existing, matches_request)
+                    if replay is not None:
+                        return replay
             raise
         return jsonify(response_body)
 
@@ -1292,21 +1342,77 @@ def register_members_routes(bp):
             except ValueError:
                 _paused_on, _planned_days = None, 0
             if _paused_on is not None and _planned_days > 0:
-                from datetime import datetime as _dt, timezone as _tz
+                # V8-L7(a): the renewal-since-pause boundary is
+                # gym-local midnight on the pause date, not UTC
+                # midnight — a renewal 00:00–05:30 IST on the pause
+                # date used to slip past the guard and get clawed
+                # back. V8-L7(b): a manual date edit after the pause
+                # that extends the end is guarded too, not just
+                # RenewalHistory rows — the freeze audit records the
+                # end as frozen, so any end beyond it means the paid
+                # period moved after the pause (renewal or hand edit).
+                from app.services.timezone_service import utc_start_of_gym_day
 
+                _pause_boundary = utc_start_of_gym_day(tz, local_date=_paused_on)
                 _renewed_since_pause = (
                     RenewalHistory.query.filter(
                         RenewalHistory.member_id == member.id,
-                        RenewalHistory.created_at
-                        >= _dt(
-                            _paused_on.year,
-                            _paused_on.month,
-                            _paused_on.day,
-                            tzinfo=_tz.utc,
-                        ),
+                        RenewalHistory.created_at >= _pause_boundary,
                     ).first()
                     is not None
                 )
+                if not _renewed_since_pause:
+                    from app.models import AuditLog
+
+                    _freeze_audit = (
+                        AuditLog.query.filter(
+                            AuditLog.action == "freeze_member",
+                            AuditLog.resource_type == "member",
+                            AuditLog.resource_id == str(member.id),
+                            AuditLog.created_at >= _pause_boundary,
+                        )
+                        .order_by(AuditLog.created_at.desc())
+                        .first()
+                    )
+                    _frozen_end = None
+                    if _freeze_audit is not None:
+                        _raw_frozen_end = (_freeze_audit.metadata_json or {}).get(
+                            "new_membership_end"
+                        )
+                        try:
+                            _frozen_end = (
+                                date.fromisoformat(_raw_frozen_end)
+                                if _raw_frozen_end
+                                else None
+                            )
+                        except ValueError:
+                            _frozen_end = None
+                    if (
+                        _frozen_end is not None
+                        and member.membership_end is not None
+                        and member.membership_end > _frozen_end
+                    ):
+                        _renewed_since_pause = True
+                    else:
+                        # Legacy freeze with no audit row: fall back
+                        # to update_member audits since the pause —
+                        # a hand edit that raised the end also blocks
+                        # the clawback.
+                        for _edit in AuditLog.query.filter(
+                            AuditLog.action == "update_member",
+                            AuditLog.resource_type == "member",
+                            AuditLog.resource_id == str(member.id),
+                            AuditLog.created_at >= _pause_boundary,
+                        ).all():
+                            _meta = _edit.metadata_json or {}
+                            try:
+                                _old = date.fromisoformat(_meta["old_end"]) if _meta.get("old_end") else None
+                                _new = date.fromisoformat(_meta["new_end"]) if _meta.get("new_end") else None
+                            except (ValueError, TypeError):
+                                continue
+                            if _old is not None and _new is not None and _new > _old:
+                                _renewed_since_pause = True
+                                break
                 _actually_paused = max(0, (today - _paused_on).days)
                 _unused_days = _planned_days - _actually_paused
                 if _unused_days > 0 and not _renewed_since_pause:

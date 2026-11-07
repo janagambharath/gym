@@ -86,12 +86,13 @@ from app.services.bridge_service import (
     queue_membership_command,
 )
 
+from app.mobile_api.token_service import revoke_all_user_tokens
 from app.services.payment_service import delete_payment, verify_payment
 
 from app.services.timezone_service import today_for_gym
 from app.services.whatsapp_service import WhatsAppService
 from app.utils.decorators import roles_required
-from app.utils.helpers import slugify
+from app.utils.helpers import password_policy_error, slugify
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:
@@ -121,9 +122,56 @@ COUNTRY_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 
-def _generate_temp_password(length: int = 10) -> str:
+def _generate_temp_password(length: int = 12) -> str:
+    """Generate a temp password that satisfies the shared policy (V8-M3).
+
+    The old generator picked 10 random chars from a mixed alphabet —
+    usually no symbol, sometimes no digit — so a generated temp
+    password failed the 12-char + complexity rule it was supposed to
+    set. The new one guarantees one lower, one upper, one digit and
+    one symbol, then fills to ``length`` (floored at 12).
+    """
+    length = max(12, length)
     alphabet = string.ascii_letters + string.digits + "!@#$%"
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    chars = [
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%"),
+    ]
+    chars += [secrets.choice(alphabet) for _ in range(length - len(chars))]
+    random.shuffle(chars)
+    return "".join(chars)
+
+
+# V8-L2: one-time secrets in the Flask session. The session cookie is
+# signed, not encrypted — anything stored in it is base64-readable to
+# anyone who sees the cookie. Temp passwords, bridge keys and pairing
+# codes used to sit in the session indefinitely. They are now stored
+# Fernet-encrypted (same primitive as the idempotency replay table,
+# key derived from SECRET_KEY) and popped on first read, so a
+# plaintext credential never travels in the cookie and a stale one
+# never survives past its single display. A value stored before this
+# fix (plaintext, no "enc1:" prefix) fails closed to None.
+_ONE_TIME_SECRET_PREFIX = "enc1:"
+
+
+def _store_one_time_secret(key: str, value: str) -> None:
+    from app.utils.token_encryption import encrypt_token
+
+    session[key] = _ONE_TIME_SECRET_PREFIX + encrypt_token(value)
+
+
+def _pop_one_time_secret(key: str) -> str | None:
+    from app.utils.token_encryption import decrypt_token
+
+    raw = session.pop(key, None)
+    if not isinstance(raw, str) or not raw.startswith(_ONE_TIME_SECRET_PREFIX):
+        return None
+    try:
+        return decrypt_token(raw[len(_ONE_TIME_SECRET_PREFIX):])
+    except Exception:
+        return None
 
 
 def _generate_pairing_code() -> str:
@@ -314,7 +362,11 @@ def dashboard():
     total_members = Member.query.filter(Member.deleted_at.is_(None)).count()
     active_members = Member.query.filter(Member.deleted_at.is_(None), Member.status == "active").count()
     
-    today = date.today()
+    # V8-L8: platform view has no single gym, so this uses the
+    # India-local day (every gym on the platform is India-based)
+    # instead of the server clock — same 00:00–05:30 IST skew as the
+    # gym-local windows.
+    today = today_for_gym("Asia/Kolkata")
     expiring_soon = Member.query.filter(
         Member.deleted_at.is_(None),
         Member.status == "active",
@@ -630,6 +682,14 @@ def create_gym():
             flash("All required fields must be filled.", "danger")
             return render_template("admin/create_gym.html")
 
+        # V8-M3 (same class as the reset/onboarding paths): the owner
+        # password is a live login credential — enforce the shared
+        # 12-char + complexity policy here too.
+        policy_error = password_policy_error(password)
+        if policy_error:
+            flash(policy_error, "danger")
+            return render_template("admin/create_gym.html")
+
         if User.query.filter_by(email=email).first():
             flash("A user with this email already exists.", "danger")
             return render_template("admin/create_gym.html")
@@ -882,6 +942,14 @@ def onboard_step(gym_id: int, step_num: int):
                     return redirect(url_for("admin.onboard_step", gym_id=gym.id, step_num=2))
 
                 generated_pass = temp_pass or _generate_temp_password()
+                # V8-M3: an admin-supplied temp password is a live login
+                # credential — it must meet the shared 12-char +
+                # complexity policy (was: no check at all). The
+                # generated default now satisfies it by construction.
+                policy_error = password_policy_error(generated_pass)
+                if policy_error:
+                    flash(policy_error, "danger")
+                    return redirect(url_for("admin.onboard_step", gym_id=gym.id, step_num=2))
                 owner = User(
                     gym_id=gym.id,
                     email=owner_email,
@@ -898,15 +966,22 @@ def onboard_step(gym_id: int, step_num: int):
                 db.session.add(owner)
                 dep.add_timeline_event(f"Owner account created: {owner.email}", actor=current_user.full_name)
                 dep.update_checklist_item("owner_created", "passed", "Owner Account Provisioned", True)
-                session[f"temp_pass_{gym.id}"] = generated_pass
+                # V8-L2: encrypted + popped on first read, never
+                # plaintext in the session cookie indefinitely.
+                _store_one_time_secret(f"temp_pass_{gym.id}", generated_pass)
             else:
                 owner.full_name = owner_name
                 owner.email = owner_email
                 if temp_pass:
+                    # V8-M3: same policy check on the re-provision path.
+                    policy_error = password_policy_error(temp_pass)
+                    if policy_error:
+                        flash(policy_error, "danger")
+                        return redirect(url_for("admin.onboard_step", gym_id=gym.id, step_num=2))
                     owner.set_password(temp_pass)
                     owner.must_change_password = True
                     owner.is_temporary_password = True
-                    session[f"temp_pass_{gym.id}"] = temp_pass
+                    _store_one_time_secret(f"temp_pass_{gym.id}", temp_pass)
 
             dep.current_step = max(dep.current_step, 3)
             audit(action="onboard_provision_owner", resource_type="user", resource_id=owner.id, gym_id=gym.id)
@@ -1078,7 +1153,8 @@ def onboard_step(gym_id: int, step_num: int):
                         device_serial=device_serial,
                     )
                     db.session.add(bridge)
-                    session[f"bridge_key_{gym.id}"] = raw_key
+                    # V8-L2: encrypted + popped on first read.
+                    _store_one_time_secret(f"bridge_key_{gym.id}", raw_key)
                 else:
                     bridge.device_serial = device_serial
                 dep.update_checklist_item("bridge_connected", "passed", "Biometric Bridge Connected", False, f"Bound serial: {device_serial}")
@@ -1106,19 +1182,40 @@ def onboard_step(gym_id: int, step_num: int):
     owner = User.query.filter_by(gym_id=gym.id, role="gym_owner").first() if gym else None
     bot_cfg = GymBotConfig.query.filter_by(gym_id=gym.id).first() if gym else None
     bridge = BridgeInstallation.query.filter_by(gym_id=gym.id).first() if gym else None
-    temp_pass = session.get(f"temp_pass_{gym.id}") if gym else None
-    bridge_raw_key = session.get(f"bridge_key_{gym.id}") if gym else None
+    # V8-L2: one-time secrets are popped on first read — after this
+    # GET renders, the cookie no longer carries them at all. Each is
+    # popped only on the step that displays it: the POST that
+    # provisions the owner redirects to step 3, so popping temp_pass
+    # on every GET would consume it before the admin ever sees step 2.
+    temp_pass = (
+        _pop_one_time_secret(f"temp_pass_{gym.id}")
+        if gym and step_num == 2
+        else None
+    )
+    bridge_raw_key = (
+        _pop_one_time_secret(f"bridge_key_{gym.id}")
+        if gym and step_num == 7
+        else None
+    )
 
     # Ensure pairing code exists for step 7
-    if dep and (not dep.pairing_code or not dep.pairing_code_expires_at or _as_utc(dep.pairing_code_expires_at) < utcnow()):
-        # Stored salted-hashed; the plaintext is rendered once from the session below.
+    bridge_pairing_code = None
+    if step_num == 7 and dep and (not dep.pairing_code or not dep.pairing_code_expires_at or _as_utc(dep.pairing_code_expires_at) < utcnow()):
+        # Stored salted-hashed; the plaintext is rendered once from the local below.
         raw_code = _generate_pairing_code()
         dep.pairing_code_salt, dep.pairing_code = (
             _salted_pairing_storage(raw_code)
         )
         dep.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
-        session[f"bridge_pairing_{gym.id}"] = raw_code
+        # V8-L2: generated on this GET, so no session storage is needed
+        # at all — it is rendered from the local and never enters the
+        # cookie. (The POST generate-pairing flow still stores it
+        # one-time, because it redirects first.)
+        bridge_pairing_code = raw_code
         db.session.commit()
+    elif dep and step_num == 7:
+        # Popped only on the step that displays it (see temp_pass above).
+        bridge_pairing_code = _pop_one_time_secret(f"bridge_pairing_{gym.id}")
 
     # Auto-reconcile checklist against actual database state
     if dep and gym:
@@ -1152,6 +1249,7 @@ def onboard_step(gym_id: int, step_num: int):
         bot_cfg=bot_cfg,
         bridge=bridge,
         temp_pass=temp_pass,
+        bridge_pairing_code=bridge_pairing_code,
         bridge_raw_key=bridge_raw_key,
         checklist_stats=checklist_stats,
         ready_for_live=ready_for_live,
@@ -1536,6 +1634,35 @@ def gym_detail(gym_id: int):
     # 11. Bridge version and update status
     bridge_status_info = check_gym_bridge_status(gym)
 
+    # V8-L2: one-time secrets are popped on first read — after this
+    # GET renders, the cookie no longer carries them at all. Each is
+    # popped only on the tab that displays it, so generating a code
+    # and landing on another tab first does not consume it unseen.
+    bridge_pairing_code = (
+        _pop_one_time_secret(f"bridge_pairing_{gym.id}")
+        if active_tab == "biometric"
+        else None
+    )
+    rotated_bridge_key = (
+        _pop_one_time_secret(f"rotated_bridge_key_{gym.id}")
+        if active_tab == "biometric"
+        else None
+    )
+    reset_temp_pass = None
+    reset_temp_email = None
+    _reset_raw = (
+        _pop_one_time_secret(f"reset_pass_{gym.id}")
+        if active_tab == "staff"
+        else None
+    )
+    if _reset_raw:
+        try:
+            _reset_data = json.loads(_reset_raw)
+            reset_temp_pass = _reset_data.get("password")
+            reset_temp_email = _reset_data.get("email")
+        except (ValueError, AttributeError):
+            reset_temp_pass = None
+
     return render_template(
         "admin/gym_detail.html",
         gym=gym,
@@ -1555,6 +1682,10 @@ def gym_detail(gym_id: int):
         bot_knowledge=bot_knowledge,
         bridge=bridge,
         bridge_status_info=bridge_status_info,
+        bridge_pairing_code=bridge_pairing_code,
+        rotated_bridge_key=rotated_bridge_key,
+        reset_temp_pass=reset_temp_pass,
+        reset_temp_email=reset_temp_email,
         commands=commands,
         attendance_events=attendance_events,
         users=users,
@@ -1589,11 +1720,17 @@ def resend_user_invitation(gym_id: int, user_id: int):
 def reset_user_password(gym_id: int, user_id: int):
     user = User.query.filter_by(id=user_id, gym_id=gym_id).first_or_404()
     new_pass = (request.form.get("new_password") or "").strip()
+    generated = False
     if not new_pass:
         new_pass = _generate_temp_password(12)
+        generated = True
 
-    if len(new_pass) < 6:
-        flash("Password must be at least 6 characters long.", "danger")
+    # V8-M3: the shared 12-char + complexity policy — a 6-char,
+    # no-complexity password was previously accepted here. The
+    # generated default satisfies it by construction.
+    policy_error = password_policy_error(new_pass)
+    if policy_error:
+        flash(policy_error, "danger")
         return redirect(url_for("admin.gym_detail", gym_id=gym_id, tab="staff"))
 
     user.set_password(new_pass)
@@ -1601,9 +1738,26 @@ def reset_user_password(gym_id: int, user_id: int):
     user.is_temporary_password = True
     user.failed_login_count = 0
     user.locked_until = None
+    # V8-L4 (via set_password + revoke): outstanding mobile sessions
+    # on the old password are killed, refresh and access alike.
+    revoke_all_user_tokens(user.id)
     audit(action="admin_reset_password", resource_type="user", resource_id=user.id, gym_id=gym_id)
     db.session.commit()
-    flash(f"Password reset for {user.email}! Temporary Password: {new_pass}", "success")
+    if generated:
+        # V8-M3: never flash the password in clear (a flash lives in
+        # the session cookie). A generated password is shown once on
+        # the staff tab via the V8-L2 one-time store instead; a
+        # super-admin-supplied password needs no display — they typed it.
+        _store_one_time_secret(
+            f"reset_pass_{gym_id}",
+            json.dumps({"email": user.email, "password": new_pass}),
+        )
+        flash(
+            f"Password reset for {user.email}. The temporary password is shown once below — copy it now.",
+            "success",
+        )
+    else:
+        flash(f"Password reset for {user.email}.", "success")
     return redirect(url_for("admin.gym_detail", gym_id=gym_id, tab="staff"))
 
 
@@ -1615,12 +1769,16 @@ def generate_bridge_pairing(gym_id: int):
     dep = _get_or_create_deployment(gym)
     raw_code = _generate_pairing_code()
     # Store only the salted hash; the plaintext code is shown once below and never logged.
-    session[f"bridge_pairing_{gym.id}"] = raw_code
+    # V8-L2: encrypted + popped on first read of the gym detail page.
+    _store_one_time_secret(f"bridge_pairing_{gym.id}", raw_code)
     dep.pairing_code_salt, dep.pairing_code = _salted_pairing_storage(raw_code)
     dep.pairing_code_expires_at = utcnow() + timedelta(minutes=10)
     dep.add_timeline_event("Generated new biometric pairing code", actor=current_user.full_name)
     db.session.commit()
-    flash(f"New Biometric Pairing Code generated: {raw_code} (Valid for 10 minutes)", "success")
+    # V8-L2: never flash the code in clear (a flash lives in the
+    # session cookie) — it is shown once on the biometric tab via the
+    # one-time store above.
+    flash("New Biometric Pairing Code generated (valid for 10 minutes). It is shown once below.", "success")
     return redirect(url_for("admin.gym_detail", gym_id=gym.id, tab="biometric"))
 
 
@@ -1633,7 +1791,11 @@ def rotate_bridge_key(gym_id: int):
     raw_key = bridge.rotate_key()
     audit(action="rotate_bridge_key", resource_type="bridge_installation", resource_id=bridge.id, gym_id=gym.id)
     db.session.commit()
-    flash(f"Biometric Bridge API Key rotated! Copy now (shown once): {raw_key}", "warning")
+    # V8-L2: the rotated key used to be flashed in clear — a flash
+    # lives in the session cookie. Show it once on the biometric tab
+    # via the one-time store instead.
+    _store_one_time_secret(f"rotated_bridge_key_{gym.id}", raw_key)
+    flash("Biometric Bridge API Key rotated! Copy it now from below — it will not be shown again.", "warning")
     return redirect(url_for("admin.gym_detail", gym_id=gym.id, tab="biometric"))
 
 
@@ -1869,6 +2031,15 @@ def undo_member_import_batch(gym_id: int, batch_id: str):
         m.deleted_at = utcnow()
         m.status = "deleted"
         queue_membership_command(m)
+        # V8-M6: this was the only soft-delete path that never freed
+        # the terminal ID — the mapping to the deleted member persisted
+        # indefinitely. Delete mappings AFTER the block is queued,
+        # the same order as web delete / mobile deactivate / owner
+        # import-undo / member self-delete (the delete-time block
+        # itself is stamped with the member intent at queue time).
+        from app.services.rrr_service import delete_identity_mappings
+
+        delete_identity_mappings(gym.id, m.id)
         audit(action="soft_delete_member", resource_type="member",
               resource_id=m.id, gym_id=gym.id,
               metadata={"previous_status": prev_status})

@@ -22,6 +22,7 @@ from app.models import (
 from app.models.bot import BotConversation, BotLead, GymBotConfig
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
+from app.services.timezone_service import today_for_gym
 from app.utils.decorators import active_gym_required, roles_required
 
 
@@ -131,7 +132,13 @@ def issues():
 @roles_required("gym_owner")
 def reports():
     gym_id = current_user.gym_id
-    today = date.today()
+    # V8-L8: month boundary in gym-local time, not server-local —
+    # a payment on the 1st IST must count in the new month.
+    today = today_for_gym(
+        current_user.gym.timezone
+        if current_user.gym and current_user.gym.timezone
+        else "Asia/Kolkata"
+    )
 
     # 1. Total Recovered Verified Revenue This Month
     first_of_month = today.replace(day=1)

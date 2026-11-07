@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from app.extensions import db
 from app.forms.member import E164_RE
 from app.models import Member, MembershipPlan
+from app.models.member import SYNTHETIC_TEST_MEMBER_PHONE
 from app.services.analytics_service import invalidate_dashboard_cache
 from app.services.audit_service import audit
 from app.services.bridge_service import queue_membership_command
@@ -109,6 +110,13 @@ def import_members():
         cleaned_phone = phone.replace(" ", "")
         if not E164_RE.match(cleaned_phone):
             errors.append(f"phone '{phone}' must be in E.164 format, e.g. +919876543210")
+        elif cleaned_phone == SYNTHETIC_TEST_MEMBER_PHONE:
+            # V8-L1 (V7-L3 gap): the reserved test phone must never be
+            # importable — a CSV row carrying it (with the synthetic
+            # name) would be mutated by the admin test-payment flow,
+            # which looks the member up by phone AND name. Phone-only,
+            # like the other blocklist sites.
+            errors.append("This phone number is reserved for internal testing")
         elif cleaned_phone in existing_phones:
             errors.append(f"phone '{phone}' is already registered in this gym (duplicate)")
             duplicate_count += 1

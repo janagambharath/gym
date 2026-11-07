@@ -206,6 +206,54 @@ def request_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def file_upload_payload(
+    endpoint: str, *, sha256_hex: str, size_bytes: int
+) -> dict[str, Any]:
+    """Fingerprint payload for a multipart file upload (V8-L29).
+
+    ``request_fingerprint`` takes a JSON dict, so a file upload cannot be
+    fingerprinted on the raw body. The fingerprint is (endpoint + SHA-256
+    of the file bytes + byte size):
+
+    - the content hash is the identity: the same bytes are the same
+      upload, whatever the client called the file;
+    - the filename is deliberately EXCLUDED — a retry that re-sends the
+      same QR under a different filename is the same replace operation
+      and must replay, not re-store (``save_gym_qr`` mints a fresh uuid
+      filename on every store, so re-storing would orphan the first
+      file and return a different signed URL for the same image);
+    - size is redundant with the hash but cheap, and makes a hash
+      collision structurally impossible to exploit silently.
+
+    Callers must read the bytes, hash them, then ``seek(0)`` the stream
+    before the storage call so the upload can be read again.
+    """
+    return {
+        "endpoint": endpoint,
+        "sha256": sha256_hex,
+        "size_bytes": size_bytes,
+    }
+
+
+def _identity_filters(
+    *, user_id: int | None, member_id: int | None
+) -> dict[str, Any]:
+    """Resolve exactly one identity for an idempotency row (V8-L29/L32).
+
+    Owner/staff requests scope by ``user_id``; member-API requests scope
+    by ``member_id`` (members are not ``User`` rows — see
+    ``MobileIdempotencyKey``). Passing neither, or both, is a caller bug
+    and fails loudly instead of writing a row no lookup could ever find.
+    """
+    if (user_id is None) == (member_id is None):
+        raise ValueError(
+            "Idempotency scope needs exactly one of user_id / member_id."
+        )
+    if member_id is not None:
+        return {"user_id": None, "member_id": member_id}
+    return {"user_id": user_id, "member_id": None}
+
+
 def valid_key(value: str | None) -> str | None:
     """Normalize a client retry key, rejecting unbounded/unusable values."""
 
@@ -218,19 +266,29 @@ def valid_key(value: str | None) -> str | None:
 
 
 def find_replay(
-    *, gym_id: int, user_id: int, scope: str, key: str, request_hash: str
+    *,
+    gym_id: int,
+    user_id: int | None = None,
+    member_id: int | None = None,
+    scope: str,
+    key: str,
+    request_hash: str,
 ) -> tuple[MobileIdempotencyKey | None, bool]:
     """Return an existing record and whether its payload matches this request.
 
     An expired record is reported as no record at all (V7-L4): the caller
     executes fresh instead of replaying a stale response.
+
+    V8-L29/L32: pass ``member_id`` (and no ``user_id``) for member-API
+    rows; ``user_id`` for owner/staff rows. Exactly one is required.
     """
 
+    identity = _identity_filters(user_id=user_id, member_id=member_id)
     record = MobileIdempotencyKey.query.filter_by(
         gym_id=gym_id,
-        user_id=user_id,
         scope=scope,
         key=key,
+        **identity,
     ).one_or_none()
     if record is None or is_expired(record):
         return None, True
@@ -238,7 +296,13 @@ def find_replay(
 
 
 def begin_idempotency(
-    *, gym_id: int, user_id: int, scope: str, headers, payload: dict[str, Any]
+    *,
+    gym_id: int,
+    user_id: int | None = None,
+    member_id: int | None = None,
+    scope: str,
+    headers,
+    payload: dict[str, Any],
 ) -> tuple[str | None, str, Any]:
     """Read the Idempotency-Key header and check for a prior execution.
 
@@ -260,6 +324,9 @@ def begin_idempotency(
     ``None``). Only success responses are recorded — validation and
     conflict failures never store a key, so a corrected retry works.
 
+    V8-L29/L32: pass ``member_id`` (and no ``user_id``) for member-API
+    rows; ``user_id`` for owner/staff rows. Exactly one is required.
+
     Expired rows are pruned lazily on entry (V7-L4) and an expired or
     undecryptable stored response is never replayed (V7-M3).
     """
@@ -276,6 +343,7 @@ def begin_idempotency(
     existing, matches_request = find_replay(
         gym_id=gym_id,
         user_id=user_id,
+        member_id=member_id,
         scope=scope,
         key=key,
         request_hash=request_hash,
@@ -307,7 +375,8 @@ def begin_idempotency(
 def record_idempotency(
     *,
     gym_id: int,
-    user_id: int,
+    user_id: int | None = None,
+    member_id: int | None = None,
     scope: str,
     key: str | None,
     request_hash: str,
@@ -323,29 +392,77 @@ def record_idempotency(
 
     Credential values in the body are encrypted before storage (V7-M3)
     and the row carries a 24h expiry (V7-L4).
+
+    V8-L29/L32: pass ``member_id`` (and no ``user_id``) for member-API
+    rows; ``user_id`` for owner/staff rows. Exactly one is required.
     """
 
     if not key:
         return
+    identity = _identity_filters(user_id=user_id, member_id=member_id)
     db.session.add(
         MobileIdempotencyKey(
             gym_id=gym_id,
-            user_id=user_id,
             scope=scope,
             key=key,
             request_hash=request_hash,
             status_code=status_code,
             response_body=_encrypt_sensitive_fields(response_body),
             expires_at=utcnow() + IDEMPOTENCY_TTL,
+            **identity,
         )
     )
 
 
+def legacy_replay(existing: MobileIdempotencyKey, matches_request: bool):
+    """Decrypting replay for the pre-``begin_idempotency`` call sites.
+
+    V8-L5: the legacy ``find_replay`` + ``jsonify(existing.response_body)``
+    sites replayed the stored body verbatim, so a credential stored as
+    ``enc1:`` ciphertext would have been returned as ciphertext (and a
+    future sensitive key would leak that way). This routes them through
+    :func:`replay_response_body` like ``begin_idempotency`` does.
+
+    Returns the Flask response the caller must return immediately, or
+    ``None`` when the caller should execute fresh: the stored body held
+    an undecryptable credential, so the row is deleted (fail-closed,
+    never return ciphertext) and the request runs normally.
+    """
+    if not matches_request:
+        return error_response(
+            "IDEMPOTENCY_KEY_REUSED",
+            "This idempotency key was already used for a different request.",
+            409,
+        )
+    body, ok = replay_response_body(existing)
+    if not ok:
+        try:
+            db.session.delete(existing)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            logger.warning(
+                "Idempotency undecryptable-row delete failed (non-fatal)",
+                exc_info=True,
+            )
+        return None
+    return jsonify(body), existing.status_code
+
+
 def replay_after_conflict(
-    *, gym_id: int, user_id: int, scope: str, key: str | None, request_hash: str
+    *,
+    gym_id: int,
+    user_id: int | None = None,
+    member_id: int | None = None,
+    scope: str,
+    key: str | None,
+    request_hash: str,
 ):
     """After a commit IntegrityError, return the winner's replay response
     if this key lost the unique-key race, else ``None`` (caller re-raises).
+
+    V8-L29/L32: pass ``member_id`` (and no ``user_id``) for member-API
+    rows; ``user_id`` for owner/staff rows.
     """
 
     if not key:
@@ -353,6 +470,7 @@ def replay_after_conflict(
     existing, matches_request = find_replay(
         gym_id=gym_id,
         user_id=user_id,
+        member_id=member_id,
         scope=scope,
         key=key,
         request_hash=request_hash,

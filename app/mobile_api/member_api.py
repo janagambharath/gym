@@ -29,6 +29,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, current_app, g, jsonify, request, send_from_directory, url_for
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
@@ -53,6 +54,11 @@ from app.models import (
     User,
 )
 from app.services.audit_service import audit
+from app.services.idempotency_service import (
+    begin_idempotency,
+    record_idempotency,
+    replay_after_conflict,
+)
 from app.services.timezone_service import today_for_gym
 from app.utils.helpers import normalize_public_media_url
 
@@ -176,6 +182,30 @@ def _verify_otp_challenge(phone: str, otp: str, challenge: str) -> tuple[int, in
         return None
 
 
+def _parse_challenge_identity(challenge) -> tuple[int, int] | None:
+    """Parse (member_id, gym_id) out of an OTP challenge WITHOUT verifying it.
+
+    V8-L32 — verify-otp needs its idempotency scope (the member
+    identity) BEFORE the HMAC check, because the replay check must run
+    before the challenge is consumed: a retry after a successful
+    verify must replay the stored tokens instead of failing "code
+    already used". Parsing the ``member_id.gym_id.exp.sig`` envelope
+    is not authentication — the HMAC verification below still gates
+    execution, and a forged challenge simply finds no replay row and
+    then fails the HMAC. Returns None when the challenge is malformed
+    (no idempotency is honoured for that request).
+    """
+    try:
+        if not isinstance(challenge, str):
+            return None
+        parts = challenge.split(".")
+        if len(parts) != 4:
+            return None
+        return int(parts[0]), int(parts[1])
+    except (ValueError, AttributeError):
+        return None
+
+
 # SECURITY (2026-10-13): server-side OTP guess budget. The 10/min/IP limiter
 # alone doesn't stop distributed guessing across many IPs against the
 # stateless HMAC challenge. Each challenge gets MAX_OTP_ATTEMPTS guesses
@@ -224,6 +254,99 @@ def cleanup_expired_otp_attempts() -> int:
     """Delete expired OTP attempt rows. Run periodically alongside other cleanup."""
     now = datetime.now(timezone.utc)
     return OtpAttempt.query.filter(OtpAttempt.expires_at < now).delete()
+
+
+# V8-L3: one leaked OTP must not mint unlimited sessions. The challenge
+# is a stateless HMAC, so consumption is recorded on the existing
+# OtpAttempt row: a successful verify atomically exhausts the guess
+# budget (attempts -> MAX), and any later verify of the same challenge
+# is refused by _otp_attempt_allowed before the HMAC is even checked.
+# The conditional UPDATE is the linearization point — two concurrent
+# verifies of one challenge cannot both consume it.
+def _consume_otp_challenge(challenge: str) -> bool:
+    """Atomically consume an OTP challenge. True when this call consumed it."""
+    from sqlalchemy.exc import IntegrityError
+
+    challenge_hash = hashlib.sha256(challenge.encode()).hexdigest()
+    updated = (
+        OtpAttempt.query.filter_by(challenge_hash=challenge_hash)
+        .filter(OtpAttempt.attempts < MAX_OTP_ATTEMPTS)
+        .update({OtpAttempt.attempts: MAX_OTP_ATTEMPTS})
+    )
+    if updated > 0:
+        return True
+    row = OtpAttempt.query.filter_by(challenge_hash=challenge_hash).first()
+    if row is not None:
+        # Already at MAX — a previous verify consumed this challenge.
+        return False
+    # No attempt row exists (lost a first-attempt race in
+    # _otp_attempt_allowed). The HMAC already verified above, so the
+    # challenge is genuine: record it consumed rather than rejecting
+    # a legitimate login.
+    try:
+        expires_at_ts = int(challenge.split(".")[2])
+    except (IndexError, ValueError):
+        expires_at_ts = int(time.time()) + 600
+    try:
+        with db.session.begin_nested():
+            db.session.add(
+                OtpAttempt(
+                    challenge_hash=challenge_hash,
+                    attempts=MAX_OTP_ATTEMPTS,
+                    expires_at=datetime.fromtimestamp(
+                        expires_at_ts, tz=timezone.utc
+                    ),
+                )
+            )
+        return True
+    except IntegrityError:
+        # A concurrent verify consumed it first.
+        return False
+
+
+# V8-L3: per-member refresh-family cap. Each verify-otp used to mint a
+# brand-new family with no limit, so a leaked OTP (or a scripted loop)
+# could accumulate unbounded live sessions. Families beyond the newest
+# MAX_MEMBER_REFRESH_FAMILIES are deleted when a new one is minted.
+MAX_MEMBER_REFRESH_FAMILIES = 5
+
+
+def _enforce_member_refresh_family_cap(
+    member_id: int, keep_family_id: str
+) -> int:
+    """Delete a member's oldest refresh families beyond the cap.
+
+    Returns the number of families deleted. The family just minted
+    (``keep_family_id``) is never deleted.
+    """
+    family_ids = [
+        row[0]
+        for row in db.session.query(MemberRefreshToken.family_id)
+        .filter_by(member_id=member_id)
+        .distinct()
+        .all()
+    ]
+    if len(family_ids) <= MAX_MEMBER_REFRESH_FAMILIES:
+        return 0
+    oldest_first = (
+        db.session.query(
+            MemberRefreshToken.family_id,
+            db.func.min(MemberRefreshToken.created_at),
+        )
+        .filter_by(member_id=member_id)
+        .group_by(MemberRefreshToken.family_id)
+        .order_by(db.func.min(MemberRefreshToken.created_at).asc())
+        .all()
+    )
+    excess = [fid for fid, _ in oldest_first if fid != keep_family_id][
+        : len(family_ids) - MAX_MEMBER_REFRESH_FAMILIES
+    ]
+    deleted = 0
+    for family_id in excess:
+        deleted += MemberRefreshToken.query.filter_by(
+            member_id=member_id, family_id=family_id
+        ).delete()
+    return deleted
 
 
 def member_token_required(view):
@@ -558,6 +681,32 @@ def verify_otp():
     if not phone or not otp:
         return jsonify({"success": False, "error": "Phone and OTP are required."}), 400
 
+    # V8-L32 — honour Idempotency-Key on verify-otp. The replay check
+    # runs BEFORE the guess budget and before the challenge is
+    # consumed, so a network-drop retry after a successful verify
+    # replays the stored tokens instead of failing "code already
+    # used". The fingerprint includes the OTP, so a different OTP
+    # under the same key 409s: a corrected guess is a new attempt and
+    # the client must send a fresh key (fingerprinting without the
+    # OTP would let anyone holding the challenge replay the session
+    # without knowing the code). Without a parseable challenge
+    # (reviewer-bypass path) there is no member identity to scope by,
+    # so no key is honoured there.
+    idempotency_key = None
+    idempotency_request_hash = ""
+    _challenge_identity = _parse_challenge_identity(challenge) if challenge else None
+    if _challenge_identity is not None:
+        _idem_member_id, _idem_gym_id = _challenge_identity
+        idempotency_key, idempotency_request_hash, replay = begin_idempotency(
+            gym_id=_idem_gym_id,
+            member_id=_idem_member_id,
+            scope="member_verify_otp",
+            headers=request.headers,
+            payload={"phone": phone, "otp": otp, "challenge": challenge},
+        )
+        if replay is not None:
+            return replay
+
     member_id: int | None = None
     gym_id: int | None = None
 
@@ -569,6 +718,12 @@ def verify_otp():
             return jsonify({"success": False, "error": "Too many incorrect attempts. Please request a new code."}), 429
         verified = _verify_otp_challenge(phone, otp, challenge)
         if verified:
+            # V8-L3: consume the challenge on success — a second verify
+            # of the same OTP must fail, even within the 10-minute
+            # window. _consume_otp_challenge is atomic, so two
+            # concurrent verifies cannot both mint a session.
+            if not _consume_otp_challenge(challenge):
+                return jsonify({"success": False, "error": "This verification code has already been used. Please request a new code."}), 400
             member_id, gym_id = verified
 
     # Reviewer verification for Google Play Store review
@@ -589,9 +744,15 @@ def verify_otp():
     # Generate cryptographically signed member JWT
     token = create_access_token(user_id=member.id, gym_id=gym_id or member.gym_id, role="member")
     refresh_token = create_member_refresh_token(member.id, gym_id or member.gym_id)
-    db.session.commit()
+    # V8-L3: cap live refresh families per member — a leaked OTP used
+    # to mint a new family on every verify with no limit at all.
+    _new_family = MemberRefreshToken.query.filter_by(
+        token_hash=hashlib.sha256(refresh_token.encode()).hexdigest()
+    ).first()
+    if _new_family is not None:
+        _enforce_member_refresh_family_cap(member.id, _new_family.family_id)
 
-    return jsonify({
+    response_body = {
         "success": True,
         "data": {
             "token": token,
@@ -606,7 +767,26 @@ def verify_otp():
                 "plan_name": member.plan.name if member.plan else None,
             },
         },
-    })
+    }
+    # V8-L32 — record the minted session for replay. A retry returns
+    # the SAME access + refresh tokens (no second refresh family is
+    # minted). Caveat: the access token lives 15 minutes — a replay
+    # after that returns an expired access token alongside the
+    # still-valid refresh token, so the client must refresh; that is
+    # the correct retry semantic (same session, not a new one).
+    if _challenge_identity is not None:
+        record_idempotency(
+            gym_id=_challenge_identity[1],
+            member_id=member.id,
+            scope="member_verify_otp",
+            key=idempotency_key,
+            request_hash=idempotency_request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+    db.session.commit()
+
+    return jsonify(response_body)
 
 
 @member_bp.route("/auth/refresh", methods=["POST"])
@@ -668,6 +848,23 @@ def delete_member_account():
     from app.services.bridge_service import queue_membership_command
     from app.services.rrr_service import delete_identity_mappings
 
+    # V8-L32 — honour Idempotency-Key on self-delete, scoped by the
+    # token identity (g.member_id). NOTE the replay path is normally
+    # pre-empted: member_token_required rejects a soft-deleted member
+    # with 401 before this view runs, so a same-key retry after a
+    # successful delete still 401s — that 401 IS the dedupe (no
+    # double-execute is possible) and is kept deliberately. This row
+    # is defence-in-depth for any path that reaches the view.
+    idempotency_key, request_hash, replay = begin_idempotency(
+        gym_id=g.gym_id,
+        member_id=g.member_id,
+        scope="member_delete_account",
+        headers=request.headers,
+        payload={},
+    )
+    if replay is not None:
+        return replay
+
     member = _locked_current_member()
     prev_status = member.status
 
@@ -701,12 +898,35 @@ def delete_member_account():
         },
     )
     invalidate_dashboard_cache(member.gym_id)
-    db.session.commit()
-
-    return jsonify({
+    response_body = {
         "success": True,
         "data": {"message": "Member account deleted successfully."},
-    })
+    }
+    record_idempotency(
+        gym_id=member.gym_id,
+        member_id=member.id,
+        scope="member_delete_account",
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=200,
+        response_body=response_body,
+    )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        replayed = replay_after_conflict(
+            gym_id=member.gym_id,
+            member_id=member.id,
+            scope="member_delete_account",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replayed is not None:
+            return replayed
+        raise
+
+    return jsonify(response_body)
 
 
 # ── Gym Branding ─────────────────────────────────────────────────────
@@ -970,8 +1190,24 @@ def claim_payment():
     4. A PAYMENT_CLAIMED (pending) record is created
     5. Gym owner verifies and confirms the renewal
     """
-    member = _locked_current_member()
     data = request.get_json(silent=True) or {}
+
+    # V8-L32 — honour Idempotency-Key on renew/claim, scoped by the
+    # token identity. A same-key retry replays the stored payment
+    # instead of inserting a second claim; the existing
+    # already_pending check stays as the dedupe for retries under a
+    # different key.
+    idempotency_key, request_hash, replay = begin_idempotency(
+        gym_id=g.gym_id,
+        member_id=g.member_id,
+        scope="member_renew_claim",
+        headers=request.headers,
+        payload=data,
+    )
+    if replay is not None:
+        return replay
+
+    member = _locked_current_member()
 
     # Check for existing pending or processing payment to prevent duplicates
     existing = PaymentVerification.query.filter(
@@ -1038,7 +1274,40 @@ def claim_payment():
         renewal_days=plan.duration_days if plan else 30,
     )
     db.session.add(payment)
-    db.session.commit()
+    db.session.flush()
+    response_body = {
+        "success": True,
+        "message": "Payment submitted! The gym will verify your payment and renew your membership.",
+        "data": {
+            "payment_id": payment.id,
+            "amount": str(payment.amount),
+            "plan_name": plan.name if plan else None,
+            "status": payment.status,
+        },
+    }
+    record_idempotency(
+        gym_id=member.gym_id,
+        member_id=member.id,
+        scope="member_renew_claim",
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=201,
+        response_body=response_body,
+    )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        replayed = replay_after_conflict(
+            gym_id=member.gym_id,
+            member_id=member.id,
+            scope="member_renew_claim",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replayed is not None:
+            return replayed
+        raise
 
     # Notify gym owner
     try:
@@ -1049,16 +1318,7 @@ def claim_payment():
     except Exception:
         _logger.exception("Failed to send payment claim notification")
 
-    return jsonify({
-        "success": True,
-        "message": "Payment submitted! The gym will verify your payment and renew your membership.",
-        "data": {
-            "payment_id": payment.id,
-            "amount": str(payment.amount),
-            "plan_name": plan.name if plan else None,
-            "status": payment.status,
-        },
-    }), 201
+    return jsonify(response_body), 201
 
 
 # ── Legacy Renewal Request (backward compatibility) ──────────────────

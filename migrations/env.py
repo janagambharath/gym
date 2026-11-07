@@ -20,7 +20,9 @@ logger = logging.getLogger('alembic.env')
 # --- V6-M18: SQLite is not a migration target -------------------------
 # The chain contains Postgres-only SQL (INTERVAL / ANY in
 # 71e470eb6cb6_correct_yodha_punch_times, the ~ regex operator in
-# c4a9012b3d4e_canonicalize_stored_enroll_numbers), so a fresh SQLite
+# c4a9012b3d4e_canonicalize_stored_enroll_numbers, and DATE(created_at)
+# + INTERVAL '14 days' in 9d2b4f7e8a13_production_audit_fixes.py:28),
+# so a fresh SQLite
 # `flask db upgrade` dies mid-chain after ~50 migrations. Refuse early
 # with a clear message instead. The default dev DB is SQLite
 # (app/config.py) and the test suite builds its schema with
@@ -42,7 +44,8 @@ _SQLITE_BLOCKED_VERBS = ("upgrade", "downgrade", "migrate")
 _SQLITE_REFUSAL = (
     "SQLite is not supported for migrations (V6-M18). The chain "
     "contains Postgres-only SQL (INTERVAL / ANY in 71e470eb6cb6, the ~ "
-    "regex operator in c4a9012b3d4e), so a SQLite upgrade fails "
+    "regex operator in c4a9012b3d4e, DATE(created_at) + INTERVAL '14 days' "
+    "in 9d2b4f7e8a13), so a SQLite upgrade fails "
     "mid-chain. Run migrations against Postgres (set DATABASE_URL). "
     "Tests and dev schema use db.create_all(), not migrations. "
     "Scratch-testing one SQLite-safe repair migration: "

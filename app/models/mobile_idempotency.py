@@ -10,6 +10,18 @@ class MobileIdempotencyKey(db.Model):
 
     Keys are scoped to the authenticated user, gym, and operation so a retry
     cannot replay an unrelated endpoint or cross a tenant boundary.
+
+    V8-L29/L32 — member-scoped rows: member endpoints derive identity from
+    the Bearer <redacted> token, and members are not ``User`` rows, so a member
+    retry cannot be stored under ``user_id`` (the FK to ``users.id`` would
+    fail on Postgres, and stuffing the member id in would silently collide
+    with a real user of the same id). Exactly one of ``user_id`` /
+    ``member_id`` is set: owner/staff rows use ``user_id`` (unique on
+    ``uq_mobile_idempotency_scope_key``), member rows use ``member_id``
+    (unique on ``uq_mobile_idempotency_member_scope_key``). A NULL in the
+    other column keeps the two unique constraints from ever firing on the
+    wrong row type (Postgres/SQLite both treat NULLs as distinct in a
+    unique constraint).
     """
 
     __tablename__ = "mobile_idempotency_keys"
@@ -19,7 +31,13 @@ class MobileIdempotencyKey(db.Model):
         db.Integer, db.ForeignKey("gyms.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id = db.Column(
-        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # V8-L29/L32 — member identity for member-API replay rows (NULL on
+    # owner/staff rows). FK to members.id so a row can never name a
+    # member that does not exist.
+    member_id = db.Column(
+        db.Integer, db.ForeignKey("members.id", ondelete="CASCADE"), nullable=True, index=True
     )
     scope = db.Column(db.String(96), nullable=False)
     key = db.Column(db.String(128), nullable=False)
@@ -36,7 +54,15 @@ class MobileIdempotencyKey(db.Model):
         db.UniqueConstraint(
             "gym_id", "user_id", "scope", "key", name="uq_mobile_idempotency_scope_key"
         ),
+        db.UniqueConstraint(
+            "gym_id",
+            "member_id",
+            "scope",
+            "key",
+            name="uq_mobile_idempotency_member_scope_key",
+        ),
     )
 
     gym = db.relationship("Gym")
     user = db.relationship("User")
+    member = db.relationship("Member")

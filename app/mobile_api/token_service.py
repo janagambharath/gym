@@ -41,7 +41,15 @@ def _b64url_decode(s: str) -> bytes:
 
 
 def create_access_token(user_id: int, gym_id: int, role: str) -> str:
-    """Create an HMAC-SHA256 signed access token."""
+    """Create an HMAC-SHA256 signed access token.
+
+    V8-L4: owner/staff tokens carry the user's current ``token_version``
+    (``ver``). The middleware rejects a token whose version no longer
+    matches the user, so a password change or logout-all kills
+    outstanding access tokens immediately instead of letting them live
+    out their 15-minute TTL. Member tokens (OTP sessions, no password)
+    carry no version and are unaffected.
+    """
     ttl_minutes = current_app.config.get("MOBILE_API_ACCESS_TOKEN_MINUTES", 15)
     payload = {
         "sub": user_id,
@@ -50,6 +58,18 @@ def create_access_token(user_id: int, gym_id: int, role: str) -> str:
         "iat": int(time.time()),
         "exp": int(time.time()) + ttl_minutes * 60,
     }
+    if role in ("gym_owner", "staff", "super_admin"):
+        try:
+            from app.models.user import User
+
+            user = db.session.get(User, user_id)
+            if user is not None:
+                payload["ver"] = user.token_version or 1
+        except Exception:
+            # Token minting must never fail on a version lookup — a
+            # token without "ver" is rejected by the middleware, which
+            # is the fail-closed outcome.
+            pass
     header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
     body = _b64url_encode(json.dumps(payload).encode())
     signature = hmac.new(
@@ -290,8 +310,30 @@ def revoke_refresh_token(raw_token: str) -> bool:
 
 
 def revoke_all_user_tokens(user_id: int) -> int:
-    """Revoke all refresh tokens for a user (logout-all / password change)."""
+    """Revoke all refresh tokens for a user (logout-all / password change).
+
+    V8-L4: also bumps the user's token version, which invalidates
+    outstanding stateless access tokens at the next request (the
+    middleware compares the token's ``ver`` claim). Previously only
+    the refresh rows were deleted and access tokens stayed valid for
+    up to 15 minutes.
+    """
     deleted = MobileRefreshToken.query.filter_by(user_id=user_id).delete()
+    try:
+        from app.models.user import User
+
+        # ORM-instance bump (not a bulk UPDATE): the in-memory User
+        # must carry the new version, because a token minted later in
+        # this same request (e.g. a re-login) reads it from the session.
+        user = db.session.get(User, user_id)
+        if user is not None:
+            user.token_version = (user.token_version or 1) + 1
+    except Exception:
+        # The refresh revocation already happened; a version-bump
+        # failure must not mask it — the caller still commits.
+        current_app.logger.exception(
+            "V8-L4: token_version bump failed for user %s", user_id
+        )
     return deleted
 
 

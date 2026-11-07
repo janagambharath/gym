@@ -8,8 +8,15 @@ from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationE
 
 
 class PasswordStrength:
+    # V8-M3: this must mirror the shared 12-char + complexity rule in
+    # app/utils/helpers.py::password_policy_error (upper, lower, digit,
+    # symbol). It previously required no lowercase letter and the
+    # forms paired it with Length(min=10), so web passwords drifted
+    # below the mobile rule on every web path.
     def __call__(self, form, field) -> None:
         password = field.data or ""
+        if not re.search(r"[a-z]", password):
+            raise ValidationError("Password must contain at least one lowercase letter.")
         if not re.search(r"[A-Z]", password):
             raise ValidationError("Password must contain at least one uppercase letter.")
         if not re.search(r"[0-9]", password):
@@ -31,7 +38,7 @@ class RegisterGymForm(FlaskForm):
     email = EmailField("Email", validators=[DataRequired(), Email(), Length(max=255)])
     phone = StringField("Phone", validators=[DataRequired(), Length(max=40)])
     password = PasswordField(
-        "Password", validators=[DataRequired(), Length(min=10), PasswordStrength()]
+        "Password", validators=[DataRequired(), Length(min=12), PasswordStrength()]
     )
     confirm_password = PasswordField(
         "Confirm password", validators=[DataRequired(), EqualTo("password")]
@@ -42,7 +49,7 @@ class RegisterGymForm(FlaskForm):
 class ChangePasswordForm(FlaskForm):
     current_password = PasswordField("Current password", validators=[DataRequired()])
     new_password = PasswordField(
-        "New password", validators=[DataRequired(), Length(min=10), PasswordStrength()]
+        "New password", validators=[DataRequired(), Length(min=12), PasswordStrength()]
     )
     confirm_new_password = PasswordField(
         "Confirm new password", validators=[DataRequired(), EqualTo("new_password")]
@@ -57,7 +64,7 @@ class ForgotPasswordForm(FlaskForm):
 
 class ResetPasswordForm(FlaskForm):
     new_password = PasswordField(
-        "New password", validators=[DataRequired(), Length(min=10), PasswordStrength()]
+        "New password", validators=[DataRequired(), Length(min=12), PasswordStrength()]
     )
     confirm_password = PasswordField(
         "Confirm password", validators=[DataRequired(), EqualTo("new_password")]

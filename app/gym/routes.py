@@ -30,7 +30,7 @@ from app.models.mixins import utcnow
 from app.repositories import TenantRepository
 from app.services.analytics_service import gym_dashboard_stats
 from app.services.audit_service import audit
-from app.services.reminder_service import auto_expire_members_for_gym
+from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
 from app.services.storage_service import (
     delete_local_upload,
     invalidate_whatsapp_media_cache,
@@ -52,13 +52,21 @@ def dashboard():
     gym_id = current_user.gym_id
     # Membership expiry runs in the scheduler, not in this GET (see above).
     stats = gym_dashboard_stats(gym_id)
+    # V8-L8: gym-local today, not server-local — in the 00:00–05:30
+    # IST window a member expiring today IST was dropped from this
+    # list a day early.
+    _gym_today = today_for_gym(
+        current_user.gym.timezone
+        if current_user.gym and current_user.gym.timezone
+        else "Asia/Kolkata"
+    )
     expiring_members = (
         Member.query.filter(
             Member.gym_id == gym_id,
             Member.status == "active",
             Member.deleted_at.is_(None),
-            Member.membership_end >= date.today(),
-            Member.membership_end <= date.today() + timedelta(days=14),
+            Member.membership_end >= _gym_today,
+            Member.membership_end <= _gym_today + timedelta(days=14),
         )
         .options(joinedload(Member.plan))
         .order_by(Member.membership_end.asc())

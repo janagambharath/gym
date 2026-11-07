@@ -35,6 +35,13 @@ class User(UserMixin, TimestampMixin, db.Model):
     must_change_password = db.Column(db.Boolean, nullable=False, default=False)
     invitation_status = db.Column(db.String(32), nullable=False, default="sent")
     invited_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # V8-L4: access-token version. Stateless HMAC access tokens cannot be
+    # deleted, so each token carries the version current when it was
+    # minted; password changes (set_password) and logout-all
+    # (revoke_all_user_tokens) bump this, and token_required rejects
+    # tokens minted under an older version — closing the 15-minute
+    # window in which a revoked session's access token stayed valid.
+    token_version = db.Column(db.Integer, nullable=False, default=1)
     created_by_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -46,6 +53,12 @@ class User(UserMixin, TimestampMixin, db.Model):
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
+        # V8-L4: every password change invalidates outstanding access
+        # tokens, even on a path that forgets to call
+        # revoke_all_user_tokens (the admin reset used to be one).
+        # New users get version 2 instead of 1 — harmless, since no
+        # token can exist before the account does.
+        self.token_version = (self.token_version or 1) + 1
 
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.password_hash, password)

@@ -8,6 +8,7 @@ from app.extensions import db
 from app.models import Gym, User
 from app.services.audit_service import audit
 from app.utils.decorators import active_gym_required, roles_required
+from app.utils.helpers import password_policy_error
 
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/app/staff")
@@ -80,8 +81,15 @@ def accept_invite(token: str):
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         password = request.form.get("password", "")
-        if not full_name or len(password) < 10:
-            flash("Name and password (min 10 chars) are required.", "danger")
+        if not full_name:
+            flash("Name is required.", "danger")
+            return render_template("gym/accept_invite.html", email=payload["email"])
+        # V8-M3 (same class as the reset/onboarding paths): the invite
+        # password is a live login credential — enforce the shared
+        # 12-char + complexity policy (was: length >= 10 only).
+        policy_error = password_policy_error(password)
+        if policy_error:
+            flash(policy_error, "danger")
             return render_template("gym/accept_invite.html", email=payload["email"])
 
         existing = User.query.filter_by(email=payload["email"]).first()

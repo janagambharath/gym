@@ -59,6 +59,19 @@ def token_required(view):
         user = db.session.get(User, payload.get("sub"))
         if user is None:
             return error_response("UNAUTHORIZED", "User not found.", 401)
+        # V8-L4: a token minted before the last password change or
+        # logout-all carries a stale "ver" and is rejected here, even
+        # though its 15-minute HMAC expiry has not passed. Tokens
+        # minted before this version existed carry no "ver" at all and
+        # are rejected too (fail-closed); clients holding a refresh
+        # token recover via /auth/refresh, which mints a current one.
+        if payload.get("role") in ("gym_owner", "staff", "super_admin"):
+            if payload.get("ver") != (user.token_version or 1):
+                return error_response(
+                    "TOKEN_EXPIRED",
+                    "Access token was revoked (password changed or signed out everywhere). Sign in again.",
+                    401,
+                )
         # SECURITY (2026-10-13): member and owner tokens share the same secret
         # and format, and members.id / users.id both autoincrement from 1, so
         # numeric collisions are guaranteed. Without a role check, a member's
