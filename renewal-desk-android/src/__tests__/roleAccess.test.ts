@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  accessOwnerControls,
+  isOwnerRole,
+  rrrGrowthOwnerSections,
+} from '../services/roleAccess';
+
+// V7-L13: owner-only controls rendered for staff and 403'd with a generic
+// "You do not have permission". Backend enforcement was always correct —
+// this is dead-button UX only. The screens hide the controls for
+// non-owners, mirroring the BulkDeactivate-link pattern.
+
+test('only the gym_owner role counts as owner', () => {
+  assert.equal(isOwnerRole('gym_owner'), true);
+  assert.equal(isOwnerRole('staff'), false);
+  assert.equal(isOwnerRole('gym_staff'), false);
+  assert.equal(isOwnerRole(undefined), false);
+  assert.equal(isOwnerRole(null), false);
+  assert.equal(isOwnerRole(''), false);
+});
+
+test('staff sees no owner-only Access controls (Clear-failed, Unlock Gate)', () => {
+  assert.deepEqual(accessOwnerControls(false), {
+    showClearFailed: false,
+    showRemoteUnlock: false,
+  });
+});
+
+test('owner sees both Access controls', () => {
+  assert.deepEqual(accessOwnerControls(true), {
+    showClearFailed: true,
+    showRemoteUnlock: true,
+  });
+});
+
+test('staff sees no owner-only RRR Growth sections', () => {
+  assert.deepEqual(rrrGrowthOwnerSections(false), {
+    showTerminalSetup: false,
+    showCommissioningConsole: false,
+    showBridgeControls: false,
+    showThresholds: false,
+  });
+});
+
+test('owner sees every RRR Growth section', () => {
+  assert.deepEqual(rrrGrowthOwnerSections(true), {
+    showTerminalSetup: true,
+    showCommissioningConsole: true,
+    showBridgeControls: true,
+    showThresholds: true,
+  });
+});

@@ -20,6 +20,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { resolveRefreshError } from '../services/memberDetailRefresh';
 import { resolveBlockToggle } from '../services/memberAccess';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
@@ -72,6 +73,12 @@ export function MemberDetailScreen({
   const [paymentTotal, setPaymentTotal] = useState<number | null>(null);
   const [biometricHistory, setBiometricHistory] = useState<BiometricHistory>();
   const [biometricError, setBiometricError] = useState<string>();
+  // V7-L14: a failed member/renewal/payment poll leg used to be fully
+  // silent — the previous values stayed on screen with no signal they were
+  // stale. Track the first non-401 leg failure (401s log out instead) and
+  // show a "couldn't refresh" note with retry, mirroring the biometric
+  // leg's error handling below.
+  const [refreshError, setRefreshError] = useState<string | undefined>();
   const [loadingMoreBiometrics, setLoadingMoreBiometrics] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
@@ -164,6 +171,14 @@ export function MemberDetailScreen({
       setBiometricHistory(undefined);
       setBiometricError(biometricRes.error.message);
     }
+    // V7-L14: surface a failed member/renewal/payment leg instead of
+    // silently keeping stale values. Undefined on a clean poll clears the
+    // note; the biometric leg is excluded — it has its own error display.
+    setRefreshError(resolveRefreshError({
+      member: memberRes.ok ? { ok: true } : { ok: false, status: memberRes.error.status, message: memberRes.error.message },
+      renewals: renewalRes.ok ? { ok: true } : { ok: false, status: renewalRes.error.status, message: renewalRes.error.message },
+      payments: paymentRes.ok ? { ok: true } : { ok: false, status: paymentRes.error.status, message: paymentRes.error.message },
+    }));
     setRefreshing(false);
   }), [member.id, onLogout]);
 
@@ -432,6 +447,18 @@ export function MemberDetailScreen({
         {message ? (
           <View style={[styles.messageBanner, messageType === 'error' ? styles.errorBanner : styles.successBanner]}>
             <Text style={messageType === 'error' ? styles.errorBannerText : styles.successBannerText}>{message}</Text>
+          </View>
+        ) : null}
+
+        {/* V7-L14: poll failed — the values below are the last saved ones, not fresh. */}
+        {refreshError ? (
+          <View style={styles.staleBanner}>
+            <Text style={styles.staleBannerText}>
+              Couldn&apos;t refresh — showing last saved details. {refreshError}
+            </Text>
+            <TouchableOpacity onPress={() => void fetchMemberData()} activeOpacity={0.7}>
+              <Text style={styles.staleRetryText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
 
@@ -1276,6 +1303,30 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     padding: spacing.md,
+  },
+  // V7-L14: poll-failure staleness note ("couldn't refresh") with retry.
+  staleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warningBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  staleBannerText: {
+    color: colors.warningDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.medium,
+    flex: 1,
+    flexShrink: 1,
+  },
+  staleRetryText: {
+    color: colors.warningDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   notesText: {
     color: colors.textSecondary,

@@ -3,7 +3,7 @@ import { useLiveEffect } from '../hooks/useLiveEffect';
 import { Alert, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest } from '../services/apiClient';
-import { dismissOpportunityRequest, filterOpportunities, opportunitiesUrl, PILLAR_LABELS, PILLAR_ORDER, PILLAR_SHORT_LABELS, updateOpportunityRequest, type PillarFilter, type RrrOpportunity, type RrrPillar } from '../services/rrrOpportunities';
+import { dismissOpportunityRequest, filterOpportunities, opportunitiesUrl, pillarCounts, PILLAR_LABELS, PILLAR_ORDER, PILLAR_SHORT_LABELS, updateOpportunityRequest, type PillarFilter, type RrrOpportunity, type RrrPillar } from '../services/rrrOpportunities';
 import { colors, fontSize, fontWeight, radius, shadows, spacing } from '../theme/tokens';
 
 const FILTERS: { key: PillarFilter; label: string }[] = [
@@ -31,8 +31,14 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
   const [recoveryTarget, setRecoveryTarget] = useState<RrrOpportunity | null>(null);
   const [outcomeAmount, setOutcomeAmount] = useState('');
 
-  const load = useCallback(async (selected: PillarFilter) => {
-    const result = await apiRequest<{ opportunities: RrrOpportunity[] }>(opportunitiesUrl(selected));
+  // V7-M11: fetch the UNFILTERED list once and filter client-side. The old
+  // load(pillar) fetched the pillar-filtered list, but the chip counts were
+  // computed from that same filtered array — selecting Revenue made the
+  // Retain/Recover chips read "(0)" and "All" show only the revenue count.
+  // The backend returns .all() (no pagination), so one unfiltered fetch is
+  // the whole queue; filterOpportunities below does the per-pillar view.
+  const load = useCallback(async () => {
+    const result = await apiRequest<{ opportunities: RrrOpportunity[] }>(opportunitiesUrl('all'));
     if (result.ok) {
       setItems(result.data.opportunities || []);
       setLoadError(undefined);
@@ -46,7 +52,7 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
   // Same pattern as RrrGrowthScreen: the load is deferred out of the
   // effect body (react-hooks/set-state-in-effect) and re-runs while focused.
   useLiveEffect(() => {
-    const timer = setTimeout(() => { void load(pillar); }, 0);
+    const timer = setTimeout(() => { void load(); }, 0);
     return () => clearTimeout(timer);
   }, [pillar, load]);
 
@@ -57,10 +63,9 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
   };
 
   const visible = filterOpportunities(items, pillar);
-  const counts = PILLAR_ORDER.reduce<Record<string, number>>((acc, key) => {
-    acc[key] = items.filter((item) => item.pillar === key).length;
-    return acc;
-  }, {});
+  // V7-M11: counts come from the full (unfiltered) list — never from the
+  // pillar-filtered view — so every chip stays correct whatever is selected.
+  const counts = pillarCounts(items);
 
   const runUpdate = async (
     item: RrrOpportunity,
@@ -70,7 +75,7 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
     setUpdatingId(item.id);
     const result = await apiRequest(request.path, { method: request.method, body: request.body });
     setUpdatingId(null);
-    if (result.ok) void load(pillar);
+    if (result.ok) void load();
     else Alert.alert('Could not update opportunity', result.error.message);
   };
 
@@ -108,7 +113,7 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
           <RefreshControl
             tintColor={colors.brand}
             refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); void load(pillar); }}
+            onRefresh={() => { setRefreshing(true); void load(); }}
           />
         }
       >
@@ -140,7 +145,7 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Unable to load opportunities.</Text>
             <Text style={styles.copy}>{loadError}</Text>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => { setLoading(true); void load(pillar); }}>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => { setLoading(true); void load(); }}>
               <Text style={styles.secondaryText}>Try again</Text>
             </TouchableOpacity>
           </View>

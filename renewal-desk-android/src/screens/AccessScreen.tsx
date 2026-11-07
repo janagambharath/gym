@@ -17,7 +17,9 @@ import { Avatar } from '../components/Avatar';
 import { ErrorState } from '../components/ErrorState';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
-import { apiRequest } from '../services/apiClient';
+import { apiRequest, getCachedSession } from '../services/apiClient';
+import { resolveAccessListView, shouldShowFeedErrorBanner } from '../services/accessFeedState';
+import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
 import {
   clearFailedSyncsWithConfirm,
   reconcileMembers,
@@ -153,6 +155,13 @@ export function AccessScreen({
   const [checkingInId, setCheckingInId] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+
+  // V7-L13: Clear-failed (POST /access/clear-failed) and remote-unlock
+  // (POST /access/remote-unlock) are owner-only — they rendered for staff
+  // and 403'd with a generic message. Backend enforcement was always
+  // correct; hide the dead buttons instead.
+  const isOwner = isOwnerRole(getCachedSession()?.userRole);
+  const ownerControls = accessOwnerControls(isOwner);
 
   // ── Fetch summary ────────────────────────────────────────────────
 
@@ -476,6 +485,27 @@ export function AccessScreen({
     );
   };
 
+  // V7-M10: a feed/Inside fetch failure used to be invisible once the
+  // summary loaded — `error` only rendered via the `error && !summary`
+  // full-screen gate, so staff stared at stale rows (or a false "nobody
+  // inside") with no signal. Show an inline banner + retry above the
+  // stale list whenever the feed/Inside fetch failed.
+  const renderFeedErrorBanner = () => {
+    const itemCount = activeTab === 'inside' ? insideMembers.length : events.length;
+    if (!shouldShowFeedErrorBanner({ error, summaryLoaded: !!summary, itemCount })) return null;
+    return (
+      <View style={styles.feedErrorBanner}>
+        <Icon name="alert" size={16} color={colors.critical} />
+        <Text style={styles.feedErrorText}>
+          Couldn&apos;t load the latest {activeTab === 'inside' ? 'inside list' : 'events'} — showing last loaded data. {error}
+        </Text>
+        <TouchableOpacity style={styles.feedErrorRetryBtn} onPress={onRefresh} activeOpacity={0.7}>
+          <Text style={styles.feedErrorRetryText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   const renderFailedCommandsBanner = () => {
     if (!summary || !summary.failed_commands || summary.failed_commands === 0) return null;
     return (
@@ -496,15 +526,18 @@ export function AccessScreen({
               {retryingSync ? 'Retrying...' : 'Retry All'}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.clearFailedBtn}
-            onPress={handleClearFailedSyncs}
-            disabled={clearingFailed}
-          >
-            <Text style={styles.clearFailedBtnText}>
-              {clearingFailed ? 'Clearing...' : 'Clear'}
-            </Text>
-          </TouchableOpacity>
+          {/* V7-L13: Clear is owner-only (POST /access/clear-failed) — hide it for staff. */}
+          {ownerControls.showClearFailed ? (
+            <TouchableOpacity
+              style={styles.clearFailedBtn}
+              onPress={handleClearFailedSyncs}
+              disabled={clearingFailed}
+            >
+              <Text style={styles.clearFailedBtnText}>
+                {clearingFailed ? 'Clearing...' : 'Clear'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     );
@@ -555,7 +588,7 @@ export function AccessScreen({
         <Icon name="access" size={16} color={colors.textInverse} />
         <Text style={styles.checkInBtnText}>+ Check In</Text>
       </TouchableOpacity>
-      {summary?.remote_unlock_available && (
+      {summary?.remote_unlock_available && ownerControls.showRemoteUnlock ? (
         <TouchableOpacity
           style={[styles.checkInBtn, { backgroundColor: colors.success }]}
           onPress={handleRemoteUnlock}
@@ -565,7 +598,7 @@ export function AccessScreen({
           <Icon name="lock" size={16} color={colors.textInverse} />
           <Text style={styles.checkInBtnText}>{unlocking ? 'Sending...' : 'Unlock Gate'}</Text>
         </TouchableOpacity>
-      )}
+      ) : null}
       </View>
       {!summary?.remote_unlock_available && (
         <Text style={styles.remoteUnlockNotice}>
@@ -685,6 +718,9 @@ export function AccessScreen({
             onPress={() => {
               setActiveTab(tab.key);
               setSearch('');
+              // V7-M10: a feed error from the previous tab must not linger
+              // over the new tab's list while its fetch is still in flight.
+              setError(undefined);
             }}
             activeOpacity={0.7}
           >
@@ -769,6 +805,21 @@ export function AccessScreen({
 
   const renderEmpty = () => {
     if (loading) return null;
+    // V7-M10: a failed feed/Inside fetch must never fall through to the
+    // misleading "No members are currently inside." / "No access events
+    // today." empty state — show the error + retry instead.
+    if (resolveAccessListView({ loading, error, itemCount: activeTab === 'inside' ? insideMembers.length : events.length }) === 'error') {
+      return (
+        <View style={styles.emptyContainer}>
+          <Icon name="alert" size={48} color={colors.critical} />
+          <Text style={styles.emptyTitle}>Couldn&apos;t load {activeTab === 'inside' ? 'who is inside' : 'access events'}.</Text>
+          <Text style={styles.emptySubtitle}>{error}</Text>
+          <TouchableOpacity style={styles.feedErrorRetryBtn} onPress={onRefresh} activeOpacity={0.7}>
+            <Text style={styles.feedErrorRetryText}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
     const message =
       activeTab === 'inside'
         ? 'No members are currently inside.'
@@ -834,6 +885,7 @@ export function AccessScreen({
           ListHeaderComponent={
             <>
               {renderActionBanner()}
+              {renderFeedErrorBanner()}
               {renderSummaryCards()}
               {renderSummaryStaleness()}
               {renderCheckInButton()}
@@ -878,6 +930,7 @@ export function AccessScreen({
           ListHeaderComponent={
             <>
               {renderActionBanner()}
+              {renderFeedErrorBanner()}
               {renderSummaryCards()}
               {renderSummaryStaleness()}
               {renderCheckInButton()}
@@ -1050,6 +1103,39 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
+  },
+
+  // V7-M10: inline feed/Inside error banner + retry (above a stale list).
+  feedErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  feedErrorText: {
+    color: colors.critical,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.medium,
+    flex: 1,
+    flexShrink: 1,
+  },
+  feedErrorRetryBtn: {
+    backgroundColor: colors.critical,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  feedErrorRetryText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
 
   // Action banner

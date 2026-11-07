@@ -4,6 +4,7 @@ import {
   dismissOpportunityRequest,
   filterOpportunities,
   opportunitiesUrl,
+  pillarCounts,
   updateOpportunityRequest,
   type RrrOpportunity,
 } from '../services/rrrOpportunities';
@@ -66,4 +67,33 @@ test('close as recovered carries the owner-confirmed outcome_revenue', () => {
 test('invalid status and missing outcome_revenue are rejected before any request', () => {
   assert.throws(() => updateOpportunityRequest(1, 'bogus' as never), /Invalid opportunity status/);
   assert.throws(() => updateOpportunityRequest(1, 'closed'), /outcome_revenue is required/);
+});
+
+// V7-M11: chip counts were computed from the pillar-filtered list, so
+// selecting Revenue made Retain/Recover read "(0)" and "All" show only the
+// revenue count. The screen now fetches the unfiltered list once and
+// filters client-side — counts must come from that full list, whatever
+// pillar is selected.
+test('pillar counts come from the full unfiltered list', () => {
+  assert.deepEqual(pillarCounts(sample), { revenue: 2, retain: 1, recover: 1 });
+});
+
+test('counts stay correct for a filtered view — the bug case', () => {
+  // The old code counted filterOpportunities(sample, 'revenue'):
+  // { revenue: 2, retain: 0, recover: 0 }. The counts must be computed
+  // from `sample` itself, so the Retain/Recover chips never read (0)
+  // while open items exist in those pillars.
+  const revenueView = filterOpportunities(sample, 'revenue');
+  assert.deepEqual(pillarCounts(revenueView), { revenue: 2, retain: 0, recover: 0 });
+  assert.deepEqual(pillarCounts(sample), { revenue: 2, retain: 1, recover: 1 });
+  assert.equal(sample.length, 4); // "All" shows the full count, not the view's
+});
+
+test('pillar counts ignore unknown pillars and handle an empty list', () => {
+  assert.deepEqual(pillarCounts([]), { revenue: 0, retain: 0, recover: 0 });
+  const mixed: RrrOpportunity[] = [
+    ...sample,
+    { id: 5, pillar: 'other', status: 'open', reason: 'Unknown pillar', potential_revenue: '0', member: { name: 'X' } },
+  ];
+  assert.deepEqual(pillarCounts(mixed), { revenue: 2, retain: 1, recover: 1 });
 });

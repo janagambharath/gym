@@ -60,6 +60,23 @@ export function filterOpportunities(
   return items.filter((item) => item.pillar === pillar);
 }
 
+/**
+ * V7-M11: chip counts must be computed from the UNFILTERED list. The screen
+ * used to fetch the pillar-filtered list and count from that same array, so
+ * selecting Revenue made the Retain/Recover chips read "(0)" and "All" show
+ * only the revenue count. The screen now fetches `pillar='all'` once and
+ * filters client-side — pass that full list here.
+ */
+export function pillarCounts(items: RrrOpportunity[]): Record<RrrPillar, number> {
+  const counts: Record<RrrPillar, number> = { revenue: 0, retain: 0, recover: 0 };
+  for (const item of items) {
+    if (item.pillar === 'revenue' || item.pillar === 'retain' || item.pillar === 'recover') {
+      counts[item.pillar] += 1;
+    }
+  }
+  return counts;
+}
+
 /** Request shape for PATCH /rrr/opportunities/:id. Throws on an invalid status. */
 export function updateOpportunityRequest(
   id: number,
