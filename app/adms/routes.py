@@ -683,6 +683,35 @@ def cdata(path_token: str | None = None):
     elif request.method == "POST" and table == "OPERLOG":
         operlog_enrollments = _ingest_operlog(integration)
     db.session.commit()
+    # V9-L28: repair failed RRR projections after each successful
+    # ATTLOG batch, not only on the daily scheduler (default 1440 min)
+    # / CLI — a projection that threw at ingest used to stay invisible
+    # to member-app last_visit/today_entries and Inside state for up
+    # to 24 h. Same sweep the scheduler runs (7-day window, per-row
+    # savepoint, idempotent, capped at 100 rows), best-effort: a
+    # backfill failure must never poison the upload ack.
+    if request.method == "POST" and table == "ATTLOG":
+        try:
+            from app.services.access_event_service import (
+                backfill_missing_rrr_projections as _backfill_rrr_after_attlog,
+            )
+
+            repaired = _backfill_rrr_after_attlog(integration.gym_id)
+            if repaired:
+                db.session.commit()
+                log.info(
+                    "Repaired %d failed RRR projection(s) for gym %s after ATTLOG batch",
+                    repaired,
+                    integration.gym_id,
+                )
+        except Exception:
+            db.session.rollback()
+            log.warning(
+                "RRR projection backfill failed after ATTLOG batch for gym %s; "
+                "the daily scheduler will retry",
+                integration.gym_id,
+                exc_info=True,
+            )
     if operlog_enrollments:
         try:
             from app.services.enroll_match_service import (
@@ -789,6 +818,14 @@ def getrequest(path_token: str | None = None):
         s.status = "failed"
         s.result_message = "Timeout: no ack within 10 min"
     if stuck:
+        db.session.commit()
+    # V9-L14: a queued unlock_door older than 10 min must never serve —
+    # expire it before picking the next command, so a stale unlock cannot
+    # open the door hours later and cannot wedge the pipe behind the
+    # COMMAND_PENDING guards.
+    from app.services.bridge_service import expire_stale_queued_adms_unlock_commands
+
+    if expire_stale_queued_adms_unlock_commands(integration.id):
         db.session.commit()
     # Re-send a delivered command until the terminal posts its result.  DATA
     # UPDATE is idempotent and this prevents a short mobile/Wi-Fi outage from

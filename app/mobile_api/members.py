@@ -866,7 +866,11 @@ def register_members_routes(bp):
         except Exception as exc:
             db.session.rollback()
             _logger.exception("create_member failed: %s", exc)
-            return error_response("CREATE_FAILED", f"Could not add member: {str(exc)}", 400)
+            # V9-L3: never echo raw exception text to the client — an
+            # unexpected type can carry DB/ORM detail (constraint
+            # names, column values). One fixed message; detail is in
+            # the server log above.
+            return error_response("CREATE_FAILED", "Could not add member. Please try again.", 400)
 
     @bp.route("/members/<int:member_id>", methods=["PATCH"])
     @token_required

@@ -1,6 +1,7 @@
 """Mobile API payments endpoints."""
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -37,6 +38,8 @@ from app.services.payment_service import (
     verified_payment_with_reference,
 )
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
+
+_logger = logging.getLogger(__name__)
 
 
 def _generate_receipt(p: PaymentVerification) -> dict:
@@ -346,6 +349,11 @@ def register_payments_routes(bp):
                 standard_price = None
         if standard_price is None and plan:
             standard_price = plan.price
+        # V9-L29: standard_price is money stored in Numeric(10,2) —
+        # a 3-decimal value would be silently rounded on Postgres
+        # (and the stored triple could go arithmetically inconsistent).
+        if standard_price is not None and standard_price.as_tuple().exponent < -2:
+            return error_response("VALIDATION_ERROR", "standard_price must have at most 2 decimal places.", 400)
 
         try:
             amount = Decimal(str(data.get("amount", data.get("final_payable", "0"))).strip() or "0")
@@ -359,6 +367,12 @@ def register_payments_routes(bp):
         # uses (renewals.py), so the two creation paths agree.
         if not amount.is_finite() or amount > Decimal("99999999.99"):
             return error_response("VALIDATION_ERROR", "Amount must be at most 99999999.99.", 400)
+        # V9-L29: Numeric(10,2) rounds ₹100.999 → ₹101.00 silently
+        # on Postgres while direct renew, bulk renew and CSV import
+        # all enforce 2dp. Reject here instead of storing a rounded
+        # value the caller never typed.
+        if amount.as_tuple().exponent < -2:
+            return error_response("VALIDATION_ERROR", "Amount must have at most 2 decimal places.", 400)
 
         # Discount calculation
         raw_discount = data.get("discount")
@@ -371,6 +385,11 @@ def register_payments_routes(bp):
             discount = standard_price - amount
         else:
             discount = Decimal("0.00")
+        # V9-L29: same 2-decimal rule as amount/standard_price (a
+        # derived discount from two 2dp values is already 2dp; only a
+        # caller-supplied 3-decimal discount can trip this).
+        if discount.as_tuple().exponent < -2:
+            return error_response("VALIDATION_ERROR", "discount must have at most 2 decimal places.", 400)
 
         # V6-L2: standard_price / discount are money, not free text —
         # a negative discount inflates the total_discount sum and a
@@ -572,8 +591,17 @@ def register_payments_routes(bp):
             except ValueError as exc:
                 db.session.rollback()
                 if str(exc).startswith("DUPLICATE_REFERENCE"):
-                    return error_response("DUPLICATE_REFERENCE", str(exc), 409)
-                return error_response("VALIDATION_ERROR", str(exc), 400)
+                    # V9-L3: the service message names the clashing
+                    # payment id — return the same fixed text the
+                    # IntegrityError branch above uses.
+                    return error_response(
+                        "DUPLICATE_REFERENCE",
+                        "A verified payment with this reference already exists for this gym.",
+                        409,
+                    )
+                # V9-L3: never echo raw exception text to the client.
+                _logger.warning("create_payment auto-verify rejected: %s", exc)
+                return error_response("VALIDATION_ERROR", "This payment could not be verified. Please check the payment details and try again.", 400)
 
         audit(
             action="create_payment",

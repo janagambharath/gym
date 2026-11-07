@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 from flask import current_app, g, jsonify, request
 
@@ -22,6 +23,8 @@ from app.services.mobile_billing_service import (
     reconcile_google_subscription,
     verify_google_purchase,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def register_billing_routes(bp):
@@ -67,7 +70,10 @@ def register_billing_routes(bp):
                 purchase_token=purchase_token,
             )
         except ValueError as exc:
-            return error_response("PURCHASE_INVALID", str(exc), 409)
+            # V9-L3: the verifier's message can carry provider detail
+            # — return one fixed message, log the detail server-side.
+            _logger.warning("Google Play purchase verification rejected: %s", exc)
+            return error_response("PURCHASE_INVALID", "This purchase could not be verified. Please try again.", 409)
         except GooglePlayConfigurationError:
             return error_response("BILLING_NOT_CONFIGURED", "Google Play verification is not available.", 503)
         audit(

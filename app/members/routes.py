@@ -4,7 +4,7 @@ import uuid
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -402,8 +402,8 @@ def create():
                 "warning",
             )
             return redirect(url_for("members.index"))
-        form.membership_start.data = date.today()
-        form.membership_end.data = date.today()
+        form.membership_start.data = today_for_gym(gym.timezone or "Asia/Kolkata")
+        form.membership_end.data = today_for_gym(gym.timezone or "Asia/Kolkata")
         form.status.data = "active"
     if form.validate_on_submit():
         locked_gym = _locked_gym(gym.id)
@@ -483,6 +483,18 @@ def edit(member_id: int):
     member = TenantRepository(Member, current_user.gym_id).get_or_404(member_id)
     form = _member_form(member)
     if form.validate_on_submit():
+        # V9-M12: staff may not change dates/plan/status on an existing
+        # member — the mobile API 403s the same edit. A staff date
+        # rewrite, plan change (re-pinning member.price) or "pause"
+        # (no freeze marker, audit or end extension) is rejected
+        # before anything is applied.
+        if current_user.role != "gym_owner" and (
+            (form.plan_id.data or None) != member.plan_id
+            or form.membership_start.data != member.membership_start
+            or form.membership_end.data != member.membership_end
+            or form.status.data != member.status
+        ):
+            abort(403)
         try:
             _apply_member_form(member, form)
         except ValueError as exc:
@@ -586,6 +598,22 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     member.email = form.email.data.strip() if form.email.data else None
 
     member.gender = form.gender.data or None
+    # V9-M12: date/plan/pause fields are owner-only — the mobile API
+    # 403s staff date edits, but this form applied them for staff too.
+    # On an existing member a staff submission leaves those fields
+    # exactly as stored (the edit route 403s a staff change above;
+    # this is the defence in depth if the form is applied from
+    # anywhere else). On create the signup dates/plan are the creation
+    # itself, but a staff "paused" is still downgraded — pausing goes
+    # through the guarded freeze endpoint only, never this form.
+    _is_owner = getattr(current_user, "role", None) == "gym_owner"
+    if member.id is not None and not _is_owner:
+        form.plan_id.data = member.plan_id or 0
+        form.membership_start.data = member.membership_start
+        form.membership_end.data = member.membership_end
+        form.status.data = member.status
+    elif not _is_owner and form.status.data == "paused":
+        form.status.data = "active"
     new_plan_id = form.plan_id.data or None
     if new_plan_id != member.plan_id:
         member.plan_id = new_plan_id

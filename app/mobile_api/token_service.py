@@ -206,6 +206,17 @@ def create_refresh_token(user_id: int, gym_id: int, family_id: str | None = None
     return raw_token
 
 
+def find_refresh_token_record(raw_token: str) -> MobileRefreshToken | None:
+    """Look up a refresh-token row WITHOUT consuming it (V9-L1).
+
+    Lets the refresh endpoint check the account state *before*
+    rotating: rotating first would mint + commit a fresh 30-day token
+    for an account that is already disabled, and the old code then
+    returned 403 while leaving the new token live in the DB.
+    """
+    return MobileRefreshToken.query.filter_by(token_hash=_hash_token(raw_token)).first()
+
+
 def rotate_refresh_token(raw_token: str) -> tuple[str, MobileRefreshToken] | None:
     """Consume a refresh token and issue a replacement. Returns (new_raw_token, old_record) or None.
 

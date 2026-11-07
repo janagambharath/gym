@@ -13,6 +13,7 @@ from app.mobile_api.middleware import token_required
 from app.mobile_api.token_service import (
     create_access_token,
     create_refresh_token,
+    find_refresh_token_record,
     revoke_all_user_tokens,
     revoke_refresh_token,
     rotate_refresh_token,
@@ -480,6 +481,18 @@ def register_auth_routes(bp):
         if not raw_token:
             return error_response("VALIDATION_ERROR", "Refresh token is required.", 400)
 
+        # V9-L1: check the account BEFORE rotating. Rotating first
+        # would mint + commit a fresh 30-day token for a disabled (or
+        # gym-inactive) account, and the old code then returned 403
+        # while leaving the new token live in the DB.
+        record = find_refresh_token_record(raw_token)
+        if record is not None:
+            owner = db.session.get(User, record.user_id)
+            if owner is None or not owner.is_active:
+                return error_response("ACCOUNT_DISABLED", "Account is no longer active.", 403)
+            if owner.gym is None or not owner.gym.is_operational():
+                return error_response("GYM_INACTIVE", "Gym account is not active.", 403)
+
         result = rotate_refresh_token(raw_token)
         if result is None:
             db.session.commit()
@@ -488,6 +501,9 @@ def register_auth_routes(bp):
         new_refresh, old_record = result
         user = db.session.get(User, old_record.user_id)
         if user is None or not user.is_active:
+            # Race: disabled between the pre-check and the rotation —
+            # drop the just-minted token instead of committing it.
+            revoke_refresh_token(new_refresh)
             db.session.commit()
             return error_response("ACCOUNT_DISABLED", "Account is no longer active.", 403)
 

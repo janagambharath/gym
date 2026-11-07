@@ -847,7 +847,7 @@ def _opportunity_payload(row: RRROpportunity) -> dict:
     }
 
 
-def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
+def dashboard_for_gym(gym_id: int, gym_timezone: str, *, include_terminal_token: bool = True) -> dict:
     refresh_opportunities(gym_id, gym_timezone)
     db.session.flush()
     opportunities = RRROpportunity.query.filter_by(gym_id=gym_id).filter(
@@ -924,7 +924,7 @@ def dashboard_for_gym(gym_id: int, gym_timezone: str) -> dict:
         "members": {"total": total_members, "active": active_members,
                     "attendance_rate": round((active_visitors / active_members * 100), 1) if active_members else 0},
         "integration": (
-            integration_payload(integration) if integration
+            integration_payload(integration, include_terminal_token=include_terminal_token) if integration
             else ({"type": "legacy_bridge", "status": "connected",
                    "name": "Bridge"}
                   if legacy_bridge else None)
@@ -996,7 +996,7 @@ def adms_terminal_settings(host_url: str | None = None, path_token: str | None =
     }
 
 
-def integration_payload(row: RRRIntegration) -> dict:
+def integration_payload(row: RRRIntegration, *, include_terminal_token: bool = True) -> dict:
     terminal_last_seen = (
         direct_adms_terminal_last_seen_at(row)
         if row.connector_type == "adms_direct"
@@ -1037,8 +1037,23 @@ def integration_payload(row: RRRIntegration) -> dict:
             row.adms_token_grace_until.isoformat() if row.adms_token_grace_until else None
         )
         if row.adms_path_token:
-            # Legacy plaintext row (pre-hardening): still displayable.
-            payload["terminal_settings"] = adms_terminal_settings(path_token=row.adms_path_token)
+            if include_terminal_token:
+                # Legacy plaintext row (pre-hardening): still displayable.
+                payload["terminal_settings"] = adms_terminal_settings(path_token=row.adms_path_token)
+            else:
+                # V9-M1: the legacy path token is an owner-level
+                # credential. A staff read gets presence only, never the
+                # token — same shape as the hash-only branch below.
+                base = adms_terminal_settings()
+                base.update({
+                    "path": None,
+                    "token_present": True,
+                    "token_note": (
+                        "Token is stored as a hash and cannot be shown again. "
+                        "Rotate the token to re-provision this terminal."
+                    ),
+                })
+                payload["terminal_settings"] = base
         elif row.adms_token_hash:
             base = adms_terminal_settings()
             base.update({

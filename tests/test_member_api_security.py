@@ -342,26 +342,40 @@ def test_privacy_and_account_deletion_routes(client):
 
 
 def test_staff_phone_rejected_on_member_otp_request(client, seed_gym):
-    """Gym staff/owner accounts must be gracefully rejected from logging into VYNLA."""
+    """Gym staff/owner accounts must not get a member OTP challenge.
+
+    V9-L2: the old 403 + is_staff response was half of a phone
+    enumeration oracle (404 unknown vs 403 staff vs 409 multi-gym vs
+    200 member). Every non-member outcome now returns the SAME
+    uniform 200 + generic message with no challenge and no
+    account-type signal — indistinguishable from an unknown number.
+    """
     gym = seed_gym["gym"]
     staff_phone = gym.business_phone_number or gym.phone
     assert staff_phone is not None
 
     res = client.post("/api/member/v1/auth/request-otp", json={"phone": staff_phone})
-    assert res.status_code == 403
+    assert res.status_code == 200
     data = res.json
-    assert data["success"] is False
-    assert data.get("is_staff") is True
-    assert "gym staff" in data["error"]
+    assert data["success"] is True
+    assert data.get("challenge") is None
+    assert "is_staff" not in data
+    assert "If an account exists" in data["message"]
 
 
 def test_unknown_phone_returns_friendly_message(client):
-    """Unregistered phone numbers must return friendly guidance without leaking internals."""
+    """Unregistered phone numbers get the same uniform response as any non-member.
+
+    V9-L2: the old 404 ("couldn't find a member account") let anyone
+    probe whether a number belongs to a member. The response is now
+    identical to the staff-phone and multi-gym cases.
+    """
     res = client.post("/api/member/v1/auth/request-otp", json={"phone": "9999900000"})
-    assert res.status_code == 404
+    assert res.status_code == 200
     data = res.json
-    assert data["success"] is False
-    assert "We couldn't find a member account for this number. Please contact your gym." in data["error"]
+    assert data["success"] is True
+    assert data.get("challenge") is None
+    assert "If an account exists" in data["message"]
 
 
 def test_gym_branding_endpoint_and_tenant_isolation(client, seed_member, seed_gym):

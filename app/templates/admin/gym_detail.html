@@ -513,6 +513,13 @@
     <div class="small mt-1 text-muted">Save this key in the gym bridge config. It will not be shown again.</div>
 </div>
 {% endif %}
+{% if created_bridge_key %}
+<div class="alert alert-warning mb-3">
+    <strong>Bridge API Key generated (shown once — copy it now):</strong>
+    <code class="fs-6 fw-bold">{{ created_bridge_key }}</code>
+    <div class="small mt-1 text-muted">Save this key in the gym bridge config. It will not be shown again.</div>
+</div>
+{% endif %}
 <div class="row g-4">
     <!-- Pairing & Hardware Box -->
     <div class="col-lg-5">

@@ -708,7 +708,7 @@ def create_gym():
             phone=phone,
             address=address,
             subscription_status=sub_status,
-            trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS) if sub_status == "trial" else None,
+            trial_ends_at=today_for_gym("Asia/Kolkata") + timedelta(days=DEFAULT_TRIAL_DAYS) if sub_status == "trial" else None,
             max_members=max_members,
             status="active",
             onboarding_status="live",
@@ -869,7 +869,7 @@ def onboard_step(gym_id: int, step_num: int):
                     status="active",
                     onboarding_status="configuring",
                     subscription_status=sub_status,
-                    trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS) if sub_status == "trial" else None,
+                    trial_ends_at=today_for_gym(timezone_val) + timedelta(days=DEFAULT_TRIAL_DAYS) if sub_status == "trial" else None,
                     max_members=max_members_val,
                 )
                 db.session.add(gym)
@@ -1648,6 +1648,13 @@ def gym_detail(gym_id: int):
         if active_tab == "biometric"
         else None
     )
+    # V9-M2: the key minted at bridge creation, shown once on the
+    # biometric tab — never flashed in the clear.
+    created_bridge_key = (
+        _pop_one_time_secret(f"created_bridge_key_{gym.id}")
+        if active_tab == "biometric"
+        else None
+    )
     reset_temp_pass = None
     reset_temp_email = None
     _reset_raw = (
@@ -1684,6 +1691,7 @@ def gym_detail(gym_id: int):
         bridge_status_info=bridge_status_info,
         bridge_pairing_code=bridge_pairing_code,
         rotated_bridge_key=rotated_bridge_key,
+        created_bridge_key=created_bridge_key,
         reset_temp_pass=reset_temp_pass,
         reset_temp_email=reset_temp_email,
         commands=commands,
@@ -2274,7 +2282,15 @@ def create_gym_bridge(gym_id: int):
 
     audit(action="admin_provision_bridge", resource_type="bridge_installation", resource_id=bridge.id, gym_id=gym.id)
     db.session.commit()
-    flash(f"Biometric Bridge Key generated for {gym.name}! Save this key now (shown once): {raw_key}", "success")
+    # V9-M2 (missed V8-L2 site): the raw bridge key used to be flashed
+    # in clear — a flash lives in the signed-only session cookie, so
+    # the live bridge credential travelled base64-readable until
+    # displayed. Store it Fernet-encrypted + popped on first read, and
+    # show it once on the biometric tab, like the rotate flow. A
+    # distinct key from the onboarding flow's bridge_key_<id> so the
+    # two one-time displays cannot clobber each other.
+    _store_one_time_secret(f"created_bridge_key_{gym.id}", raw_key)
+    flash(f"Biometric Bridge Key generated for {gym.name}! Save this key now (shown once below).", "success")
     return redirect(url_for("admin.gym_detail", gym_id=gym.id, tab="biometric"))
 
 

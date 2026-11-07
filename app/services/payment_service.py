@@ -315,6 +315,12 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     locked_payment.status = "verified"
     locked_payment.verified_by_id = verified_by_id
     locked_payment.verified_at = utcnow()
+    # V9-L31: member-claim renewals were created with paid_on NULL
+    # and the operations monthly figure filters on paid_on, so
+    # verified claims vanished from it. New claims now carry paid_on
+    # at creation; backfill legacy NULLs here so they count too.
+    if locked_payment.paid_on is None:
+        locked_payment.paid_on = today
 
     target_plan_id = locked_payment.plan_id or member.plan_id
     if not scheduled:
@@ -563,6 +569,39 @@ def rechain_scheduled_renewals(member: Member, *, old_end, today, actor_id: int 
             member.membership_start == row.new_start
             and member.membership_end == row.new_end
         ):
+            continue
+        # V9-L30: only re-point when the member's new current end is
+        # still before the row's new_end. Otherwise activation (which
+        # writes start/end = row.new_start/new_end once the current
+        # end matches previous_end) would overwrite the member's
+        # dates backwards and shorten granted time. Leave the row
+        # stale — it can never activate — and audit the skip.
+        # Threshold is new_end, not new_start: the harm is the end
+        # moving backwards, and re-pointing a row whose new_start the
+        # current end already reached is deliberate, pinned behaviour
+        # — V5-M9 (edit lands exactly on new_start, row still
+        # activates to its later new_end) and V7-M5 (a due row
+        # re-chained after a missed window activates to new_end).
+        # In both, activation EXTENDS the end; nothing is shortened.
+        if (
+            member.membership_end is not None
+            and row.new_end is not None
+            and member.membership_end >= row.new_end
+        ):
+            audit(
+                action="scheduled_renewal_rechain_skipped",
+                resource_type="renewal_history",
+                resource_id=row.id,
+                gym_id=member.gym_id,
+                actor_id=actor_id,
+                metadata={
+                    "member_id": member.id,
+                    "old_previous_end": old_end.isoformat() if old_end else None,
+                    "current_end": member.membership_end.isoformat(),
+                    "scheduled_end": row.new_end.isoformat(),
+                    "reason": "current end at or past scheduled end; activation would overwrite dates backwards",
+                },
+            )
             continue
         row.previous_end = member.membership_end
         audit(

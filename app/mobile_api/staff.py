@@ -215,12 +215,22 @@ def register_staff_routes(bp):
                 # Owner cannot demote themselves if they are the only gym owner
                 if user.id == g.current_user.id and role != "gym_owner":
                     return error_response("FORBIDDEN", "You cannot demote yourself from Gym Owner.", 403)
+                # V9-L5: one owner cannot demote ANOTHER owner — only a
+                # super-admin (via the admin console) can change another
+                # owner's role. Without this, a single compromised owner
+                # account can lock every other owner out of the gym.
+                if user.id != g.current_user.id and user.role == "gym_owner" and role != "gym_owner":
+                    return error_response("FORBIDDEN", "Only a super-admin can change another gym owner's role.", 403)
                 user.role = role
 
         if "is_active" in data:
             is_active = bool(data["is_active"])
             if user.id == g.current_user.id and not is_active:
                 return error_response("FORBIDDEN", "You cannot deactivate your own account.", 403)
+            # V9-L5: one owner cannot deactivate ANOTHER owner — only a
+            # super-admin can. (Same lock-out risk as demotion.)
+            if user.id != g.current_user.id and user.role == "gym_owner" and not is_active:
+                return error_response("FORBIDDEN", "Only a super-admin can deactivate another gym owner.", 403)
             user.is_active = is_active
 
         audit(
@@ -362,6 +372,11 @@ def register_staff_routes(bp):
 
         if user.id == g.current_user.id:
             return error_response("FORBIDDEN", "You cannot remove your own account.", 403)
+
+        # V9-L5: removing another owner is a deactivation — only a
+        # super-admin can do it, same as PATCH is_active=False.
+        if user.role == "gym_owner":
+            return error_response("FORBIDDEN", "Only a super-admin can remove another gym owner.", 403)
 
         # A retry after a successful deactivate must replay, not 404
         # (the row still exists but is_active is False — the lookup

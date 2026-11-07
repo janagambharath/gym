@@ -56,6 +56,7 @@ from app.models import (
 from app.services.audit_service import audit
 from app.services.idempotency_service import (
     begin_idempotency,
+    file_upload_payload,
     record_idempotency,
     replay_after_conflict,
 )
@@ -510,36 +511,35 @@ def request_otp():
         # SECURITY (2026-10-13): the phone-suffix lookup is gym-unscoped, so
         # the same 10-digit suffix can match members in different gyms. Never
         # silently pick .first() across gyms — the OTP would go to the wrong
-        # person's WhatsApp. Ambiguous matches are rejected explicitly.
+        # person's WhatsApp. Ambiguous matches send no code at all (below).
         matches = (
             Member.query.filter(Member.phone.endswith(phone[-10:]))
             .filter(Member.deleted_at.is_(None))
             .all()
         )
         gym_ids = {m.gym_id for m in matches}
-        if len(gym_ids) > 1:
-            return jsonify({
-                "success": False,
-                "error": "This number matches accounts at multiple gyms. Please contact your gym for your login code.",
-            }), 409
-        member = matches[0] if matches else None
+        member = matches[0] if len(gym_ids) == 1 and matches else None
 
     if not member:
-        # Check if phone belongs to gym owner or staff (registered gym phone or business phone)
-        gym_staff = Gym.query.filter(
-            (Gym.phone.endswith(phone[-10:])) | (Gym.business_phone_number.endswith(phone[-10:]))
-        ).first()
-        if gym_staff:
-            return jsonify({
-                "success": False,
-                "is_staff": True,
-                "error": "This phone number is registered as gym staff. Please use the Renewal Desk owner app to manage your gym.",
-            }), 403
-
+        # V9-L2: the old 404 (unknown) vs 403 is_staff (staff phone) vs
+        # 409 (multi-gym) vs 200 (member) responses were a phone
+        # enumeration oracle — anyone could probe whether a number
+        # belongs to a member, and which kind of account. Every
+        # non-member outcome now gets the SAME 200 + generic message,
+        # with no challenge and no account-type signal; only a matched
+        # member gets a challenge. Rate limiting still applies.
         return jsonify({
-            "success": False,
-            "error": "We couldn't find a member account for this number. Please contact your gym.",
-        }), 404
+            "success": True,
+            "delivery_ok": False,
+            "delivery_error": None,
+            "delivery_warning": None,
+            "message": "If an account exists for this number, a verification code was sent to WhatsApp.",
+            "challenge": None,
+            "wa_chat_url": None,
+            "gym_name": None,
+            "powered_by": "VYNLA",
+            "test_otp": None,  # never echo OTPs in responses,
+        })
 
     if _is_reviewer_bypass_enabled() and (phone.endswith("9999999999") or phone.endswith("7995854994")):
         otp = "123456"
@@ -1266,6 +1266,10 @@ def claim_payment():
         standard_price=amount,
         discount=Decimal("0.00"),
         amount=amount,
+        # V9-L31: paid_on=today like /renew — the operations monthly
+        # figure filters on paid_on, and a NULL here dropped the
+        # verified claim from it.
+        paid_on=today_for_gym(member.gym.timezone if member.gym else "Asia/Kolkata"),
         method="member_claim",
         channel="online",
         reference=reference,
@@ -1353,6 +1357,10 @@ def request_renewal():
         gym_id=member.gym_id,
         member_id=member.id,
         amount=amount,
+        # V9-L31: paid_on=today like /renew — the operations monthly
+        # figure filters on paid_on, and a NULL here dropped the
+        # verified claim from it.
+        paid_on=today_for_gym(member.gym.timezone if member.gym else "Asia/Kolkata"),
         method="member_request",
         notes=f"Self-service renewal request from {member.full_name}",
         status="pending",
@@ -1711,7 +1719,13 @@ def confirm_upi_payment():
             db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            return jsonify({"success": False, "error": str(exc)}), 400
+            # V9-L3: never echo raw exception text to the client —
+            # verify_payment raises business ValueErrors whose wording
+            # is not a stable API contract (and an unexpected type can
+            # carry DB detail). Log it server-side, return one fixed
+            # message.
+            _logger.exception("Member payment verification failed for payment %s", payment.id)
+            return jsonify({"success": False, "error": "The payment could not be verified. Please try again."}), 400
 
         return jsonify({
             "success": True,
@@ -1935,7 +1949,7 @@ def member_access():
                 "last_visit": last_entry.event_timestamp.isoformat() if last_entry else None,
                 "today_entries": today_entries,
                 "today_exits": today_exits,
-                "is_inside": access_state.is_inside if access_state else False,
+                "is_inside": (access_state.current_state == "INSIDE") if access_state else False,
                 "access_active": member.status == "active" and not member.is_expired,
             },
             "events": [
@@ -2049,18 +2063,70 @@ def member_profile_photo():
     upload = request.files.get("photo")
     if not upload or not upload.filename:
         return jsonify({"success": False, "error": "Choose a profile photo to upload."}), 400
+
+    # V9-L4: honour Idempotency-Key on photo upload. Without it, a
+    # retried POST mints a fresh uuid file every time, and two
+    # concurrent double-submits can orphan the loser's file (each
+    # request deletes the old_path it read at entry, so the loser's
+    # newly written file is left unreferenced). The fingerprint is the
+    # SHA-256 of the file bytes + size (V8-L29 helper): the same bytes
+    # under the same key replay the stored URL with no second file;
+    # different bytes under the same key 409. A request without a key
+    # proceeds exactly as before. DELETE needs no key — it is
+    # naturally idempotent.
+    raw_bytes = upload.stream.read()
+    upload.stream.seek(0)
+    idempotency_key, request_hash, replay = begin_idempotency(
+        gym_id=g.gym_id,
+        member_id=g.member_id,
+        scope="profile_photo_upload",
+        headers=request.headers,
+        payload=file_upload_payload(
+            "member/profile/photo",
+            sha256_hex=hashlib.sha256(raw_bytes).hexdigest(),
+            size_bytes=len(raw_bytes),
+        ),
+    )
+    if replay is not None:
+        return replay
+
     try:
         from app.services.storage_service import save_member_profile_photo, delete_member_profile_photo
         new_path = save_member_profile_photo(upload, g.gym_id, member.id)
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        # V9-L3: never echo raw exception text to the client — return
+        # one fixed message and log the detail server-side.
+        _logger.warning("Profile photo rejected for member %s: %s", member.id, exc)
+        return jsonify({"success": False, "error": "The photo could not be saved. Please choose a JPEG, PNG, or WebP image under 3 MB and try again."}), 400
     except Exception:
         _logger.exception("Could not save profile photo for member %s", member.id)
         return jsonify({"success": False, "error": "The photo could not be saved. Please try again."}), 500
 
     member.profile_photo_path = new_path
+    response_body = {"success": True, "data": {"profile_photo_url": _member_profile_photo_url(member)}}
+    record_idempotency(
+        gym_id=g.gym_id,
+        member_id=g.member_id,
+        scope="profile_photo_upload",
+        key=idempotency_key,
+        request_hash=request_hash,
+        status_code=200,
+        response_body=response_body,
+    )
     try:
         db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        replayed = replay_after_conflict(
+            gym_id=g.gym_id,
+            member_id=g.member_id,
+            scope="profile_photo_upload",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replayed is not None:
+            return replayed
+        raise
     except Exception:
         db.session.rollback()
         try:
@@ -2074,7 +2140,7 @@ def member_profile_photo():
             delete_member_profile_photo(old_path)
         except Exception:
             _logger.exception("Could not delete replaced profile photo for member %s", member.id)
-    return jsonify({"success": True, "data": {"profile_photo_url": _member_profile_photo_url(member)}})
+    return jsonify(response_body)
 
 
 @member_bp.route("/profile/photo/<token>", methods=["GET"])

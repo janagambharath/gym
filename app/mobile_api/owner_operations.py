@@ -6,6 +6,7 @@ second ledger or a duplicate CRM.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -36,6 +37,8 @@ LEAD_STATUSES = frozenset({
     "converted", "lost", "closed",
 })
 LEAD_SOURCES = frozenset({"walk_in", "phone", "referral", "instagram", "google", "whatsapp", "other"})
+
+_logger = logging.getLogger(__name__)
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -146,7 +149,14 @@ def register_owner_operation_routes(bp):
             BotLead.trial_scheduled_for >= start_at,
             BotLead.trial_scheduled_for < end_at,
         ).order_by(BotLead.trial_scheduled_for.asc()).all()
-        rrr = dashboard_for_gym(g.gym_id, gym_timezone)
+        # V9-M1: the RRR dashboard embeds the integration payload,
+        # which carries the legacy ADMS path token — staff reads get
+        # presence only, never the token.
+        rrr = dashboard_for_gym(
+            g.gym_id,
+            gym_timezone,
+            include_terminal_token=(g.current_user.role == "gym_owner"),
+        )
         # dashboard_for_gym refreshes calculated opportunities.  Persist that
         # deterministic refresh just as the RRR dashboard endpoint does.
         db.session.commit()
@@ -210,7 +220,10 @@ def register_owner_operation_routes(bp):
         try:
             counted = _money(payload.get("counted_cash"), "counted_cash")
         except ValueError as exc:
-            return error_response("VALIDATION_ERROR", str(exc), 422)
+            # V9-L3: _money's message is app-written, but the API
+            # boundary returns one fixed message; detail is logged.
+            _logger.warning("Cash close rejected: %s", exc)
+            return error_response("VALIDATION_ERROR", "The counted cash amount is invalid.", 422)
         notes = str(payload.get("notes") or "").strip()[:1000] or None
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         now = utcnow()
@@ -296,7 +309,9 @@ def register_owner_operation_routes(bp):
             follow_up = _parse_datetime(payload.get("next_follow_up_at"), "next_follow_up_at")
             trial_at = _parse_datetime(payload.get("trial_scheduled_for"), "trial_scheduled_for")
         except ValueError as exc:
-            return error_response("VALIDATION_ERROR", str(exc), 422)
+            # V9-L3: fixed message at the API boundary; detail logged.
+            _logger.warning("Lead create rejected: %s", exc)
+            return error_response("VALIDATION_ERROR", "Dates must be valid ISO 8601 timestamps.", 422)
         # A retry after a successful create must replay the stored
         # lead instead of creating a duplicate row.
         idempotency_key, request_hash, replay = begin_idempotency(
@@ -384,7 +399,9 @@ def register_owner_operation_routes(bp):
                     raise ValueError("Assigned staff member does not belong to this gym.")
                 lead.assigned_staff_id = int(staff_id) if staff_id is not None else None
         except (ValueError, TypeError) as exc:
-            return error_response("VALIDATION_ERROR", str(exc), 422)
+            # V9-L3: fixed message at the API boundary; detail logged.
+            _logger.warning("Lead update rejected: %s", exc)
+            return error_response("VALIDATION_ERROR", "One or more lead fields are invalid.", 422)
         audit(action="owner_lead_updated", resource_type="bot_lead", resource_id=lead.id, gym_id=g.gym_id, actor_id=g.user_id, metadata={"status": lead.status})
         response_body = {"success": True, "data": {"lead": _lead_payload(lead)}}
         record_idempotency(

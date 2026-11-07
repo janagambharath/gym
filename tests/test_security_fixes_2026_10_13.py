@@ -256,5 +256,10 @@ def test_request_otp_cross_gym_ambiguity_rejected(client, app, seed_gym):
     res = client.post(
         "/api/member/v1/auth/request-otp", json={"phone": f"+91{shared_suffix}"}
     )
-    assert res.status_code == 409
-    assert res.json["success"] is False
+    # V9-L2: the old 409 ("matches accounts at multiple gyms") was one
+    # leg of a phone enumeration oracle. An ambiguous match now sends
+    # no code and returns the same uniform 200 + generic message as an
+    # unknown number — the member must identify their gym out of band.
+    assert res.status_code == 200
+    assert res.json["success"] is True
+    assert res.json.get("challenge") is None

@@ -586,7 +586,19 @@ def command_ack(command_id: str):
         gym_id=installation.gym_id,
         metadata={"command_type": command.command_type, "status": status},
     )
-    retry = schedule_retry_after_failed_command(command) if status == "failed" else None
+    # V9-L15: schedule the bounded retry whenever the DURABLE status
+    # after the ack is failed — not only when the incoming status was
+    # "failed". acknowledge_command escalates "accepted"-but-never-
+    # confirmed to failed after 10 leases, and that escalation previously
+    # never reached schedule_retry_after_failed_command, so a dead enable
+    # stranded a renewed member until manual retry. The retry itself is
+    # bounded (BRIDGE_COMMAND_MAX_EXECUTION_ATTEMPTS) and fail-closed
+    # (never re-drives a disable/enable the member no longer qualifies for).
+    retry = (
+        schedule_retry_after_failed_command(command)
+        if command.status == "failed"
+        else None
+    )
     db.session.commit()
     return jsonify({"ok": True, "retryScheduled": retry is not None})
 

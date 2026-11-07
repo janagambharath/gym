@@ -80,7 +80,14 @@ def register_rrr_routes(bp):
     @token_required
     @roles_required("gym_owner", "staff")
     def rrr_dashboard():
-        data = dashboard_for_gym(g.gym_id, g.current_user.gym.timezone or "Asia/Kolkata")
+        # V9-M1: the dashboard embeds the integration payload, which
+        # carries the legacy ADMS path token — staff reads get presence
+        # only, never the token.
+        data = dashboard_for_gym(
+            g.gym_id,
+            g.current_user.gym.timezone or "Asia/Kolkata",
+            include_terminal_token=(g.current_user.role == "gym_owner"),
+        )
         db.session.commit()
         return jsonify({"success": True, "data": data})
 
@@ -221,8 +228,11 @@ def register_rrr_routes(bp):
     def rrr_integrations():
         rows = RRRIntegration.query.filter_by(gym_id=g.gym_id).order_by(RRRIntegration.connector_type).all()
         devices = RRRDevice.query.filter_by(gym_id=g.gym_id).order_by(RRRDevice.device_name).all()
+        # V9-M1: the legacy ADMS path token is an owner-level credential.
+        # Staff reads get token presence only, never the token itself.
+        include_token = g.current_user.role == "gym_owner"
         return jsonify({"success": True, "data": {
-            "integrations": [integration_payload(x) for x in rows],
+            "integrations": [integration_payload(x, include_terminal_token=include_token) for x in rows],
             "devices": [{"id": d.id, "integration_id": d.integration_id, "serial_number": d.serial_number,
                          "name": d.device_name, "status": d.status, "selected": d.is_selected,
                          "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None}

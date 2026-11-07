@@ -7,6 +7,7 @@ door has already opened.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timezone
 from flask import g, jsonify, request
 from sqlalchemy.exc import IntegrityError
@@ -26,10 +27,13 @@ from app.services.access_event_service import (
 )
 from app.services.audit_service import audit
 from app.services.bridge_service import (
+    OWNER_CANCELLED_ERROR,
+    OWNER_CANCELLED_MARKER,
     STALE_ENABLE_ERROR,
     STALE_ENABLE_MARKER,
     bridge_disable_must_be_cancelled_at_lease,
     bridge_enable_must_be_cancelled,
+    cancel_adms_command,
     cancel_bridge_command,
     queue_gym_reconciliation,
 )
@@ -38,6 +42,8 @@ from app.services.idempotency_service import (
     record_idempotency,
     replay_after_conflict,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def register_access_routes(bp):
@@ -129,7 +135,15 @@ def register_access_routes(bp):
                 RRRAdmsCommand.integration_id == adms.id,
                 RRRAdmsCommand.status.in_(["queued", "delivered"]),
             ).count()
-            summary["failed_commands"] = 0
+            # V9-L24: count the real failed ADMS commands for this
+            # integration — the hardcoded 0 hid failed Direct Cloud
+            # commands from the owner (no banner, no count). Retry /
+            # Clear still 409 for ADMS gyms; failed blocks auto-retry
+            # on the scheduler.
+            summary["failed_commands"] = RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.integration_id == adms.id,
+                RRRAdmsCommand.status == "failed",
+            ).count()
         else:
             summary["adms_integration_id"] = None
             summary["adms_online"] = False
@@ -183,7 +197,10 @@ def register_access_routes(bp):
             # all-time feed.
             from app.mobile_api.errors import error_response
 
-            return error_response("VALIDATION_ERROR", str(exc), 400)
+            # V9-L3: the service message echoes the caller-supplied
+            # value — return one fixed message, log the detail.
+            _logger.warning("Invalid date_filter on access feed: %s", exc)
+            return error_response("VALIDATION_ERROR", "Invalid date filter.", 400)
         result["log"] = result.get("events", [])
         resp = jsonify({"success": True, "data": result})
         resp.headers["Cache-Control"] = "no-store"
@@ -218,7 +235,16 @@ def register_access_routes(bp):
         """Record manual member check-in or check-out directly from the app."""
         data = request.get_json(silent=True) or {}
         member_id = data.get("member_id")
-        event_type = (data.get("type") or data.get("event_type") or "ENTRY").upper()
+        # V9-L26: validate input types before use — a non-string type
+        # 500d on .upper(), and a non-integer member_id 500d on
+        # Postgres (invalid input syntax for integer) in filter_by.
+        # Malformed client input is a 400, not a 500.
+        raw_type = data.get("type") or data.get("event_type") or "ENTRY"
+        if not isinstance(raw_type, str):
+            return jsonify({"success": False, "error": {"message": "type must be a string"}}), 400
+        event_type = raw_type.upper()
+        if isinstance(member_id, bool) or not isinstance(member_id, int):
+            return jsonify({"success": False, "error": {"message": "member_id must be an integer"}}), 400
         if not member_id:
             return jsonify({"success": False, "error": {"message": "member_id is required"}}), 400
 
@@ -522,6 +548,57 @@ def register_access_routes(bp):
             "data": {
                 "cleared_count": cleared_count,
                 "message": f"Cleared {cleared_count} failed command(s).",
+            },
+        })
+
+    @bp.route("/access/adms-commands/<int:command_id>/cancel", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    def cancel_adms_command_route(command_id: int):
+        """Owner-cancel a queued Direct ADMS command (V9-L14).
+
+        Only ``queued`` rows can be cancelled — a ``delivered`` row has
+        already been handed to the terminal and cannot be recalled, and
+        terminal rows (``acked``/``failed``) are history. Cancelling the
+        queued row frees the ADMS pipe: the COMMAND_PENDING guards block
+        new test / advanced / unlock commands while any queued or
+        delivered row exists, so a stuck unlock otherwise wedges every
+        other ADMS command. Gym-scoped: a row from another gym is 404.
+        """
+        from app.models.rrr import RRRAdmsCommand
+
+        command = RRRAdmsCommand.query.filter_by(
+            id=command_id, gym_id=g.gym_id
+        ).first()
+        if command is None:
+            return jsonify({"success": False, "error": {
+                "code": "NOT_FOUND",
+                "message": "Direct ADMS command was not found.",
+            }}), 404
+        if command.status != "queued":
+            return jsonify({"success": False, "error": {
+                "code": "COMMAND_NOT_QUEUED",
+                "message": f"Only a queued command can be cancelled (status is {command.status}).",
+            }}), 409
+        cancel_adms_command(
+            command, marker=OWNER_CANCELLED_MARKER, error=OWNER_CANCELLED_ERROR
+        )
+        db.session.commit()
+        audit(
+            action="adms_command_cancelled_by_owner",
+            resource_type="rrr_adms_command",
+            resource_id=command.id,
+            gym_id=g.gym_id,
+            actor_id=g.current_user.id,
+            metadata={"action": command.action},
+        )
+        return jsonify({
+            "success": True,
+            "data": {
+                "command_id": command.id,
+                "action": command.action,
+                "status": command.status,
+                "message": "Queued Direct ADMS command cancelled.",
             },
         })
 

@@ -91,6 +91,26 @@ STALE_ENABLE_ERROR = (
     "only a currently active member with an end date today or in the future "
     "may be enabled); enable command was not served."
 )
+# V9-M7: only membership-state commands may be replaced in place by a
+# bridge membership/manual dedupe. Every other command type is a raw or
+# advanced command (enrollment, deletion, validity window, door, sync,
+# device info, restart, log clear) — replacing one silently drops work
+# the owner explicitly queued (e.g. a pending create_user vanishes and
+# the member never gets a terminal user). Those rows are preserved and
+# the membership/manual command queues fresh behind them instead.
+BRIDGE_MEMBERSHIP_COMMAND_TYPES = frozenset({"enable_user", "disable_user"})
+# V9-L14: a queued unlock_door is a physical door opening — it must not
+# serve hours after the owner tapped it. Queued unlocks expire after the
+# same 10-minute window other commands are bounded by
+# (ADMS_QUEUED_STALE_MINUTES / ADMS_DELIVERED_TIMEOUT_MINUTES).
+STALE_UNLOCK_MARKER = "CANCELLED_STALE_UNLOCK"
+STALE_UNLOCK_ERROR = (
+    "CANCELLED_STALE_UNLOCK: queued door unlock expired before the terminal "
+    "polled (10 min); queue a fresh unlock if the door still needs opening."
+)
+# V9-L14: owner cancel of a queued ADMS row.
+OWNER_CANCELLED_MARKER = "CANCELLED_BY_OWNER"
+OWNER_CANCELLED_ERROR = "Cancelled by the gym owner before delivery."
 
 
 def adms_command_is_forbidden(command: RRRAdmsCommand) -> bool:
@@ -619,6 +639,38 @@ def cancel_adms_command(
     command.result_code = marker
     command.result_message = error
     command.acknowledged_at = utcnow()
+
+
+def expire_stale_queued_adms_unlock_commands(integration_id: int) -> int:
+    """Fail queued ``unlock_door`` rows older than the 10-minute window
+    (V9-L14).
+
+    A queued unlock is a physical door opening: if the terminal never
+    polled within ``ADMS_QUEUED_STALE_MINUTES`` of queue time, serving it
+    later would open the door with nobody there — and while it sits
+    queued it wedges the whole ADMS pipe behind the COMMAND_PENDING
+    guards. Delivered rows are untouched (already served; the delivered
+    reaper bounds them). Does not commit; callers commit. Returns the
+    number expired.
+    """
+
+    cutoff = utcnow() - timedelta(minutes=ADMS_QUEUED_STALE_MINUTES)
+    stale = RRRAdmsCommand.query.filter(
+        RRRAdmsCommand.integration_id == integration_id,
+        RRRAdmsCommand.action == "unlock_door",
+        RRRAdmsCommand.status == "queued",
+        RRRAdmsCommand.created_at < cutoff,
+    ).all()
+    for row in stale:
+        cancel_adms_command(row, marker=STALE_UNLOCK_MARKER, error=STALE_UNLOCK_ERROR)
+        audit(
+            action="adms_unlock_expired",
+            resource_type="rrr_adms_command",
+            resource_id=row.id,
+            gym_id=row.gym_id,
+            metadata={"action": "unlock_door"},
+        )
+    return len(stale)
 
 
 # Marker for a command cancelled because its terminal ID changed hands
@@ -1295,7 +1347,27 @@ def queue_manual_adms_member_command(
                     # re-stamped like the automatic path does — otherwise
                     # displace + the V6-M6 intent check can never catch
                     # it when this enroll is recycled to a new holder.
+                    # V9-L13: re-stamping intent alone is not enough —
+                    # the row's command_text still carries the previous
+                    # holder's name, and serving it would rename the
+                    # terminal user to that stale name. Refresh the wire
+                    # text from the current member too, and audit it.
+                    latest.command_text = command_text
+                    latest.result_code = None
+                    latest.result_message = None
                     latest.intended_member_id = member.id
+                    audit(
+                        action=f"adms_manual_{action}_queued",
+                        resource_type="rrr_adms_command",
+                        resource_id=latest.id,
+                        gym_id=member.gym_id,
+                        actor_id=actor_id,
+                        metadata={"member_id": member.id, "enroll_number": enroll_number,
+                                  "restamped_intent": True,
+                                  "command_text_refreshed": True,
+                                  **({"method": "essl_userinfo_group", "group": "100"}
+                                     if action == "block" else {})},
+                    )
                 return latest
             # A not-yet-delivered command is replaced by the owner's newest
             # explicit choice (block→unblock or unblock→block).
@@ -1581,24 +1653,43 @@ def queue_manual_bridge_member_command(
         ):
             return latest
         if latest.status == "pending":
-            latest.command_type = command_type
-            latest.enroll_number = enroll_number
-            latest.member_name = member.full_name
-            latest.delay_seconds = None
-            latest.last_error = None
-            latest.retry_attempt = 0
-            latest.not_before = None
-            db.session.flush()
-            audit(
-                action=f"bridge_manual_{action}_queued",
-                resource_type="bridge_command",
-                resource_id=latest.id,
-                gym_id=member.gym_id,
-                actor_id=actor_id,
-                metadata={"member_id": member.id, "enroll_number": enroll_number,
-                          "replaced_pending": True},
-            )
-            return latest
+            if latest.command_type not in BRIDGE_MEMBERSHIP_COMMAND_TYPES:
+                # V9-M7 (bridge twin of V8-L11): a pending raw/advanced
+                # command (create_user / delete_user / set_valid_date /
+                # unlock_door / sync_users / ...) must never be silently
+                # overwritten by a manual toggle. Preserve it, audit the
+                # preservation, and fall through to queue the manual
+                # command as a fresh row behind it (FIFO serves the raw
+                # command first).
+                audit(
+                    action=f"bridge_manual_{action}_queued",
+                    resource_type="bridge_command",
+                    resource_id=latest.id,
+                    gym_id=member.gym_id,
+                    actor_id=actor_id,
+                    metadata={"member_id": member.id, "enroll_number": enroll_number,
+                              "raw_command_preserved": True,
+                              "preserved_command_type": latest.command_type},
+                )
+            else:
+                latest.command_type = command_type
+                latest.enroll_number = enroll_number
+                latest.member_name = member.full_name
+                latest.delay_seconds = None
+                latest.last_error = None
+                latest.retry_attempt = 0
+                latest.not_before = None
+                db.session.flush()
+                audit(
+                    action=f"bridge_manual_{action}_queued",
+                    resource_type="bridge_command",
+                    resource_id=latest.id,
+                    gym_id=member.gym_id,
+                    actor_id=actor_id,
+                    metadata={"member_id": member.id, "enroll_number": enroll_number,
+                              "replaced_pending": True},
+                )
+                return latest
 
     command = BridgeCommand(
         bridge_id=installation.id,
@@ -1699,17 +1790,35 @@ def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> 
                 latest.not_before = None
             return latest
         if latest.status == "pending":
-            # A not-yet-delivered command can safely be replaced by the most
-            # recent membership state.  A leased command is left immutable;
-            # its follow-up command preserves correct final ordering.
-            latest.command_type = command_type
-            latest.enroll_number = enroll_number
-            latest.member_name = member.full_name
-            latest.delay_seconds = None
-            latest.last_error = None
-            latest.retry_attempt = 0
-            latest.not_before = None
-            return latest
+            if latest.command_type not in BRIDGE_MEMBERSHIP_COMMAND_TYPES:
+                # V9-M7 (bridge twin of V8-L11): a pending raw/advanced
+                # command (create_user / delete_user / set_valid_date /
+                # unlock_door / sync_users / ...) must never be silently
+                # overwritten by a membership queue. Preserve it, audit
+                # the preservation, and fall through to queue the
+                # membership command as a fresh row behind it (FIFO
+                # serves the raw command first).
+                audit(
+                    action="bridge_membership_command_queued",
+                    resource_type="bridge_command",
+                    resource_id=latest.id,
+                    gym_id=member.gym_id,
+                    metadata={"member_id": member.id, "enroll_number": enroll_number,
+                              "raw_command_preserved": True,
+                              "preserved_command_type": latest.command_type},
+                )
+            else:
+                # A not-yet-delivered command can safely be replaced by the most
+                # recent membership state.  A leased command is left immutable;
+                # its follow-up command preserves correct final ordering.
+                latest.command_type = command_type
+                latest.enroll_number = enroll_number
+                latest.member_name = member.full_name
+                latest.delay_seconds = None
+                latest.last_error = None
+                latest.retry_attempt = 0
+                latest.not_before = None
+                return latest
         if (
             latest.status == "acked"
             and latest.command_type == command_type
@@ -1885,6 +1994,20 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
     )
     leased: list[BridgeCommand] = []
     for command in ready:
+        # V9-L14: a queued unlock_door is a physical door opening — never
+        # lease one older than the 10-minute window other commands are
+        # bounded by. Expire it instead of serving it hours late.
+        if (
+            command.command_type == "unlock_door"
+            and command.status == "pending"
+            and command.created_at is not None
+            and utcnow() - _as_utc(command.created_at)
+            > timedelta(minutes=ADMS_QUEUED_STALE_MINUTES)
+        ):
+            cancel_bridge_command(
+                command, marker=STALE_UNLOCK_MARKER, error=STALE_UNLOCK_ERROR
+            )
+            continue
         # V4-M3: a command queued for a member who no longer holds this
         # enroll number must never execute against the new holder — the
         # bridge executes by enroll number, so judge the CURRENT holder.

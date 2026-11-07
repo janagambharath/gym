@@ -707,7 +707,30 @@ def create_campaign(
                     and member.membership_end >= today
                     and exp_date < member.membership_end
                 )
-                if _live_end:
+                if member.status == "paused":
+                    # V9-M10: never rewrite a paused member's dates.
+                    # The import expiry is in the past, so the
+                    # rewrite below would force status "expired" and
+                    # destroy the freeze extension with no
+                    # compensation — the [Paused on …] marker stays
+                    # orphaned, unfreeze can never run (NOT_PAUSED),
+                    # and the V8-L7 freeze guards cannot protect a
+                    # member who is no longer paused. Skip like a
+                    # live-active period; the freeze stands.
+                    audit(
+                        action="campaign_import_member_date_skipped",
+                        resource_type="member",
+                        resource_id=member.id,
+                        gym_id=gym_id,
+                        actor_id=created_by_id,
+                        metadata={
+                            "campaign_id": campaign.id,
+                            "reason": "member paused",
+                            "current_end": member.membership_end.isoformat() if member.membership_end else None,
+                            "imported_end": exp_date.isoformat(),
+                        },
+                    )
+                elif _live_end:
                     # Never shorten a live paid period from a CSV.
                     audit(
                         action="campaign_import_member_date_skipped",
@@ -731,6 +754,47 @@ def create_campaign(
                         old_end=_old_end,
                         today=today,
                         actor_id=created_by_id,
+                    )
+                    # V9-M11: the rewrite must leave a ledger row, or
+                    # Date Repair reads the stored end as a hand edit
+                    # (ledger_mismatch) and Apply reverts it to the
+                    # pre-import end. A zero-amount marker makes the
+                    # chain agree with the stored end. It is
+                    # money-neutral (no payment link, amount 0,
+                    # excluded from payment-backed money) and its
+                    # previous_end is the pre-import end, never the
+                    # new end, so the scheduler treats it as stale
+                    # history, never an activatable row.
+                    # Shape: when the import EXTENDS the end, the
+                    # marker chains contiguously (new_start =
+                    # old_end + 1) so the scan stays fully clean;
+                    # when it SHORTENS the end, a 1-day marker at
+                    # the new end is the only shape that fits
+                    # (new_start must be <= new_end) — the scan may
+                    # then flag a review-only period_overlap
+                    # against the earlier row, but Apply never
+                    # auto-applies a finding with no proposal, so
+                    # the imported end stands.
+                    if _old_end is not None and exp_date > _old_end:
+                        _marker_start = _old_end + timedelta(days=1)
+                    else:
+                        _marker_start = exp_date
+                    db.session.add(
+                        RenewalHistory(
+                            gym_id=gym_id,
+                            member_id=member.id,
+                            plan_id=member.plan_id,
+                            renewed_by_id=created_by_id,
+                            previous_start=member.membership_start,
+                            previous_end=_old_end,
+                            new_start=_marker_start,
+                            new_end=exp_date,
+                            duration_days=max(1, (exp_date - _marker_start).days + 1),
+                            amount=Decimal("0.00"),
+                            channel="offline",
+                            notes="Campaign import date correction (no payment)",
+                            is_creation=False,
+                        )
                     )
                     queue_membership_command(member)
                     audit(

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
@@ -121,6 +121,27 @@ def _punch_key(enroll_number, event_timestamp, event_type, direction) -> str:
     return f"{enroll_number or ''}|{ts or ''}|{event_type or ''}|{direction or ''}"
 
 
+def _normalize_twin_class(event_type, direction):
+    """Normalize a punch classification for twin comparison (V9-L23).
+
+    A direction-missing punch classifies ATTENDANCE/UNKNOWN while the
+    same physical punch seen with an att-state classifies ENTRY/IN
+    (ATTLOG line with no status column; old bridge build with no
+    att_state). Those are the same punch, so twin keys must treat
+    them as one class. ATTENDANCE is entry-like only — it never
+    normalises to EXIT, so a genuine same-second ENTRY+EXIT pair (and
+    an ATTENDANCE row against an EXIT) stay distinct.
+    """
+    if event_type == "ATTENDANCE":
+        return "ENTRY", "IN"
+    if direction in (None, "", "UNKNOWN"):
+        if event_type == "ENTRY":
+            return "ENTRY", "IN"
+        if event_type == "EXIT":
+            return "EXIT", "OUT"
+    return event_type, direction
+
+
 def _find_punch_twin(
     *,
     gym_id: int,
@@ -146,12 +167,38 @@ def _find_punch_twin(
     from datetime import timedelta
 
     floor = ts.replace(microsecond=0)
+    # V9-L23: classification-tolerant twin match — a direction-missing
+    # punch (ATTENDANCE/UNKNOWN) is the same physical punch as the
+    # ENTRY/IN the other path recorded for it. Match any stored class
+    # whose NORMALISED class equals the incoming punch's normalised
+    # class, in either direction (incoming ATTENDANCE vs stored ENTRY,
+    # or incoming ENTRY vs stored ATTENDANCE). ATTENDANCE normalises
+    # to entry-like only, so same-second entry+exit pairs stay
+    # distinct.
+    target = _normalize_twin_class(event_type, direction)
+    candidates = {(event_type, direction)} | {
+        cls
+        for cls in (
+            ("ENTRY", "IN"),
+            ("EXIT", "OUT"),
+            ("ATTENDANCE", "UNKNOWN"),
+            ("ACCESS_DENIED", "UNKNOWN"),
+        )
+        if _normalize_twin_class(*cls) == target
+    }
     return (
         AccessEvent.query.filter(
             AccessEvent.gym_id == gym_id,
             AccessEvent.device_enroll_number == device_enroll_number,
-            AccessEvent.event_type == event_type,
-            AccessEvent.direction == direction,
+            or_(
+                *[
+                    and_(
+                        AccessEvent.event_type == twin_type,
+                        AccessEvent.direction == twin_direction,
+                    )
+                    for twin_type, twin_direction in sorted(candidates)
+                ]
+            ),
             AccessEvent.event_timestamp >= floor,
             AccessEvent.event_timestamp < floor + timedelta(seconds=1),
         )
@@ -282,7 +329,7 @@ def _serialize_rrr_event(evt) -> dict:
         "direction": direction,
         "event_timestamp": evt.punch_time.isoformat() if evt.punch_time else None,
         "member_id": member.id if member else None,
-        "member_name": member.full_name if member else f"User {evt.biometric_user_id}",
+        "member_name": member.full_name if member else None,
         "biometric_user_id": evt.biometric_user_id,
         "device_name": evt.device_serial,
         "verify_method": evt.verify_method,
@@ -445,8 +492,15 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
         if member is not None:
             if existing.member_id is None:
                 existing.member_id = member.id
-            existing.member_name = member.full_name
-            existing.membership_status = member.status
+            # V9-L22: only (re)write the displayed name/status when the
+            # row belongs to this member (or had no member yet). The
+            # twin may have been remapped to a different member since
+            # this row projected; overwriting its name/status with the
+            # new member's would show one member's name on another
+            # member's row. Mirrors the bridge twin branch guard.
+            if existing.member_id == member.id:
+                existing.member_name = member.full_name
+                existing.membership_status = member.status
             if existing.member_id == member.id and existing.event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
                 _update_member_access_state(
                     gym_id=attendance.gym_id,
@@ -484,8 +538,12 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
         if member is not None:
             if twin.member_id is None:
                 twin.member_id = member.id
-            twin.member_name = member.full_name
-            twin.membership_status = member.status
+            # V9-L22: only (re)write the displayed name/status when the
+            # twin belongs to this member (or had no member yet) — see
+            # the existing-branch guard above.
+            if twin.member_id == member.id:
+                twin.member_name = member.full_name
+                twin.membership_status = member.status
             if twin.member_id == member.id and twin.event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
                 _update_member_access_state(
                     gym_id=attendance.gym_id,
@@ -619,6 +677,11 @@ def _twin_second_key(enroll_number, event_timestamp, event_type, direction):
     if ts is None:
         return None
     ts = _as_utc(ts).replace(microsecond=0)
+    # V9-L23: normalise the classification before keying — a
+    # direction-missing ATTENDANCE/UNKNOWN punch and the ENTRY/IN the
+    # other path recorded for the same physical punch must share one
+    # key, or the twin survives and double-counts/renders twice.
+    event_type, direction = _normalize_twin_class(event_type, direction)
     return f"{enroll_number or ''}|{ts.isoformat()}|{event_type or ''}|{direction or ''}"
 
 

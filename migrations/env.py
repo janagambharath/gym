@@ -41,6 +41,20 @@ logger = logging.getLogger('alembic.env')
 # the guard and fails mid-chain as before.
 _SQLITE_BLOCKED_VERBS = ("upgrade", "downgrade", "migrate")
 
+# All verbs alembic / flask db accept (V9-L21). _migration_command_verb
+# scans argv for the first of these instead of positional parsing.
+_MIGRATION_VERBS = (
+    "upgrade", "downgrade", "migrate", "current", "stamp", "heads",
+    "history", "revision", "branches", "show", "merge", "check",
+    "edit", "init", "list_templates", "ensure_version",
+)
+
+# CLI options that take a separate value token — their value must be
+# skipped too, so a value that happens to look like a verb (or a
+# config path) is never mistaken for the verb (V9-L21).
+_OPTIONS_WITH_VALUE = ("-c", "--config", "-n", "--name", "-x",
+                       "--app", "--env-file")
+
 _SQLITE_REFUSAL = (
     "SQLite is not supported for migrations (V6-M18). The chain "
     "contains Postgres-only SQL (INTERVAL / ANY in 71e470eb6cb6, the ~ "
@@ -54,15 +68,36 @@ _SQLITE_REFUSAL = (
 
 
 def _migration_command_verb(argv):
-    """The alembic verb for `flask db <verb> ...` / `alembic <verb> ...`."""
+    """The alembic verb for `flask db <verb> ...` / `alembic <verb> ...`.
+
+    Scans argv for the first known verb token instead of positional
+    parsing, so option flags and their values (e.g. `alembic -c
+    <ini> upgrade`, `flask --app app:create_app db upgrade`) cannot
+    be mistaken for the verb (V9-L21: the old positional parse
+    returned '-c' for the `-c` form, so the V6-M18 SQLite refusal
+    would not have fired for that invocation).
+    """
     argv = list(argv or [])
-    if "db" in argv:
-        idx = argv.index("db")
-        if idx + 1 < len(argv):
-            return argv[idx + 1]
-        return None
-    if len(argv) > 1:
-        return argv[1]
+    i = 1  # skip the program name
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            i += 1
+            continue
+        if tok.startswith("-"):
+            if "=" in tok:
+                i += 1  # --opt=value: single token, no separate value
+                continue
+            if tok in _OPTIONS_WITH_VALUE:
+                i += 2  # skip the option and its value
+                continue
+            i += 1  # value-less flag
+            continue
+        if tok in _MIGRATION_VERBS:
+            return tok
+        # Bare non-verb token (e.g. flask's `db` subcommand, or an
+        # unknown verb) — keep scanning for the real verb.
+        i += 1
     return None
 
 
