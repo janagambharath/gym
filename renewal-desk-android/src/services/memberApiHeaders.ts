@@ -12,18 +12,20 @@
  * honours the key.
  *
  * BACKEND STATUS (verified 2026-11-07 against app/mobile_api/member_api.py):
- * NONE of the three member mutations honours Idempotency-Key today —
- * the file contains no `Idempotency-Key` / `begin_idempotency` /
- * `find_replay` reference at all (idempotency lives only in the owner
- * blueprints: members.py, payments.py, campaigns.py, etc.). Sending
- * the key is harmless (the backend ignores the unknown header) and
- * future-proofs the client, but until the backend adds support the key
- * provides NO replay protection on these endpoints — the live guards
- * remain the server-side ones: claim returns `already_pending` when a
- * pending/processing payment exists, verify-otp is bounded by the
- * per-challenge guess budget, and a second delete 401s because the
- * refresh families are already revoked. Do not claim replay safety for
- * member mutations until a backend change lands.
+ * The backend DOES honour Idempotency-Key on the member mutations
+ * since fix-all v8 — `begin_idempotency` with `member_id` scoping at
+ * member_api.py:700 (verify-otp), :858 (self-delete) and :1200
+ * (renew/claim). A retry after the server already committed replays
+ * instead of executing twice. The live guards still apply alongside
+ * the key: claim returns `already_pending` when a pending/processing
+ * payment exists, verify-otp is bounded by the per-challenge guess
+ * budget, and a second delete 401s because the refresh families are
+ * already revoked. (The reviewer-bypass path honours no key.)
+ *
+ * Previous note (stale since v8, corrected 2026-11-07 / V9-L19): this
+ * comment used to say no member endpoint honoured the key — that was
+ * true before fix-all v8 landed the backend halves, and is no longer
+ * true. Do not remove the keys as "useless".
  */
 
 import { newIdempotencyKey } from './idempotencyKey';

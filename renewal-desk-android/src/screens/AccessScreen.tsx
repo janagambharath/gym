@@ -15,9 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { ErrorState } from '../components/ErrorState';
+import { MemberPickerModal, type PickerPerson } from '../components/MemberPickerModal';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { resolveAccessRowTap, buildQuickAssignBody } from '../services/accessRowTap';
 import { resolveAccessListView, shouldShowFeedErrorBanner, switchAccessTab } from '../services/accessFeedState';
 import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
 import {
@@ -155,6 +157,11 @@ export function AccessScreen({
   const [checkingInId, setCheckingInId] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  // V9-L25: tap-to-assign — the terminal ID of the Unknown row whose
+  // member picker is open, or null. Named rows navigate to the member
+  // instead (handleEventRowPress).
+  const [assignBioId, setAssignBioId] = useState<string | null>(null);
+  const [linkingAssign, setLinkingAssign] = useState(false);
 
   // V7-L13: Clear-failed (POST /access/clear-failed) and remote-unlock
   // (POST /access/remote-unlock) are owner-only — they rendered for staff
@@ -400,6 +407,53 @@ export function AccessScreen({
       ],
     );
   }, [requestRemoteUnlock]);
+
+  // ── V9-L25: feed row taps ───────────────────────────────────────
+  // Named rows open the member (same destination the Inside tab uses);
+  // Unknown rows open the assign picker — the PWA quick-assign flow
+  // (pick a member → link the terminal ID via bulk-resolve, feed
+  // refreshes to show the name). Rows with neither do nothing.
+
+  const handleEventRowPress = useCallback((item: AccessEvent) => {
+    const tap = resolveAccessRowTap(item);
+    if (tap.kind === 'member') {
+      onNavigateMemberDetail?.(tap.member as any);
+    } else if (tap.kind === 'assign') {
+      setAssignBioId(tap.bioId);
+    }
+  }, [onNavigateMemberDetail]);
+
+  /** Server-side member search for the assign picker (q=, 20/page) —
+   * same endpoint shape as the RrrGrowthScreen mapping picker. */
+  const searchMembersForAssign = useCallback(async (query: string): Promise<PickerPerson[]> => {
+    const q = query.trim();
+    const url = q
+      ? `/api/mobile/v1/members?q=${encodeURIComponent(q)}&page_size=20`
+      : '/api/mobile/v1/members?page=1&page_size=20';
+    const res = await apiRequest<{ members: PickerPerson[] }>(url);
+    return res.ok ? (res.data.members || []) : [];
+  }, []);
+
+  const handleAssignSelect = useCallback(async (person: PickerPerson) => {
+    // Double-tap guard (PWA V3-L21): a second tap must not fire the
+    // link twice.
+    if (linkingAssign || !assignBioId) return;
+    setLinkingAssign(true);
+    const bioId = assignBioId;
+    const res = await apiRequest<{ linked: number; total: number }>(
+      '/api/mobile/v1/rrr/mappings/bulk-resolve',
+      { method: 'POST', body: buildQuickAssignBody(bioId, person.id) },
+    );
+    setLinkingAssign(false);
+    if (res.ok && res.data.linked === 1) {
+      setAssignBioId(null);
+      setActionMessage(`Biometric ID ${bioId} linked to ${person.full_name}.`);
+      setTimeout(() => setActionMessage(null), 3500);
+      void loadAll();
+    } else {
+      Alert.alert('Link failed', res.ok ? 'Could not link this ID — try again.' : res.error.message);
+    }
+  }, [linkingAssign, assignBioId, loadAll]);
 
   const [retryingSync, setRetryingSync] = useState(false);
 
@@ -753,14 +807,21 @@ export function AccessScreen({
     // Without it staff only see "Unknown Member" and can't tell IDs apart.
     const bioId = item.biometric_user_id || item.device_enroll_number;
     const isUnknown = !item.member_id && !!bioId;
+    // V9-L25: feed rows are tappable — named rows open the member,
+    // Unknown rows open tap-to-assign (same flow as the PWA).
     return (
-      <View style={styles.eventCard}>
+      <TouchableOpacity
+        style={styles.eventCard}
+        onPress={() => handleEventRowPress(item)}
+        activeOpacity={0.7}
+      >
         <View style={styles.eventLeft}>
           <Avatar name={item.member_name || '?'} size={40} />
         </View>
         <View style={styles.eventCenter}>
           <Text style={styles.eventName} numberOfLines={1}>
             {item.member_id ? (item.member_name || 'Unknown Member') : (bioId ? `Unknown Member · ID ${bioId}` : 'Unknown Member')}
+            {isUnknown ? <Text style={styles.tapToAssignHint}> · tap to assign</Text> : null}
           </Text>
           <View style={styles.eventMeta}>
             <View style={[styles.eventBadge, { backgroundColor: style.bgColor, borderColor: style.borderColor }]}>
@@ -779,7 +840,7 @@ export function AccessScreen({
         <View style={styles.eventRight}>
           <Icon name={style.icon} size={18} color={style.color} />
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -1035,6 +1096,17 @@ export function AccessScreen({
           </View>
         </View>
       </Modal>
+
+      {/* V9-L25: tap-to-assign — pick the member for an Unknown terminal
+          ID; links via bulk-resolve, same endpoint as the PWA
+          quick-assign sheet and the RrrGrowthScreen mapping picker. */}
+      <MemberPickerModal
+        visible={assignBioId !== null}
+        title={assignBioId ? `Who is biometric ID ${assignBioId}?` : 'Assign biometric ID'}
+        serverSearch={searchMembersForAssign}
+        onSelect={(person) => void handleAssignSelect(person)}
+        onClose={() => setAssignBioId(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -1440,6 +1512,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.base,
     fontWeight: fontWeight.semibold,
+  },
+  // V9-L25: hint on Unknown rows, same wording as the PWA feed.
+  tapToAssignHint: {
+    color: colors.brand,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
   },
   eventMeta: {
     alignItems: 'center',

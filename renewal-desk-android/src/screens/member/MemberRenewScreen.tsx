@@ -16,10 +16,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ErrorState } from '../../components/ErrorState';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import { formatCurrency } from '../../types';
 import type { MemberPlan, MemberPaymentInfo } from '../../services/memberApiClient';
+import { firstLoadErrorMessage } from '../../services/loadError';
 import {
   claimPayment,
   fetchMemberPaymentInfo,
@@ -40,27 +42,40 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // V9-L17: load failure for either leg (plans / payment info) used
+  // to be swallowed and the screen rendered "No plans available.
+  // Contact your gym for renewal." — indistinguishable from a gym with
+  // genuinely no plans, with no error and no retry.
+  const [loadError, setLoadError] = useState<string | undefined>();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(undefined);
+    const [plansResult, paymentResult] = await Promise.all([
+      fetchMemberPlans(),
+      fetchMemberPaymentInfo(),
+    ]);
+
+    if (plansResult.ok) {
+      setPlans(plansResult.data.plans);
+      if (plansResult.data.plans.length === 1) {
+        setSelectedPlan(plansResult.data.plans[0]);
+      }
+    }
+    if (paymentResult.ok) {
+      setPaymentInfo(paymentResult.data);
+    }
+    setLoadError(firstLoadErrorMessage([plansResult, paymentResult]));
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    const load = async () => {
-      const [plansResult, paymentResult] = await Promise.all([
-        fetchMemberPlans(),
-        fetchMemberPaymentInfo(),
-      ]);
-
-      if (plansResult.ok) {
-        setPlans(plansResult.data.plans);
-        if (plansResult.data.plans.length === 1) {
-          setSelectedPlan(plansResult.data.plans[0]);
-        }
-      }
-      if (paymentResult.ok) {
-        setPaymentInfo(paymentResult.data);
-      }
-      setLoading(false);
-    };
     void load();
-  }, []);
+  }, [load]);
+
+  const retryLoad = useCallback(() => {
+    void load();
+  }, [load]);
 
   const handleSelectPlan = useCallback((plan: MemberPlan) => {
     setSelectedPlan(plan);
@@ -143,14 +158,28 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
         {step === 'plan' && (
           <>
             <Text style={styles.sectionTitle}>Select your membership plan</Text>
-            {plans.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>
-                  No plans available. Contact your gym for renewal.
-                </Text>
-              </View>
+            {loadError && plans.length === 0 ? (
+              <ErrorState message={loadError} onRetry={retryLoad} />
             ) : (
-              plans.map((plan) => (
+              <>
+                {loadError ? (
+                  <View style={styles.errorBanner}>
+                    <Text style={styles.errorText}>
+                      Couldn&apos;t load the latest payment details — {loadError}
+                    </Text>
+                    <TouchableOpacity onPress={retryLoad} activeOpacity={0.7}>
+                      <Text style={styles.retryLinkText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                {plans.length === 0 ? (
+                  <View style={styles.emptyCard}>
+                    <Text style={styles.emptyText}>
+                      No plans available. Contact your gym for renewal.
+                    </Text>
+                  </View>
+                ) : (
+                  plans.map((plan) => (
                 <TouchableOpacity
                   key={plan.id}
                   style={[
@@ -174,6 +203,8 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
                   </Text>
                 </TouchableOpacity>
               ))
+            )}
+              </>
             )}
           </>
         )}
@@ -599,6 +630,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   errorText: { color: colors.critical, fontSize: fontSize.base },
+  retryLinkText: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+    marginTop: spacing.xs,
+  },
   submitButton: {
     backgroundColor: colors.brand,
     borderRadius: radius.xl,

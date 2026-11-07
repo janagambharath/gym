@@ -2,6 +2,7 @@ import { getRuntimeConfigurationSafely } from '../config/runtime';
 import { clearSession, loadSession, MobileSession, saveSession } from '../storage/secureSessionStore';
 import { newIdempotencyKey, hasIdempotencyKeyHeader } from './idempotencyKey';
 import { configureDisplayPreferences } from '../types';
+import { buildQrUploadHeaders } from './qrUploadHeaders';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -694,7 +695,10 @@ export type PaymentQrUploadResult = {
 
 /** Upload a QR image selected by the gym owner for display in VYNLA.
  * Multipart upload with the same 401 → refresh-once → retry path as the
- * JSON client: an expired access token no longer forces a re-login. */
+ * JSON client: an expired access token no longer forces a re-login.
+ * Carries one fresh Idempotency-Key per upload, re-sent unchanged on
+ * the 401-refresh retry (V9-L16) — the backend honours it for QR
+ * uploads, so a retried upload replays instead of executing twice. */
 export async function uploadPaymentQrImage(
   image: PaymentQrImage,
 ): Promise<ApiResult<PaymentQrUploadResult>> {
@@ -709,6 +713,13 @@ export async function uploadPaymentQrImage(
     return { ok: false, error: { message: 'API base URL is not configured.' } };
   }
 
+  // V9-L16: one fresh Idempotency-Key per upload, generated ONCE per
+  // call — the 401-refresh retry below re-sends the SAME key, mirroring
+  // the JSON client (and the PWA V8-L29 client half). The backend
+  // honours the key for QR uploads (scope `payment_qr_upload`), so a
+  // retried upload replays instead of executing twice.
+  const idempotencyKey = newIdempotencyKey();
+
   const makeUpload = async (token?: string): Promise<Response> => {
     const form = new FormData();
     form.append('qr_image', {
@@ -718,10 +729,7 @@ export async function uploadPaymentQrImage(
     } as never);
     return fetch(`${config.apiBaseUrl}/api/mobile/v1/settings/payment/qr`, {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: buildQrUploadHeaders({ token, idempotencyKey }),
       body: form,
     });
   };

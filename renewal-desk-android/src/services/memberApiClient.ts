@@ -272,9 +272,11 @@ async function memberApiRequest<T>(
   const { method = 'GET', body, anonymous = false } = options;
   // V8-L32: one fresh Idempotency-Key per mutation, generated ONCE per
   // memberApiRequest call — the 401-refresh retry below re-sends the SAME
-  // key, mirroring the owner client (apiClient.ts). See memberApiHeaders
-  // for the verified backend status: no member endpoint honours the key
-  // yet, so this is forward-compatible, not replay protection today.
+  // key, mirroring the owner client (apiClient.ts). The backend honours
+  // the key on these endpoints since v8 (member_api.py:700 verify-otp,
+  // :858 self-delete, :1200 renew/claim, member_id-scoped), so a retry
+  // after the server already committed replays instead of executing
+  // twice. See memberApiHeaders for the verified backend status.
   const idempotencyKey = memberMutationIdempotencyKey(method);
 
   try {

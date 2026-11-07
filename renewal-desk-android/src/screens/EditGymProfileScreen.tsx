@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest } from '../services/apiClient';
+import { resolveSettingsLoadView } from '../services/settingsLoadGate';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 import type { GymSettings, SettingsResponse } from '../types';
 import { AppHeader } from '../components/AppHeader';
+import { ErrorState } from '../components/ErrorState';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 
@@ -22,24 +24,42 @@ export function EditGymProfileScreen({ onBack, onSaved }: EditGymProfileScreenPr
   const [timezone, setTimezone] = useState('Asia/Kolkata');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // V9-M8: load gate — the form used to render immediately with blank
+  // fields (no loading state, no error branch on the GET), so a failed
+  // or merely slow load + Save wiped email/phone/address ('' → null)
+  // and forced timezone Asia/Kolkata (backend settings.py:143-147
+  // applies every key). No editable form until the GET succeeds.
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | undefined>();
 
-  useEffect(() => {
-    let cancelled = false;
-    void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((res) => {
-      if (!cancelled && res.ok) {
-        const g = res.data.gym;
-        setGym(g);
-        setName(g.name ?? '');
-        setEmail(g.email ?? '');
-        setPhone(g.phone ?? '');
-        setAddress(g.address ?? '');
-        setTimezone(g.timezone ?? 'Asia/Kolkata');
-      }
-    });
-    return () => { cancelled = true; };
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setLoadError(undefined);
+    const res = await apiRequest<SettingsResponse>('/api/mobile/v1/settings');
+    if (res.ok) {
+      const g = res.data.gym;
+      setGym(g);
+      setName(g.name ?? '');
+      setEmail(g.email ?? '');
+      setPhone(g.phone ?? '');
+      setAddress(g.address ?? '');
+      setTimezone(g.timezone ?? 'Asia/Kolkata');
+      setLoaded(true);
+    } else {
+      setLoadError(res.error.message);
+    }
+    setLoading(false);
   }, []);
 
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
   const save = async () => {
+    // Defence in depth: the form only renders once loaded, but never
+    // let a Save go out on unloaded (blank-default) values.
+    if (!loaded) return;
     if (!name.trim()) {
       setError('Gym name cannot be empty.');
       return;
@@ -65,6 +85,32 @@ export function EditGymProfileScreen({ onBack, onSaved }: EditGymProfileScreenPr
       setError(res.error.message);
     }
   };
+
+  const loadView = resolveSettingsLoadView({ loading, loaded, loadError });
+
+  if (loadView === 'loading') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <AppHeader title="Edit Gym Profile" onBack={onBack} />
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={colors.brand} />
+          <Text style={styles.loadingText}>Loading gym profile...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (loadView === 'error') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <AppHeader title="Edit Gym Profile" onBack={onBack} />
+        <ErrorState
+          message={loadError ?? 'Could not load the gym profile.'}
+          onRetry={() => void loadSettings()}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -93,4 +139,14 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.section },
   error: { color: colors.critical, fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
   actions: { marginTop: spacing.sm },
+  centerContainer: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
+  loadingText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    marginTop: spacing.md,
+  },
 });

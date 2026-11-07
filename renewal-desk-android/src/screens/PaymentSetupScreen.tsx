@@ -16,9 +16,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '../components/AppHeader';
+import { ErrorState } from '../components/ErrorState';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { apiRequest, uploadPaymentQrImage } from '../services/apiClient';
+import { resolveSettingsLoadView } from '../services/settingsLoadGate';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 
@@ -36,6 +38,8 @@ type PaymentSetupScreenProps = {
 
 export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
   const [upiId, setUpiId] = useState('');
   const [paymentLabel, setPaymentLabel] = useState('');
@@ -45,26 +49,35 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const [uploadingQr, setUploadingQr] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    void apiRequest<PaymentSettingsData>('/api/mobile/v1/settings/payment').then((res) => {
-      if (cancelled) return;
-      if (res.ok && res.data) {
-        setUpiId(res.data.upi_id || '');
-        setPaymentLabel(res.data.payment_label || '');
-        setInstructions(res.data.instructions || '');
-        setIsActive(res.data.is_active !== false);
-        setQrImageUrl(res.data.qr_public_url || null);
-      }
-      setLoading(false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
+  // V9-M9: load gate — a failed GET used to render the form with an
+  // empty UPI ID and isActive=true, and Save then cleared the stored
+  // UPI ID ('' → None, settings.py:211) and could flip is_active on.
+  // No form / no Save until the settings load succeeds.
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setLoadError(undefined);
+    const res = await apiRequest<PaymentSettingsData>('/api/mobile/v1/settings/payment');
+    if (res.ok && res.data) {
+      setUpiId(res.data.upi_id || '');
+      setPaymentLabel(res.data.payment_label || '');
+      setInstructions(res.data.instructions || '');
+      setIsActive(res.data.is_active !== false);
+      setQrImageUrl(res.data.qr_public_url || null);
+      setLoaded(true);
+    } else {
+      setLoadError(res.ok ? 'Payment settings could not be loaded.' : res.error.message);
+    }
+    setLoading(false);
   }, []);
 
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
   const handleSave = useCallback(async () => {
+    // Defence in depth: the form only renders once loaded, but never
+    // let a Save go out on unloaded (blank-default) values.
+    if (!loaded) return;
     const trimmedUpi = upiId.trim();
     if (trimmedUpi && !trimmedUpi.includes('@')) {
       Alert.alert(
@@ -97,7 +110,7 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
     } else {
       Alert.alert('Save Failed', res.error.message || 'Could not update payment settings.');
     }
-  }, [upiId, paymentLabel, instructions, isActive]);
+  }, [upiId, paymentLabel, instructions, isActive, loaded]);
 
   const handlePickQr = useCallback(async () => {
     const selection = await DocumentPicker.getDocumentAsync({
@@ -127,7 +140,9 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
     }
   }, []);
 
-  if (loading) {
+  const loadView = resolveSettingsLoadView({ loading, loaded, loadError });
+
+  if (loadView === 'loading') {
     return (
       <SafeAreaView style={styles.safeArea}>
         <AppHeader title="Payment & UPI Setup" onBack={onBack} />
@@ -135,6 +150,18 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
           <ActivityIndicator size="large" color={colors.brand} />
           <Text style={styles.loadingText}>Loading payment settings...</Text>
         </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (loadView === 'error') {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <AppHeader title="Payment & UPI Setup" onBack={onBack} />
+        <ErrorState
+          message={loadError ?? 'Could not load payment settings.'}
+          onRetry={() => void loadSettings()}
+        />
       </SafeAreaView>
     );
   }

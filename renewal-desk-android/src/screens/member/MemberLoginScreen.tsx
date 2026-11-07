@@ -4,7 +4,7 @@
  * Flow: Phone input → OTP verification → Dashboard
  * Uses HMAC-signed stateless challenges for multi-worker safety.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -20,6 +20,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fontSize, fontWeight, radius, spacing, fontFamily} from '../../theme/tokens';
 import { requestOtp, verifyOtp } from '../../services/memberApiClient';
+import {
+  OTP_RESEND_COOLDOWN_MS,
+  isResendCoolingDown,
+  resendCooldownRemainingSeconds,
+} from '../../services/otpResendCooldown';
 
 type MemberLoginScreenProps = {
   onLoginSuccess: () => void;
@@ -34,7 +39,26 @@ export function MemberLoginScreen({ onLoginSuccess, onSwitchToOwner }: MemberLog
   const [gymName, setGymName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // V9-L18: resend cooldown — every tap used to mint a new OTP
+  // challenge + WhatsApp message. After a successful send the resend
+  // button stays disabled for 30 s with a countdown label.
+  const [resendCooldownUntil, setResendCooldownUntil] = useState<number | null>(null);
+  const [cooldownLeft, setCooldownLeft] = useState(0);
   const otpInputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (!resendCooldownUntil) return;
+    const tick = () => {
+      const remaining = resendCooldownRemainingSeconds(resendCooldownUntil, Date.now());
+      setCooldownLeft(remaining);
+      if (remaining === 0) setResendCooldownUntil(null);
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldownUntil]);
+
+  const resendCoolingDown = isResendCoolingDown(resendCooldownUntil, Date.now());
 
   const handleRequestOtp = useCallback(async () => {
     const trimmedPhone = phone.trim();
@@ -51,6 +75,8 @@ export function MemberLoginScreen({ onLoginSuccess, onSwitchToOwner }: MemberLog
       setChallenge(result.data.challenge);
       setGymName(result.data.gym_name || '');
       setStep('otp');
+      // V9-L18: a successful send starts the resend cooldown.
+      setResendCooldownUntil(Date.now() + OTP_RESEND_COOLDOWN_MS);
       setTimeout(() => otpInputRef.current?.focus(), 200);
     } else {
       setError(result.error);
@@ -198,10 +224,14 @@ export function MemberLoginScreen({ onLoginSuccess, onSwitchToOwner }: MemberLog
 
                 <TouchableOpacity
                   onPress={() => void handleRequestOtp()}
-                  disabled={loading}
-                  style={styles.resendButton}
+                  disabled={loading || resendCoolingDown}
+                  style={[styles.resendButton, resendCoolingDown && styles.buttonDisabled]}
                 >
-                  <Text style={styles.resendText}>{"Didn't receive it? Resend Code"}</Text>
+                  <Text style={styles.resendText}>
+                    {resendCoolingDown
+                      ? `Didn't receive it? Resend code in ${cooldownLeft}s`
+                      : "Didn't receive it? Resend Code"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
