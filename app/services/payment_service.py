@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.extensions import db
 from app.models import Member, MembershipPlan, PaymentVerification, RenewalHistory
@@ -56,11 +56,20 @@ def active_scheduled_renewals(
     scheduling. They are left in place as inert history — deleting
     them would erase the record of a paid future renewal that a
     later immediate renewal superseded.
+
+    V7-M5: a row is also live on its due date and after a missed
+    scheduler window, while it is still activatable
+    (``new_start <= today`` and ``new_end >= today`` with
+    ``previous_end`` still matching the member's current end). The
+    old ``new_start > today`` definition made a due row invisible
+    to every guard, so a freeze/renew/refund/edit on the due date
+    orphaned the paid row. Liveness is therefore "not stale and
+    not expired" (``new_end >= today``), not "starts in future".
     """
     rows = (
         RenewalHistory.query.filter(
             RenewalHistory.member_id == member.id,
-            RenewalHistory.new_start > today,
+            RenewalHistory.new_end >= today,
         )
         .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())
         .all()
@@ -231,9 +240,19 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
     today = today_for_gym(gym_timezone)
     earliest_start = previous_end + timedelta(days=1) if previous_end and previous_end >= today else today
     new_start = locked_payment.renewal_start_date or earliest_start
-    if previous_end and previous_end >= today and new_start < earliest_start:
+    # V7-M4: the start is floored at previous_end + 1 whenever a
+    # previous period exists — for an EXPIRED member too. The old
+    # guard only fired while previous_end >= today, so an expired
+    # member could backdate a renewal inside (or before) the
+    # previous period, double-paying days and leaving a permanent
+    # period_overlap flag. A backdate to previous_end + 1 is still
+    # allowed (the paid gap is preserved); it just cannot overlap.
+    # The default (no explicit start) never violates the floor:
+    # active members default to previous_end + 1, expired members
+    # default to today, which is past previous_end.
+    if previous_end and new_start < previous_end + timedelta(days=1):
         raise ValueError(
-            f"Renewal start date must be {earliest_start.isoformat()} or later so the current paid membership is not shortened."
+            f"Renewal start date must be {(previous_end + timedelta(days=1)).isoformat()} or later so it does not overlap the previous paid period."
         )
     new_end = new_start + timedelta(days=renewal_days - 1)
     if new_start <= today and new_end < today:
@@ -345,6 +364,12 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
         # V5-L16: carry the owner-approved override onto the ledger
         # row so Date Repair skips it instead of stripping it.
         override_reason=_stored_override,
+        # V7-L15: propagate is_test from the payment into the
+        # renewal row inside verify_payment — the single funnel —
+        # so no future caller can verify a test payment and leak
+        # its amount into payment_backed_amount. The admin route's
+        # post-hoc patch stays as a harmless redundant set.
+        is_test=bool(getattr(locked_payment, "is_test", False)),
     )
     db.session.add(renewal)
     db.session.flush()
@@ -522,11 +547,12 @@ def rechain_scheduled_renewals(member: Member, *, old_end, today, actor_id: int 
     chained = (
         RenewalHistory.query.filter(
             RenewalHistory.member_id == member.id,
-            # >= today: a row starting today is due but not yet
-            # activated — it still needs re-chaining. Rows already
-            # applied (member dates already equal the row's dates)
-            # are history, not live, and are skipped below.
-            RenewalHistory.new_start >= today,
+            # V7-M5: new_end >= today, not new_start >= today — a
+            # row starting today (due, not yet activated) or after
+            # a missed scheduler window still needs re-chaining.
+            # Rows whose window already ended (new_end < today)
+            # can never activate and are left alone.
+            RenewalHistory.new_end >= today,
             RenewalHistory.previous_end == old_end,
         )
         .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())
@@ -623,8 +649,35 @@ def apply_due_scheduled_renewals(gym) -> int:
                     continue
                 if outcome in ("activated", "already_applied"):
                     activated += 1
-                # "stale" rows are inert history by design (V3-M16):
-                # they can never activate and must not block anything.
+                elif outcome == "stale":
+                    # V7-M5: a stale row is inert history by design
+                    # (V3-M16) — it can never activate — but it must
+                    # not die silently. Audit it so a paid row
+                    # orphaned by a missed scheduler window + a
+                    # later refund/edit is visible to the owner.
+                    _logger.warning(
+                        "Scheduled renewal %s for member %s is stale "
+                        "(previous_end %s != current end %s); it can "
+                        "never activate.",
+                        renewal.id,
+                        member.id,
+                        renewal.previous_end,
+                        member.membership_end,
+                    )
+                    audit(
+                        action="scheduled_renewal_stale_unactivated",
+                        resource_type="renewal_history",
+                        resource_id=renewal.id,
+                        gym_id=gym.id,
+                        actor_id=None,
+                        metadata={
+                            "member_id": member.id,
+                            "new_start": renewal.new_start.isoformat() if renewal.new_start else None,
+                            "new_end": renewal.new_end.isoformat() if renewal.new_end else None,
+                            "previous_end": renewal.previous_end.isoformat() if renewal.previous_end else None,
+                            "current_end": member.membership_end.isoformat() if member.membership_end else None,
+                        },
+                    )
         except Exception:
             _logger.exception(
                 "Scheduled renewal activation failed for renewal %s (member %s, gym %s)",
@@ -671,8 +724,55 @@ def _revert_renewal(member: Member, renewal: RenewalHistory) -> None:
     (when present), and refunding a signup no longer leaves a 1-day
     active stub: a creation row (previous_end == new_start, the
     pre-signup state) reverts to status "expired" instead of "active".
+
+    V7-M6: the old guard reverted ONLY when the member's current end
+    still equalled the refunded row's new_end. That is correct for a
+    genuine later renewal (the current end belongs to the later
+    period and must not be clobbered) — but a freeze extends the end
+    and a manual edit moves it, so renew → freeze → refund silently
+    kept the paid period. Distinguish the cases: revert whenever no
+    later RenewalHistory row covers the current end, EXCEPT a
+    scheduled (not-yet-current) row (new_start in the future), whose
+    refund must move no dates at all.
     """
+    _revert_tz = member.gym.timezone if member.gym and member.gym.timezone else "Asia/Kolkata"
+    _revert_today = today_for_gym(_revert_tz)
     if member.membership_end == renewal.new_end:
+        _should_revert = True
+    elif renewal.new_start is not None and renewal.new_start <= _revert_today:
+        # V7-M6: the end moved since this row was applied (freeze
+        # extended it, or a hand edit moved it). Revert UNLESS a
+        # genuine later renewal owns the current period. A later
+        # row is detected three ways, because a freeze also moves
+        # the later row's end off the member's current end:
+        # (1) a row whose new_end still equals the current end;
+        # (2) a directly-chained successor (previous_end == this
+        # row's new_end) that already started; (3) a row whose
+        # new_start is the member's current start and already
+        # started. A merely SCHEDULED successor (new_start in the
+        # future) matches none of these, so refunding the current
+        # row still reverts and re-chains it (V5-M8).
+        _later = RenewalHistory.query.filter(
+            RenewalHistory.member_id == member.id,
+            RenewalHistory.id != renewal.id,
+            or_(
+                RenewalHistory.new_end == member.membership_end,
+                and_(
+                    RenewalHistory.previous_end == renewal.new_end,
+                    RenewalHistory.new_start <= _revert_today,
+                ),
+                and_(
+                    RenewalHistory.new_start == member.membership_start,
+                    RenewalHistory.new_start <= _revert_today,
+                ),
+            ),
+        ).first()
+        _should_revert = _later is None
+    else:
+        _should_revert = False
+    if not _should_revert:
+        return
+    if _should_revert:
         member.membership_end = renewal.previous_end
         if renewal.previous_start is not None:
             member.membership_start = renewal.previous_start
@@ -696,9 +796,9 @@ def _revert_renewal(member: Member, renewal: RenewalHistory) -> None:
         _chained = (
             RenewalHistory.query.filter(
                 RenewalHistory.member_id == member.id,
-                # >= today: a row starting today is due but not yet
-                # activated — it still needs re-chaining.
-                RenewalHistory.new_start >= _today,
+                # V7-M5: new_end >= today — a due row still needs
+                # re-chaining after a refund, like a future one.
+                RenewalHistory.new_end >= _today,
                 RenewalHistory.previous_end == renewal.new_end,
             )
             .order_by(RenewalHistory.new_start.asc(), RenewalHistory.id.asc())

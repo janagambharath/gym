@@ -20,6 +20,7 @@ from flask import Blueprint, Response, current_app, g, request
 from sqlalchemy import or_
 
 from app.extensions import db, limiter
+from app.models import Member
 from app.models.gym import Gym
 from app.models.mixins import utcnow
 from app.models.rrr import RRRAdmsCommand, RRRDevice, RRRIntegration, hash_adms_token
@@ -868,6 +869,26 @@ def getrequest(path_token: str | None = None):
             # tests keep resolve_adms_member's deleted filter. The
             # owner-override branch below (B-H1) is untouched.
             member = resolve_adms_member_for_disable(integration.gym_id, candidate.test_enroll_number)
+            if member is None:
+                # V7-M1: a mapping-only deleted member cannot be resolved
+                # at serve time — its mappings were deleted with the
+                # member, and it never had a device_enroll_number. Fall
+                # back to the member id stamped on the command row at
+                # queue time: a soft-deleted intended member is blockable
+                # (deleted counts as blockable, V4-H2), and a live holder
+                # would already have resolved above, so this fallback can
+                # never land a block on a live member. Any other intent
+                # (live member, wrong gym, missing row) stays unresolvable
+                # and the command cancels below, fail-closed.
+                intended_id = adms_command_intended_member_id(candidate)
+                if intended_id is not None:
+                    intended = db.session.get(Member, intended_id)
+                    if (
+                        intended is not None
+                        and intended.gym_id == integration.gym_id
+                        and intended.deleted_at is not None
+                    ):
+                        member = intended
             if disable_must_be_cancelled_including_deleted(member):
                 cancel_adms_command(candidate)
                 continue
@@ -877,6 +898,21 @@ def getrequest(path_token: str | None = None):
             # B-H1 (the owner-override carve-out itself) is untouched: an
             # owner block for the member it was queued for still serves.
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
+            if member is None:
+                # V7-M2: an unenroll block is queued BEFORE the identity is
+                # freed, so at serve time the member no longer resolves to
+                # the enroll. Fall back to the member id stamped on the
+                # command row at queue time: the terminal user under this
+                # PIN is still the intended member's fingerprint, and if
+                # the ID had been reassigned, resolve above would have
+                # returned the new holder and the V6-M6 check below would
+                # cancel. A wrong-gym or missing intended member stays
+                # unresolvable and the command cancels, fail-closed.
+                intended_id = adms_command_intended_member_id(candidate)
+                if intended_id is not None:
+                    intended = db.session.get(Member, intended_id)
+                    if intended is not None and intended.gym_id == integration.gym_id:
+                        member = intended
             if member is None:
                 cancel_adms_command(
                     candidate,
@@ -903,12 +939,20 @@ def getrequest(path_token: str | None = None):
         # date today or in the future.  A stale enable for a
         # paused/expired/unresolvable member cancels instead of re-opening
         # the door; serving continues with the next command.
-        # B-H2: create_user is exempt — it is the command that CREATES the
-        # terminal user, so a new enroll number can never resolve to a
-        # member row and the guard would cancel every creation.
-        if candidate.action in ADMS_ENABLE_ACTIONS and candidate.action != "create_user":
+        # B-H2: create_user is exempt from the blanket enable guard — it
+        # is the command that CREATES the terminal user, so a new enroll
+        # number can never resolve to a member row and the guard would
+        # cancel every creation. V7-L8: the exemption is NOT blanket at
+        # serve time — re-run the queue-time check here. A create queued
+        # for an unmapped ID that was linked to an expired/paused member
+        # before the terminal polled must cancel instead of opening the
+        # door with firmware-default access for ~one poll cycle. An
+        # unmapped ID (member is None) still serves, as before.
+        if candidate.action in ADMS_ENABLE_ACTIONS:
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
-            if enable_must_be_cancelled(member):
+            if candidate.action == "create_user" and member is None:
+                pass  # Unmapped ID: the normal creation case — serve it.
+            elif enable_must_be_cancelled(member):
                 # A dropped unblock used to be silent: log the exact reason
                 # (unresolved member vs wrong status vs past end date) so a
                 # renewal that never reaches the door is diagnosable from

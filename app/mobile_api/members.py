@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -17,6 +18,7 @@ from app.mobile_api.date_rules import grid_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, Member, MembershipPlan, MobileIdempotencyKey, PaymentVerification, RenewalHistory
+from app.models.member import SYNTHETIC_TEST_MEMBER_PHONE
 from app.models.member_access_state import MemberAccessState
 from app.models.mixins import utcnow
 from app.services.analytics_service import invalidate_dashboard_cache
@@ -149,6 +151,11 @@ def register_members_routes(bp):
                 item_errors.append("Name is required")
             if not phone:
                 item_errors.append("Valid E.164 phone number is required")
+            elif phone == SYNTHETIC_TEST_MEMBER_PHONE:
+                # V7-L3: reserved for the admin test-payment synthetic
+                # member — a real member must never carry it, or the
+                # test flow could mutate them.
+                item_errors.append("This phone number is reserved for internal testing")
             elif phone in existing_phones:
                 item_errors.append(f"Phone {phone} already belongs to an existing member")
             elif phone in seen_phones:
@@ -524,6 +531,14 @@ def register_members_routes(bp):
         phone = normalize_phone_e164((data.get("phone") or "").strip())
         if not full_name or not phone:
             return error_response("VALIDATION_ERROR", "full_name and phone are required.", 400)
+        if phone == SYNTHETIC_TEST_MEMBER_PHONE:
+            # V7-L3: reserved for the admin test-payment synthetic
+            # member — a real member must never carry it.
+            return error_response(
+                "VALIDATION_ERROR",
+                "This phone number is reserved for internal testing.",
+                400,
+            )
 
         try:
             # Check member limit.
@@ -857,6 +872,13 @@ def register_members_routes(bp):
             phone = normalize_phone_e164((data["phone"] or "").strip())
             if not phone:
                 return error_response("VALIDATION_ERROR", "phone cannot be empty.", 400)
+            if phone == SYNTHETIC_TEST_MEMBER_PHONE:
+                # V7-L3: reserved for the admin test-payment synthetic member.
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "This phone number is reserved for internal testing.",
+                    400,
+                )
             member.phone = phone
 
         if "email" in data:
@@ -1162,7 +1184,9 @@ def register_members_routes(bp):
                 409,
             )
 
-        # Extend membership end date by the paused days
+        # Extend membership end date by the paused days. V7-L6:
+        # this is an up-front grant of the PLANNED days; unfreeze
+        # claws back whatever was not actually used (pause-the-clock).
         if member.membership_end:
             member.membership_end = member.membership_end + timedelta(days=days)
 
@@ -1244,6 +1268,53 @@ def register_members_routes(bp):
         tz = g.current_user.gym.timezone or "Asia/Kolkata"
         today = today_for_gym(tz)
 
+        # V7-L6 (pause-the-clock semantics, pinned here): freeze
+        # extends the end by the PLANNED days up front, and unfreeze
+        # claws back the UNUSED days (planned - actually paused), so
+        # resuming early does not gift the member days they neither
+        # paid for nor spent frozen. Parsed from the freeze marker
+        # freeze wrote; if the marker is missing/unparseable, or a
+        # renewal was recorded on/after the pause date (the end may
+        # belong to a new paid period), the end is left alone rather
+        # than risk shortening paid time. Runs BEFORE the status
+        # derivation below so the status follows the adjusted end.
+        _clawed_back_days = 0
+        _paused_match = None
+        for _m in re.finditer(
+            r"\[Paused on (\d{4}-\d{2}-\d{2}) for (\d+) days",
+            member.notes or "",
+        ):
+            _paused_match = _m
+        if _paused_match is not None and member.membership_end:
+            try:
+                _paused_on = date.fromisoformat(_paused_match.group(1))
+                _planned_days = int(_paused_match.group(2))
+            except ValueError:
+                _paused_on, _planned_days = None, 0
+            if _paused_on is not None and _planned_days > 0:
+                from datetime import datetime as _dt, timezone as _tz
+
+                _renewed_since_pause = (
+                    RenewalHistory.query.filter(
+                        RenewalHistory.member_id == member.id,
+                        RenewalHistory.created_at
+                        >= _dt(
+                            _paused_on.year,
+                            _paused_on.month,
+                            _paused_on.day,
+                            tzinfo=_tz.utc,
+                        ),
+                    ).first()
+                    is not None
+                )
+                _actually_paused = max(0, (today - _paused_on).days)
+                _unused_days = _planned_days - _actually_paused
+                if _unused_days > 0 and not _renewed_since_pause:
+                    member.membership_end = member.membership_end - timedelta(
+                        days=_unused_days
+                    )
+                    _clawed_back_days = _unused_days
+
         if member.membership_end and member.membership_end >= today:
             member.status = "active"
         else:
@@ -1260,7 +1331,7 @@ def register_members_routes(bp):
             resource_id=member.id,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"status": member.status},
+            metadata={"status": member.status, "clawed_back_days": _clawed_back_days},
         )
         invalidate_dashboard_cache(g.gym_id)
         db.session.flush()
@@ -1494,6 +1565,20 @@ def register_members_routes(bp):
         if not old_enroll:
             return error_response("NOT_ENROLLED", "Member is not enrolled on any device.", 400)
 
+        # V7-M2: queue the terminal block BEFORE clearing the identity.
+        # Both clients promise unenroll "will block terminal access", but
+        # no command was ever queued: the terminal user kept Grp=1 and its
+        # fingerprint, and the freed ID could then be re-assigned while the
+        # old finger still punched in as the new holder. This is a manual
+        # (owner) block — the same branch the member-page access toggle
+        # uses — because the owner is explicitly removing access. Bridge
+        # note: bridge gyms have no owner-override branch, so the lease
+        # guard still cancels this block for a live ACTIVE member (the
+        # fail-closed invariant); it serves for paused/expired members.
+        # That bridge gap needs a B-H1-style decision, not a silent bypass.
+        from app.services.bridge_service import queue_manual_member_block
+
+        queue_manual_member_block(member, g.current_user.id)
         member.device_enroll_number = None
         # H9: free the terminal ID — delete the identity mapping rows so
         # the enroll number can be reused for another member.

@@ -14,6 +14,28 @@ from app.services.timezone_service import today_for_gym
 
 E164_RE = re.compile(r"^\+\d{7,15}$")
 
+#: Shared staff/owner password rule (V7-L5): the same 12-char + complexity
+#: rule registration enforces. One helper so create-staff, staff reset and
+#: registration cannot drift apart again.
+PASSWORD_POLICY_MESSAGE = (
+    "Password must be at least 12 characters and include upper, lower, "
+    "number, and symbol."
+)
+
+
+def password_policy_error(password: str | None) -> str | None:
+    """Return the policy message when ``password`` fails the rule, else None."""
+    password = password or ""
+    if (
+        len(password) < 12
+        or not any(char.islower() for char in password)
+        or not any(char.isupper() for char in password)
+        or not any(char.isdigit() for char in password)
+        or not any(not char.isalnum() for char in password)
+    ):
+        return PASSWORD_POLICY_MESSAGE
+    return None
+
 
 def slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()

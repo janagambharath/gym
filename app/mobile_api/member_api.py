@@ -1632,9 +1632,15 @@ def member_access():
     )
 
     # Last visit
+    # V7-L18: include ATTENDANCE — legacy bridge builds send no
+    # att_state, so their punches classify ATTENDANCE, and ENTRY-only
+    # here showed "0 entries today" / no last visit on a day the member
+    # punched in. Mirrors get_access_summary (ENTRY + ATTENDANCE).
     last_entry = (
-        AccessEvent.query.filter_by(
-            member_id=g.member_id, gym_id=g.gym_id, event_type="ENTRY"
+        AccessEvent.query.filter(
+            AccessEvent.member_id == g.member_id,
+            AccessEvent.gym_id == g.gym_id,
+            AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
         )
         .order_by(AccessEvent.event_timestamp.desc())
         .first()
@@ -1646,7 +1652,7 @@ def member_access():
     today_entries = AccessEvent.query.filter(
         AccessEvent.member_id == g.member_id,
         AccessEvent.gym_id == g.gym_id,
-        AccessEvent.event_type == "ENTRY",
+        AccessEvent.event_type.in_(["ENTRY", "ATTENDANCE"]),
         AccessEvent.event_timestamp >= today_start,
     ).count()
     today_exits = AccessEvent.query.filter(

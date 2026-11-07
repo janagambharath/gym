@@ -1300,9 +1300,11 @@ def register_rrr_routes(bp):
         """
         from app.services import enroll_match_service
 
-        snapshot = enroll_match_service.get_terminal_snapshot(
+        # V7-M8: same merged snapshot as the matchers — a stale bridge
+        # row must not shadow the live ADMS list here either.
+        snapshot = enroll_match_service.get_preferred_terminal_snapshot(
             g.gym_id
-        ) or enroll_match_service.get_adms_snapshot(g.gym_id)
+        )
         if not snapshot:
             return jsonify({"success": True, "data": {
                 "has_snapshot": False,

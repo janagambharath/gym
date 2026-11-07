@@ -27,6 +27,10 @@ class MobileIdempotencyKey(db.Model):
     status_code = db.Column(db.Integer, nullable=False)
     response_body = db.Column(db.JSON, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    # V7-L4 — rows expire (default TTL 24h, see idempotency_service).
+    # NULL = legacy row written before this column existed; treated as
+    # created_at + TTL by the service, never as "never expires".
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         db.UniqueConstraint(

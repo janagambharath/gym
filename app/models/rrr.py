@@ -305,6 +305,15 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
     # Powers smart enroll matching on the PC-less ADMS path.
     result_data = db.Column(db.Text, nullable=True)
     requested_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # V7-M1/V7-L10: the member this command was queued for, stamped on the
+    # row at queue time. The serve-time guards previously derived intent
+    # only from the queue-time audit row, which the 90-day audit purge
+    # deletes (V7-L10) — and a mapping-only deleted member cannot be
+    # re-resolved at serve time at all once its mappings are gone (V7-M1).
+    # The row survives both. No FK: members are soft-deleted, never
+    # hard-deleted in the normal flow, and a dangling id must read as
+    # "unknown intent", never break a serve.
+    intended_member_id = db.Column(db.Integer, nullable=True)
     integration = db.relationship("RRRIntegration")
 
 

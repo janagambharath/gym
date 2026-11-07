@@ -211,7 +211,8 @@ def _dedupe_key(source: str, device_serial: str | None, external_event_id: str |
 
 
 def _legacy_dedupe_keys(device_serial: str | None, biometric_user_id: str,
-                       punch_time, direction: str | None = None) -> list[str]:
+                       punch_time, direction: str | None = None,
+                       raw_biometric_user_id: str | None = None) -> list[str]:
     """Pre-L8 dedupe keys to probe on a miss (V4-M8, V4-L13).
 
     * V4-M8: the Yodha punch-time migration recomputed ``dedupe_key`` in
@@ -222,26 +223,43 @@ def _legacy_dedupe_keys(device_serial: str | None, biometric_user_id: str,
     * V4-L13: the same punch arriving once with direction present and
       once without (old bridge vs new) computes two different new-format
       keys. Probing the direction-less new-format key catches that pair.
+    * V5-L9 (residual, all gyms): the old-format keys were computed
+      from the STORED pin verbatim, but the probe only tried the
+      canonical pin — a pre-fix row stored as "042" was missed by a
+      re-send probing "42". ``raw_biometric_user_id`` is the pin as the
+      terminal sent it (pre-canonicalization); probing both spellings
+      closes the hole for any gym, not just migrated Yodha rows. The
+      same applies to pre-H7 new-format keys, which were also computed
+      from the raw pin — hence the direction-less key is probed with
+      both spellings too.
     Probing is read-only and cheap (indexed equality lookups); nothing
     is rewritten.
     """
     keys: list[str] = []
     iso = punch_time.isoformat()
-    # Direction-less new-format key (canonical serial + empty direction).
-    directionless = hashlib.sha256(
-        "|".join(((device_serial or "").strip().upper(), biometric_user_id, iso, "")).encode("utf-8")
-    ).hexdigest()
-    if directionless:
-        keys.append(directionless)
+    pin_variants = {biometric_user_id}
+    if raw_biometric_user_id:
+        pin_variants.add(raw_biometric_user_id)
+    serial_canonical = (device_serial or "").strip().upper()
+    # Direction-less new-format keys (canonical serial + empty
+    # direction), one per pin spelling.
+    for pin in pin_variants:
+        directionless = hashlib.sha256(
+            "|".join((serial_canonical, pin, iso, "")).encode("utf-8")
+        ).hexdigest()
+        if directionless not in keys:
+            keys.append(directionless)
     # Old-format keys (migration 71e470eb6cb6): raw serial, 3 parts, no
     # direction. Try the serial as passed and its canonical spelling —
-    # the migration used the stored serial verbatim.
-    for serial_variant in {(device_serial or ""), (device_serial or "").strip().upper()}:
-        old = hashlib.sha256(
-            "|".join((serial_variant, biometric_user_id, iso)).encode("utf-8")
-        ).hexdigest()
-        if old not in keys:
-            keys.append(old)
+    # the migration used the stored serial verbatim — crossed with both
+    # pin spellings.
+    for pin in pin_variants:
+        for serial_variant in {(device_serial or ""), serial_canonical}:
+            old = hashlib.sha256(
+                "|".join((serial_variant, pin, iso)).encode("utf-8")
+            ).hexdigest()
+            if old not in keys:
+                keys.append(old)
     return keys
 
 
@@ -292,6 +310,9 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
     # H7: canonicalize once at the ingest boundary ("042" -> "42") so
     # stored IDs, dedupe keys and mappings all agree. Non-numeric IDs
     # keep their raw form (M16).
+    # V5-L9: keep the raw pin — the legacy-key probe needs it (a
+    # pre-fix stored key was computed from "042", not "42").
+    raw_biometric_user_id = str(biometric_user_id)
     biometric_user_id = _canonical_or_raw(biometric_user_id)
     key = _dedupe_key(source, device_serial, external_event_id, biometric_user_id, punch_time, raw_payload,
                       direction=direction)
@@ -301,7 +322,8 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
         # of a Yodha-migrated row (old-format key) or of a punch first
         # seen without a direction must dedupe, not insert a duplicate.
         for legacy_key in _legacy_dedupe_keys(
-            device_serial, biometric_user_id, punch_time, direction=direction
+            device_serial, biometric_user_id, punch_time, direction=direction,
+            raw_biometric_user_id=raw_biometric_user_id,
         ):
             if legacy_key == key:
                 continue
@@ -383,7 +405,8 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
         # re-raised, 500ing the whole ATTLOG batch. Probe the legacy
         # keys too before giving up.
         for legacy_key in _legacy_dedupe_keys(
-            device_serial, biometric_user_id, punch_time, direction=direction
+            device_serial, biometric_user_id, punch_time, direction=direction,
+            raw_biometric_user_id=raw_biometric_user_id,
         ):
             if legacy_key == key:
                 continue

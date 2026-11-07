@@ -302,8 +302,12 @@ def undo_import(batch_id: str):
         # H9: soft-delete frees the terminal ID (mapping rows deleted).
         from app.services.rrr_service import delete_identity_mappings
 
-        delete_identity_mappings(current_user.gym_id, m.id)
+        # V7-M1: queue the delete-time block BEFORE the mappings are
+        # deleted — same ordering as the two main delete paths (V5-M6).
+        # This path was never reordered: a mapping-only member's block
+        # never even queued here.
         queue_membership_command(m)
+        delete_identity_mappings(current_user.gym_id, m.id)
         audit(
             action="soft_delete_member",
             resource_type="member",

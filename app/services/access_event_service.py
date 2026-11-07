@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
@@ -95,6 +95,69 @@ def _live_member(member: Member | None) -> Member | None:
     if member is not None and member.deleted_at is not None:
         return None
     return member
+
+
+def _punch_key(enroll_number, event_timestamp, event_type, direction) -> str:
+    """Stable punch identity (V7-L19): enroll + full-precision
+    timestamp + type + direction.
+
+    A punch's row id changes when it projects (``"adms-<id>"`` -> int
+    AccessEvent id), so id-based dedupe cannot collapse the same punch
+    across legs/pages. The timestamp is deliberately FULL precision:
+    truncating to the second would collapse two genuinely distinct
+    punches by the same member in the same second (V4-L12's feed
+    search test builds exactly that pair from two ``_now()`` calls).
+    A real twin carries the same instant on both legs — the ADMS
+    projection copies ``punch_time`` verbatim into the AccessEvent —
+    so full-precision equality still collapses it. Member id is
+    deliberately NOT in the key — it changes from None to the member
+    when the punch is linked, and the punch is still the same punch.
+    """
+    ts = event_timestamp
+    if isinstance(ts, datetime):
+        ts = ts.isoformat()
+    elif ts is not None:
+        ts = str(ts)
+    return f"{enroll_number or ''}|{ts or ''}|{event_type or ''}|{direction or ''}"
+
+
+def _find_punch_twin(
+    *,
+    gym_id: int,
+    device_enroll_number: str,
+    event_timestamp: datetime,
+    event_type: str,
+    direction: str,
+) -> AccessEvent | None:
+    """Existing AccessEvent for the same physical punch, projected via
+    the OTHER ingest path (V7-M9).
+
+    Bridge and ADMS projections use disjoint ``source_event_id``
+    namespaces, so neither saw the other's row and one physical punch
+    yielded two AccessEvents (doubled ``entries_today``, duplicate feed
+    rows). A twin is the same gym + enroll + event type + direction in
+    the same wall-clock second — the second window absorbs the bridge
+    path's microseconds vs the ADMS path's whole-second timestamps.
+    Same-second entry+exit stay distinct (type/direction differ).
+    """
+    ts = _as_utc(event_timestamp)
+    if ts is None:
+        return None
+    from datetime import timedelta
+
+    floor = ts.replace(microsecond=0)
+    return (
+        AccessEvent.query.filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.device_enroll_number == device_enroll_number,
+            AccessEvent.event_type == event_type,
+            AccessEvent.direction == direction,
+            AccessEvent.event_timestamp >= floor,
+            AccessEvent.event_timestamp < floor + timedelta(seconds=1),
+        )
+        .order_by(AccessEvent.id.asc())
+        .first()
+    )
 
 
 def _unprojected_rrr_exists(gym_id: int):
@@ -224,6 +287,9 @@ def _serialize_rrr_event(evt) -> dict:
         "device_name": evt.device_serial,
         "verify_method": evt.verify_method,
         "source": "adms_direct",
+        # V7-L19: stable punch identity — lets clients dedupe this row
+        # against its projected AccessEvent twin across page fetches.
+        "punch_key": _punch_key(evt.biometric_user_id, evt.punch_time, event_type, direction),
     }
 
 
@@ -260,6 +326,33 @@ def process_attendance_to_access_event(
     # V3-M14: a soft-deleted member resolves as unknown — no name/status
     # snapshot, no MemberAccessState update (see _live_member).
     member = _live_member(member)
+
+    # V7-M9: the same physical punch may already be projected via the
+    # ADMS path (disjoint source_event_id namespaces). Projecting again
+    # would double entries_today and duplicate the feed row — skip and,
+    # if the twin was projected before the member was known, fill its
+    # identity + INSIDE state like the ADMS existing-branch does.
+    twin = _find_punch_twin(
+        gym_id=attendance.gym_id,
+        device_enroll_number=attendance.device_enroll_number,
+        event_timestamp=attendance.event_time,
+        event_type=event_type,
+        direction=direction,
+    )
+    if twin is not None:
+        if member is not None and twin.member_id is None:
+            twin.member_id = member.id
+            twin.member_name = member.full_name
+            twin.membership_status = member.status
+            db.session.flush()
+            if twin.event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
+                _update_member_access_state(
+                    gym_id=attendance.gym_id,
+                    member_id=member.id,
+                    access_event=twin,
+                    event_type="ENTRY" if twin.event_type == "ATTENDANCE" else twin.event_type,
+                )
+        return None
 
     # 4. Get bridge info for display
     bridge = None
@@ -373,6 +466,34 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
         verify_method = None
 
     event_type, direction = _classify_event(att_state, is_invalid=False)
+    # V7-M9: cross-source twin — this punch may already be projected
+    # via the bridge path (same gym + enroll + second + type). Skip
+    # creating a second AccessEvent; fill the twin's identity + INSIDE
+    # state when the member is now known. No feed/summary twin survives
+    # in either arrival order: bridge-first RRR rows carry a non-ADMS
+    # source so the RRR leg never surfaces them, and ADMS-first rows
+    # are already projected (their own AccessEvent exists).
+    twin = _find_punch_twin(
+        gym_id=attendance.gym_id,
+        device_enroll_number=(attendance.biometric_user_id or "unknown")[:32],
+        event_timestamp=attendance.punch_time,
+        event_type=event_type,
+        direction=direction,
+    )
+    if twin is not None:
+        if member is not None:
+            if twin.member_id is None:
+                twin.member_id = member.id
+            twin.member_name = member.full_name
+            twin.membership_status = member.status
+            if twin.member_id == member.id and twin.event_type in ("ENTRY", "EXIT", "ATTENDANCE"):
+                _update_member_access_state(
+                    gym_id=attendance.gym_id,
+                    member_id=member.id,
+                    access_event=twin,
+                    event_type="ENTRY" if twin.event_type == "ATTENDANCE" else twin.event_type,
+                )
+        return None
     access_event = AccessEvent(
         gym_id=attendance.gym_id,
         member_id=member.id if member else None,
@@ -749,10 +870,31 @@ def get_access_events(
         key=lambda e: e.get("event_timestamp") or "",
         reverse=True,
     )
+    # V7-L19: collapse historical cross-source twins in the merged feed
+    # (same punch projected via both bridge and ADMS before the V7-M9
+    # twin check existed). The first row wins — the AccessEvent leg
+    # sorts ahead of the RRR leg at equal timestamps. The total drops
+    # by the duplicates removed within the fetched window.
+    seen_punch_keys: set[str] = set()
+    deduped_merged: list[dict] = []
+    duplicates_removed = 0
+    for row in merged:
+        key = row.get("punch_key") or _punch_key(
+            row.get("biometric_user_id") or row.get("device_enroll_number"),
+            row.get("event_timestamp"),
+            row.get("event_type"),
+            row.get("direction"),
+        )
+        if key in seen_punch_keys:
+            duplicates_removed += 1
+            continue
+        seen_punch_keys.add(key)
+        deduped_merged.append(row)
+    merged = deduped_merged
     start = (page - 1) * per_page
     page_events = merged[start:start + per_page]
 
-    total = access_total + adms_total
+    total = access_total + adms_total - duplicates_removed
     return {
         "events": page_events,
         "pagination": {
@@ -790,9 +932,18 @@ def get_members_inside(
     # joins Member, so filter on the already-joined table. A second
     # unaliased join(Member) emitted two JOIN members and made
     # members.full_name ambiguous (500 on any Inside search).
+    # V7-L17: also match the terminal enroll number, mirroring the
+    # feed legs (V4-L12) — typing "42" must find inside member 42.
     if search and search.strip():
+        from sqlalchemy import or_
+
         search_term = f"%{search.strip()}%"
-        query = query.filter(Member.full_name.ilike(search_term))
+        query = query.filter(
+            or_(
+                Member.full_name.ilike(search_term),
+                Member.device_enroll_number.ilike(search_term),
+            )
+        )
 
     pagination = (
         query.order_by(MemberAccessState.last_entry_at.desc())
@@ -849,6 +1000,8 @@ def _serialize_access_event(evt: AccessEvent) -> dict:
         "biometric_user_id": evt.device_enroll_number,
         "is_invalid": evt.is_invalid,
         "verify_method": evt.verify_method,
+        # V7-L19: stable punch identity (see _punch_key).
+        "punch_key": _punch_key(evt.device_enroll_number, evt.event_timestamp, evt.event_type, evt.direction),
     }
 
 
@@ -895,16 +1048,39 @@ def auto_reset_stale_inside_members(
     # Convert to UTC for the database comparison
     closing_cutoff_utc = closing_cutoff.astimezone(timezone.utc)
 
+    # V7-L7: also catch rows whose last_entry_at is in the future
+    # (beyond the same 15-minute skew the ADMS/bridge ingest bound
+    # allows, V6-M11). Pre-fix clock-ahead terminals stored
+    # future-dated punches that can never satisfy
+    # ``last_entry_at < closing_cutoff``, so those members stayed
+    # INSIDE forever with no repair path. A future entry is reset
+    # with last_exit_at = now (not the past closing cutoff).
+    now_utc = datetime.now(timezone.utc)
+    from datetime import timedelta as _td
+
+    _future_bound_utc = now_utc + _td(minutes=15)
+
     stale_members = MemberAccessState.query.filter(
         MemberAccessState.gym_id == gym_id,
         MemberAccessState.current_state == "INSIDE",
-        MemberAccessState.last_entry_at < closing_cutoff_utc,
+        or_(
+            MemberAccessState.last_entry_at < closing_cutoff_utc,
+            MemberAccessState.last_entry_at > _future_bound_utc,
+        ),
     ).all()
 
     count = 0
     for state in stale_members:
         state.current_state = "OUTSIDE"
-        state.last_exit_at = closing_cutoff_utc
+        # SQLite strips tzinfo on read: treat a naive stored value
+        # as UTC before comparing with the aware bound.
+        _entry_at = state.last_entry_at
+        if _entry_at is not None and _entry_at.tzinfo is None:
+            _entry_at = _entry_at.replace(tzinfo=timezone.utc)
+        if _entry_at is not None and _entry_at > _future_bound_utc:
+            state.last_exit_at = now_utc
+        else:
+            state.last_exit_at = closing_cutoff_utc
         count += 1
 
     if count:
@@ -914,6 +1090,65 @@ def auto_reset_stale_inside_members(
         )
 
     return count
+
+
+def backfill_missing_bridge_projections(
+    gym_id: int,
+    *,
+    limit: int = 100,
+    since_days: int = 7,
+) -> int:
+    """Re-project bridge punches that have no AccessEvent (V7-L16).
+
+    A bridge punch whose projection threw at ingest used to be lost
+    from the feed, the counts and the INSIDE flip forever — no later
+    path re-projected it (``_backfill_bridge_punch`` only runs for
+    unmapped rows). This sweep is called from the daily scheduler job;
+    it is scoped to the last 7 days (the feed window) so ancient rows
+    are never resurrected, per-row savepoint-contained, and idempotent
+    (``process_attendance_to_access_event`` dedupes on
+    ``source_event_id``). The caller is responsible for committing.
+    Returns the number of projections created.
+    """
+    from datetime import timedelta
+
+    cutoff = utcnow() - timedelta(days=since_days)
+    projected = (
+        db.session.query(AccessEvent.id)
+        .filter(
+            AccessEvent.gym_id == gym_id,
+            AccessEvent.source_event_id == BridgeAttendance.event_id,
+        )
+        .exists()
+    )
+    rows = (
+        BridgeAttendance.query.filter(
+            BridgeAttendance.gym_id == gym_id,
+            BridgeAttendance.event_time >= cutoff,
+            ~projected,
+        )
+        .order_by(BridgeAttendance.event_time.asc())
+        .limit(limit)
+        .all()
+    )
+    created = 0
+    for row in rows:
+        try:
+            with db.session.begin_nested():
+                if process_attendance_to_access_event(row) is not None:
+                    created += 1
+        except Exception:
+            logger.exception(
+                "Bridge projection backfill failed for attendance %s",
+                row.event_id,
+            )
+    if created:
+        logger.info(
+            "Backfilled %d missing bridge punch projection(s) for gym %s",
+            created,
+            gym_id,
+        )
+    return created
 
 
 def has_legacy_attendance_events(gym_id: int) -> bool:

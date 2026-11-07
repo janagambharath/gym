@@ -23,6 +23,7 @@ from app.models import (
     PaymentVerification,
     RenewalHistory,
 )
+from app.models.member import SYNTHETIC_TEST_MEMBER_PHONE
 from app.repositories import TenantRepository
 from app.services.audit_service import audit
 from app.services.analytics_service import invalidate_dashboard_cache
@@ -184,17 +185,22 @@ def bulk_renew():
                     "danger",
                 )
                 return redirect(url_for("members.bulk_renew"))
+            # V7-M4: floor the start at previous_end + 1 whenever a
+            # previous period exists — for an EXPIRED member too.
+            # The old guard only fired while previous_end >= today,
+            # so an expired member could backdate a bulk renewal
+            # inside (or before) the previous paid period.
             earliest = (
                 member.membership_end + timedelta(days=1)
-                if member.membership_end and member.membership_end >= today
+                if member.membership_end
                 else None
             )
             if earliest is not None and requested < earliest:
                 flash(
                     f"Cannot renew {member.full_name}: start date "
                     f"{requested.isoformat()} is before "
-                    f"{earliest.isoformat()} and would shorten the "
-                    "current paid membership.",
+                    f"{earliest.isoformat()} and would overlap the "
+                    "previous paid period.",
                     "danger",
                 )
                 return redirect(url_for("members.bulk_renew"))
@@ -574,6 +580,9 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     _old_end = member.membership_end
     member.full_name = form.full_name.data.strip()
     member.phone = normalize_phone_e164(form.phone.data.strip())
+    if member.phone == SYNTHETIC_TEST_MEMBER_PHONE:
+        # V7-L3: reserved for the admin test-payment synthetic member.
+        raise ValueError("This phone number is reserved for internal testing.")
     member.email = form.email.data.strip() if form.email.data else None
 
     member.gender = form.gender.data or None

@@ -756,14 +756,29 @@ _ADMS_QUEUE_AUDIT_ACTIONS = frozenset({
 
 
 def adms_command_intended_member_id(command: RRRAdmsCommand) -> int | None:
-    """Member id an ADMS command was queued for, from its queue-time audit
-    row (V4-L8 / V4-M3).
+    """Member id an ADMS command was queued for.
+
+    V7-L10: prefer the ``intended_member_id`` stamped on the command row
+    at queue time — it survives the 90-day audit purge. Fall back to the
+    queue-time audit row for legacy rows queued before the column existed.
 
     Returns ``None`` when no queue audit survives (legacy rows, or audit
     retention purged it). Callers treat unknown intent as NOT matching, so
     a recycled ID never inherits the previous holder's acked block — a
     redundant Grp=100 block is idempotent, a missing one is not.
     """
+
+    # V7-M1/V7-L10: row-stamped intent (see RRRAdmsCommand docstring).
+    stamped = getattr(command, "intended_member_id", None)
+    if isinstance(stamped, bool):
+        stamped = None
+    if isinstance(stamped, int):
+        return stamped
+    try:
+        if stamped is not None:
+            return int(stamped)
+    except (TypeError, ValueError):
+        pass
 
     from app.models.audit_log import AuditLog
 
@@ -1052,6 +1067,8 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                     latest.result_code = None
                     latest.result_message = None
                     latest.requested_by_id = None
+                    # V7-M1/V7-L10: re-stamp intent on the row itself.
+                    latest.intended_member_id = member.id
                     audit(
                         action=f"adms_membership_{action}_queued",
                         resource_type="rrr_adms_command",
@@ -1068,6 +1085,9 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                     # resolve there). Demoting is safe: the member is gone,
                     # so no owner block for a live member is lost.
                     latest.requested_by_id = None
+                    # V7-M1/V7-L10: stamp intent so the block can serve
+                    # after the mappings are deleted.
+                    latest.intended_member_id = member.id
                     audit(
                         action=f"adms_membership_{action}_queued",
                         resource_type="rrr_adms_command",
@@ -1086,6 +1106,8 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
             latest.result_code = None
             latest.result_message = None
             latest.requested_by_id = None
+            # V7-M1/V7-L10: re-stamp intent on the row itself.
+            latest.intended_member_id = member.id
             audit(
                 action=f"adms_membership_{action}_queued",
                 resource_type="rrr_adms_command",
@@ -1110,6 +1132,9 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
                         # V4-H2: demote like the queued branch above, so
                         # the re-send takes the automatic branch.
                         latest.requested_by_id = None
+                        # V7-M1/V7-L10: stamp intent so the block can serve
+                        # after the mappings are deleted.
+                        latest.intended_member_id = member.id
                         audit(
                             action=f"adms_membership_{action}_queued",
                             resource_type="rrr_adms_command",
@@ -1146,6 +1171,8 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
         test_enroll_number=enroll_number,
         command_text=command_text,
         requested_by_id=None,
+        # V7-M1/V7-L10: stamp intent on the row itself.
+        intended_member_id=member.id,
     )
     db.session.add(command)
     db.session.flush()
@@ -1233,6 +1260,8 @@ def queue_manual_adms_member_command(
                     latest.result_code = None
                     latest.result_message = None
                     latest.requested_by_id = actor_id
+                    # V7-M1/V7-L10: re-stamp intent on the row itself.
+                    latest.intended_member_id = member.id
                     audit(
                         action=f"adms_manual_{action}_queued",
                         resource_type="rrr_adms_command",
@@ -1252,6 +1281,8 @@ def queue_manual_adms_member_command(
             latest.result_code = None
             latest.result_message = None
             latest.requested_by_id = actor_id
+            # V7-M1/V7-L10: re-stamp intent on the row itself.
+            latest.intended_member_id = member.id
             audit(
                 action=f"adms_manual_{action}_queued",
                 resource_type="rrr_adms_command",
@@ -1288,6 +1319,8 @@ def queue_manual_adms_member_command(
         test_enroll_number=enroll_number,
         command_text=command_text,
         requested_by_id=actor_id,
+        # V7-M1/V7-L10: stamp intent on the row itself.
+        intended_member_id=member.id,
     )
     db.session.add(command)
     db.session.flush()
@@ -1496,9 +1529,15 @@ def queue_manual_bridge_member_command(
     installation = _active_installation(member.gym_id)
     if installation is None:
         return None
-    if not member.device_enroll_number:
+    # V7-M1: resolve mapping-preferred, like the ADMS queue — a
+    # mapping-only member has no device_enroll_number but still has a
+    # terminal identity, and its delete-time block must queue.
+    try:
+        enroll_number = resolve_adms_enroll_number(member)
+    except ValueError:
         return None
-    enroll_number = canonical_enroll_number(member.device_enroll_number)
+    if not enroll_number:
+        return None
     command_type = "disable_user" if action == "block" else "enable_user"
 
     # Deduplicate against the latest command for this member: never stack
@@ -1559,6 +1598,27 @@ def queue_manual_bridge_member_command(
     return command
 
 
+def queue_manual_member_block(member: Member, actor_id: int | None):
+    """Queue an owner-initiated block for one member, ADMS-first (V7-M2).
+
+    Same dispatch as :func:`queue_membership_command`: a configured
+    direct-ADMS integration is authoritative for the gym, bridge-only gyms
+    use their connector. Used by unenroll, where the owner explicitly
+    removes terminal access — so this is a *manual* (owner) block, not an
+    automatic membership-derived one: on ADMS it serves through the owner
+    branch (B-H1), which is the same branch the manual access toggle
+    uses. On bridge gyms the lease guard still judges it (an active
+    member's block is lease-cancelled per the fail-closed invariant —
+    there is no bridge owner-override; see V7-M2 note in the unenroll
+    endpoint). Returns ``None`` when no terminal is commissioned or the
+    member has no terminal identity. Does not commit.
+    """
+
+    if _adms_integration(member.gym_id) is not None:
+        return queue_manual_adms_member_command(member, "block", actor_id)
+    return queue_manual_bridge_member_command(member, "block", actor_id)
+
+
 def queue_membership_command(
     member: Member, *, force: bool = False
 ) -> BridgeCommand | RRRAdmsCommand | None:
@@ -1580,14 +1640,21 @@ def queue_membership_command(
 
 
 def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> BridgeCommand | None:
-    if not member.device_enroll_number:
+    # V7-M1: resolve mapping-preferred, like the ADMS queue — a
+    # mapping-only member has no device_enroll_number but still has a
+    # terminal identity, and its delete-time block must queue (the bridge
+    # leg previously returned None here, so the block never existed).
+    try:
+        enroll_number = resolve_adms_enroll_number(member)
+    except ValueError:
+        return None
+    if not enroll_number:
         return None
 
     installation = _active_installation(member.gym_id)
     if installation is None:
         return None
 
-    enroll_number = canonical_enroll_number(member.device_enroll_number)
     command_type = desired_command_type(member)
     # This lock is essential: a dashboard renewal must never mutate a command
     # that the polling request has already leased and handed to the laptop.
@@ -1848,7 +1915,15 @@ def schedule_retry_after_failed_command(command: BridgeCommand) -> BridgeCommand
     if command.retry_attempt + 1 >= max_attempts or command.member_id is None:
         return None
     member = db.session.get(Member, command.member_id)
-    if member is None or not member.device_enroll_number:
+    if member is None:
+        return None
+    # V7-M1: a mapping-only member has no device_enroll_number — resolve
+    # mapping-preferred so its delete-time block can still be re-driven.
+    try:
+        member_enroll = resolve_adms_enroll_number(member)
+    except ValueError:
+        return None
+    if not member_enroll:
         return None
     if member.gym_id != command.gym_id:
         # M2: a cross-gym member reference must never authorise a retry.
@@ -1892,7 +1967,7 @@ def schedule_retry_after_failed_command(command: BridgeCommand) -> BridgeCommand
     elif desired_command_type(member) != command.command_type:
         # A later membership transaction will queue the correct current state.
         return None
-    if canonical_enroll_number(member.device_enroll_number) != command.enroll_number:
+    if member_enroll != command.enroll_number:
         return None
 
     base_delay = max(30, int(current_app.config["BRIDGE_COMMAND_RETRY_SECONDS"]))

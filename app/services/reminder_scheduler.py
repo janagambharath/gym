@@ -175,6 +175,23 @@ def _scheduled_reminder_job(app: Flask) -> None:
             _refresh_redis_lock(redis_url, _lock_ttl(app))
 
         app.logger.info("Running scheduled reminder scan")
+        # V7-L4: prune expired idempotency replay rows (24h TTL) on the
+        # same cadence as the reminder scan. Best-effort — a prune
+        # failure must never block reminders.
+        try:
+            from app.services.idempotency_service import (
+                prune_expired_idempotency_keys,
+            )
+
+            pruned = prune_expired_idempotency_keys()
+            if pruned:
+                db.session.commit()
+                app.logger.info(
+                    "Pruned %s expired idempotency row(s)", pruned
+                )
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("Idempotency prune failed (non-fatal)")
         for gym in _iter_active_gyms():
             try:
                 expired_count = auto_expire_members_for_gym(gym)
@@ -201,6 +218,56 @@ def _scheduled_reminder_job(app: Flask) -> None:
             except Exception:
                 db.session.rollback()
                 app.logger.exception("Scheduled renewal activation failed for gym %s", gym.id)
+
+            # V7-M7: reset stale INSIDE members. Entry-only gyms never
+            # exit-scan, so without this the Inside list accumulates
+            # phantom members indefinitely. This is the job that actually
+            # runs in production (daily, REMINDER_JOB_MINUTES); the
+            # flask run-reminders CLI was previously the only caller and
+            # nothing schedules it.
+            try:
+                from app.services.access_event_service import (
+                    auto_reset_stale_inside_members,
+                    backfill_missing_bridge_projections,
+                )
+
+                reset_count = auto_reset_stale_inside_members(
+                    gym.id, gym.timezone or "Asia/Kolkata"
+                )
+                if reset_count:
+                    db.session.commit()
+                    app.logger.info(
+                        "Auto-exited %s stale INSIDE members for gym %s",
+                        reset_count,
+                        gym.id,
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Stale-inside reset failed for gym %s", gym.id)
+
+            # V7-L16: re-project bridge punches whose AccessEvent
+            # projection threw at ingest. Without this a transient
+            # failure loses the feed row, the count and the INSIDE flip
+            # permanently (_backfill_bridge_punch only runs for unmapped
+            # rows). Scoped to the last 7 days, per-row contained.
+            try:
+                from app.services.access_event_service import (
+                    backfill_missing_bridge_projections as _backfill_bridge,
+                )
+
+                backfilled = _backfill_bridge(gym.id)
+                if backfilled:
+                    db.session.commit()
+                    app.logger.info(
+                        "Backfilled %s bridge punch projections for gym %s",
+                        backfilled,
+                        gym.id,
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception(
+                    "Bridge projection backfill failed for gym %s", gym.id
+                )
 
             # Reconcile failed blocks: expired members whose block command
             # never acked (terminal offline, timeout, etc.) get re-queued.

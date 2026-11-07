@@ -203,7 +203,7 @@ def test_batch_create_members_atomic_creation_and_metrics(client, app, test_gym_
     members_payload = [
         {
             "name": "New Batch Member 1",
-            "phone": "+919999900001",
+            "phone": "+919999900011",
             "plan_id": test_gym_and_owner["plan1_id"],  # 1500 price
             "membership_start": (today - timedelta(days=25)).isoformat(),
             "membership_end": (today + timedelta(days=5)).isoformat(),  # Expiring in 5 days -> upcoming renewal
@@ -232,7 +232,7 @@ def test_batch_create_members_atomic_creation_and_metrics(client, app, test_gym_
 
     # Verify members exist in DB
     with app.app_context():
-        m1 = Member.query.filter_by(phone="+919999900001").first()
+        m1 = Member.query.filter_by(phone="+919999900011").first()
         m2 = Member.query.filter_by(phone="+919999900002").first()
         assert m1 is not None
         assert m1.full_name == "New Batch Member 1"

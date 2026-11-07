@@ -301,11 +301,17 @@ def register_renewals_routes(bp):
 
         earliest_start = previous_end + timedelta(days=1) if previous_end and previous_end >= today else today
         new_start = requested_start or earliest_start
-        if previous_end and previous_end >= today and new_start < earliest_start:
+        # V7-M4: floor the start at previous_end + 1 whenever a
+        # previous period exists — for an EXPIRED member too, so a
+        # backdated renewal cannot overlap (or precede) the previous
+        # paid period. The default (no explicit start) never
+        # violates the floor (active: previous_end + 1; expired:
+        # today, past previous_end).
+        if previous_end and new_start < previous_end + timedelta(days=1):
             db.session.rollback()
             return error_response(
                 "VALIDATION_ERROR",
-                f"Renewal start date must be {earliest_start.isoformat()} or later so the current paid membership is not shortened.",
+                f"Renewal start date must be {(previous_end + timedelta(days=1)).isoformat()} or later so it does not overlap the previous paid period.",
                 400,
             )
         new_end = new_start + timedelta(days=renewal_days - 1)

@@ -22,7 +22,7 @@ from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.models.user import User
 from app.services.audit_service import audit
 from app.services.mobile_billing_service import SUPPORTED_LOCALES, entitlement_for
-from app.utils.helpers import slugify
+from app.utils.helpers import password_policy_error, slugify
 
 
 def _mobile_auth_payload(user: User, access_token: str, refresh_token: str) -> dict:
@@ -35,6 +35,15 @@ def _mobile_auth_payload(user: User, access_token: str, refresh_token: str) -> d
             "email": user.email,
             "full_name": user.full_name,
             "role": user.role,
+            # V7-M3: mirrors the web login's must_change_password
+            # redirect (app/auth/routes.py). Clients must route a
+            # flagged user to change-password before normal use.
+            "must_change_password": bool(
+                getattr(user, "must_change_password", False)
+            ),
+            "is_temporary_password": bool(
+                getattr(user, "is_temporary_password", False)
+            ),
         },
         "gym": {
             "id": gym.id,
@@ -71,14 +80,11 @@ def _registration_error(data: dict) -> str | None:
     if not phone.startswith("+") or not phone[1:].isdigit() or not 8 <= len(phone) <= 16:
         return "Phone must be in E.164 format, for example +919876543210."
     password = data["password"]
-    if (
-        len(password) < 12
-        or not any(char.islower() for char in password)
-        or not any(char.isupper() for char in password)
-        or not any(char.isdigit() for char in password)
-        or not any(not char.isalnum() for char in password)
-    ):
-        return "Password must be at least 12 characters and include upper, lower, number, and symbol."
+    # V7-L5: one shared rule (see app/utils/helpers.py) — registration,
+    # staff create and staff reset must not drift apart again.
+    policy_error = password_policy_error(password)
+    if policy_error:
+        return policy_error
     country = data["country"].strip().upper()
     currency = data["currency"].strip().upper()
     locale = SUPPORTED_LOCALES.get(country)
@@ -528,6 +534,57 @@ def register_auth_routes(bp):
         db.session.commit()
         return jsonify({"success": True, "data": {"message": f"Revoked {count} sessions."}})
 
+    @bp.route("/auth/change-password", methods=["POST"])
+    @token_required
+    def change_password():
+        """Mobile counterpart of the web change-password page.
+
+        V7-M3: the mobile login payload now surfaces
+        ``must_change_password`` (mirroring the web login redirect), but
+        the flag was unactionable on mobile — no endpoint existed to
+        clear it. This endpoint closes that loop: a staff member on a
+        temp password can rotate it from the app instead of needing the
+        web dashboard. Same 12-char + complexity rule as registration.
+        """
+        data = request.get_json(silent=True) or {}
+        current_password = data.get("current_password") or ""
+        new_password = data.get("new_password") or ""
+        user = g.current_user
+
+        if not current_password or not user.check_password(current_password):
+            return error_response(
+                "INVALID_PASSWORD", "Current password is incorrect.", 403
+            )
+        policy_error = password_policy_error(new_password)
+        if policy_error:
+            return error_response("VALIDATION_ERROR", policy_error, 400)
+        if new_password == current_password:
+            return error_response(
+                "VALIDATION_ERROR",
+                "New password must be different from the current password.",
+                400,
+            )
+
+        user.set_password(new_password)
+        # Kick out any stolen/compromised sessions (mirrors web).
+        revoke_all_user_tokens(user.id)
+        user.must_change_password = False
+        user.is_temporary_password = False
+        user.failed_login_count = 0
+        user.locked_until = None
+        audit(
+            action="mobile_change_password",
+            resource_type="user",
+            resource_id=user.id,
+            gym_id=g.gym_id,
+            actor_id=user.id,
+        )
+        db.session.commit()
+        return jsonify({
+            "success": True,
+            "data": {"message": "Password changed successfully."},
+        })
+
     @bp.route("/me", methods=["GET"])
     @token_required
     def me():
@@ -541,6 +598,12 @@ def register_auth_routes(bp):
                     "email": user.email,
                     "full_name": user.full_name,
                     "role": user.role,
+                    "must_change_password": bool(
+                        getattr(user, "must_change_password", False)
+                    ),
+                    "is_temporary_password": bool(
+                        getattr(user, "is_temporary_password", False)
+                    ),
                 },
                 "gym": {
                     "id": gym.id,

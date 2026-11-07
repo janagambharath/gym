@@ -51,6 +51,10 @@ from app.models import (
     User,
 )
 from app.models.gym import DEFAULT_TRIAL_DAYS
+from app.models.member import (
+    SYNTHETIC_TEST_MEMBER_NAME,
+    SYNTHETIC_TEST_MEMBER_PHONE,
+)
 from app.models.bot import (
     BotConversation,
     BotFAQ,
@@ -76,7 +80,7 @@ from app.services.bridge_release_service import (
 from app.services.bridge_service import (
     STALE_ENABLE_ERROR,
     STALE_ENABLE_MARKER,
-    bridge_command_must_be_cancelled,
+    bridge_disable_must_be_cancelled_at_lease,
     bridge_enable_must_be_cancelled,
     cancel_bridge_command,
     queue_membership_command,
@@ -1259,9 +1263,15 @@ def run_test_payment_renewal(gym_id: int):
     # instead — clearly named, on a reserved test phone, with no
     # terminal enroll number (so no door command can ever target a
     # real terminal user). Reused across runs for the same gym.
+    # V7-L3: the lookup matches on phone AND the synthetic name, never
+    # phone alone — and the phone is blocklisted at member creation, so
+    # no real member can carry it in the first place.
     member = (
         Member.query.filter_by(
-            gym_id=gym.id, phone="+919999900001", deleted_at=None
+            gym_id=gym.id,
+            phone=SYNTHETIC_TEST_MEMBER_PHONE,
+            full_name=SYNTHETIC_TEST_MEMBER_NAME,
+            deleted_at=None,
         )
         .order_by(Member.id.asc())
         .first()
@@ -1269,8 +1279,8 @@ def run_test_payment_renewal(gym_id: int):
     if member is None:
         member = Member(
             gym_id=gym.id,
-            full_name="REvorax Test Member",
-            phone="+919999900001",
+            full_name=SYNTHETIC_TEST_MEMBER_NAME,
+            phone=SYNTHETIC_TEST_MEMBER_PHONE,
             membership_start=date.today() - timedelta(days=30),
             membership_end=date.today() - timedelta(days=1),
             status="expired",
@@ -1660,7 +1670,12 @@ def retry_failed_commands(gym_id: int):
         # Fail-safe: never resurrect a disable unless the member is proven
         # blockable (paused, or expired with a past end date).  Stamp the
         # cancellation so the skip is auditable.
-        if bridge_command_must_be_cancelled(cmd):
+        # V7-L9: judge disables with the including-deleted lease guard
+        # (the V5-M5 fix), not the strict guard — a failed delete-time
+        # block for a soft-deleted member must be re-driven, not
+        # re-stamped cancelled. Non-disable commands are unaffected:
+        # the lease guard returns False for them.
+        if bridge_disable_must_be_cancelled_at_lease(cmd):
             cancel_bridge_command(cmd)
             continue
         # H8 mirror: never resurrect a stale enable either.

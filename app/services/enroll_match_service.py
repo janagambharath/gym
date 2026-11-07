@@ -103,6 +103,49 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+def get_preferred_terminal_snapshot(gym_id: int) -> dict | None:
+    """Terminal user list with the LIVE source winning (V7-M8).
+
+    A gym that migrates bridge -> ADMS keeps its last acked bridge
+    ``sync_users`` row forever, and the old code preferred it
+    (``get_terminal_snapshot() or get_adms_snapshot()``) whenever ANY
+    acked bridge row existed — so a recycled PIN auto-linked to its
+    previous holder at confidence 100 from frozen names. The ADMS
+    snapshot is refreshed on every OPERLOG enrollment and pruned by
+    USERINFO uploads, so it wins per enroll number; bridge-only
+    entries (a PIN the ADMS snapshot has never seen) are retained so
+    a migrated gym loses no coverage and bridge-only gyms (no ADMS
+    snapshot at all) behave exactly as before.
+    """
+    adms = get_adms_snapshot(gym_id)
+    bridge = get_terminal_snapshot(gym_id)
+    if adms is None:
+        return bridge
+    if bridge is None:
+        return adms
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for user in bridge.get("users", []):
+        enroll = user.get("enroll_number")
+        if enroll and enroll not in merged:
+            merged[enroll] = user
+            order.append(enroll)
+    for user in adms.get("users", []):
+        enroll = user.get("enroll_number")
+        if not enroll:
+            continue
+        if enroll not in merged:
+            order.append(enroll)
+        # ADMS wins on conflict: its name is the live terminal state.
+        merged[enroll] = user
+    return {
+        "command_id": adms["command_id"],
+        "source": "adms",
+        "acknowledged_at": adms.get("acknowledged_at"),
+        "users": [merged[enroll] for enroll in order],
+    }
+
+
 def get_terminal_snapshot(gym_id: int) -> dict | None:
     """Return the latest acked sync_users snapshot for this gym, or None.
 
@@ -463,7 +506,7 @@ def _suggest_for_enroll(gym_id: int, enroll_number: str) -> dict | None:
     suggestion shape as suggest_matches, or None when the ID is not in
     the snapshot / has no exact match.
     """
-    snapshot = get_terminal_snapshot(gym_id) or get_adms_snapshot(gym_id)
+    snapshot = get_preferred_terminal_snapshot(gym_id)
     if not snapshot:
         return None
     terminal_user = next(
@@ -543,7 +586,7 @@ def suggest_matches(gym_id: int) -> dict:
     Each suggestion: {enroll_number, terminal_name, member_id, member_name,
     member_phone, confidence (0-100)}.
     """
-    snapshot = get_terminal_snapshot(gym_id) or get_adms_snapshot(gym_id)
+    snapshot = get_preferred_terminal_snapshot(gym_id)
     if not snapshot:
         return {"suggestions": [], "unmatched_terminal": [], "snapshot": None,
                 "error": "no_snapshot",

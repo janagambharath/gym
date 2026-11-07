@@ -19,7 +19,7 @@ from app.services.idempotency_service import (
     record_idempotency,
     replay_after_conflict,
 )
-from app.utils.helpers import normalize_phone_e164
+from app.utils.helpers import normalize_phone_e164, password_policy_error
 
 
 def _serialize_staff(u: User) -> dict:
@@ -106,9 +106,16 @@ def register_staff_routes(bp):
         if existing:
             return error_response("CONFLICT", f"An account with email '{email}' already exists.", 409)
 
-        password = data.get("password") or _generate_temp_password(10)
-        if len(password) < 6:
-            return error_response("VALIDATION_ERROR", "Password must be at least 6 characters.", 400)
+        # V7-L5: an owner-supplied password must meet the same 12-char +
+        # complexity rule as registration and staff reset (was: 6 chars,
+        # no complexity). The server-generated default is exempt — it is
+        # random, and the account is flagged must_change_password below.
+        supplied_password = data.get("password")
+        if supplied_password:
+            policy_error = password_policy_error(supplied_password)
+            if policy_error:
+                return error_response("VALIDATION_ERROR", policy_error, 400)
+        password = supplied_password or _generate_temp_password(10)
 
         user = User(
             gym_id=g.gym_id,
@@ -116,6 +123,11 @@ def register_staff_routes(bp):
             full_name=full_name,
             role=role,
             is_active=True,
+            # V7-M3: a temp password must force rotation. Previously only
+            # is_temporary_password was set and no login path enforced
+            # it; must_change_password is the flag web login enforces
+            # and mobile login now surfaces (see auth.py).
+            must_change_password=True,
             is_temporary_password=True,
             invitation_status="sent",
         )
@@ -272,17 +284,28 @@ def register_staff_routes(bp):
             return replay
 
         # Caller-supplied password preferred; otherwise generate a secure one
-        # (the PWA reset flow sends no body). Either way, min 12 chars.
-        new_password = data.get("new_password") or data.get("password") or _generate_temp_password(16)
-        if len(new_password) < 12:
-            return error_response("VALIDATION_ERROR", "Password must be at least 12 characters.", 400)
+        # (the PWA reset flow sends no body). V7-L5: a caller-supplied
+        # password must meet the same 12-char + complexity rule as
+        # registration (was: length-only). The generated default is
+        # random 16 chars and exempt from the check.
+        supplied_password = data.get("new_password") or data.get("password")
+        if supplied_password:
+            policy_error = password_policy_error(supplied_password)
+            if policy_error:
+                return error_response("VALIDATION_ERROR", policy_error, 400)
+        new_password = supplied_password or _generate_temp_password(16)
 
         user.set_password(new_password)
         # Kick out any sessions on the old password.
         revoke_all_user_tokens(user.id)
         user.failed_login_count = 0
         user.locked_until = None
-        user.must_change_password = False
+        # V7-M3: a reset password IS a temp password. This was False,
+        # so a reset never forced rotation on any login path; the web
+        # admin reset sets True. Now the next mobile login surfaces the
+        # flag and the user rotates it via /auth/change-password.
+        user.must_change_password = True
+        user.is_temporary_password = True
 
         audit(
             action="reset_staff_password_mobile",

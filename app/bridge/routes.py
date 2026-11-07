@@ -463,8 +463,13 @@ def enrollment():
                 gym_id=installation.gym_id, connector_type="ebioserver"
             ).first()
         if integration:
+            # V7 carry-over (ex-v5v6 residual): upsert_terminal_snapshot
+            # takes a gym_id — the old code passed integration.id, which
+            # normally no-ops silently but pollutes ANOTHER gym's OPERLOG
+            # snapshot whenever some other gym's id coincides with this
+            # integration's numeric id (cross-gym mislink vector).
             upsert_terminal_snapshot(
-                integration.id, enroll_number, user_name, source="bridge"
+                installation.gym_id, enroll_number, user_name, source="bridge"
             )
             # V4-M7: the enrollment post used to run the full-gym fuzzy
             # scan on every enrollment — gate it on the shared throttle.

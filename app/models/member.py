@@ -9,6 +9,13 @@ from app.extensions import db
 from app.models.mixins import TenantMixin, TimestampMixin, utcnow
 from app.services.timezone_service import today_for_gym
 
+#: V7-L3 — the admin test-payment flow's synthetic member. The phone is
+#: RESERVED: member creation (mobile single + batch, web form, phone
+#: change) rejects it, so no real member can ever carry it, and the
+#: test-payment lookup below matches on phone AND name, never phone alone.
+SYNTHETIC_TEST_MEMBER_PHONE = "+919999900001"
+SYNTHETIC_TEST_MEMBER_NAME = "REvorax Test Member"
+
 
 class MembershipPlan(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "membership_plans"
