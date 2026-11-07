@@ -3,6 +3,9 @@ import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js'; import { SEGMENT_LABELS, formatInteger, escapeHtml } from '../utils.js';
 export default { async mount(el) {
+  // V8-L23: last Preview & Count result (count + the segment it was for).
+  let previewCount = null;
+  let previewSegment = null;
   const segOpts = Object.entries(SEGMENT_LABELS).map(([v,l])=>({value:v,label:l}));
   const templRes = await apiRequest('/api/mobile/v1/campaigns/templates');
   const templates = templRes.ok ? templRes.data.templates||templRes.data||[] : [];
@@ -28,6 +31,10 @@ export default { async mount(el) {
     const r = await apiRequest(`/api/mobile/v1/campaigns/segments/preview?type=${seg}`);
     const prev = el.querySelector('#cc-preview');
     if (r.ok) {
+      // V8-L23: remember the counted segment + count so the Send confirm
+      // can show the real recipient number instead of "all recipients".
+      previewCount = r.data.total ?? 0;
+      previewSegment = seg;
       prev.classList.remove('hidden');
       el.querySelector('#cc-preview-count').textContent = `${formatInteger(r.data.total||0)} recipients will receive this message`;
       // The message itself: the chosen template's body, else the typed message.
@@ -44,7 +51,14 @@ export default { async mount(el) {
   });
   el.querySelector('#cc-form').addEventListener('submit',async(e)=>{
     e.preventDefault();
-    const yes = await showConfirm({title:'Send Campaign',message:'This will send messages to all recipients. Continue?',confirmText:'Send'});
+    // V8-L23: show the recipient count from the Preview & Count step in
+    // the confirm — a wrong-segment mis-tap used to send blind. The count
+    // only counts if the segment hasn't changed since the preview.
+    const seg = el.querySelector('#cc-segment')?.value;
+    const countText = (previewCount != null && previewSegment === seg)
+      ? `This will send messages to ${formatInteger(previewCount)} recipient${previewCount === 1 ? '' : 's'}. Continue?`
+      : 'This will send messages to all recipients. Continue?';
+    const yes = await showConfirm({title:'Send Campaign',message:countText,confirmText:'Send'});
     if (!yes) return;
     const btn = el.querySelector('#cc-send'); btn.disabled = true;
     const body = { name:el.querySelector('#cc-name').value.trim(), segment:el.querySelector('#cc-segment').value,

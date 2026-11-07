@@ -1,18 +1,30 @@
 /* Edit Member Screen */
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast } from '../components.js';
+import { escapeHtml } from '../utils.js';
 
 export default {
-  async mount(el, params) {
+  async mount(el, params) { await load(el, params); }
+};
+
+async function load(el, params) {
     const memberId = params?.memberId;
     const res = await apiRequest(`/api/mobile/v1/members/${memberId}`);
     if (!res.ok) {
-      el.innerHTML = `<div class="empty-state"><div class="empty-state-title">Member not found</div></div>`;
+      // V8-L19: any load failure used to read as "Member not found" with no
+      // retry. Only a 404 is genuinely missing; anything else is an error.
+      if (res.error?.status === 404) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-title">Member not found</div></div>`;
+        return;
+      }
+      el.innerHTML = renderErrorState(res.error?.message || 'Could not load this member.');
+      el.querySelector('#retry-btn')?.addEventListener('click', () => load(el, params));
       return;
     }
     const m = res.data;
     const settingsRes = await apiRequest('/api/mobile/v1/settings');
+    const plansFailed = !settingsRes.ok;
     const plans = settingsRes.ok ? (settingsRes.data.plans || []) : [];
 
     el.innerHTML = `
@@ -25,6 +37,7 @@ export default {
           ${renderFormField({ id: 'em-gender', label: 'Gender', value: m.gender || '', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}
           ${renderFormField({ id: 'em-address', label: 'Address', type: 'textarea', value: m.address || '' })}
           ${renderFormField({ id: 'em-plan', label: 'Plan', value: m.plan?.id || '', options: plans.map(p => ({ value: p.id, label: p.name })) })}
+          ${plansFailed ? `<div class="empty-state" style="padding:var(--sp-md)"><div class="empty-state-text">Could not load the membership plans (${escapeHtml(settingsRes.error?.message || 'check your connection')}) — saving is blocked so the member's plan can't be silently unassigned.</div><button class="btn btn-primary" id="em-plans-retry">Try Again</button></div>` : ''}
           ${renderFormField({ id: 'em-start', label: 'Start Date', type: 'date', value: m.membership_start || '' })}
           <div class="form-group">
             <label class="form-label">End Date (auto-calculated)</label>
@@ -38,6 +51,14 @@ export default {
 
     bindHeaderEvents(el, { onBack: () => navigate.pop() });
     el.querySelector('#em-date-repair')?.addEventListener('click', () => navigate.push('date-repair'));
+    // V8-M11: when the plans leg failed the dropdown is empty and submit
+    // would send plan_id: null, silently unassigning the member's plan.
+    // Block Save until the plans load succeeds.
+    el.querySelector('#em-plans-retry')?.addEventListener('click', () => load(el, params));
+    if (plansFailed) {
+      const submitBtn = el.querySelector('#em-submit');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Plans failed to load — Save blocked'; }
+    }
 
     // End date is auto-calculated from Plan + Start (never hand-typed).
     // Uses the renewal convention: end = start + duration - 1.
@@ -63,6 +84,9 @@ export default {
 
     el.querySelector('#edit-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      // V8-M11 second guard (defence in depth — the button is disabled
+      // too, but a programmatic submit must not slip past either).
+      if (plansFailed) { showToast('Membership plans failed to load — retry before saving.', 'error'); return; }
       const btn = el.querySelector('#em-submit');
       btn.disabled = true;
       btn.textContent = 'Saving...';
@@ -107,5 +131,4 @@ export default {
         btn.textContent = 'Save Changes';
       }
     });
-  }
-};
+}

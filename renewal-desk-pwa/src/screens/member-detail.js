@@ -50,6 +50,7 @@ export default {
 
       el.innerHTML = `
         ${renderHeader({ title: 'Member', showBack: true, actions: [{ icon: 'edit', label: 'Edit' }] })}
+        ${staleRefresh ? `<div id="md-stale-banner" style="padding:var(--sp-sm) var(--sp-lg);background:var(--warning-surface,#fef3c7);color:var(--warning,#92400e);font-size:var(--fs-sm);display:flex;align-items:center;justify-content:space-between;gap:var(--sp-sm)"><span>Showing saved details — refresh failed${refreshError ? `: ${escapeHtml(refreshError)}` : '.'}</span><button class="btn btn-sm btn-secondary" id="md-refresh-retry">Try again</button></div>` : ''}
         <div class="scroll-view">
           <div class="scroll-content">
             <!-- Profile Card -->
@@ -199,6 +200,11 @@ export default {
         onBack: () => navigate.pop(),
         actions: [{ onClick: openEdit }],
       });
+
+      // V8-L20: a failed refresh on cached member data used to keep stale
+      // data silently. The banner above (rendered when staleRefresh is
+      // set) carries the retry.
+      el.querySelector('#md-refresh-retry')?.addEventListener('click', () => refreshMember());
 
       el.querySelector('#btn-edit-member')?.addEventListener('click', openEdit);
       el.querySelector('#btn-edit-contact')?.addEventListener('click', openEdit);
@@ -416,6 +422,38 @@ export default {
       });
     };
 
+    // V8-L20: refresh the member from the API, distinguishing a genuine
+    // 404 ("Member not found", no retry) from any other load failure
+    // (error + retry), and flagging stale cached data instead of silently
+    // keeping it.
+    let staleRefresh = false;
+    let refreshError = null;
+    const refreshMember = async (background = false) => {
+      const r = await apiRequest(`/api/mobile/v1/members/${memberId}`);
+      if (r.ok) {
+        member = r.data;
+        staleRefresh = false;
+        refreshError = null;
+        render();
+        return true;
+      }
+      if (!member) {
+        if (r.error?.status === 404) {
+          // Genuine 404: no retry — retrying a missing member is pointless.
+          el.innerHTML = '<div class="empty-state"><div class="empty-state-title">Member not found</div></div>';
+        } else {
+          el.innerHTML = renderErrorState(r.error?.message || 'Could not load this member.');
+          el.querySelector('#retry-btn')?.addEventListener('click', () => refreshMember());
+        }
+        return false;
+      }
+      staleRefresh = true;
+      refreshError = r.error?.message || null;
+      if (!background) showToast('Could not refresh member details — showing saved details.', 'error');
+      render();
+      return false;
+    };
+
     // If we have initial data, render immediately
     if (member) {
       render();
@@ -424,14 +462,7 @@ export default {
     }
 
     // Refresh from API to ensure address and latest data are up to date
-    const res = await apiRequest(`/api/mobile/v1/members/${memberId}`);
-    if (res.ok) {
-      member = res.data;
-      render();
-    } else if (!member) {
-      el.innerHTML = renderErrorState(res.error?.message || 'Member not found');
-      return;
-    }
+    await refreshMember();
 
     // Listen for member updates from edit-member screen
     const onMemberUpdated = (e) => {
@@ -441,12 +472,6 @@ export default {
       }
     };
     window.addEventListener('member-updated', onMemberUpdated);
-    attachLiveRefresh(el, async () => {
-      const result = await apiRequest(`/api/mobile/v1/members/${memberId}`);
-      if (result.ok && el.dataset.screenDisposed !== 'true') {
-        member = result.data;
-        render();
-      }
-    }, 30000, () => window.removeEventListener('member-updated', onMemberUpdated));
+    attachLiveRefresh(el, async () => { await refreshMember(true); }, 30000, () => window.removeEventListener('member-updated', onMemberUpdated));
   }
 };

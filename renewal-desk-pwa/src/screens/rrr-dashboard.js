@@ -1,6 +1,6 @@
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml, formatCurrency, formatInteger } from '../utils.js';
+import { escapeHtml, formatCurrency, formatInteger, formatTime } from '../utils.js';
 import { attachLiveRefresh } from '../live-refresh.js';
 import { icon } from '../icons.js';
 
@@ -36,6 +36,15 @@ async function load(el, background = false) {
   const session = getCachedSession();
   const gymName = session?.tenantName || 'Your Gym';
   const ownerName = session?.userName || 'Owner';
+  // V8-L27: the today/settings legs used to fail silently (today section
+  // omitted, banner defaults shown). Surface them with retry instead.
+  const auxErrors = [];
+  if (!todayResult.ok) auxErrors.push(`today's queue (${todayResult.error?.message || 'could not load'})`);
+  if (!settingsResult.ok) auxErrors.push(`settings (${settingsResult.error?.message || 'could not load'})`);
+  if (background && auxErrors.length) {
+    const status = el.querySelector('[data-freshness]');
+    if (status) status.textContent = 'Some sections could not refresh · showing previous data';
+  }
   const integration = data.integration;
   const integrationName = integration?.type === 'adms_direct' ? 'Direct Cloud' : integration?.type === 'legacy_bridge' ? 'Bridge' : integration?.type === 'direct_bridge' ? 'Bridge' : 'eBioServer';
   const integrationStatusLabel = integration?.status === 'connected'
@@ -52,7 +61,8 @@ async function load(el, background = false) {
     : true;
 
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page">
-    <p data-freshness style="font-size:12px;color:var(--muted);margin:0 0 12px">Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · refreshes automatically</p>
+    <p data-freshness style="font-size:12px;color:var(--muted);margin:0 0 12px">Updated ${formatTime(new Date().toISOString())} (gym time) · refreshes automatically</p>
+    ${auxErrors.length && !background ? `<p style="font-size:12px;color:var(--warning,#92400e);margin:0 0 12px">Could not load ${escapeHtml(auxErrors.join(' and '))} — showing the dashboard without ${auxErrors.length > 1 ? 'them' : 'it'}. <button class="btn btn-sm btn-secondary" id="rrr-aux-retry">Try again</button></p>` : ''}
     <header class="rrr-workspace-bar">
       <button class="rrr-gym-switcher" id="rrr-members">${icon('business', 18)}<span><b>${escapeHtml(gymName)}</b><small>Owner workspace</small></span>${icon('chevronDown', 16)}</button>
       <div class="rrr-header-actions"><button class="rrr-icon-button" id="rrr-inbox" aria-label="Open inbox">${icon('inbox', 19)}</button><button class="rrr-add-button" id="rrr-add-member">${icon('add', 18, 'white')} Add member</button><button class="rrr-owner-avatar" id="rrr-avatar" aria-label="Open settings">${escapeHtml(ownerName.slice(0, 2).toUpperCase())}</button></div>
@@ -95,6 +105,8 @@ async function load(el, background = false) {
     </section>
   </main>`;
   el.querySelector('#rrr-integrations')?.addEventListener('click', () => navigate.push('rrr-integrations'));
+  // V8-L27: retry the whole load when an auxiliary leg failed.
+  el.querySelector('#rrr-aux-retry')?.addEventListener('click', () => load(el));
   el.querySelector('#rrr-kpi-mapping')?.addEventListener('click', () => navigate.push('rrr-mappings'));
   el.querySelector('#rrr-link-banner')?.addEventListener('click', () => navigate.push('rrr-mappings'));
   el.querySelector('#rrr-kpi-members')?.addEventListener('click', () => navigate.switchTab('members'));

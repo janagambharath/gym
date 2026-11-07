@@ -42,15 +42,22 @@ export default { async mount(el) {
     container.querySelectorAll('[data-idx]').forEach(row => {
       if (row.dataset.wired) return;
       row.dataset.wired = '1';
-      row.addEventListener('click', () => {
+      row.addEventListener('click', async () => {
         const n = notifs[Number(row.dataset.idx)];
         if (!n) return;
-        // Tapping marks the notification read (B-L5) and clears its highlight.
+        // Tapping marks the notification read (B-L5) — but only clear the
+        // highlight once the server confirms it. V8-L21: the old code
+        // cleared optimistically and fired the POST without awaiting it,
+        // so a failed request left the server unread while the UI said read.
         if (n.id && !n.read) {
-          n.read = true;
-          row.style.background = '';
-          row.querySelector('.list-item-title').style.fontWeight = 'var(--fw-normal)';
-          apiRequest(`/api/mobile/v1/notifications/${n.id}/read`, { method: 'POST' });
+          const r = await apiRequest(`/api/mobile/v1/notifications/${n.id}/read`, { method: 'POST' });
+          if (!r.ok) {
+            showToast(r.error?.message || 'Could not mark as read.', 'error');
+          } else {
+            n.read = true;
+            row.style.background = '';
+            row.querySelector('.list-item-title').style.fontWeight = 'var(--fw-normal)';
+          }
         }
         if (n.member_id) navigate.push('member-detail', { memberId: String(n.member_id) });
         else if (n.payment_id) navigate.push('payment-detail', { paymentId: String(n.payment_id) });

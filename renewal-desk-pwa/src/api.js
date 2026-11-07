@@ -398,13 +398,25 @@ export async function uploadPaymentQrImage(file, timeoutMs = 15000) {
 
 /** POST a FormData body (file uploads) with auth + token refresh, no hardcoded host. */
 export async function uploadFormData(path, formData, timeoutMs = 60000) {
+  // V8-L29: uploads used to post without an Idempotency-Key and re-POSTed
+  // the same FormData on the 401-refresh retry. Generate one key per call
+  // and send it on both attempts, like apiRequest does for JSON mutations.
+  // NOTE: the backend QR-upload endpoint does not honour the key yet
+  // (payment_qr_image has no begin_idempotency call — verified 2026-11-07);
+  // the key is sent so the invariant holds client-side, but a backend
+  // worker still needs to add begin_idempotency + record_idempotency to
+  // POST /settings/payment/qr (and the members scan/import uploads) for
+  // the replay to actually happen server-side. The upload is a replace,
+  // so a double execute is harmless today — this is a latent gap, not a
+  // live double-charge.
+  const idempotencyKey = uuid();
   const doFetch = async (token) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fetch(`${API_BASE_URL}${path}`, {
         method: 'POST',
-        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { Accept: 'application/json', 'Idempotency-Key': idempotencyKey, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: formData,
         signal: controller.signal,
       });

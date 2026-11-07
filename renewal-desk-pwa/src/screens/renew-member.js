@@ -1,6 +1,6 @@
 /* Renew Member Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, renderAvatar, renderBadge, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, renderAvatar, renderBadge, renderErrorState, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatCurrency, formatDate, uuid, getMemberDisplayStatus } from '../utils.js';
 
 function dateKeyInTimezone(value, timezone) {
@@ -31,7 +31,8 @@ export default { async mount(el, params) {
     await mountRenew(el, params);
   } catch (err) {
     console.error('[renew-member] mount failed', err);
-    el.innerHTML = `<div class="empty-state"><div class="empty-state-title">Renew couldn't open</div><div class="empty-state-text">${escapeHtml(err?.message || 'Something went wrong. Go back and try again.')}</div></div>`;
+    el.innerHTML = `<div class="empty-state"><div class="empty-state-title">Renew couldn't open</div><div class="empty-state-text">${escapeHtml(err?.message || 'Something went wrong. Go back and try again.')}</div><button class="btn btn-primary" id="rn-retry">Try Again</button></div>`;
+    el.querySelector('#rn-retry')?.addEventListener('click', () => mountRenew(el, params));
   }
 } };
 
@@ -41,16 +42,35 @@ async function mountRenew(el, params) {
   if (!member && params?.memberId) {
     const res = await apiRequest(`/api/mobile/v1/members/${params.memberId}`);
     if (res.ok) member = res.data;
+    else {
+      // V8-L24: a member-fetch failure used to read as "No member selected".
+      // Only a 404 is genuinely missing; anything else is an error + retry.
+      if (res.error?.status === 404) {
+        el.innerHTML = '<div class="empty-state"><div class="empty-state-title">Member not found</div><div class="empty-state-text">Go back to the member list and try again.</div></div>';
+      } else {
+        el.innerHTML = renderErrorState(res.error?.message || 'Could not load this member.');
+        el.querySelector('#retry-btn')?.addEventListener('click', () => mountRenew(el, params));
+      }
+      return;
+    }
   }
   if (!member) { el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No member selected</div><div class="empty-state-text">Go back to the member list and tap Renew again.</div></div>'; return; }
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
-  const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
+  if (!settingsRes.ok) {
+    // V8-L24: a settings failure used to render plans=[] → false "No
+    // membership plans yet" and a timezone fallback to Asia/Kolkata that
+    // shifts minStartDate for non-IST gyms. Fail loudly with retry instead.
+    el.innerHTML = renderErrorState(settingsRes.error?.message || 'Could not load membership plans.');
+    el.querySelector('#retry-btn')?.addEventListener('click', () => mountRenew(el, params));
+    return;
+  }
+  const plans = settingsRes.data.plans || [];
   if (plans.length === 0) {
     el.innerHTML = `<div class="empty-state"><div class="empty-state-title">No membership plans yet</div><div class="empty-state-text">Create a plan first, then renew this member.</div><button class="btn btn-primary" id="rn-create-plan">Create a plan</button></div>`;
     el.querySelector('#rn-create-plan')?.addEventListener('click', () => navigate.push('plans'));
     return;
   }
-  const timezone = settingsRes.ok ? settingsRes.data.gym?.timezone || 'Asia/Kolkata' : 'Asia/Kolkata';
+  const timezone = settingsRes.data.gym?.timezone || 'Asia/Kolkata';
   const today = dateKeyInTimezone(new Date(), timezone);
   const minStartDate = member.membership_end && member.membership_end >= today
     ? addDays(member.membership_end, 1)

@@ -36,8 +36,10 @@ export default {
 
       const res = await apiRequest('/api/mobile/v1/date-repair/scan');
       if (!res.ok) {
-        el.innerHTML = `${renderHeader({ title: 'Date Repair', showBack: true })}<div class="scroll-view"><div class="scroll-content"><div class="empty-state"><div class="empty-state-title">Could not run the scan</div><p>${esc(res.error?.message || 'Owner access required.')}</p></div></div></div>`;
+        // V8-L25: the scan-failure state had no retry.
+        el.innerHTML = `${renderHeader({ title: 'Date Repair', showBack: true })}<div class="scroll-view"><div class="scroll-content"><div class="empty-state"><div class="empty-state-title">Could not run the scan</div><p>${esc(res.error?.message || 'Owner access required.')}</p><button class="btn btn-primary" id="dr-retry">Try Again</button></div></div></div>`;
         bindHeaderEvents(el, { onBack: () => navigate.pop() });
+        el.querySelector('#dr-retry')?.addEventListener('click', load);
         return;
       }
 

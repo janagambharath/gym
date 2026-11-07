@@ -77,6 +77,16 @@ async function load(el, background = false) {
   if (!background) stopPoll();
   if (!background) el.innerHTML = '<div class="rrr-loading">Preparing your connection workspace…</div>';
   const result = await apiRequest('/api/mobile/v1/rrr/integrations');
+  if (!background && !result.ok) {
+    // V8-M12: a total load failure used to render as "not set up" (Step 1
+    // of 3, 0 verified records, provisioning form) with zero error
+    // indication. Show the failure with retry instead. (Background
+    // refreshes keep the existing guard below — they never lie.)
+    if (el.dataset.screenDisposed === 'true') return;
+    el.innerHTML = `<main class="rrr-page rrr-integrations-page"><div class="rrr-empty"><h2>Could not load your terminal connection.</h2><p>${esc(result.error?.message || 'Check your connection and try again.')}</p><button class="rrr-btn" id="rrr-retry">Try again</button></div></main>`;
+    el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el));
+    return;
+  }
   const integrations = result.ok ? result.data.integrations || [] : [];
   const direct = integrations.find(x => x.type === 'adms_direct');
   const bridge = integrations.find(x => x.type === 'ebioserver');

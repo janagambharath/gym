@@ -66,8 +66,11 @@ async function load(el, params, background = false, append = false) {
       <header class="rrr-header"><button id="rrr-back" class="rrr-back-btn">← Member</button></header>
       <h1>Biometric Records</h1>
       <p>Could not load records: ${esc(res.error?.message || 'Unknown error')}</p>
+      <button class="btn btn-primary" id="rrr-retry">Try Again</button>
     </main>`;
     el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
+    // V8-L25: the failure state had no retry (Back only).
+    el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el, params));
     return;
   }
   attBgErrorShown = false;

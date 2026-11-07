@@ -2,12 +2,23 @@
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, renderListSkeleton, renderErrorState, showToast, renderSectionHeader } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatDateTime } from '../utils.js';
-export default { async mount(el) {
+export default { async mount(el) { await load(el); } };
+
+async function load(el) {
   el.innerHTML = `${renderHeader({ title:'WhatsApp', showBack:true })}<div class="scroll-view" id="wa-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   const [statusRes, logRes] = await Promise.all([apiRequest('/api/mobile/v1/whatsapp/status'), apiRequest('/api/mobile/v1/whatsapp/logs?page_size=20')]);
   const scroll = el.querySelector('#wa-scroll');
-  const s = statusRes.ok ? statusRes.data : {};
+  if (!scroll) return;
+  if (!statusRes.ok) {
+    // V8-M13: a status-load failure used to render as "Disconnected" with a
+    // "Connect WhatsApp" button and "Auto Reminders: Disabled" as fact.
+    // A failed load is not a disconnect — show the error with retry.
+    scroll.innerHTML = renderErrorState(statusRes.error?.message || 'Could not load the WhatsApp status.');
+    scroll.querySelector('#retry-btn')?.addEventListener('click', () => load(el));
+    return;
+  }
+  const s = statusRes.data;
   const checklist = s.checklist || {};
   // Backend returns `state` + `checklist`; map to display flags.
   const isConnected = s.state === 'CONNECTED' || checklist.messaging_ready === true;
@@ -30,6 +41,7 @@ export default { async mount(el) {
       <button class="btn btn-whatsapp" style="flex:1" id="wa-broadcast">${icon('send',16,'white')} Broadcast</button>
       <button class="btn btn-outline" style="flex:1" id="wa-campaigns">${icon('megaphone',16)} Campaigns</button>`}
     </div>
+    ${!logRes.ok ? `<div style="padding:0 var(--sp-lg) var(--sp-lg)"><div class="empty-state" style="padding:var(--sp-md)"><div class="empty-state-text">Could not load recent messages (${escapeHtml(logRes.error?.message || 'check your connection')}).</div><button class="btn btn-primary" id="wa-logs-retry">Try Again</button></div></div>` : ''}
     ${logs.length > 0 ? `${renderSectionHeader('Recent Messages')}
       <div class="card" style="margin:0 var(--sp-lg)">${logs.slice(0,15).map(l=>`
         <div class="list-item"><div class="list-item-content">
@@ -43,4 +55,5 @@ export default { async mount(el) {
   el.querySelector('#wa-connect')?.addEventListener('click',()=>navigate.push('whatsapp-setup'));
   el.querySelector('#wa-broadcast')?.addEventListener('click',()=>navigate.push('campaign-create'));
   el.querySelector('#wa-campaigns')?.addEventListener('click',()=>navigate.push('campaigns'));
-}};
+  el.querySelector('#wa-logs-retry')?.addEventListener('click',()=>load(el));
+}

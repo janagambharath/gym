@@ -3,7 +3,7 @@ import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest, checkInMember } from '../api.js';
 import { navigate } from '../app.js';
 import { router } from '../router.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderAvatar, showToast, showConfirm } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderErrorState, renderAvatar, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js';
 import { formatDateTime, formatInteger, escapeHtml } from '../utils.js';
 
@@ -16,7 +16,6 @@ export default {
     let requestId = 0;
     // Feed pagination (V3-M21): page/total survive background refreshes.
     let page = 1, totalEvents = 0, totalPages = 1, allEvents = [];
-    let insideMembers = [], insideTotal = 0, insidePage = 1, insideTotalPages = 1;
     // V4-L20: dedupe feed rows by event id — a new punch landing between
     // two fetched pages can otherwise appear twice.
     // V7-L19: prefer the backend's stable punch_key (enroll + second
@@ -27,27 +26,14 @@ export default {
     // NOTE: `||` and `??` cannot mix unparenthesised in JS.
     const eventKey = (l) => l.punch_key || (l.id ?? `${l.member_id || ''}|${l.biometric_user_id || l.device_enroll_number || ''}|${l.event_timestamp || l.timestamp || l.created_at || ''}`);
     const dedupeEvents = (rows) => { const seen = new Set(); return rows.filter((r) => { const k = eventKey(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
-    // One Inside-now row — shared by the full render and the load-more
-    // append so appended rows look and behave exactly like the first page.
-    function insideRowHtml(m) {
-      return `
-        <div class="list-item" style="cursor:pointer" data-event-member-id="${m.id}">
-          ${renderAvatar(m.full_name || 'Member', 'sm')}
-          <div class="list-item-content">
-            <div class="list-item-title">${escapeHtml(m.full_name)}</div>
-            <div class="list-item-subtitle">Entered ${m.entered_at ? formatDateTime(m.entered_at) : '—'}</div>
-          </div>
-          <button class="btn btn-secondary btn-sm" data-checkout-id="${m.id}" data-checkout-name="${escapeHtml(m.full_name)}">Check Out</button>
-        </div>`;
-    }
     let feedErrorShown = false;
+    // V8-L26: whether any load has ever rendered. A total first-load
+    // failure must show an error + retry, not zeros as fact.
+    let hasRendered = false;
     // V5-L27: a summary-only failure used to render stale stats with no
     // indication — toast once and show a staleness note on the card.
     let summaryErrorShown = false;
     let summaryLoadedAt = null;
-    // V6-L13: an inside-leg failure used to silently drop that page's rows
-    // and never surface — toast once like the feed leg does.
-    let insideErrorShown = false;
 
     // One feed row — shared by the full render and load-more appends so
     // appended rows look and behave exactly like the first page.
@@ -97,35 +83,6 @@ export default {
           }
         });
       });
-
-      // Check Out buttons — live targets are the Inside-now rows (V3-L23).
-      container.querySelectorAll('[data-checkout-id]').forEach(btn => {
-        if (btn.dataset.wired) return;
-        btn.dataset.wired = '1';
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const mid = btn.dataset.checkoutId;
-          const name = btn.dataset.checkoutName;
-          btn.disabled = true;
-          btn.textContent = 'Checking out...';
-          const res = await checkInMember(mid, 'EXIT');
-          // V6-M14: the backend returns HTTP 200 success:true with the
-          // denial only in the top-level message + data.event_type — a
-          // green "checked out" toast here would lie about a denied member.
-          if (res.ok && res.data?.event_type === 'ACCESS_DENIED') {
-            showToast(res.message || res.data?.message || `${name} was denied access — membership is not active.`, 'error');
-            btn.disabled = false;
-            btn.textContent = 'Check Out';
-          } else if (res.ok) {
-            showToast(`${name} checked out`, 'success');
-            await loadData();
-          } else {
-            showToast(res.error?.message || 'Check-out failed', 'error');
-            btn.disabled = false;
-            btn.textContent = 'Check Out';
-          }
-        });
-      });
     }
 
     async function loadMoreEvents() {
@@ -161,56 +118,20 @@ export default {
       if (btn) { btn.disabled = false; btn.textContent = 'Load more events'; }
     }
 
-    async function loadMoreInside() {
-      if (insidePage >= insideTotalPages) return;
-      const btn = el.querySelector('#ac-inside-more');
-      if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-      const next = insidePage + 1;
-      const res = await apiRequest(`/api/mobile/v1/access/inside?page=${next}&per_page=50`);
-      if (!res.ok) {
-        showToast(res.error?.message || 'Could not load more members inside.', 'error');
-        if (btn) { btn.disabled = false; btn.textContent = 'Load more'; }
-        return;
-      }
-      insidePage = res.data?.pagination?.page ?? next;
-      insideTotalPages = res.data?.pagination?.total_pages ?? insideTotalPages;
-      insideTotal = res.data?.pagination?.total ?? insideTotal;
-      const seenInside = new Set(insideMembers.map((m) => m.id));
-      const fresh = (res.data?.members || []).filter((m) => { if (seenInside.has(m.id)) return false; seenInside.add(m.id); return true; });
-      insideMembers = [...insideMembers, ...fresh];
-      const list = el.querySelector('#ac-inside-list');
-      if (list) {
-        list.insertAdjacentHTML('beforeend', fresh.map(insideRowHtml).join(''));
-        wireEventRows(list);
-      }
-      const count = el.querySelector('#ac-inside-count');
-      if (count) count.textContent = `Showing ${insideMembers.length} of ${insideTotal} inside now`;
-      const wrap = el.querySelector('#ac-inside-more-wrap');
-      if (wrap) wrap.style.display = insidePage < insideTotalPages ? '' : 'none';
-      if (btn) { btn.disabled = false; btn.textContent = 'Load more'; }
-    }
-
     async function loadData() {
       const id = ++requestId;
       const scroll = el.querySelector('#ac-scroll');
       if (!scroll) return;
 
-      // Parallel fetch summary + inside-now + current tab feed. A background
+      // Parallel fetch summary + current tab feed. A background
       // refresh re-fetches pages 1..page so a loaded-more feed keeps its
       // place (members-list pattern) instead of snapping back to page 1.
       const feedUrl = (p) => `/api/mobile/v1/access/events?page=${p}&per_page=25${currentTab === 'all' ? '' : `&type=${currentTab}`}`;
-      // V4-L16: inside-now is paginated too — re-fetch pages 1..insidePage
-      // on background refresh so loaded-more rows keep their place.
-      const insideUrl = (p) => `/api/mobile/v1/access/inside?page=${p}&per_page=50`;
-      const [summaryRes, ...rest] = await Promise.all([
+      const [summaryRes, ...feedPages] = await Promise.all([
         apiRequest('/api/mobile/v1/access/summary'),
-        ...Array.from({ length: insidePage }, (_, i) => apiRequest(insideUrl(i + 1))),
         ...Array.from({ length: page }, (_, i) => apiRequest(feedUrl(i + 1))),
       ]);
       if (id !== requestId || el.dataset.screenDisposed === 'true') return;
-      const insidePages = rest.slice(0, insidePage);
-      const insideRes = insidePages[insidePages.length - 1];
-      const feedPages = rest.slice(insidePage);
       // V4-M23: feedRes is the CURRENT page (the last fetched). Picking the
       // first failed page as feedRes zeroed totalEvents on a failed middle
       // page ("Showing N of 0 events"). The total below falls back to the
@@ -229,6 +150,17 @@ export default {
       }
       const s = summaryRes.ok ? summaryRes.data : (summaryData || {});
       summaryData = s;
+      // V8-L26: if every leg fails on the very first load, the page would
+      // render 0 entries/exits and "Biometric Device Offline" as fact with
+      // only a toast and no retry. Show the failure with retry instead.
+      // (Background-refresh staleness handling below is good — keep it.)
+      const totalFirstLoadFailure = !hasRendered && !summaryRes.ok && !feedRes.ok;
+      if (totalFirstLoadFailure) {
+        const firstError = summaryRes.error?.message || feedRes.error?.message || 'Check your connection and try again.';
+        scroll.innerHTML = renderErrorState(firstError);
+        scroll.querySelector('#retry-btn')?.addEventListener('click', loadData);
+        return;
+      }
       // V5-L27: serving a cached summary after a failed refresh must say so.
       if (!summaryRes.ok) {
         if (summaryData && !summaryErrorShown) { summaryErrorShown = true; showToast('Could not refresh the access summary — showing the last loaded stats.', 'error'); }
@@ -238,9 +170,6 @@ export default {
       }
       const summaryStale = !summaryRes.ok && !!summaryData;
 
-      // /access/events never returns a members list — inside-now comes from
-      // the dedicated /access/inside endpoint (the old feedRes.data.members
-      // read was always []).
       const events = feedRes.ok ? (feedRes.data?.events || feedRes.data?.log || []) : [];
       const pg = feedRes.ok ? (feedRes.data?.pagination || {}) : {};
       // V4-M23 second leg: a failed current page must not zero the total —
@@ -251,26 +180,6 @@ export default {
       totalPages = pg.total_pages ?? totalPages;
       page = pg.page ?? page;
       allEvents = dedupeEvents(feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events));
-      // V4-L16: inside-now keeps its own page/total; a failed inside fetch
-      // keeps the previous total instead of collapsing the count to 0.
-      // V6-L13: on a partial inside failure, MERGE the ok pages into the
-      // previous rows instead of rebuilding from ok-only pages (which
-      // silently dropped the failed page's rows). On a full success the
-      // list is rebuilt, so members who left are not kept forever.
-      const insideFailed = insidePages.some((r) => !r.ok);
-      if (insideFailed) {
-        if (!insideErrorShown) { insideErrorShown = true; showToast('Could not refresh the inside-now list — showing the last loaded members.', 'error'); }
-        const freshInside = insidePages.flatMap((r) => (r.ok ? (r.data?.members || []) : []));
-        const insideById = new Map(insideMembers.map((m) => [m.id, m]));
-        freshInside.forEach((m) => insideById.set(m.id, m));
-        insideMembers = [...insideById.values()];
-      } else {
-        insideErrorShown = false;
-        insideMembers = [...new Map(insidePages.flatMap((r) => (r.ok ? (r.data?.members || []) : [])).map((m) => [m.id, m])).values()];
-      }
-      insideTotal = insideRes.ok ? (insideRes.data?.pagination?.total ?? insideMembers.length) : insideTotal;
-      insideTotalPages = insideRes.ok ? (insideRes.data?.pagination?.total_pages ?? insideTotalPages) : insideTotalPages;
-      insidePage = insideRes.ok ? (insideRes.data?.pagination?.page ?? insidePage) : insidePage;
 
       const lastEventText = s.last_event_at ? formatDateTime(s.last_event_at) : (s.last_heartbeat ? `Heartbeat: ${formatDateTime(s.last_heartbeat)}` : '');
 
@@ -371,15 +280,6 @@ export default {
             ` : ''}
           </div>
 
-          <!-- Inside Now (V3-M21) — from /access/inside, not the feed -->
-          ${insideMembers.length ? `
-            <div class="card" style="margin:var(--sp-md) var(--sp-lg) 0">
-              <div style="padding:var(--sp-md) var(--sp-md) var(--sp-xs);font-weight:var(--fw-bold);font-size:var(--fs-sm)">Inside now (${insideTotal})</div>
-              <div id="ac-inside-list">${insideMembers.map(insideRowHtml).join('')}</div>
-              <div id="ac-inside-count" style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${insideMembers.length} of ${insideTotal} inside now</div>
-              ${insidePage < insideTotalPages ? `<div id="ac-inside-more-wrap" style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="ac-inside-more">Load more</button></div>` : ''}
-            </div>` : ''}
-
           <!-- Filter Tabs -->
           <div style="display:flex;gap:var(--sp-xs);padding:0 var(--sp-lg) var(--sp-md);overflow-x:auto;-webkit-overflow-scrolling:touch">
             ${[
@@ -419,8 +319,6 @@ export default {
 
       // Load more (V3-M21)
       scroll.querySelector('#ac-load-more')?.addEventListener('click', loadMoreEvents);
-      // V4-L16: load the next inside-now page in place.
-      scroll.querySelector('#ac-inside-more')?.addEventListener('click', loadMoreInside);
 
       // Quick stat clicks
       scroll.querySelector('#stat-entries')?.addEventListener('click', () => { currentTab = 'entry'; page = 1; allEvents = []; loadData(); });
@@ -512,11 +410,12 @@ export default {
         }
       });
 
-      // Member rows + Check Out buttons (inside-now list and feed rows).
+      // Member rows (feed rows).
       // NOTE (V3-L23): the old [data-member-link] binding was dead — no
       // element ever carried that attribute (rows use
       // data-event-member-id) — so it was removed, not re-bound.
       wireEventRows(scroll);
+      hasRendered = true;
     }
 
     function openCheckinModal() {

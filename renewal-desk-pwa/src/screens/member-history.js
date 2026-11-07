@@ -130,7 +130,7 @@ async function load(el, params) {
         <div style="padding:0 var(--sp-lg) var(--sp-lg)">
           <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">Membership Renewals${renewals.length ? ` (${renewals.length})` : ''}</div>
           ${!renewalsRes.ok
-            ? `<div style="font-size:var(--fs-sm);color:var(--muted)">Could not load renewals.</div>`
+            ? `<div class="empty-state" style="padding:var(--sp-md)"><div class="empty-state-text">Could not load renewals: ${escapeHtml(renewalsRes.error?.message || 'check your connection')}</div><button class="btn btn-primary" id="retry-renewals">Try Again</button></div>`
             : renewals.length
               ? `<div class="card">${renewals.map(renderRenewalRow).join('')}</div>`
               : `<div style="font-size:var(--fs-sm);color:var(--muted)">No renewals recorded for this member.</div>`}
@@ -140,7 +140,7 @@ async function load(el, params) {
         <div style="padding:0 var(--sp-lg) var(--sp-lg)">
           <div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-md)">Payments${payments.length ? ` (${payments.length})` : ''}</div>
           ${!paymentsRes.ok
-            ? `<div style="font-size:var(--fs-sm);color:var(--muted)">Could not load payments.</div>`
+            ? `<div class="empty-state" style="padding:var(--sp-md)"><div class="empty-state-text">Could not load payments: ${escapeHtml(paymentsRes.error?.message || 'check your connection')}</div><button class="btn btn-primary" id="retry-payments">Try Again</button></div>`
             : payments.length
               ? `<div class="card">${payments.map(renderPaymentRow).join('')}</div>`
               : renderEmptyState({ icon: 'payments', title: 'No payments', text: `No payments recorded for ${member.full_name}` })}
@@ -149,6 +149,10 @@ async function load(el, params) {
     </div>`;
 
   bindHeaderEvents(el, { onBack: () => navigate.pop() });
+  // V8-L30: the two sub-legs used to fail with a muted note and no retry,
+  // unlike the member leg. Retry re-runs the whole load (all three legs).
+  el.querySelector('#retry-renewals')?.addEventListener('click', () => load(el, params));
+  el.querySelector('#retry-payments')?.addEventListener('click', () => load(el, params));
   el.querySelectorAll('[data-payment-id]').forEach(row => {
     row.addEventListener('click', () => navigate.push('payment-detail', { paymentId: row.dataset.paymentId }));
   });

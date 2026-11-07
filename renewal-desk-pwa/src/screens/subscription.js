@@ -1,8 +1,10 @@
 /* Subscription Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, renderListSkeleton } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, renderListSkeleton, renderErrorState } from '../components.js';
 import { icon } from '../icons.js'; import { formatDate, formatCurrency, escapeHtml } from '../utils.js';
-export default { async mount(el) {
+export default { async mount(el) { await load(el); } };
+
+async function load(el) {
   el.innerHTML = `${renderHeader({title:'Subscription',showBack:true})}<div class="scroll-view" id="sub-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   const [res, membersRes] = await Promise.all([
@@ -10,7 +12,8 @@ export default { async mount(el) {
     apiRequest('/api/mobile/v1/members?page=1&page_size=1'),
   ]);
   const scroll = el.querySelector('#sub-scroll');
-  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Could not load subscription</div></div>`; return; }
+  // V8-L25: the failure state had no retry and no detail.
+  if (!res.ok) { scroll.innerHTML = renderErrorState(res.error?.message || 'Could not load subscription.'); scroll.querySelector('#retry-btn')?.addEventListener('click', () => load(el)); return; }
   const raw = res.data || {};
   // The subscription endpoint carries no member count (L11) — the members
   // list pagination total is the authoritative "members used" figure.
@@ -38,4 +41,4 @@ export default { async mount(el) {
       ${s.amount ? renderInfoRow('Amount', formatCurrency(s.amount)) : ''}
     </div></div>
   </div>`;
-}};
+}

@@ -27,7 +27,10 @@ async function load(el, append = false) {
   const res = await apiRequest(`/api/mobile/v1/members?page=${fetchPage}&page_size=50${delQuery ? `&q=${encodeURIComponent(delQuery)}` : ''}`);
   if (!res.ok) {
     if (append) { showToast(res.error?.message || 'Could not load more members.', 'error'); return; }
-    el.innerHTML = '<main class="rrr-page"><h1>Failed to load</h1><button onclick="history.back()">Back</button></main>';
+    // V8-L25: the failure state had no retry and no error detail (Back only).
+    el.innerHTML = `<main class="rrr-page"><h1>Could not load members</h1><p>${esc(res.error?.message || 'Check your connection and try again.')}</p><button class="rrr-btn" id="rrr-retry">Try again</button> <button class="rrr-btn rrr-btn-outline" id="rrr-back">Back</button></main>`;
+    el.querySelector('#rrr-retry')?.addEventListener('click', () => load(el));
+    el.querySelector('#rrr-back')?.addEventListener('click', () => navigate.back());
     return;
   }
 

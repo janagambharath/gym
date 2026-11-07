@@ -1,13 +1,23 @@
 /* Gym Profile Screen — edit gym name, contact, address, timezone */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast } from '../components.js';
 import { escapeHtml } from '../utils.js';
-export default { async mount(el) {
+export default { async mount(el) { await load(el); } };
+
+async function load(el) {
   el.innerHTML = `${renderHeader({title:'Gym Profile',showBack:true})}<div class="scroll-view"><div class="scroll-content form-scroll-content" id="gp-form-wrap"><div style="padding:var(--sp-lg)">Loading…</div></div></div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   const wrap = el.querySelector('#gp-form-wrap');
   const res = await apiRequest('/api/mobile/v1/settings');
-  const s = res.ok ? (res.data.settings || res.data) : {};
+  if (!res.ok) {
+    // V8-M10: a failed load used to render a blank form — Save then cleared
+    // email/phone/address and forced the timezone to Asia/Kolkata.
+    // Never render the form (or its Save button) until the load succeeds.
+    wrap.innerHTML = renderErrorState(res.error?.message || 'Could not load the gym profile.');
+    wrap.querySelector('#retry-btn')?.addEventListener('click', () => load(el));
+    return;
+  }
+  const s = res.data.settings || res.data;
   wrap.innerHTML = `
     <form id="gp-form" style="display:flex;flex-direction:column;gap:var(--sp-md);padding:var(--sp-lg)">
       ${renderFormField({id:'gp-name',label:'Gym Name',value:s.name||'',required:true})}
@@ -33,4 +43,4 @@ export default { async mount(el) {
     if (r.ok) { showToast('Gym profile updated','success'); navigate.pop(); }
     else showToast(r.error?.message||'Could not save','error');
   });
-}};
+}
