@@ -8,6 +8,7 @@
 import * as SecureStore from 'expo-secure-store';
 
 import { getRuntimeConfiguration } from '../config/runtime';
+import { buildMemberRequestHeaders, memberMutationIdempotencyKey } from './memberApiHeaders';
 import { configureDisplayPreferences, localeFromPhonePrefix } from '../types';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -269,14 +270,23 @@ async function memberApiRequest<T>(
     return { ok: false, error: 'API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL for this build.' };
   }
   const { method = 'GET', body, anonymous = false } = options;
+  // V8-L32: one fresh Idempotency-Key per mutation, generated ONCE per
+  // memberApiRequest call — the 401-refresh retry below re-sends the SAME
+  // key, mirroring the owner client (apiClient.ts). See memberApiHeaders
+  // for the verified backend status: no member endpoint honours the key
+  // yet, so this is forward-compatible, not replay protection today.
+  const idempotencyKey = memberMutationIdempotencyKey(method);
 
   try {
     const makeRequest = async (token?: string): Promise<Response> => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
-      const headers: Record<string, string> = { Accept: 'application/json' };
-      if (body) headers['Content-Type'] = 'application/json';
-      if (token) headers.Authorization = `Bearer ${token}`;
+      const headers = buildMemberRequestHeaders({
+        method,
+        token,
+        hasBody: Boolean(body),
+        idempotencyKey,
+      });
       try {
         return await fetch(`${baseUrl}${path}`, {
           method,

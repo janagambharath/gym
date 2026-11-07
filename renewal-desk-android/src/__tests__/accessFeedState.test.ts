@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   resolveAccessListView,
   shouldShowFeedErrorBanner,
+  switchAccessTab,
 } from '../services/accessFeedState';
 
 // V7-M10: a feed/Inside fetch failure was invisible once the summary loaded
@@ -72,4 +73,28 @@ test('no banner on a successful fetch', () => {
     shouldShowFeedErrorBanner({ error: undefined, summaryLoaded: true, itemCount: 4 }),
     false,
   );
+});
+
+// V8-L35 (V7-M10 rule): every tab switch — including the denied-banner
+// shortcut — clears the search text and any feed error, so a stale error
+// never lingers over the new tab's list while its fetch is in flight.
+// The shortcut used to do setActiveTab('denied') only.
+
+test('tab switch lands on the new tab with search and error cleared', () => {
+  assert.deepEqual(switchAccessTab('inside'), {
+    activeTab: 'inside',
+    search: '',
+    error: undefined,
+  });
+});
+
+test('denied-banner shortcut clears search and error exactly like a tab-row tap', () => {
+  const viaBanner = switchAccessTab('denied');
+  const viaTabRow = switchAccessTab('denied');
+  assert.deepEqual(viaBanner, {
+    activeTab: 'denied',
+    search: '',
+    error: undefined,
+  });
+  assert.deepEqual(viaBanner, viaTabRow);
 });

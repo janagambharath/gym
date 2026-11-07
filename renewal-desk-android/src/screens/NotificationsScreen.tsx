@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -14,6 +15,7 @@ import { ErrorState } from '../components/ErrorState';
 import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
+import { applyMarkAllRead, applyMarkRead, revertMarkRead } from '../services/notificationRead';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatShortDate, type AppNotificationItem, type NotificationsResponse } from '../types';
@@ -73,6 +75,8 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
   const [error, setError] = useState<string | undefined>();
   const [category, setCategory] = useState('all');
   const [revision, setRevision] = useState(0);
+  // V8-L33: in-flight guard for mark-all-read (double-tap protection).
+  const [markingAllRead, setMarkingAllRead] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,22 +102,36 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
   }, [category, revision]);
 
   const handleMarkAllRead = useCallback(async () => {
+    // V8-L33: no in-flight guard used to mean a double-tap sent duplicate
+    // POSTs (harmless server-side — read-all is idempotent — but wasted
+    // work and a confusing double state update).
+    if (markingAllRead) return;
+    setMarkingAllRead(true);
     const res = await apiRequest('/api/mobile/v1/notifications/read-all', { method: 'POST' });
+    setMarkingAllRead(false);
     if (res.ok) {
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setNotifications((prev) => applyMarkAllRead(prev));
       setUnreadCount(0);
+    } else {
+      Alert.alert('Could not mark all as read', res.error.message);
     }
-  }, []);
+  }, [markingAllRead]);
 
   const handlePressItem = useCallback(
     async (item: AppNotificationItem) => {
-      // Mark as read in background
+      // V8-L33: the POST is awaited now — the old fire-and-forget
+      // (`void apiRequest(...)`) left the item "read" locally while the
+      // server stayed unread when the POST failed. On failure the
+      // optimistic update is reverted and the error is surfaced.
       if (!item.is_read) {
-        void apiRequest(`/api/mobile/v1/notifications/${item.id}/read`, { method: 'POST' });
-        setNotifications((prev) =>
-          prev.map((n) => (n.id === item.id ? { ...n, is_read: true } : n))
-        );
+        setNotifications((prev) => applyMarkRead(prev, item.id).items);
         setUnreadCount((c) => Math.max(0, c - 1));
+        const res = await apiRequest(`/api/mobile/v1/notifications/${item.id}/read`, { method: 'POST' });
+        if (!res.ok) {
+          setNotifications((prev) => revertMarkRead(prev, item.id));
+          setUnreadCount((c) => c + 1);
+          Alert.alert('Could not mark as read', res.error.message);
+        }
       }
 
       // Handle navigation
@@ -131,8 +149,12 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
         onBack={onBack}
         rightAction={
           unreadCount > 0 ? (
-            <TouchableOpacity onPress={handleMarkAllRead} style={styles.markAllBtn}>
-              <Text style={styles.markAllText}>Mark all read</Text>
+            <TouchableOpacity
+              onPress={handleMarkAllRead}
+              style={[styles.markAllBtn, markingAllRead && { opacity: 0.5 }]}
+              disabled={markingAllRead}
+            >
+              <Text style={styles.markAllText}>{markingAllRead ? 'Marking…' : 'Mark all read'}</Text>
             </TouchableOpacity>
           ) : undefined
         }

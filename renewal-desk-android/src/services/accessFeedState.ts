@@ -41,3 +41,22 @@ export function shouldShowFeedErrorBanner(args: {
 }): boolean {
   return Boolean(args.error) && args.summaryLoaded && args.itemCount > 0;
 }
+
+/**
+ * One shared tab-switch transition for AccessScreen.
+ *
+ * V7-M10: a feed error from the previous tab must not linger over the
+ * new tab's list while its fetch is still in flight — every tab switch
+ * clears the search text and the error. V8-L35: the denied-banner
+ * shortcut did `setActiveTab('denied')` only, bypassing that rule, so
+ * the stale error lingered until the new tab's fetch succeeded. Both
+ * call sites now go through this helper, so the shortcut cannot drift
+ * from the tab row again.
+ */
+export function switchAccessTab<Tab extends string>(nextTab: Tab): {
+  activeTab: Tab;
+  search: string;
+  error: undefined;
+} {
+  return { activeTab: nextTab, search: '', error: undefined };
+}

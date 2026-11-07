@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   accessOwnerControls,
+  canOpenDateRepair,
   isOwnerRole,
   rrrGrowthOwnerSections,
 } from '../services/roleAccess';
@@ -50,4 +51,15 @@ test('owner sees every RRR Growth section', () => {
     showBridgeControls: true,
     showThresholds: true,
   });
+});
+
+// V8-L31: Date Repair is owner-only on the backend (scan/apply/confirm
+// all 403 staff) — the Settings menu item and the Edit Member link must
+// not render for staff. The Edit Member link already sat inside the
+// owner-only membership block; the gate is explicit so a future move of
+// the link cannot silently re-expose it.
+
+test('Date Repair opens for owners only', () => {
+  assert.equal(canOpenDateRepair(true), true);
+  assert.equal(canOpenDateRepair(false), false);
 });

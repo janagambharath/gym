@@ -18,6 +18,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { getRuntimeConfiguration } from '../config/runtime';
 import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
+import { canOpenDateRepair, isOwnerRole } from '../services/roleAccess';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { GymSettings, PaymentSettings, SettingsResponse } from '../types';
@@ -66,6 +67,10 @@ export function SettingsScreen({
   const [showLinkBanner, setShowLinkBanner] = useState(true);
   const [savingLinkBannerPreference, setSavingLinkBannerPreference] = useState(false);
   const session = getCachedSession();
+  // V8-L31 (V7-L13 pattern): Date Repair is owner-only on the backend
+  // (scan/apply/confirm all 403 staff) — hide the entry point for staff
+  // instead of rendering a dead menu item that 403s on tap.
+  const isOwner = isOwnerRole(session?.userRole);
 
   useEffect(() => {
     void apiRequest<SettingsResponse>('/api/mobile/v1/settings').then((result) => {
@@ -294,7 +299,9 @@ export function SettingsScreen({
             <MenuItem icon="analytics" label="Operational Analytics & Performance" onPress={onNavigateReports} />
             <MenuItem icon="wallet" label="Daily Collections & Cash Close" onPress={onNavigateOwnerFinance} />
             <MenuItem icon="members" label="Leads & Trial Visits" onPress={onNavigateOwnerLeads} />
-            <MenuItem icon="calendar" label="Date Repair" onPress={onNavigateDateRepair} />
+            {canOpenDateRepair(isOwner) ? (
+              <MenuItem icon="calendar" label="Date Repair" onPress={onNavigateDateRepair} />
+            ) : null}
           </View>
         </View>
 

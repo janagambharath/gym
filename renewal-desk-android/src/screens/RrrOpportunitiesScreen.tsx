@@ -51,14 +51,18 @@ export function RrrOpportunitiesScreen({ onBack, initialPillar }: { onBack: () =
 
   // Same pattern as RrrGrowthScreen: the load is deferred out of the
   // effect body (react-hooks/set-state-in-effect) and re-runs while focused.
+  // V8-L34: `pillar` is NOT a dependency — the fetch is pillar-independent
+  // (V7-M11) and the chips filter the already-loaded list client-side, so
+  // a pillar tap must not re-fetch the whole queue or flash the skeleton.
+  // Fetch happens on mount / focus / pull-to-refresh only.
   useLiveEffect(() => {
     const timer = setTimeout(() => { void load(); }, 0);
     return () => clearTimeout(timer);
-  }, [pillar, load]);
+  }, [load]);
 
   const selectPillar = (next: PillarFilter) => {
     if (next === pillar) return;
-    setLoading(true);
+    // V8-L34: client-side filter only — no setLoading(true), no refetch.
     setPillar(next);
   };
 

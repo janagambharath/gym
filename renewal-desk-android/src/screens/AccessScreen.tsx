@@ -18,7 +18,7 @@ import { ErrorState } from '../components/ErrorState';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { apiRequest, getCachedSession } from '../services/apiClient';
-import { resolveAccessListView, shouldShowFeedErrorBanner } from '../services/accessFeedState';
+import { resolveAccessListView, shouldShowFeedErrorBanner, switchAccessTab } from '../services/accessFeedState';
 import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
 import {
   clearFailedSyncsWithConfirm,
@@ -675,7 +675,17 @@ export function AccessScreen({
     return (
       <TouchableOpacity
         style={styles.deniedBanner}
-        onPress={() => setActiveTab('denied')}
+        onPress={() => {
+          // V8-L35 (V7-M10 rule): the shortcut must clear the error and
+          // the search exactly like a tab-row tap — setActiveTab alone
+          // left the stale error over the denied list until its fetch
+          // succeeded. Both paths share switchAccessTab so they cannot
+          // drift apart again.
+          const next = switchAccessTab('denied');
+          setActiveTab(next.activeTab);
+          setSearch(next.search);
+          setError(next.error);
+        }}
         activeOpacity={0.7}
       >
         <Icon name="alert" size={16} color={colors.critical} />
@@ -716,11 +726,14 @@ export function AccessScreen({
             key={tab.key}
             style={[styles.tab, isActive && styles.tabActive]}
             onPress={() => {
-              setActiveTab(tab.key);
-              setSearch('');
               // V7-M10: a feed error from the previous tab must not linger
               // over the new tab's list while its fetch is still in flight.
-              setError(undefined);
+              // Shared with the denied-banner shortcut (V8-L35) via
+              // switchAccessTab — one transition, both call sites.
+              const next = switchAccessTab(tab.key);
+              setActiveTab(next.activeTab);
+              setSearch(next.search);
+              setError(next.error);
             }}
             activeOpacity={0.7}
           >

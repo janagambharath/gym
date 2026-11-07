@@ -31,6 +31,19 @@ export function isOwnerRole(role: string | undefined | null): boolean {
   return role === 'gym_owner';
 }
 
+/**
+ * V8-L31: Date Repair entry points are owner-only on the backend
+ * (scan/apply/confirm all reject staff with 403) — the Settings menu
+ * item and the Edit Member link must not render for staff, same
+ * V7-L13 pattern as the controls above. The Edit Member link already
+ * sat inside the owner-only membership block, but the gate is stated
+ * explicitly here so a future move of the link cannot silently
+ * re-expose it to staff.
+ */
+export function canOpenDateRepair(isOwner: boolean): boolean {
+  return isOwner;
+}
+
 /** AccessScreen: which owner-only buttons render. */
 export type AccessOwnerControls = {
   /** POST /access/clear-failed — the Clear button in the failed-commands banner. */

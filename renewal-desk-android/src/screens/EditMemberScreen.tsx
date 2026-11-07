@@ -17,6 +17,7 @@ import { FormField } from '../components/FormField';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { canOpenDateRepair } from '../services/roleAccess';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Plan } from '../types';
@@ -261,7 +262,11 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
                 <Text style={styles.readOnlyCopy}>
                   End date will be recalculated from the selected plan or the current membership length.
                 </Text>
-                {onNavigateDateRepair ? (
+                {/* V8-L31: this block is already owner-only via
+                    canEditMembership, but the Date Repair gate is stated
+                    explicitly so moving the link out of this block cannot
+                    silently re-expose it to staff. */}
+                {onNavigateDateRepair && canOpenDateRepair(canEditMembership) ? (
                   <Text style={styles.readOnlyCopy}>
                     If dates don&apos;t match payments, fix them in{' '}
                     <Text style={styles.dateRepairLink} onPress={onNavigateDateRepair}>
