@@ -1,13 +1,16 @@
 /* Campaigns Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderBadge } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderErrorState, renderBadge } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatDateTime, formatInteger, SEGMENT_LABELS } from '../utils.js';
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Campaigns',showBack:true,actions:[{icon:'add',label:'New'}]})}<div class="scroll-view" id="cp-list">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop(), actions:[{onClick:()=>navigate.push('campaign-create')}] });
-  const res = await apiRequest('/api/mobile/v1/campaigns');
+  async function load() {
   const list = el.querySelector('#cp-list');
+  if (list) list.innerHTML = renderListSkeleton();
+  const res = await apiRequest('/api/mobile/v1/campaigns');
   const campaigns = res.ok ? res.data.campaigns||res.data||[] : [];
+  if (!res.ok) { list.innerHTML = renderErrorState(res.error?.message || 'Failed to load'); list.querySelector('#retry-btn')?.addEventListener('click', load); return; }
   if (!Array.isArray(campaigns)||campaigns.length===0) { list.innerHTML = renderEmptyState({icon:'megaphone',title:'No campaigns',text:'Create your first WhatsApp campaign',actionText:'New Campaign',actionId:'cp-new'}); list.querySelector('#cp-new')?.addEventListener('click',()=>navigate.push('campaign-create')); return; }
   list.innerHTML = `<div class="scroll-content"><div class="card" style="margin:var(--sp-lg)">${campaigns.map(c=>`
     <div class="list-item" data-cid="${c.id}">
@@ -22,4 +25,6 @@ export default { async mount(el) {
       </div>
     </div>`).join('')}</div></div>`;
   list.querySelectorAll('[data-cid]').forEach(i=>i.addEventListener('click',()=>navigate.push('campaign-detail',{campaignId:i.dataset.cid})));
+  }
+  await load();
 }};

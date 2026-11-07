@@ -1,6 +1,6 @@
 /* Bot Conversation Detail Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, showToast, renderErrorState } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatDateTime } from '../utils.js';
 export default { async mount(el, params) {
   const cid = params?.conversationId;
@@ -10,9 +10,14 @@ export default { async mount(el, params) {
       <button class="btn btn-primary btn-icon" id="bcd-send">${icon('send',18,'white')}</button>
     </div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  const res = await apiRequest(`/api/mobile/v1/bot/conversations/${cid}`);
   const scroll = el.querySelector('#bcd-scroll');
-  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Not found</div></div>`; return; }
+  async function load() {
+  const res = await apiRequest(`/api/mobile/v1/bot/conversations/${cid}`);
+  if (!res.ok) {
+    if (res.error?.status === 404) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Not found</div></div>`; }
+    else { scroll.innerHTML = renderErrorState(res.error?.message || 'Failed to load'); scroll.querySelector('#retry-btn')?.addEventListener('click', load); }
+    return;
+  }
   const msgs = res.data.messages || [];
   scroll.innerHTML = `<div class="chat-container">${msgs.map(m=>`
     <div class="chat-bubble ${m.sender==='bot'?'bot':m.sender==='customer'?'incoming':'outgoing'}">
@@ -40,4 +45,6 @@ export default { async mount(el, params) {
   };
   el.querySelector('#bcd-send')?.addEventListener('click', sendReply);
   el.querySelector('#bcd-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendReply(); } });
+  }
+  await load();
 }};

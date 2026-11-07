@@ -10,6 +10,7 @@ import {
   renderAvatar,
   renderBadge,
   renderEmptyState,
+  renderErrorState,
   renderListSkeleton,
   renderFormField,
   showToast,
@@ -24,10 +25,12 @@ export default {
     let showAddModal = false;
     let selectedStaff = null;
     let createdInvite = null;
+    let loadError = null;
 
     async function loadData() {
       const res = await apiRequest('/api/mobile/v1/staff');
-      staffMembers = res.ok ? res.data.staff || [] : [];
+      if (!res.ok) { loadError = res.error?.message || 'Failed to load'; staffMembers = []; }
+      else { loadError = null; staffMembers = res.data.staff || []; }
       render();
     }
 
@@ -42,7 +45,9 @@ export default {
         <div class="scroll-view">
           <div class="scroll-content" style="padding-bottom:calc(var(--tab-bar-height) + 24px)">
             ${
-              staffMembers.length === 0
+              loadError
+                ? renderErrorState(loadError, 'staff-retry')
+                : staffMembers.length === 0
                 ? renderEmptyState({
                     icon: 'staff',
                     title: 'No staff members yet',
@@ -191,6 +196,8 @@ export default {
           },
         ],
       });
+
+      el.querySelector('#staff-retry')?.addEventListener('click', loadData);
 
       el.querySelector('#btn-empty-add-staff')?.addEventListener('click', () => {
         showAddModal = true;

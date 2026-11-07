@@ -1,11 +1,16 @@
 /* Payment Detail Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, showToast, showConfirm } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, showToast, showConfirm, renderErrorState } from '../components.js';
 import { icon } from '../icons.js'; import { formatCurrency, formatDate, formatDateTime, escapeHtml } from '../utils.js';
 export default { async mount(el, params) {
   const paymentId = params?.paymentId;
+  async function load() {
   const res = await apiRequest(`/api/mobile/v1/payments/${paymentId}`);
-  if (!res.ok) { el.innerHTML = `${renderHeader({title:'Payment',showBack:true})}<div class="empty-state"><div class="empty-state-title">Payment not found</div></div>`; bindHeaderEvents(el,{onBack:()=>navigate.pop()}); return; }
+  if (!res.ok) {
+    if (res.error?.status === 404) { el.innerHTML = `${renderHeader({title:'Payment',showBack:true})}<div class="empty-state"><div class="empty-state-title">Payment not found</div></div>`; }
+    else { el.innerHTML = `${renderHeader({title:'Payment',showBack:true})}<div class="scroll-view">${renderErrorState(res.error?.message || 'Failed to load')}</div>`; el.querySelector('#retry-btn')?.addEventListener('click', load); }
+    bindHeaderEvents(el,{onBack:()=>navigate.pop()}); return;
+  }
   const p = res.data;
   el.innerHTML = `${renderHeader({ title: 'Payment Detail', showBack: true })}
     <div class="scroll-view"><div class="scroll-content">
@@ -57,4 +62,6 @@ export default { async mount(el, params) {
     const r = await apiRequest(`/api/mobile/v1/payments/${paymentId}`, { method:'DELETE' });
     if (r.ok) { showToast('Payment deleted','success'); navigate.pop(); } else showToast(r.error.message,'error');
   }));
+  }
+  await load();
 }};

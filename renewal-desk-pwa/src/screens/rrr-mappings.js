@@ -1,7 +1,7 @@
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml, formatDate } from '../utils.js';
-import { showToast } from '../components.js';
+import { showToast, showConfirm } from '../components.js';
 
 export default { async mount(el) { await load(el); } };
 
@@ -419,6 +419,17 @@ function updateFooter(el) {
 }
 
 async function linkAll(el) {
+  // V7-L12: one mis-tap used to link every selected ID at once with no
+  // confirmation — confirm the count first (links are reversible, but a
+  // wrong namesake pick misattributes punches until re-mapped).
+  const n = selections.size;
+  if (n === 0) return;
+  const yes = await showConfirm({
+    title: 'Link all IDs?',
+    message: `Link ${n} biometric ${n === 1 ? 'ID' : 'IDs'} to the selected members?`,
+    confirmText: `Link ${n === 1 ? 'ID' : `${n} IDs`}`,
+  });
+  if (!yes) return;
   const footer = el.querySelector('#bm-footer');
   const progress = el.querySelector('#bm-progress');
   const fill = el.querySelector('#bm-fill');

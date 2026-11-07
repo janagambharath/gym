@@ -19,7 +19,13 @@ export default {
     let insideMembers = [], insideTotal = 0, insidePage = 1, insideTotalPages = 1;
     // V4-L20: dedupe feed rows by event id — a new punch landing between
     // two fetched pages can otherwise appear twice.
-    const eventKey = (l) => l.id ?? `${l.member_id || ''}|${l.biometric_user_id || l.device_enroll_number || ''}|${l.event_timestamp || l.timestamp || l.created_at || ''}`;
+    // V7-L19: prefer the backend's stable punch_key (enroll + second
+    // + type + direction) — a punch's row id changes when it projects
+    // ("adms-<id>" -> int AccessEvent id), so id-only dedupe let the
+    // same punch render twice when it projected between page fetches.
+    // The fallback keeps the V4-L20 key for rows without punch_key.
+    // NOTE: `||` and `??` cannot mix unparenthesised in JS.
+    const eventKey = (l) => l.punch_key || (l.id ?? `${l.member_id || ''}|${l.biometric_user_id || l.device_enroll_number || ''}|${l.event_timestamp || l.timestamp || l.created_at || ''}`);
     const dedupeEvents = (rows) => { const seen = new Set(); return rows.filter((r) => { const k = eventKey(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
     // One Inside-now row — shared by the full render and the load-more
     // append so appended rows look and behave exactly like the first page.

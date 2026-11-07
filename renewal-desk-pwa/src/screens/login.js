@@ -46,7 +46,7 @@ export default {
             <button class="btn btn-outline btn-full" id="goto-signup">
               Create a new account
             </button>
-            <button style="color:var(--brand);font-size:var(--fs-sm);font-weight:var(--fw-semibold);padding:var(--sp-sm);background:none;border:none;cursor:pointer" id="goto-member-login">
+            <button style="color:var(--brand);font-size:var(--fs-sm);font-weight:var(--fw-semibold);padding:var(--sp-sm);background:none;border:none;cursor:pointer" id="goto-vynla">
               I'm a gym member → Open VYNLA
             </button>
           </div>
@@ -100,6 +100,6 @@ export default {
     });
 
     el.querySelector('#goto-signup')?.addEventListener('click', () => navigate.push('signup'));
-    el.querySelector('#goto-member-login')?.addEventListener('click', () => { window.location.href = '/vynla'; });
+    el.querySelector('#goto-vynla')?.addEventListener('click', () => { window.location.href = '/vynla'; });
   }
 };

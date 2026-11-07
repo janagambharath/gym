@@ -1,11 +1,16 @@
 /* Bot Lead Detail Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, showToast, renderErrorState } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatDate, formatDateTime } from '../utils.js';
 export default { async mount(el, params) {
   const leadId = params?.leadId;
+  async function load() {
   const res = await apiRequest(`/api/mobile/v1/bot/leads/${leadId}`);
-  if (!res.ok) { el.innerHTML = `${renderHeader({title:'Lead',showBack:true})}<div class="empty-state"><div class="empty-state-title">Lead not found</div></div>`; bindHeaderEvents(el,{onBack:()=>navigate.pop()}); return; }
+  if (!res.ok) {
+    if (res.error?.status === 404) { el.innerHTML = `${renderHeader({title:'Lead',showBack:true})}<div class="empty-state"><div class="empty-state-title">Lead not found</div></div>`; }
+    else { el.innerHTML = `${renderHeader({title:'Lead',showBack:true})}<div class="scroll-view">${renderErrorState(res.error?.message || 'Failed to load')}</div>`; el.querySelector('#retry-btn')?.addEventListener('click', load); }
+    bindHeaderEvents(el,{onBack:()=>navigate.pop()}); return;
+  }
   const l = res.data.lead || {};
   const messages = res.data.messages || [];
   el.innerHTML = `${renderHeader({title:'Lead Detail',showBack:true})}<div class="scroll-view"><div class="scroll-content">
@@ -33,4 +38,6 @@ export default { async mount(el, params) {
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   el.querySelector('#ld-convert')?.addEventListener('click',()=>navigate.push('add-member', { prefill: JSON.stringify({ name: l.name||'', phone: l.phone||'' }) }));
   el.querySelector('#ld-wa')?.addEventListener('click',()=>{ if(l.phone) window.open(`https://wa.me/${l.phone.replace(/\D/g,'')}`,'_blank'); });
+  }
+  await load();
 }};

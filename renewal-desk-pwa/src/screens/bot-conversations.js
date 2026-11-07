@@ -1,13 +1,16 @@
 /* Bot Conversations Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderBadge } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderErrorState, renderBadge } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml, formatRelativeTime } from '../utils.js';
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'Conversations',showBack:true})}<div class="scroll-view" id="bc-list">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  const res = await apiRequest('/api/mobile/v1/bot/conversations');
+  async function load() {
   const list = el.querySelector('#bc-list');
+  if (list) list.innerHTML = renderListSkeleton();
+  const res = await apiRequest('/api/mobile/v1/bot/conversations');
   const convos = res.ok ? res.data.conversations||res.data||[] : [];
+  if (!res.ok) { list.innerHTML = renderErrorState(res.error?.message || 'Failed to load'); list.querySelector('#retry-btn')?.addEventListener('click', load); return; }
   if (!Array.isArray(convos)||convos.length===0) { list.innerHTML = renderEmptyState({icon:'chatbubble',title:'No conversations',text:'Bot conversations will appear here'}); return; }
   list.innerHTML = `<div class="scroll-content"><div class="card" style="margin:var(--sp-lg)">${convos.map(c=>{
     const needsHandover = ['human_requested','human_active'].includes(c.handover_status);
@@ -26,4 +29,6 @@ export default { async mount(el) {
       </div>
     </div>`;}).join('')}</div></div>`;
   list.querySelectorAll('[data-cid]').forEach(item=>item.addEventListener('click',()=>navigate.push('bot-conversation-detail',{conversationId:item.dataset.cid})));
+  }
+  await load();
 }};

@@ -1,18 +1,20 @@
 /* Plans Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm, renderEmptyState } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm, renderEmptyState, renderErrorState } from '../components.js';
 import { icon } from '../icons.js'; import { formatCurrency, escapeHtml } from '../utils.js';
 export default { async mount(el) {
-  let plans = [], editing = null;
+  let plans = [], editing = null, loadError = null;
   async function load() {
     const r = await apiRequest('/api/mobile/v1/settings');
-    plans = r.ok ? r.data.plans || [] : [];
+    if (!r.ok) { loadError = r.error?.message || 'Failed to load'; plans = []; }
+    else { loadError = null; plans = r.data.plans || []; }
     render();
   }
   function render() {
     el.innerHTML = `${renderHeader({ title:'Membership Plans', showBack:true, actions:[{icon:'add',label:'Add'}] })}
       <div class="scroll-view"><div class="scroll-content">
-        ${plans.length === 0 ? renderEmptyState({icon:'plan',title:'No plans',text:'Create your first membership plan',actionText:'Add Plan',actionId:'add-plan'}) :
+        ${loadError ? renderErrorState(loadError, 'plans-retry') :
+          plans.length === 0 ? renderEmptyState({icon:'plan',title:'No plans',text:'Create your first membership plan',actionText:'Add Plan',actionId:'add-plan'}) :
           `<div class="card" style="margin:var(--sp-lg)">${plans.map(p=>`
             <div class="list-item" data-id="${p.id}">
               <div class="list-item-content">
@@ -36,6 +38,7 @@ export default { async mount(el) {
           </form></div></div>` : ''}
       </div></div>`;
     bindHeaderEvents(el, { onBack:()=>navigate.pop(), actions:[{onClick:()=>{editing={};render();}}] });
+    el.querySelector('#plans-retry')?.addEventListener('click', load);
     el.querySelector('#add-plan')?.addEventListener('click',()=>{editing={};render();});
     el.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',(e)=>{e.stopPropagation();editing=plans.find(p=>String(p.id)===b.dataset.edit)||{};render();}));
     el.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',async(e)=>{e.stopPropagation();

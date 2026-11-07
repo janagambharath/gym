@@ -1,13 +1,16 @@
 /* Bot Overview Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderMenuItem, renderInfoRow, renderMetricCard, renderListSkeleton } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderMenuItem, renderInfoRow, renderMetricCard, renderListSkeleton, renderErrorState } from '../components.js';
 import { icon } from '../icons.js'; import { formatInteger, escapeHtml } from '../utils.js';
 export default { async mount(el) {
   el.innerHTML = `${renderHeader({title:'AI Receptionist',showBack:true})}<div class="scroll-view" id="bot-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  const res = await apiRequest('/api/mobile/v1/bot/overview');
+  async function load() {
   const scroll = el.querySelector('#bot-scroll');
-  const d = res.ok ? res.data : {};
+  if (scroll) scroll.innerHTML = renderListSkeleton();
+  const res = await apiRequest('/api/mobile/v1/bot/overview');
+  if (!res.ok) { scroll.innerHTML = renderErrorState(res.error?.message || 'Failed to load'); scroll.querySelector('#retry-btn')?.addEventListener('click', load); return; }
+  const d = res.data || {};
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-lg)"><div class="metric-grid">
       ${renderMetricCard({label:'Conversations',value:formatInteger(d.total_conversations||0),iconName:'chatbubble',color:'var(--brand)',bgColor:'var(--brand-subtle)'})}
@@ -23,4 +26,6 @@ export default { async mount(el) {
     </div>
   </div>`;
   scroll.querySelectorAll('[data-action]').forEach(i=>i.addEventListener('click',()=>navigate.push(i.dataset.action)));
+  }
+  await load();
 }};

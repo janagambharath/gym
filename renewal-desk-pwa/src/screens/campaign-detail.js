@@ -1,14 +1,20 @@
 /* Campaign Detail Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, renderListSkeleton } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderInfoRow, renderBadge, renderListSkeleton, renderErrorState } from '../components.js';
 import { formatDateTime, formatInteger, escapeHtml, SEGMENT_LABELS } from '../utils.js';
 export default { async mount(el, params) {
   const cid = params?.campaignId;
   el.innerHTML = `${renderHeader({title:'Campaign',showBack:true})}<div class="scroll-view" id="cd-scroll">${renderListSkeleton()}</div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
-  const res = await apiRequest(`/api/mobile/v1/campaigns/${cid}`);
+  async function load() {
   const scroll = el.querySelector('#cd-scroll');
-  if (!res.ok) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Campaign not found</div></div>`; return; }
+  if (scroll) scroll.innerHTML = renderListSkeleton();
+  const res = await apiRequest(`/api/mobile/v1/campaigns/${cid}`);
+  if (!res.ok) {
+    if (res.error?.status === 404) { scroll.innerHTML = `<div class="empty-state"><div class="empty-state-title">Campaign not found</div></div>`; }
+    else { scroll.innerHTML = renderErrorState(res.error?.message || 'Failed to load'); scroll.querySelector('#retry-btn')?.addEventListener('click', load); }
+    return;
+  }
   const c = res.data;
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-xxl);text-align:center;background:var(--card)"><h2 style="margin-bottom:var(--sp-sm)">${escapeHtml(c.name||'Campaign')}</h2>${renderBadge(c.status||'sent')}</div>
@@ -36,4 +42,6 @@ export default { async mount(el, params) {
     el.querySelector('#cd-recip-note').textContent = `Showing ${shown} of ${formatInteger(c.recipient_count || c.recipients.length)} recipients`;
     if (shown >= c.recipients.length) el.querySelector('#cd-more')?.remove();
   });
+  }
+  await load();
 }};
