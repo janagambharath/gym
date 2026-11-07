@@ -323,7 +323,7 @@ test('V8-M10 gym-profile: load failure shows error, no form/Save; retry recovers
   const { restore } = installFetch(async (url) => {
     if (url.includes('/api/mobile/v1/settings')) {
       if (mode === 'fail') return errData(500, 'Settings unavailable');
-      return okData({ settings: { name: 'Iron Paradise', email: 'gym@x.com', phone: '98765', address: 'Hyd', timezone: 'Asia/Kolkata' } });
+      return okData({ gym: { name: 'Iron Paradise', email: 'gym@x.com', phone: '98765', address: 'Hyd', timezone: 'Asia/Kolkata' }, plans: [], payment_settings: null });
     }
     return errData(404, 'not found');
   });
@@ -338,6 +338,46 @@ test('V8-M10 gym-profile: load failure shows error, no form/Save; retry recovers
     await tick();
     assert.match(el.innerHTML, /Iron Paradise/);
     assert.ok(el.querySelector('#gp-save'), 'Save appears only after a successful load');
+  } finally { restore(); }
+});
+
+// REGRESSION (2026-11-07, Yodha): the settings endpoint returns
+// { gym, plans, payment_settings } — gym-profile read res.data.settings,
+// so the form always rendered blank (and Save then wiped the gym's
+// contact fields with nulls). The form must render the gym's real values,
+// including a stored-but-invalid timezone, and Save must send them back.
+test('gym-profile: renders real gym values from data.gym; save sends them back, not blanks', async () => {
+  const GYM = { name: 'yodha fitness', email: 'owner@yodha.example', phone: '9000000000', address: 'Hayathnagar', timezone: 'india' };
+  const { calls, restore } = installFetch(async (url, options) => {
+    if (url.includes('/api/mobile/v1/settings')) {
+      if ((options?.method || 'GET') === 'PATCH') return okData({ message: 'Settings updated.' });
+      return okData({ gym: { ...GYM }, plans: [], payment_settings: null });
+    }
+    return errData(404, 'not found');
+  });
+  try {
+    const el = await mount(gymProfile);
+    assert.match(el.innerHTML, /yodha fitness/);
+    assert.match(el.innerHTML, /owner@yodha\.example/);
+    assert.match(el.innerHTML, /9000000000/);
+    assert.match(el.innerHTML, /Hayathnagar/);
+    assert.match(el.innerHTML, /india/, 'stored timezone shown as stored, not silently replaced');
+    // Simulate the browser: input values come from the rendered form.
+    el.querySelector('#gp-name').value = 'yodha fitness';
+    el.querySelector('#gp-email').value = 'owner@yodha.example';
+    el.querySelector('#gp-phone').value = '9000000000';
+    el.querySelector('#gp-address').value = 'Hayathnagar';
+    el.querySelector('#gp-timezone').value = 'india';
+    el.querySelector('#gp-form').dispatchEvent({ type: 'submit' });
+    await tick();
+    const patch = calls.find((c) => (c.options?.method || 'GET') === 'PATCH');
+    assert.ok(patch, 'save attempted');
+    const body = JSON.parse(patch.options.body);
+    assert.equal(body.name, 'yodha fitness');
+    assert.equal(body.email, 'owner@yodha.example');
+    assert.equal(body.phone, '9000000000');
+    assert.equal(body.address, 'Hayathnagar');
+    assert.equal(body.timezone, 'india');
   } finally { restore(); }
 });
 

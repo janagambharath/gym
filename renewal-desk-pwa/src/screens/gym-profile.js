@@ -17,7 +17,17 @@ async function load(el) {
     wrap.querySelector('#retry-btn')?.addEventListener('click', () => load(el));
     return;
   }
-  const s = res.data.settings || res.data;
+  // The settings endpoint returns { gym, plans, payment_settings } — the
+  // gym's own fields live under data.gym, not data.settings. Reading the
+  // wrong level rendered a blank form and Save then wiped the gym's
+  // contact fields with nulls (Yodha, 2026-11-07). Never render the form
+  // without the gym object.
+  const s = res.data && res.data.gym;
+  if (!s) {
+    wrap.innerHTML = renderErrorState('Could not load the gym profile.');
+    wrap.querySelector('#retry-btn')?.addEventListener('click', () => load(el));
+    return;
+  }
   wrap.innerHTML = `
     <form id="gp-form" style="display:flex;flex-direction:column;gap:var(--sp-md);padding:var(--sp-lg)">
       ${renderFormField({id:'gp-name',label:'Gym Name',value:s.name||'',required:true})}

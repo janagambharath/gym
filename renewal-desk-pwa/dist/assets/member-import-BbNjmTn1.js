@@ -1,0 +1,11 @@
+import{a as d,i as a,b as l,n as o,Y as c,s as n}from"./index-BBUNrwaw.js";const p={mount(e){e.innerHTML=`${d({title:"Upload CSV",showBack:!0})}<div class="scroll-view"><div class="scroll-content form-scroll-content" style="text-align:center">
+    <div id="mi-dropzone" style="position:relative;border:2px dashed var(--border);border-radius:var(--r-xl);padding:var(--sp-4xl);margin-bottom:var(--sp-xl)">
+      ${a("upload",40,"var(--muted)")}
+      <p style="margin-top:var(--sp-lg);color:var(--text-secondary)">Tap to select a CSV file</p>
+      <input type="file" accept=".csv,.xlsx" id="mi-file" style="position:absolute;opacity:0;width:100%;height:100%;top:0;left:0;cursor:pointer">
+    </div>
+    <button class="btn btn-secondary btn-full" id="mi-pick" style="margin-bottom:var(--sp-xl)">${a("upload",16)} Choose CSV file</button>
+    <button class="btn btn-secondary btn-full" id="mi-scan" style="margin-bottom:var(--sp-xl)">${a("camera",16)} Scan a register page instead</button>
+    <div id="mi-preview" class="hidden"></div>
+    <button class="btn btn-primary btn-full hidden" id="mi-submit">${a("upload",18,"white")} Import Members</button>
+  </div></div>`,l(e,{onBack:()=>o.pop()}),e.querySelector("#mi-pick").addEventListener("click",()=>e.querySelector("#mi-file").click()),e.querySelector("#mi-scan").addEventListener("click",()=>o.push("member-scan")),e.querySelector("#mi-file").addEventListener("change",async r=>{const t=r.target.files[0];if(!t)return;new FormData().append("file",t);const i=e.querySelector("#mi-preview");i.classList.remove("hidden"),i.innerHTML=`<div class="card card-body" style="text-align:left"><div style="font-weight:var(--fw-bold);margin-bottom:var(--sp-sm)">File: ${t.name}</div><div style="font-size:var(--fs-sm);color:var(--muted)">${(t.size/1024).toFixed(1)} KB</div></div>`,e.querySelector("#mi-submit").classList.remove("hidden")}),e.querySelector("#mi-submit").addEventListener("click",async()=>{const r=e.querySelector("#mi-file").files[0];if(!r)return;const t=e.querySelector("#mi-submit");t.disabled=!0,t.textContent="Importing...";const s=new FormData;s.append("file",r);const i=await c("/api/mobile/v1/members/import",s);i.ok?(n(`${i.data?.imported||0} members imported!`,"success"),o.pop()):n(i.error?.message||"Import failed","error"),t.disabled=!1,t.textContent="Import Members"})}};export{p as default};
