@@ -25,13 +25,31 @@ export default {
 
     const scroll = el.querySelector('#renewals-list');
     if (!upRes.ok && !expRes.ok) {
-      if (!background) scroll.innerHTML = renderErrorState(upRes.error?.message || 'Failed to load');
+      if (!background) {
+        scroll.innerHTML = renderErrorState(upRes.error?.message || 'Failed to load');
+        // V9-M6: the total-failure Try Again button was dead — no
+        // #retry-btn binding was ever attached. Bind it to reload.
+        scroll.querySelector('#retry-btn')?.addEventListener('click', () => load());
+      }
       return;
     }
 
     if (background && (!upRes.ok || !expRes.ok)) return;
+    // V9-M6: a single-leg failure used to silently hide that section — if
+    // the other leg was empty the screen claimed "All members are up to
+    // date!". Surface the failed leg instead of hiding it.
+    const failedLegs = [];
+    if (!upRes.ok) failedLegs.push(`upcoming renewals (${upRes.error?.message || 'could not load'})`);
+    if (!expRes.ok) failedLegs.push(`expired members (${expRes.error?.message || 'could not load'})`);
     const upcoming = upRes.ok ? (upRes.data.members || []) : [];
     const expired = expRes.ok ? (expRes.data.members || []) : [];
+    if (failedLegs.length && upcoming.length === 0 && expired.length === 0) {
+      // Nothing renderable and a leg failed: do not show the false
+      // "All members are up to date!" empty state.
+      scroll.innerHTML = renderErrorState(`Could not load ${failedLegs.join(' and ')}.`);
+      scroll.querySelector('#retry-btn')?.addEventListener('click', () => load());
+      return;
+    }
     const expiringToday = upcoming.filter(m => m.days_until_expiry === 0);
     const expiringWeek = upcoming.filter(m => m.days_until_expiry > 0 && m.days_until_expiry <= 7);
     const expiringLater = upcoming.filter(m => m.days_until_expiry > 7);
@@ -42,6 +60,9 @@ export default {
     }
 
     let html = '<div class="scroll-content">';
+    if (failedLegs.length) {
+      html += `<div style="padding:var(--sp-lg) var(--sp-lg) 0"><div class="empty-state" style="padding:var(--sp-md)"><div class="empty-state-text">Could not load ${escapeHtml(failedLegs.join(' and '))} — the list below may be incomplete.</div><button class="btn btn-primary" id="rn-leg-retry">Try Again</button></div></div>`;
+    }
     const renderSection = (title, members, badgeColor) => {
       if (members.length === 0) return '';
       return `${renderSectionHeader(`${title} (${members.length})`)}
@@ -74,6 +95,7 @@ export default {
     html += '</div>';
     scroll.innerHTML = html;
 
+    scroll.querySelector('#rn-leg-retry')?.addEventListener('click', () => load());
     scroll.querySelector('#exp-more')?.addEventListener('click', () => { expiredShown = expired.length; load(false, true); });
     scroll.querySelectorAll('[data-renew]').forEach(btn => {
       btn.addEventListener('click', (e) => {

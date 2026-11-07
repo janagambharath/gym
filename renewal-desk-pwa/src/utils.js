@@ -13,11 +13,47 @@ let displayPreferences = {
   country: 'IN', currency: 'INR', timezone: 'Asia/Kolkata',
 };
 
+// V9-L12: the last invalid stored gym timezone seen (e.g. Yodha's
+// literal 'india'). Formatters used to fall back to device-local time
+// silently while the dashboard still claimed "(gym time)".
+let invalidStoredTimezone = null;
+
+/** True when `tz` is a real IANA timezone Intl accepts. */
+export function isValidTimezone(tz) {
+  if (!tz || typeof tz !== 'string') return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The stored timezone that failed validation, or null when it is valid. */
+export function getInvalidStoredTimezone() {
+  return invalidStoredTimezone;
+}
+
+/** The timezone actually used for display (always a valid IANA zone). */
+export function getEffectiveTimezone() {
+  return displayPreferences.timezone;
+}
+
 export function configureDisplayPreferences(prefs) {
+  // V9-L12: an invalid stored timezone (e.g. 'india') must never silently
+  // fall through to device-local time in the formatters' catch blocks.
+  // Fall back to Asia/Kolkata EXPLICITLY and remember the bad value so
+  // the UI can warn the owner instead of claiming "(gym time)".
+  const storedTz = prefs.timezone || displayPreferences.timezone;
+  if (isValidTimezone(storedTz)) {
+    invalidStoredTimezone = null;
+  } else {
+    invalidStoredTimezone = storedTz;
+  }
   displayPreferences = {
     country: (prefs.country || displayPreferences.country).toUpperCase(),
     currency: (prefs.currency || displayPreferences.currency).toUpperCase(),
-    timezone: prefs.timezone || displayPreferences.timezone,
+    timezone: isValidTimezone(storedTz) ? storedTz : 'Asia/Kolkata',
   };
 }
 

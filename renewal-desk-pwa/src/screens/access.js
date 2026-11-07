@@ -140,6 +140,18 @@ export default {
       // down server on a background refresh must surface, not vanish.
       const feedRes = feedPages[feedPages.length - 1];
       const lastGoodFeedPage = [...feedPages].reverse().find((r) => r.ok);
+      // V9 (V8-L26 partial): the old gate required BOTH legs to fail, so a
+      // single-leg first-load failure still rendered false state —
+      // summary-OK + feed-failed showed a false "No events" with no retry,
+      // and summary-failed + feed-OK showed "Biometric Device Offline" +
+      // 0/0 as fact. On the very first load, EITHER leg failing is an
+      // error + retry, never a render of the other leg's data as fact.
+      if (!hasRendered && (!summaryRes.ok || !feedRes.ok)) {
+        const firstError = (!summaryRes.ok ? summaryRes.error?.message : feedRes.error?.message) || 'Check your connection and try again.';
+        scroll.innerHTML = renderErrorState(firstError);
+        scroll.querySelector('#retry-btn')?.addEventListener('click', loadData);
+        return;
+      }
       // A background feed failure used to return silently, leaving a stale
       // feed with no error — surface it once until a refresh succeeds.
       if (!feedRes.ok) {
@@ -150,17 +162,6 @@ export default {
       }
       const s = summaryRes.ok ? summaryRes.data : (summaryData || {});
       summaryData = s;
-      // V8-L26: if every leg fails on the very first load, the page would
-      // render 0 entries/exits and "Biometric Device Offline" as fact with
-      // only a toast and no retry. Show the failure with retry instead.
-      // (Background-refresh staleness handling below is good — keep it.)
-      const totalFirstLoadFailure = !hasRendered && !summaryRes.ok && !feedRes.ok;
-      if (totalFirstLoadFailure) {
-        const firstError = summaryRes.error?.message || feedRes.error?.message || 'Check your connection and try again.';
-        scroll.innerHTML = renderErrorState(firstError);
-        scroll.querySelector('#retry-btn')?.addEventListener('click', loadData);
-        return;
-      }
       // V5-L27: serving a cached summary after a failed refresh must say so.
       if (!summaryRes.ok) {
         if (summaryData && !summaryErrorShown) { summaryErrorShown = true; showToast('Could not refresh the access summary — showing the last loaded stats.', 'error'); }
@@ -194,7 +195,7 @@ export default {
                 ${s.device_name ? `<span style="font-size:var(--fs-xs);color:var(--muted)">· ${escapeHtml(s.device_name)}</span>` : ''}
               </div>
               ${lastEventText ? `<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">Last event: ${escapeHtml(lastEventText)}</div>` : '<div style="margin-bottom:var(--sp-md)"></div>'}
-              ${summaryStale ? `<div style="font-size:var(--fs-xs);color:var(--warning);margin-bottom:var(--sp-md)">Stats from ${summaryLoadedAt ? escapeHtml(formatDateTime(summaryLoadedAt.toISOString())) : 'an earlier load'} — could not refresh.</div>` : ''}
+              ${summaryStale ? `<div style="font-size:var(--fs-xs);color:var(--warning);margin-bottom:var(--sp-md)">${summaryLoadedAt ? `Stats from ${escapeHtml(formatDateTime(summaryLoadedAt.toISOString()))} — could not refresh.` : 'Stats could not be refreshed — showing the last loaded stats.'}</div>` : ''}
               <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-lg)">
                 <div style="cursor:pointer" id="stat-entries">
                   <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${formatInteger(s.entries_today || 0)}</div>

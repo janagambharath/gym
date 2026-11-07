@@ -26,7 +26,17 @@ const localeByCountry = { AE: 'en-AE', AU: 'en-AU', GB: 'en-GB', IN: 'en-IN', US
 function applyGymPrefs(gym) {
   if (!gym) return;
   if (gym.currency) gymCurrency = String(gym.currency).toUpperCase();
-  if (gym.timezone) gymTimezone = gym.timezone;
+  // V9-L12: an invalid stored gym timezone (e.g. 'india') must fall back
+  // to Asia/Kolkata explicitly — never leave an invalid zone in place for
+  // the pageDate/pageDateTime catch blocks to silently render device-local.
+  if (gym.timezone) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: gym.timezone });
+      gymTimezone = gym.timezone;
+    } catch {
+      gymTimezone = 'Asia/Kolkata';
+    }
+  }
   // V3-L28: locale comes from gym settings (explicit locale, else country),
   // never hardcoded — a US gym's members should see US date/number formats.
   if (gym.locale) gymLocale = String(gym.locale);
@@ -83,8 +93,16 @@ async function refreshMemberSession() {
 
 async function api(path, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  // V9-L10: every mutation carries a fresh Idempotency-Key, generated once
+  // per api() call so the 401-refresh retry below re-sends the SAME key —
+  // the same pattern as the owner client in api.js (V8-L32 fixed Android
+  // only; the VYNLA member client never got it). GETs never carry a key.
+  const isMutation = String(options.method || 'GET').toUpperCase() !== 'GET';
+  const idempotencyKey = isMutation
+    ? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `vynla-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+    : undefined;
   const makeRequest = async (token) => {
-    const headers = { Accept: 'application/json', ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}), ...(!options.public && token ? { Authorization: `Bearer ${token}` } : {}) };
+    const headers = { Accept: 'application/json', ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}), ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), ...(!options.public && token ? { Authorization: `Bearer ${token}` } : {}) };
     return fetch(`${API}${path}`, { method: options.method || 'GET', headers, body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined });
   };
   try {

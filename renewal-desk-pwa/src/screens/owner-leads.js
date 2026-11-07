@@ -1,6 +1,6 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml, formatDateTime, getGymTimezone, gymLocalInputToIso, toGymLocalInput } from '../utils.js';
+import { escapeHtml, formatDateTime, getGymTimezone, gymLocalInputToIso, toGymLocalInput, uuid } from '../utils.js';
 import { icon } from '../icons.js';
 import { showToast, showPrompt } from '../components.js';
 
@@ -16,6 +16,9 @@ let savedFilter = 'open';
 export default { async mount(el) { await load(el); } };
 
 async function load(el) {
+  // V9-L9: one stable key per form render, reused across retries — a fresh
+  // key per submit attempt would let a timeout retry double-create the lead.
+  const leadFormKey = uuid();
   el.innerHTML = '<div class="rrr-loading">Loading your lead pipeline…</div>';
   const result = await apiRequest('/api/mobile/v1/owner/leads');
   if (!result.ok) {
@@ -69,15 +72,25 @@ async function load(el) {
   });
   el.querySelector('#lead-form')?.addEventListener('submit', async event => {
     event.preventDefault();
+    // V9-L9: a double-click used to fire two POSTs, each minting a fresh
+    // idempotency key in apiRequest, so the backend created two leads.
+    // Disable the submit while in flight and hold one stable per-form key
+    // so a retry replays instead of duplicating.
+    const submitBtn = event.currentTarget.querySelector('button[type="submit"]');
+    if (submitBtn?.disabled) return;
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving lead…'; }
     const form = new FormData(event.currentTarget);
-    const response = await apiRequest('/api/mobile/v1/owner/leads', { method: 'POST', body: {
+    const response = await apiRequest('/api/mobile/v1/owner/leads', { method: 'POST', headers: { 'Idempotency-Key': leadFormKey }, body: {
       name: form.get('name'), phone: form.get('phone'), source: form.get('source'),
       interested_plan: form.get('interested_plan'), notes: form.get('notes'),
       trial_requested: form.get('trial_requested') === 'on',
       next_follow_up_at: localInputToIso(form.get('next_follow_up_at')),
     }});
     if (response.ok) { showToast('Lead saved to the follow-up queue.', 'success'); await load(el); }
-    else showToast(response.error?.message || 'Could not save this lead.', 'error');
+    else {
+      showToast(response.error?.message || 'Could not save this lead.', 'error');
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Save lead'; }
+    }
   });
 }
 

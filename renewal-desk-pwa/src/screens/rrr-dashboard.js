@@ -1,6 +1,6 @@
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml, formatCurrency, formatInteger, formatTime } from '../utils.js';
+import { escapeHtml, formatCurrency, formatInteger, formatTime, getInvalidStoredTimezone, getEffectiveTimezone } from '../utils.js';
 import { attachLiveRefresh } from '../live-refresh.js';
 import { icon } from '../icons.js';
 
@@ -60,8 +60,15 @@ async function load(el, background = false) {
     ? settingsResult.data.gym?.show_biometric_link_banner !== false
     : true;
 
+  // V9-L12: an invalid stored gym timezone (e.g. 'india') used to render
+  // device-local times while this line still claimed "(gym time)". Say
+  // which timezone is actually being used and that the stored one is bad.
+  const badTz = getInvalidStoredTimezone();
+  const freshnessLabel = badTz
+    ? `Updated ${formatTime(new Date().toISOString())} (showing ${escapeHtml(getEffectiveTimezone())} time — stored timezone “${escapeHtml(badTz)}” is invalid; fix it in Gym Profile)`
+    : `Updated ${formatTime(new Date().toISOString())} (gym time) · refreshes automatically`;
   el.innerHTML = `<main class="rrr-page rrr-dashboard-page">
-    <p data-freshness style="font-size:12px;color:var(--muted);margin:0 0 12px">Updated ${formatTime(new Date().toISOString())} (gym time) · refreshes automatically</p>
+    <p data-freshness style="font-size:12px;color:var(--muted);margin:0 0 12px">${freshnessLabel}</p>
     ${auxErrors.length && !background ? `<p style="font-size:12px;color:var(--warning,#92400e);margin:0 0 12px">Could not load ${escapeHtml(auxErrors.join(' and '))} — showing the dashboard without ${auxErrors.length > 1 ? 'them' : 'it'}. <button class="btn btn-sm btn-secondary" id="rrr-aux-retry">Try again</button></p>` : ''}
     <header class="rrr-workspace-bar">
       <button class="rrr-gym-switcher" id="rrr-members">${icon('business', 18)}<span><b>${escapeHtml(gymName)}</b><small>Owner workspace</small></span>${icon('chevronDown', 16)}</button>

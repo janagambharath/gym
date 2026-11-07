@@ -1,12 +1,26 @@
 /* Payment Setup Screen */
 import { apiRequest, uploadPaymentQrImage } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast, showConfirm } from '../components.js';
 
 export default {
-  async mount(el) {
+  async mount(el) { await load(el); }
+};
+
+async function load(el) {
     const res = await apiRequest('/api/mobile/v1/settings/payment');
-    const ps = res.ok && res.data ? res.data : {};
+    if (!res.ok) {
+      // V9-M3: a failed load used to render a blank form — Save then sent
+      // payment_label/instructions as null and the backend wiped them.
+      // Never render the form (or its Save button) until the load succeeds.
+      el.innerHTML = `
+      ${renderHeader({ title: 'Payment Setup', showBack: true })}
+      <div class="scroll-view"><div class="scroll-content form-scroll-content">${renderErrorState(res.error?.message || 'Could not load the payment settings.')}</div></div>`;
+      bindHeaderEvents(el, { onBack: () => navigate.pop() });
+      el.querySelector('#retry-btn')?.addEventListener('click', () => load(el));
+      return;
+    }
+    const ps = res.data || {};
 
     el.innerHTML = `
       ${renderHeader({ title: 'Payment Setup', showBack: true })}
@@ -115,5 +129,4 @@ export default {
         btn.textContent = 'Save Settings';
       }
     });
-  }
-};
+}

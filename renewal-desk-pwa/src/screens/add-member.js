@@ -1,12 +1,15 @@
 /* Add Member Screen */
 import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast } from '../components.js';
 import { formatCurrency, getGymTodayISO, escapeHtml, uuid } from '../utils.js';
 import { icon } from '../icons.js';
 
 export default {
-  async mount(el, params) {
+  async mount(el, params) { await load(el, params); }
+};
+
+async function load(el, params) {
     // Convert-to-member prefill from a bot lead (bot-lead-detail pushes
     // {prefill: JSON.stringify({name, phone})}). Tolerate bad JSON.
     let prefill = {};
@@ -18,7 +21,19 @@ export default {
     // double-creates the member (backend honours the key, V3-M23).
     const idempotencyKey = uuid();
     const settingsRes = await apiRequest('/api/mobile/v1/settings');
-    const plans = settingsRes.ok ? (settingsRes.data.plans || []) : [];
+    if (!settingsRes.ok) {
+      // V9-M4: a plans-load failure used to render an empty plan dropdown
+      // and submit created a plan-less member with a 0-day membership
+      // (start == end == today). Never render the form until the plans
+      // load succeeds — same gate as V8-M11 Edit Member.
+      el.innerHTML = `
+      ${renderHeader({ title: 'Add Member', showBack: true })}
+      <div class="scroll-view"><div class="scroll-content form-scroll-content">${renderErrorState(settingsRes.error?.message || 'Could not load membership plans.')}</div></div>`;
+      bindHeaderEvents(el, { onBack: () => navigate.pop() });
+      el.querySelector('#retry-btn')?.addEventListener('click', () => load(el, params));
+      return;
+    }
+    const plans = settingsRes.data.plans || [];
     const defaultPlan = plans[0];
     // V3-L24: the end date must be computed in gym-local calendar space,
     // not device-local time (new Date(startDate) is device-midnight and
@@ -122,6 +137,14 @@ export default {
         : (cleanDigits.length === 10 ? `+91${cleanDigits}` : `+${cleanDigits}`);
 
       const planId = el.querySelector('#am-plan')?.value ? Number(el.querySelector('#am-plan').value) : null;
+      // V9-M4 second guard (defence in depth): a member with no plan gets
+      // a 0-day membership (start == end == today). Never submit plan-less.
+      if (!planId) {
+        showToast('Please select a membership plan first — create one in Plans if there are none yet.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Add Member';
+        return;
+      }
       const customAmount = el.querySelector('#am-amount')?.value?.trim();
       const isPaid = el.querySelector('#am-paid')?.value !== 'unpaid';
       const paymentMethod = el.querySelector('#am-method')?.value || 'cash';
@@ -170,5 +193,4 @@ export default {
         btn.textContent = 'Add Member';
       }
     });
-  }
-};
+}

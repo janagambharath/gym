@@ -1,6 +1,6 @@
 /* Record Payment Screen */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderFormField, showToast, showConfirm } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js'; import { debounce, uuid, escapeHtml, formatDate } from '../utils.js';
 
 // Same guarded version as renew-member.js: an invalid stored gym timezone
@@ -22,12 +22,24 @@ function addDays(value, days) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 
-export default { async mount(el, params) {
+export default { async mount(el, params) { await mountRecord(el, params); } };
+
+async function mountRecord(el, params) {
     const idempotencyKey = uuid(); // one key per form mount, reused across retries
   const preId = params?.memberId; let members = [], selectedMember = null;
   const settingsRes = await apiRequest('/api/mobile/v1/settings');
-  const plans = settingsRes.ok ? settingsRes.data.plans || [] : [];
-  const timezone = settingsRes.ok ? settingsRes.data.gym?.timezone || 'Asia/Kolkata' : 'Asia/Kolkata';
+  if (!settingsRes.ok) {
+    // V9-L6: a settings failure used to render plans=[] → false "No plans
+    // yet", an Asia/Kolkata timezone fallback that shifts minStartDate for
+    // non-IST gyms, and a POST with plan_id: null. Fail loudly with retry
+    // instead — same gate as renew-member.js V8-L24.
+    el.innerHTML = `${renderHeader({ title: 'Record Payment', showBack: true })}<div class="scroll-view"><div class="scroll-content form-scroll-content">${renderErrorState(settingsRes.error?.message || 'Could not load membership plans.')}</div></div>`;
+    bindHeaderEvents(el, { onBack: () => navigate.pop() });
+    el.querySelector('#retry-btn')?.addEventListener('click', () => mountRecord(el, params));
+    return;
+  }
+  const plans = settingsRes.data.plans || [];
+  const timezone = settingsRes.data.gym?.timezone || 'Asia/Kolkata';
   const today = dateKeyInTimezone(new Date(), timezone);
   if (preId) { const r = await apiRequest(`/api/mobile/v1/members/${preId}`); if (r.ok) selectedMember = r.data; }
   // Draft typed values survive re-render (member pick / "Change") — M24.
@@ -85,7 +97,10 @@ export default { async mount(el, params) {
     const updateEndPreview = () => {
       const selectedPlan = plans.find(p => String(p.id) === el.querySelector('#rp-plan')?.value);
       const startDate = el.querySelector('#rp-start-date').value;
-      const days = selectedPlan?.duration_days || 30;
+      // V9-L6: no plan selected must not preview a 30-day default — the
+      // preview is meaningless without a plan duration.
+      if (!selectedPlan) { el.querySelector('#rp-end-preview').textContent = ''; return; }
+      const days = selectedPlan.duration_days;
       const endDate = startDate ? addDays(startDate, days - 1) : '';
       el.querySelector('#rp-end-preview').textContent = endDate ? `Membership ends ${formatDate(endDate)} (${days} days).` : '';
     };
@@ -101,9 +116,13 @@ export default { async mount(el, params) {
     updateEndPreview();
     el.querySelector('#rp-form').addEventListener('submit', async (e) => {
       e.preventDefault(); if (!selectedMember) { showToast('Please select a member', 'error'); return; }
+      // V9-L6: never POST plan_id: null — without a plan the renewal has
+      // no duration and the server would record a plan-less payment.
+      const planValue = el.querySelector('#rp-plan').value;
+      if (!planValue) { showToast('Please select a membership plan', 'error'); return; }
       const btn = el.querySelector('#rp-submit'); btn.disabled = true;
       const body = { member_id: selectedMember.id, amount: el.querySelector('#rp-amount').value,
-        method: el.querySelector('#rp-method').value, plan_id: el.querySelector('#rp-plan').value ? Number(el.querySelector('#rp-plan').value) : null,
+        method: el.querySelector('#rp-method').value, plan_id: Number(planValue),
         renewal_start_date: el.querySelector('#rp-start-date').value,
         reference: el.querySelector('#rp-ref').value.trim()||null, notes: el.querySelector('#rp-notes').value.trim()||null };
       const r = await apiRequest('/api/mobile/v1/payments', { method:'POST', body, headers:{'Idempotency-Key': idempotencyKey} });
@@ -121,4 +140,4 @@ export default { async mount(el, params) {
       }
     });
   }; render();
-}};
+}

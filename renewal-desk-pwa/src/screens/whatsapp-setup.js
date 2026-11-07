@@ -1,6 +1,6 @@
 /* WhatsApp Setup Screen — guided connection flow */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderListSkeleton, showToast } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderListSkeleton, renderErrorState, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml } from '../utils.js';
 // V3-L29: the visibilitychange listener must be removed on unmount, or it
 // keeps refetching (and holding `el`) after the screen is gone.
@@ -11,7 +11,15 @@ export default { async mount(el) {
   const scroll = el.querySelector('#ws-scroll');
   async function renderStatus() {
   const statusRes = await apiRequest('/api/mobile/v1/whatsapp/connection-status');
-  const st = statusRes.ok ? statusRes.data : {};
+  if (!statusRes.ok) {
+    // V9-M5: a status-load failure used to render "Connect WhatsApp" +
+    // Start Setup as fact. A failed load is not "not connected" — show
+    // the error with retry instead (same pattern as whatsapp.js V8-M13).
+    scroll.innerHTML = `<div class="scroll-content"><div style="padding:var(--sp-lg)">${renderErrorState(statusRes.error?.message || 'Could not load the WhatsApp connection status.')}</div></div>`;
+    scroll.querySelector('#retry-btn')?.addEventListener('click', renderStatus);
+    return;
+  }
+  const st = statusRes.data || {};
   const connected = st.status === 'CONNECTED';
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-lg)"><div class="card card-body" style="text-align:center">

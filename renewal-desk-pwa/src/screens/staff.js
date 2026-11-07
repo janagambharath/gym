@@ -17,7 +17,7 @@ import {
   showConfirm,
 } from '../components.js';
 import { icon } from '../icons.js';
-import { escapeHtml } from '../utils.js';
+import { escapeHtml, uuid } from '../utils.js';
 
 export default {
   async mount(el) {
@@ -26,6 +26,11 @@ export default {
     let selectedStaff = null;
     let createdInvite = null;
     let loadError = null;
+    // V9-L9: one stable reset-password key per selected staff member —
+    // two POSTs used to mint two temp passwords and the invite could show
+    // the wrong one. A fresh key per click would not dedupe a retry.
+    let resetPasswordKey = null;
+    let resetPasswordStaffId = null;
 
     async function loadData() {
       const res = await apiRequest('/api/mobile/v1/staff');
@@ -265,6 +270,9 @@ export default {
 
       el.querySelector('#btn-toggle-staff-active')?.addEventListener('click', async () => {
         if (!selectedStaff) return;
+        // V9-L9: guard the toggle while its PATCH is in flight.
+        const toggleBtn = el.querySelector('#btn-toggle-staff-active');
+        if (toggleBtn?.disabled) return;
         const willBeActive = !selectedStaff.is_active;
         const confirmMsg = willBeActive
           ? `Reactivate account for ${selectedStaff.full_name}?`
@@ -277,6 +285,7 @@ export default {
         });
 
         if (confirmed) {
+          if (toggleBtn) toggleBtn.disabled = true;
           const res = await apiRequest(`/api/mobile/v1/staff/${selectedStaff.id}`, {
             method: 'PATCH',
             body: { is_active: willBeActive },
@@ -287,20 +296,32 @@ export default {
             await loadData();
           } else {
             showToast(res.error?.message || 'Failed to update', 'error');
+            if (toggleBtn) toggleBtn.disabled = false;
           }
         }
       });
 
       el.querySelector('#btn-reset-staff-pass')?.addEventListener('click', async () => {
         if (!selectedStaff) return;
+        // V9-L9: guard reset-password while its POST is in flight, and
+        // send one stable per-staff idempotency key so a retry replays
+        // instead of minting a second temp password.
+        const resetBtn = el.querySelector('#btn-reset-staff-pass');
+        if (resetBtn?.disabled) return;
         const confirmed = await showConfirm({
           title: 'Reset Password',
           message: `Generate a new password for ${selectedStaff.full_name}?`,
           confirmText: 'Reset Password',
         });
         if (confirmed) {
+          if (resetPasswordStaffId !== selectedStaff.id) {
+            resetPasswordKey = uuid();
+            resetPasswordStaffId = selectedStaff.id;
+          }
+          if (resetBtn) resetBtn.disabled = true;
           const res = await apiRequest(`/api/mobile/v1/staff/${selectedStaff.id}/reset-password`, {
             method: 'POST',
+            headers: { 'Idempotency-Key': resetPasswordKey },
           });
           if (res.ok) {
             createdInvite = {
@@ -309,10 +330,16 @@ export default {
               temp_password: res.data.new_password,
               invite_whatsapp_url: res.data.invite_whatsapp_url,
             };
+            // The reset completed — a later deliberate reset is a new
+            // request and needs a fresh key; only a retry of THIS click
+            // reuses the key (kept above on failure).
+            resetPasswordKey = null;
+            resetPasswordStaffId = null;
             selectedStaff = null;
             render();
           } else {
             showToast(res.error?.message || 'Failed to reset password', 'error');
+            if (resetBtn) resetBtn.disabled = false;
           }
         }
       });

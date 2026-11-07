@@ -93,6 +93,10 @@ async function load(el, background = false) {
   const devices = result.ok ? result.data.devices || [] : [];
   const commandsResult = direct ? await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/adms/commands`) : null;
   const commands = commandsResult?.ok ? commandsResult.data.commands || [] : [];
+  // V9-L11: a failed commands leg used to render both eSSL commissioning
+  // tests as un-run ("No commissioning command sent yet", both checklist
+  // items unchecked). Unknown is not un-run — flag it for the panel.
+  const commandsFailed = !!(direct && commandsResult && !commandsResult.ok);
   if (el.dataset.screenDisposed === 'true') return;
   if (background && (!result.ok || (commandsResult && !commandsResult.ok) || el.dataset.draftEdited === 'true'
     || document.activeElement?.matches('input, textarea, select'))) return;
@@ -112,7 +116,7 @@ async function load(el, background = false) {
     <section class="rrr-connection-grid">
       <article class="rrr-connect-card rrr-connect-card-primary">
         <div class="rrr-card-top"><span class="rrr-option-icon">☁</span><div>${livePill(direct)}<h2>Direct Cloud</h2><p>No gym PC or bridge required for attendance.</p></div></div>
-        ${direct ? directPanel(direct, commands) : directForm()}
+        ${direct ? directPanel(direct, commands, commandsFailed) : directForm()}
       </article>
       <article class="rrr-connect-card">
         <div class="rrr-card-top"><span class="rrr-option-icon rrr-option-muted">⌘</span><div><span class="rrr-status-pill">FALLBACK</span><h2>eBioServer Bridge</h2><p>Use only when your licensed eBioServer stays on a gym PC.</p></div></div>
@@ -145,7 +149,7 @@ async function load(el, background = false) {
   el.querySelector('#rrr-delete-members')?.addEventListener('click', () => navigate.push('rrr-delete-members'));
   wireDirectForm(el);
   wireBridge(el, bridge, devices);
-  if (direct) wireDirectPanel(el, direct, commands);
+  if (direct) wireDirectPanel(el, direct, commands, commandsFailed);
 }
 
 function wireDirectForm(el) {
@@ -183,7 +187,7 @@ function copyRow(label, value) {
   return `<div class="rrr-copy-row"><div><span>${esc(label)}</span><code>${esc(value)}</code></div><button type="button" class="rrr-copy-btn" data-copy="${esc(value)}">Copy</button></div>`;
 }
 
-function directPanel(direct, commands) {
+function directPanel(direct, commands, commandsFailed = false) {
   const settings = direct.terminal_settings || {};
   const connected = isLive(direct);
   const latest = commands[0];
@@ -214,7 +218,7 @@ function directPanel(direct, commands) {
     </div>` : ''}
     <p class="rrr-muted-copy">On the terminal: <b>Menu → Comm. → Cloud Server Setting</b>. Save these values, then make one test punch. ${settings.https ? '<b>Important:</b> if your terminal has no HTTPS/SSL option in its menu, it cannot use Direct Cloud — use the eBioServer bridge instead.' : '<b>Note:</b> this terminal talks plain HTTP — keep it on a trusted network or use a VPN.'}</p>
     <section class="rrr-command-console">
-      <div><b>Live commissioning</b><span id="rrr-cmd-progress">${latest ? progressText(latest) : 'No commissioning command sent yet.'}</span></div>
+      <div><b>Live commissioning</b><span id="rrr-cmd-progress">${commandsFailed ? 'Could not load the commissioning test status — try again below.' : (latest ? progressText(latest) : 'No commissioning command sent yet.')}</span></div>
       <button class="rrr-secondary-button" data-adms-action="probe_info" ${connected ? '' : 'disabled'}>1. Send safe connection probe</button>
       ${connected ? '' : '<p class="rrr-muted-copy">Buttons unlock once the terminal phones home — finish step 2 above first.</p>'}
       <label>Enrolled test-user ID<input id="rrr-test-enroll-number" inputmode="numeric" pattern="[0-9]*" placeholder="Example: 999"></label>
@@ -227,7 +231,7 @@ function directPanel(direct, commands) {
       <p class="rrr-muted-copy">Use only the dedicated, fingerprint-enrolled fake account you created. A fake account saved as a Renewal Desk member is accepted when its current terminal name exactly matches the member name. The command updates USERINFO with Grp=100 or Grp=1 and does not use DELETE. After each terminal acknowledgement, test the same finger at the device; the acknowledgement alone does not prove access changed or that the fingerprint remained enrolled. These tests do not enable automatic membership commands.</p>
       <p id="rrr-command-error" class="rrr-form-error" role="alert"></p>
     </section>
-    ${commissionBox('direct', direct, commands)}
+    ${commissionBox('direct', direct, commands, commandsFailed)}
   </div>`;
 }
 
@@ -249,8 +253,11 @@ function progressText(cmd) {
   return `… ${action} — sent, waiting for the terminal to pick it up.`;
 }
 
-function wireDirectPanel(el, direct, commands) {
+function wireDirectPanel(el, direct, commands, commandsFailed = false) {
   el.querySelectorAll('[data-copy]').forEach(button => button.addEventListener('click', () => copyText(button.dataset.copy, button)));
+  // V9-L11: the commissioning-tests error state retries the whole load so
+  // the test results are re-fetched instead of staying "un-run".
+  el.querySelector('#rrr-commands-retry')?.addEventListener('click', () => load(el));
   el.querySelector('#rrr-rotate-token')?.addEventListener('click', async () => {
     const button = el.querySelector('#rrr-rotate-token');
     const errorEl = el.querySelector('#rrr-rotate-error');
@@ -377,9 +384,18 @@ function pollCommand(el, integrationId, commandId) {
   pollTimer = setInterval(tick, 2500);
 }
 
-function commissionBox(kind, integration, commands = []) {
+function commissionBox(kind, integration, commands = [], commandsFailed = false) {
   if (integration.commands_enabled) {
     return `<section class="rrr-commission is-on"><b>✓ Automatic block/unblock is ON</b><p>Expired members are blocked and renewed members are restored automatically on this terminal.</p>${kind === 'direct' ? '<p><b>Direct ADMS:</b> automatic blocks use the tested Grp=100 update; renewal restores Grp=1, keeping fingerprints enrolled.</p>' : ''}</section>`;
+  }
+  // V9-L11: when the commands leg failed, the test checklist is unknown —
+  // never render both eSSL tests as un-run. Show the failure with retry.
+  if (kind === 'direct' && commandsFailed) {
+    return `<section class="rrr-commission">
+    <b>Supervised commissioning</b>
+    <p>Could not load the commissioning test results — the eSSL block/unblock test status is unknown, not un-run.</p>
+    <button class="rrr-secondary-button" id="rrr-commands-retry" type="button">Try again</button>
+  </section>`;
   }
   const hasAttendance = (integration.records_synced || 0) > 0;
   const hasAckedBlock = kind === 'direct'

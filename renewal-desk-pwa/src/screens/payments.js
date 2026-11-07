@@ -88,6 +88,9 @@ export default {
           return;
         }
         listEl.innerHTML = renderErrorState(res.error.message);
+        // V9-L8: the first-load Try Again button was dead — no #retry-btn
+        // binding was ever attached. Bind it to reload the list.
+        listEl.querySelector('#retry-btn')?.addEventListener('click', () => loadPayments());
         return;
       }
       bgErrorShown = false;
