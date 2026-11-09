@@ -1,6 +1,7 @@
 """Mobile API members endpoints."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import date, timedelta
@@ -27,6 +28,7 @@ from app.services.bridge_service import door_blocked_state, queue_membership_com
 from app.services.document_scan_service import DocumentScanService
 from app.services.idempotency_service import (
     begin_idempotency,
+    file_upload_payload,
     find_replay,
     legacy_replay,
     record_idempotency,
@@ -36,6 +38,11 @@ from app.services.idempotency_service import (
 )
 from app.services.payment_service import PAYMENT_METHODS, canonical_payment_reference, verified_payment_with_reference
 from app.services.reminder_service import auto_expire_members_for_gym, today_for_gym
+from app.services.storage_service import (
+    delete_member_profile_photo,
+    member_profile_photo_url,
+    save_member_profile_photo,
+)
 from app.services.mobile_member_import_service import validate_csv
 from app.utils.helpers import normalize_phone_e164
 
@@ -58,6 +65,9 @@ def _serialize_member(m: Member) -> dict:
         "whatsapp_opted_in": bool(m.whatsapp_opted_in),
         "has_biometric": m.device_enroll_number is not None,
         "device_enroll_number": m.device_enroll_number,
+        # 2026-11-09 (owner photo slice): signed URL, resolved per
+        # request — never persisted. None when the member has no photo.
+        "profile_photo_url": member_profile_photo_url(m),
     }
 
 
@@ -1052,6 +1062,139 @@ def register_members_routes(bp):
                 return replayed
             raise
         return jsonify(response_body)
+
+    @bp.route("/members/<int:member_id>/photo", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
+    def set_member_profile_photo(member_id: int):
+        """Owner/staff-set profile photo for a member of this gym.
+
+        Same storage + idempotency pattern as the member's own upload
+        (member_api, V9-L4): multipart field ``photo``; the fingerprint
+        is the SHA-256 of the file bytes + size, so a retried upload
+        replays the stored URL instead of minting a second file, and
+        the same key with different bytes 409s. The real capture
+        moment is front-desk staff photographing a member at signup,
+        so staff may set photos too (same role pair as PATCH).
+        """
+        upload = request.files.get("photo")
+        if not upload or not upload.filename:
+            return error_response("VALIDATION_ERROR", "Choose a profile photo to upload.", 400)
+
+        raw_bytes = upload.stream.read()
+        upload.stream.seek(0)
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="owner_member_photo_upload",
+            headers=request.headers,
+            payload=file_upload_payload(
+                f"members/{member_id}/photo",
+                sha256_hex=hashlib.sha256(raw_bytes).hexdigest(),
+                size_bytes=len(raw_bytes),
+            ),
+        )
+        if replay is not None:
+            return replay
+
+        member = (
+            Member.query.filter_by(id=member_id, gym_id=g.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if member is None:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+        old_path = member.profile_photo_path
+
+        try:
+            new_path = save_member_profile_photo(upload, g.gym_id, member.id)
+        except ValueError as exc:
+            # Fixed message (never echo raw exception text), same as the
+            # member endpoint.
+            _logger.warning("Owner profile photo rejected for member %s: %s", member.id, exc)
+            return error_response(
+                "VALIDATION_ERROR",
+                "The photo could not be saved. Please choose a JPEG, PNG, or WebP image under 3 MB and try again.",
+                400,
+            )
+        except Exception:
+            _logger.exception("Could not save owner-set profile photo for member %s", member.id)
+            return error_response(
+                "PHOTO_SAVE_FAILED", "The photo could not be saved. Please try again.", 500
+            )
+
+        member.profile_photo_path = new_path
+        audit(action="member_profile_photo_set", resource_type="member", resource_id=member.id,
+              gym_id=g.gym_id, actor_id=g.current_user.id,
+              metadata={"previous_photo_path": old_path})
+        response_body = {"success": True, "data": {"profile_photo_url": member_profile_photo_url(member)}}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="owner_member_photo_upload",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=response_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="owner_member_photo_upload",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        except Exception:
+            db.session.rollback()
+            try:
+                delete_member_profile_photo(new_path)
+            except Exception:
+                _logger.exception("Could not clean up failed owner profile photo upload for member %s", member.id)
+            raise
+
+        if old_path and old_path != new_path:
+            try:
+                delete_member_profile_photo(old_path)
+            except Exception:
+                _logger.exception("Could not delete replaced profile photo for member %s", member.id)
+        return jsonify(response_body)
+
+    @bp.route("/members/<int:member_id>/photo", methods=["DELETE"])
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def remove_member_profile_photo(member_id: int):
+        """Remove a member's profile photo (owner/staff).
+
+        Naturally idempotent — no Idempotency-Key needed, like the
+        member DELETE. The file is deleted best-effort after commit.
+        """
+        member = (
+            Member.query.filter_by(id=member_id, gym_id=g.gym_id)
+            .filter(Member.deleted_at.is_(None))
+            .first()
+        )
+        if member is None:
+            return error_response("NOT_FOUND", "Member not found.", 404)
+        old_path = member.profile_photo_path
+        member.profile_photo_path = None
+        audit(action="member_profile_photo_removed", resource_type="member", resource_id=member.id,
+              gym_id=g.gym_id, actor_id=g.current_user.id,
+              metadata={"previous_photo_path": old_path})
+        db.session.commit()
+        if old_path:
+            try:
+                delete_member_profile_photo(old_path)
+            except Exception:
+                _logger.exception("Could not delete removed profile photo for member %s", member.id)
+        return jsonify({"success": True, "data": {"profile_photo_url": None}})
 
     @bp.route("/members/<int:member_id>/deactivate", methods=["POST"])
     @token_required

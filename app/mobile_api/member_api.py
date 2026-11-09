@@ -60,6 +60,7 @@ from app.services.idempotency_service import (
     record_idempotency,
     replay_after_conflict,
 )
+from app.services.storage_service import member_profile_photo_url as _member_profile_photo_url
 from app.services.timezone_service import today_for_gym
 from app.utils.helpers import normalize_public_media_url
 
@@ -85,41 +86,6 @@ def _member_qr_url(qr: QRSettings | None) -> str | None:
     serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="qr-media")
     token = serializer.dumps({"path": path.replace("\\", "/")})
     return url_for("signed_qr_file", token=token, _external=True)
-
-
-def _member_profile_photo_url(member: Member) -> str | None:
-    path = member.profile_photo_path
-    if not path:
-        return None
-    if path.startswith(("http://", "https://")):
-        return path
-    if current_app.config.get("STORAGE_BACKEND") == "s3":
-        bucket = current_app.config.get("AWS_S3_BUCKET")
-        if not bucket:
-            return None
-        try:
-            import boto3
-
-            s3 = boto3.client(
-                "s3",
-                aws_access_key_id=current_app.config.get("AWS_ACCESS_KEY_ID"),
-                aws_secret_access_key=current_app.config.get("AWS_SECRET_ACCESS_KEY"),
-                region_name=current_app.config.get("AWS_S3_REGION"),
-            )
-            return s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": bucket, "Key": path},
-                ExpiresIn=7 * 24 * 60 * 60,
-            )
-        except Exception:
-            _logger.exception("Could not create signed profile photo URL for member %s", member.id)
-            return None
-
-    from itsdangerous import URLSafeTimedSerializer
-
-    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="member-profile-photo")
-    token = serializer.dumps({"path": path, "gym_id": member.gym_id, "member_id": member.id})
-    return url_for("member_api.member_profile_photo_file", token=token, _external=True)
 
 
 def _is_reviewer_bypass_enabled() -> bool:
@@ -2188,7 +2154,14 @@ def member_profile_photo_file(token: str):
         safe_path = False
     if not safe_path:
         abort(403)
-    member = Member.query.filter_by(id=member_id, gym_id=gym_id, profile_photo_path=path).first()
+    # 2026-11-09 (owner photo slice): a URL minted before a soft-delete
+    # must stop working once the member is deleted — the lookup skips
+    # soft-deleted members. The file itself is kept (restore-safe).
+    member = (
+        Member.query.filter_by(id=member_id, gym_id=gym_id, profile_photo_path=path)
+        .filter(Member.deleted_at.is_(None))
+        .first()
+    )
     if not member:
         abort(404)
     return send_from_directory(

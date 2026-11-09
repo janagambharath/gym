@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -34,6 +35,7 @@ from app.services.bridge_service import queue_membership_command
 from app.utils.decorators import active_gym_required, roles_required
 from app.utils.helpers import normalize_phone_e164
 
+_logger = logging.getLogger(__name__)
 
 
 members_bp = Blueprint("members", __name__, url_prefix="/members")
@@ -570,6 +572,14 @@ def hard_delete(member_id: int):
         return redirect(url_for("members.detail", member_id=member.id))
 
     member_name = member.full_name
+    member_id = member.id
+    # 2026-11-09 (owner photo slice, spec §4.3 open item): the hard
+    # delete is the only permanent-removal path — no bulk hard-delete
+    # endpoint exists — and it never deleted the profile photo file,
+    # leaving an orphaned file with no DB row. Capture the path before
+    # the row is gone and delete it best-effort after commit (same
+    # pattern as the member/owner photo DELETE endpoints).
+    photo_path = member.profile_photo_path
     audit(
         action="hard_delete_member",
         resource_type="member",
@@ -579,6 +589,15 @@ def hard_delete(member_id: int):
     db.session.delete(member)
     invalidate_dashboard_cache(current_user.gym_id)
     db.session.commit()
+    if photo_path:
+        try:
+            from app.services.storage_service import delete_member_profile_photo
+
+            delete_member_profile_photo(photo_path)
+        except Exception:
+            _logger.exception(
+                "Could not delete profile photo for hard-deleted member %s", member_id
+            )
     flash(f"{member_name} has been permanently deleted.", "success")
     return redirect(url_for("members.index"))
 

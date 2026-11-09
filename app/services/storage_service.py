@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from flask import current_app
+from flask import current_app, url_for
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
+
+if TYPE_CHECKING:
+    from app.models.member import Member
+
+_logger = logging.getLogger(__name__)
 
 
 _EXTENSION_TO_TYPE = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}
@@ -118,6 +125,49 @@ def save_member_profile_photo(file: FileStorage, gym_id: int, member_id: int) ->
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     return key
+
+
+def member_profile_photo_url(member: Member) -> str | None:
+    """Signed URL for a member's profile photo (S3 presigned 7d / local signed 7d).
+
+    Moved here from ``app.mobile_api.member_api`` (2026-11-09, owner
+    photo slice) so the owner blueprint can use it too without importing
+    from the member blueprint (import-cycle risk). Behaviour unchanged.
+    The URL is never persisted — it is resolved per request and expires
+    in 7 days, so clients must re-fetch member data to refresh it.
+    """
+    path = member.profile_photo_path
+    if not path:
+        return None
+    if path.startswith(("http://", "https://")):
+        return path
+    if current_app.config.get("STORAGE_BACKEND") == "s3":
+        bucket = current_app.config.get("AWS_S3_BUCKET")
+        if not bucket:
+            return None
+        try:
+            import boto3
+
+            s3 = boto3.client(
+                "s3",
+                aws_access_key_id=current_app.config.get("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=current_app.config.get("AWS_SECRET_ACCESS_KEY"),
+                region_name=current_app.config.get("AWS_S3_REGION"),
+            )
+            return s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": path},
+                ExpiresIn=7 * 24 * 60 * 60,
+            )
+        except Exception:
+            _logger.exception("Could not create signed profile photo URL for member %s", member.id)
+            return None
+
+    from itsdangerous import URLSafeTimedSerializer
+
+    serializer = URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="member-profile-photo")
+    token = serializer.dumps({"path": path, "gym_id": member.gym_id, "member_id": member.id})
+    return url_for("member_api.member_profile_photo_file", token=token, _external=True)
 
 
 def delete_member_profile_photo(path: str | None) -> None:
