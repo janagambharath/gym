@@ -15,13 +15,14 @@
  *     POST /rrr/integrations/:id/serial-fallback,
  *     POST /rrr/integrations/:id/test-command,
  *     POST /rrr/integrations/:id/commission,
- *     POST /access/remote-unlock, POST /access/clear-failed.
+ *     POST /access/remote-unlock, POST /access/clear-failed,
+ *     POST /access/retry-sync (owner-only since V10-L11).
  *   staff-allowed — GET /rrr/dashboard, GET+PATCH /rrr/opportunities,
  *     GET /rrr/rules, GET /rrr/integrations, GET /rrr/mappings/unresolved,
  *     POST /rrr/mappings/bulk-resolve, POST /rrr/enroll-scan,
  *     GET /rrr/enroll-matches, POST /rrr/enroll-matches/confirm,
- *     GET /access/summary, GET /access/events, GET /access/inside,
- *     POST /access/checkin, POST /access/retry-sync.
+ *     GET /access/summary, GET /access/events,
+ *     POST /access/checkin.
  * So identity-review mapping, scan/confirm, and the opportunities
  * Action/Recovered buttons stay visible for staff; only the controls
  * listed above are gated.
@@ -50,10 +51,14 @@ export type AccessOwnerControls = {
   showClearFailed: boolean;
   /** POST /access/remote-unlock — the Unlock Gate button. */
   showRemoteUnlock: boolean;
+  /** POST /access/retry-sync — the Retry All button in the
+   * failed-commands banner (owner-only since backend V10-L11;
+   * V11-L26 hid it for staff on Android like the PWA does). */
+  showRetryAll: boolean;
 };
 
 export function accessOwnerControls(isOwner: boolean): AccessOwnerControls {
-  return { showClearFailed: isOwner, showRemoteUnlock: isOwner };
+  return { showClearFailed: isOwner, showRemoteUnlock: isOwner, showRetryAll: isOwner };
 }
 
 /** RrrGrowthScreen: which owner-only sections render. */

@@ -24,7 +24,10 @@ export function MemberImportScreen({ onBack, onComplete }: MemberImportScreenPro
     setError(undefined);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel'],
+        // V11-L33: CSV-only — the backend reads csv_text only, so a
+        // real .xls picked here used to be read as text and rejected
+        // as invalid rows, blaming the owner's file.
+        type: ['text/csv', 'text/comma-separated-values', 'application/csv'],
         copyToCacheDirectory: true,
         multiple: false,
       });

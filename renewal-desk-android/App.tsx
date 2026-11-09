@@ -550,6 +550,7 @@ function DashboardStackScreen({
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               onViewMember={(updatedMember) =>
                 props.navigation.navigate('MemberDetail', { member: updatedMember })
               }
@@ -565,6 +566,7 @@ function DashboardStackScreen({
             <AddMemberScreen
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               plans={plans}
               prefillName={prefill?.prefillName}
               prefillPhone={prefill?.prefillPhone}
@@ -797,6 +799,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               onViewMember={(updatedMember) =>
                 props.navigation.navigate('MemberDetail', { member: updatedMember })
               }
@@ -812,6 +815,7 @@ function MembersStackScreen({ onLogout, plans }: { onLogout: () => void; plans: 
             <AddMemberScreen
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               plans={plans}
               prefillName={prefill?.prefillName}
               prefillPhone={prefill?.prefillPhone}
@@ -969,6 +973,7 @@ function RenewalsStackScreen({ onLogout }: { onLogout: () => void }) {
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               onViewMember={(updatedMember) =>
                 props.navigation.navigate('MemberDetail', { member: updatedMember })
               }
@@ -1150,6 +1155,7 @@ function AccessStackScreen({ onLogout }: { onLogout: () => void }) {
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               onViewMember={(updatedMember) =>
                 props.navigation.navigate('MemberDetail', { member: updatedMember })
               }
@@ -1356,6 +1362,7 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
             <AddMemberScreen
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               plans={plans}
               prefillName={prefill?.prefillName}
               prefillPhone={prefill?.prefillPhone}
@@ -1445,6 +1452,7 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
               member={member}
               onBack={() => props.navigation.goBack()}
               onLogout={onLogout}
+              onNavigatePlans={() => navigationRef.navigate('More', { screen: 'Plans' })}
               onViewMember={(updatedMember) =>
                 props.navigation.navigate('MemberDetail', { member: updatedMember })
               }

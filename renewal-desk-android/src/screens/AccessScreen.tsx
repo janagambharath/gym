@@ -19,6 +19,7 @@ import { MemberPickerModal, type PickerPerson } from '../components/MemberPicker
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { keyForAction, shouldReleaseKey, type StableKeySlot } from '../services/stableKey';
 import { resolveAccessRowTap, buildQuickAssignBody } from '../services/accessRowTap';
 import { resolveAccessListView, shouldShowFeedErrorBanner, switchAccessTab } from '../services/accessFeedState';
 import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
@@ -169,6 +170,10 @@ export function AccessScreen({
   const [candidateSearchError, setCandidateSearchError] = useState<string | undefined>();
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [checkingInId, setCheckingInId] = useState<number | null>(null);
+  // V11-L32: stable per-action key for manual check-in (see
+  // handleManualCheckIn) — a retry after a lost response replays
+  // instead of recording a second punch.
+  const checkInKeyRef = useRef<StableKeySlot>(undefined);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
   // V9-L25: tap-to-assign — the terminal ID of the Unknown row whose
@@ -335,10 +340,18 @@ export function AccessScreen({
 
   const handleManualCheckIn = useCallback(async (memberId: number, type: 'ENTRY' | 'EXIT' = 'ENTRY') => {
     setCheckingInId(memberId);
+    // V11-L32: stable key per (member, direction) — a retry after a
+    // lost response replays instead of recording a second punch.
+    const { key: checkInKey, slot } = keyForAction(checkInKeyRef.current, `checkin:${memberId}:${type}`);
+    checkInKeyRef.current = slot;
     const res = await apiRequest<AccessEvent>('/api/mobile/v1/access/checkin', {
       method: 'POST',
+      headers: { 'Idempotency-Key': checkInKey },
       body: { member_id: memberId, type },
     });
+    if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+      checkInKeyRef.current = undefined;
+    }
     if (res.ok) {
       // V5-M13: the backend returns HTTP 200 success:true even when it
       // DENIED the check-in (expired/paused member tapped from a stale
@@ -591,15 +604,20 @@ export function AccessScreen({
           </Text>
         </View>
         <View style={styles.failedCommandsActions}>
-          <TouchableOpacity
-            style={styles.retrySyncBtn}
-            onPress={handleRetrySync}
-            disabled={retryingSync}
-          >
-            <Text style={styles.retrySyncBtnText}>
-              {retryingSync ? 'Retrying...' : 'Retry All'}
-            </Text>
-          </TouchableOpacity>
+          {/* V11-L26: Retry All is owner-only on the backend
+              (POST /access/retry-sync, V10-L11) — hide it for staff
+              like the PWA does, instead of a dead button that 403s. */}
+          {ownerControls.showRetryAll ? (
+            <TouchableOpacity
+              style={styles.retrySyncBtn}
+              onPress={handleRetrySync}
+              disabled={retryingSync}
+            >
+              <Text style={styles.retrySyncBtnText}>
+                {retryingSync ? 'Retrying...' : 'Retry All'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           {/* V7-L13: Clear is owner-only (POST /access/clear-failed) — hide it for staff. */}
           {ownerControls.showClearFailed ? (
             <TouchableOpacity
@@ -910,7 +928,7 @@ export function AccessScreen({
         activeOpacity={0.7}
       >
         <View style={styles.eventLeft}>
-          <Avatar name={item.member_name || '?'} size={40} />
+          <Avatar name={item.member_name || '?'} size={40} photoUrl={item.profile_photo_url} />
         </View>
         <View style={styles.eventCenter}>
           <Text style={styles.eventName} numberOfLines={1}>
@@ -1084,7 +1102,12 @@ export function AccessScreen({
               style={{ maxHeight: 350 }}
               renderItem={({ item }) => (
                 <View style={styles.candidateRow}>
-                  <Avatar name={item.full_name} size={36} />
+                  {/* V11-L27: pass the member photo through — the
+                      payload carries profile_photo_url. (Live Access
+                      event rows cannot show photos yet: the
+                      access-events payload carries no photo field —
+                      backend payload change, not an Android fix.) */}
+                  <Avatar name={item.full_name} size={36} photoUrl={item.profile_photo_url} />
                   <View style={{ flex: 1, marginLeft: spacing.sm }}>
                     <Text style={styles.candidateName} numberOfLines={1}>{item.full_name}</Text>
                     <Text style={styles.candidatePhone}>{item.phone}{item.plan ? ` · ${item.plan.name}` : ''}</Text>

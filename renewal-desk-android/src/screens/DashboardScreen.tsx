@@ -317,7 +317,7 @@ export function DashboardScreen({
                     activeOpacity={0.8}
                   >
                     <Icon name="document" size={16} color={colors.textInverse} />
-                    <Text style={styles.firstActionPrimaryBtnText}>Import Existing Members (Excel / CSV)</Text>
+                    <Text style={styles.firstActionPrimaryBtnText}>Import Existing Members (CSV)</Text>
                   </TouchableOpacity>
                   <View style={styles.firstActionSecondaryRow}>
                     <TouchableOpacity
@@ -603,20 +603,15 @@ export function DashboardScreen({
                   ) : null}
                 </View>
 
+                {/* V11-M4: the Inside tile is gone with the Inside
+                    removal — the count goes stale until the nightly
+                    auto-reset and its tap led to Live Access, which no
+                    longer has any Inside view. PWA has no such tile.
+                    Entries is now the first tile, so it loses the
+                    left border the second tile used to carry. */}
                 <View style={styles.accessStatsRow}>
                   <TouchableOpacity
                     style={styles.accessStatTile}
-                    onPress={onNavigateAccess}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.accessStatValue, { color: colors.statusActive }]}>
-                      {data.access_summary.inside_now}
-                    </Text>
-                    <Text style={styles.accessStatLabel}>Inside Now</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.accessStatTile, styles.accessStatBorder]}
                     onPress={onNavigateAccess}
                     activeOpacity={0.7}
                   >

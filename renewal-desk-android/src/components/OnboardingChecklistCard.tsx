@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
-import { OnboardingProgressData, getOnboardingProgress } from '../services/apiClient';
+import { OnboardingProgressData, getCachedSession, getOnboardingProgress } from '../services/apiClient';
+import { visibleOnboardingSteps } from '../services/onboardingSteps';
+import { isOwnerRole } from '../services/roleAccess';
 
 interface OnboardingChecklistCardProps {
   onNavigate: (route: string) => void;
@@ -26,6 +28,20 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
     return null;
   }
 
+  // V11-L30: the `member_payments` step routes to PaymentSetup, whose
+  // write is owner-only — staff followed the step and hit a 403 on
+  // Save. Hide owner-only steps for non-owners. Displayed counts are
+  // recomputed from the visible steps so the header never counts a
+  // step the viewer cannot see; when nothing is actionable for this
+  // role, the card hides entirely.
+  const steps = visibleOnboardingSteps(data.steps, isOwnerRole(getCachedSession()?.userRole));
+  if (steps.length === 0) {
+    return null;
+  }
+  const completedCount = steps.filter((step) => step.completed).length;
+  const totalCount = steps.length;
+  const percentage = Math.round((completedCount / totalCount) * 100);
+
   return (
     <View style={styles.card}>
       <TouchableOpacity
@@ -35,12 +51,12 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
       >
         <View style={styles.headerLeft}>
           <View style={styles.progressBadge}>
-            <Text style={styles.progressBadgeText}>{data.percentage}%</Text>
+            <Text style={styles.progressBadgeText}>{percentage}%</Text>
           </View>
           <View>
             <Text style={styles.title}>Set Up Your Gym</Text>
             <Text style={styles.subtitle}>
-              {data.completed_count} of {data.total_count} steps completed
+              {completedCount} of {totalCount} steps completed
             </Text>
           </View>
         </View>
@@ -51,13 +67,13 @@ export function OnboardingChecklistCard({ onNavigate }: OnboardingChecklistCardP
 
       {/* Progress Bar */}
       <View style={styles.progressBarBg}>
-        <View style={[styles.progressBarFill, { width: `${Math.max(data.percentage, 4)}%` }]} />
+        <View style={[styles.progressBarFill, { width: `${Math.max(percentage, 4)}%` }]} />
       </View>
 
       {/* Expanded Checklist Steps */}
       {expanded && (
         <View style={styles.stepList}>
-          {data.steps.map((step) => (
+          {steps.map((step) => (
             <TouchableOpacity
               key={step.id}
               style={[styles.stepRow, step.completed && styles.stepRowCompleted]}

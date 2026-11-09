@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
   ActivityIndicator,
@@ -23,6 +23,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession, removeMemberPhoto, uploadMemberPhoto } from '../services/apiClient';
 import { resolveRefreshError } from '../services/memberDetailRefresh';
 import { resolveBlockToggle } from '../services/memberAccess';
+import { keyForAction, shouldReleaseKey, type StableKeySlot } from '../services/stableKey';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Renewal, Payment } from '../types';
@@ -187,6 +188,16 @@ export function MemberDetailScreen({
   }), [member.id, onLogout]);
 
   const [checkingIn, setCheckingIn] = useState(false);
+  // V11-L32: stable per-action idempotency keys — a timeout-retry
+  // after the server already committed must replay, not re-execute
+  // (second punch / second WhatsApp / second stored photo). One key
+  // per (action, target), held in a ref, released after success or a
+  // definitive 4xx; a 5xx / network failure keeps the key.
+  const checkInKeyRef = useRef<StableKeySlot>(undefined);
+  const reminderKeyRef = useRef<StableKeySlot>(undefined);
+  const freezeKeyRef = useRef<StableKeySlot>(undefined);
+  const unfreezeKeyRef = useRef<StableKeySlot>(undefined);
+  const photoKeyRef = useRef<StableKeySlot>(undefined);
 
   const loadMoreBiometricRecords = useCallback(async () => {
     if (!biometricHistory || loadingMoreBiometrics || biometricHistory.pagination.page >= biometricHistory.pagination.pages) return;
@@ -213,10 +224,18 @@ export function MemberDetailScreen({
     if (checkingIn) return;
     setCheckingIn(true);
     const isExiting = !!member.is_inside;
+    // V11-L32: stable key per (member, direction) — a retry after a
+    // lost response replays instead of recording a second punch.
+    const { key: checkInKey, slot } = keyForAction(checkInKeyRef.current, `checkin:${member.id}:${isExiting ? 'EXIT' : 'ENTRY'}`);
+    checkInKeyRef.current = slot;
     const result = await apiRequest<{ event_type?: string }>('/api/mobile/v1/access/checkin', {
       method: 'POST',
+      headers: { 'Idempotency-Key': checkInKey },
       body: { member_id: member.id, type: isExiting ? 'EXIT' : 'ENTRY' },
     });
+    if (shouldReleaseKey(result.ok, result.ok ? undefined : result.error.status)) {
+      checkInKeyRef.current = undefined;
+    }
     if (result.ok) {
       // V6-M15: same denial-as-success bug as V5-M13 — the backend
       // returns success:true with an ACCESS_DENIED event for an
@@ -244,10 +263,18 @@ export function MemberDetailScreen({
     if (sendingReminder) return;
 
     setSendingReminder(true);
+    // V11-L32: stable key per member — a retry after a lost response
+    // replays instead of sending the member a second WhatsApp.
+    const { key: reminderKey, slot } = keyForAction(reminderKeyRef.current, `reminder:${member.id}`);
+    reminderKeyRef.current = slot;
     const result = await apiRequest<{ message: string; status: string }>('/api/mobile/v1/whatsapp/send-reminder', {
       method: 'POST',
+      headers: { 'Idempotency-Key': reminderKey },
       body: { member_id: member.id },
     });
+    if (shouldReleaseKey(result.ok, result.ok ? undefined : result.error.status)) {
+      reminderKeyRef.current = undefined;
+    }
 
     if (result.ok) {
       showMessage(`Reminder sent to ${member.full_name}.`, 'success');
@@ -291,11 +318,18 @@ export function MemberDetailScreen({
         return;
       }
       setPhotoBusy(true);
+      // V11-L32: stable key per member — a retry after a lost response
+      // replays instead of storing a second photo (first orphaned).
+      const { key: photoKey, slot } = keyForAction(photoKeyRef.current, `photo:${member.id}`);
+      photoKeyRef.current = slot;
       const res = await uploadMemberPhoto(member.id, {
         uri: asset.uri,
         name: asset.fileName || `profile.${mimeType === 'image/png' ? 'png' : 'jpg'}`,
         mimeType,
-      });
+      }, photoKey);
+      if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+        photoKeyRef.current = undefined;
+      }
       if (res.ok) {
         setMember((current) => ({ ...current, profile_photo_url: res.data.profile_photo_url }));
         showMessage('Profile photo updated.', 'success');
@@ -442,14 +476,25 @@ export function MemberDetailScreen({
       return;
     }
     setFreezing(true);
-    const res = await apiRequest<{ data: Member; message: string }>(`/api/mobile/v1/members/${member.id}/freeze`, {
+    // V11-L32: stable key per member — a retry after a lost response
+    // replays instead of freezing twice. V11-L25: the backend puts
+    // the human message top-level (res.message), not in res.data —
+    // the old res.data?.message read was always undefined, so the
+    // toast always fell back to generic text.
+    const { key: freezeKey, slot } = keyForAction(freezeKeyRef.current, `freeze:${member.id}`);
+    freezeKeyRef.current = slot;
+    const res = await apiRequest<Member>(`/api/mobile/v1/members/${member.id}/freeze`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': freezeKey },
       body: { days, reason: freezeReasonInput.trim() },
     });
+    if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+      freezeKeyRef.current = undefined;
+    }
     setFreezing(false);
     setShowFreezeModal(false);
     if (res.ok) {
-      showMessage(res.data?.message || 'Membership paused successfully.', 'success');
+      showMessage(res.message || 'Membership paused successfully.', 'success');
       void fetchMemberData();
       onMemberUpdated?.();
     } else {
@@ -466,11 +511,20 @@ export function MemberDetailScreen({
         {
           text: 'Resume',
           onPress: async () => {
-            const res = await apiRequest<{ data: Member; message: string }>(`/api/mobile/v1/members/${member.id}/unfreeze`, {
+            // V11-L32: stable key per member — a retry after a lost
+            // response replays instead of resuming twice. V11-L25:
+            // read the backend's top-level message (res.message).
+            const { key: unfreezeKey, slot } = keyForAction(unfreezeKeyRef.current, `unfreeze:${member.id}`);
+            unfreezeKeyRef.current = slot;
+            const res = await apiRequest<Member>(`/api/mobile/v1/members/${member.id}/unfreeze`, {
               method: 'POST',
+              headers: { 'Idempotency-Key': unfreezeKey },
             });
+            if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+              unfreezeKeyRef.current = undefined;
+            }
             if (res.ok) {
-              showMessage(res.data?.message || 'Membership resumed!', 'success');
+              showMessage(res.message || 'Membership resumed!', 'success');
               void fetchMemberData();
               onMemberUpdated?.();
             } else {

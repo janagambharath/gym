@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -15,6 +15,7 @@ import { ErrorState } from '../components/ErrorState';
 import { FilterChips } from '../components/FilterChips';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
+import { hasMoreNotifications, mergeNotificationPage } from '../services/notificationPagination';
 import { applyMarkAllRead, applyMarkRead, revertMarkRead } from '../services/notificationRead';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
@@ -77,29 +78,50 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
   const [revision, setRevision] = useState(0);
   // V8-L33: in-flight guard for mark-all-read (double-tap protection).
   const [markingAllRead, setMarkingAllRead] = useState(false);
+  // V11-L29: pagination — the screen used to fetch page 1 only and
+  // never read `pagination`, so a gym past 50 notifications could
+  // never reach older ones.
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const notificationsSeqRef = useRef(0);
+
+  const loadNotifications = useCallback(async (pageToLoad: number, append: boolean) => {
+    // Sequence guard: only the latest request may apply its results,
+    // so a slow earlier page can never overwrite a newer one (e.g. a
+    // category switch mid-load).
+    const seq = ++notificationsSeqRef.current;
+    const params = new URLSearchParams({ page: String(pageToLoad), page_size: '50' });
+    if (category !== 'all') params.set('category', category);
+    const res = await apiRequest<NotificationsResponse>(`/api/mobile/v1/notifications?${params.toString()}`);
+    if (seq !== notificationsSeqRef.current) return;
+    if (res.ok) {
+      setNotifications((prev) => append ? mergeNotificationPage(prev, res.data.notifications) : res.data.notifications);
+      setUnreadCount(res.data.unread_count);
+      setTotal(res.data.pagination.total);
+      setTotalPages(res.data.pagination.total_pages);
+      setPage(pageToLoad);
+      setError(undefined);
+    } else {
+      setError(res.error.message);
+    }
+    setLoading(false);
+    setRefreshing(false);
+    setLoadingMore(false);
+  }, [category]);
 
   useEffect(() => {
-    let cancelled = false;
-    const params = new URLSearchParams({ page: '1', page_size: '50' });
-    if (category !== 'all') params.set('category', category);
+    setLoading(true);
+    setLoadingMore(false);
+    void loadNotifications(1, false);
+  }, [category, revision, loadNotifications]);
 
-    void apiRequest<NotificationsResponse>(`/api/mobile/v1/notifications?${params.toString()}`).then((res) => {
-      if (cancelled) return;
-      if (res.ok) {
-        setNotifications(res.data.notifications);
-        setUnreadCount(res.data.unread_count);
-        setError(undefined);
-      } else {
-        setError(res.error.message);
-      }
-      setLoading(false);
-      setRefreshing(false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [category, revision]);
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore || page >= totalPages || !hasMoreNotifications(total, notifications.length)) return;
+    setLoadingMore(true);
+    void loadNotifications(page + 1, true);
+  }, [loadingMore, page, totalPages, total, notifications.length, loadNotifications]);
 
   const handleMarkAllRead = useCallback(async () => {
     // V8-L33: no in-flight guard used to mean a double-tap sent duplicate
@@ -188,6 +210,25 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
               message="You're all caught up! New inquiries, handovers, and payments will appear here."
             />
           }
+          ListFooterComponent={
+            total > 0 ? (
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>
+                  Showing {notifications.length} of {total}
+                </Text>
+                {hasMoreNotifications(total, notifications.length) ? (
+                  <TouchableOpacity
+                    style={styles.loadMoreBtn}
+                    onPress={handleLoadMore}
+                    disabled={loadingMore}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.loadMoreText}>{loadingMore ? 'Loading…' : 'Load more'}</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : undefined
+          }
           renderItem={({ item }) => {
             const { icon, iconBg, iconColor } = getCategoryConfig(item.category);
             return (
@@ -247,6 +288,28 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.lg,
     paddingBottom: spacing.bottomTabSafe,
+  },
+  footer: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  footerText: {
+    color: colors.muted,
+    fontSize: fontSize.sm,
+  },
+  loadMoreBtn: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  loadMoreText: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
   },
   markAllBtn: {
     paddingHorizontal: spacing.sm,

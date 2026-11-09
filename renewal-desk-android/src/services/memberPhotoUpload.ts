@@ -63,7 +63,10 @@ type BackendEnvelope<T> = {
  * Idempotency-Key, so a retried upload replays instead of executing
  * twice. `fetchImpl` / `refreshAccessToken` are injectable for tests;
  * production callers pass the global fetch and a refresh that returns
- * the fresh access token (or undefined when refresh fails / no session).
+ * the fresh access token (or the failure kind when refresh fails).
+ * V11-M5: a transient refresh failure reports "could not reach the
+ * server" (no 401) so the caller does not log the owner out on a
+ * network blip; only definitive expiry reports "Session expired".
  */
 export async function executeMemberPhotoUpload(args: {
   baseUrl: string;
@@ -72,7 +75,10 @@ export async function executeMemberPhotoUpload(args: {
   token?: string;
   idempotencyKey: string;
   fetchImpl?: typeof fetch;
-  refreshAccessToken?: () => Promise<string | undefined>;
+  refreshAccessToken?: () => Promise<
+    | { ok: true; token: string }
+    | { ok: false; failure: 'expired' | 'transient' }
+  >;
 }): Promise<MemberPhotoUploadOutcome> {
   const fetchFn = args.fetchImpl ?? fetch;
   const path = memberPhotoUploadPath(args.memberId);
@@ -110,9 +116,13 @@ export async function executeMemberPhotoUpload(args: {
   try {
     let response = await makeUpload(args.token);
     if (response.status === 401 && args.refreshAccessToken) {
-      const refreshedToken = await args.refreshAccessToken();
-      if (refreshedToken) {
-        response = await makeUpload(refreshedToken);
+      const refreshed = await args.refreshAccessToken();
+      if (refreshed.ok) {
+        response = await makeUpload(refreshed.token);
+      } else if (refreshed.failure === 'transient') {
+        // V11-M5: transient refresh failure — the session is still
+        // valid, so this is a connection error, not an expiry.
+        return { ok: false, error: { message: 'Could not upload the member photo. Check your connection and try again.' } };
       } else {
         return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
       }

@@ -17,6 +17,8 @@ import { PrimaryButton } from '../components/PrimaryButton';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest } from '../services/apiClient';
+import { plansBlockSubmit, plansGateState } from '../services/plansGate';
+import { keyForAction, shouldReleaseKey, type StableKeySlot } from '../services/stableKey';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Payment, Plan } from '../types';
@@ -28,6 +30,8 @@ type RenewMemberScreenProps = {
   onLogout: () => void;
   onViewMember?: (member: Member) => void;
   onComplete?: () => void;
+  /** V11-M3: the "create a plan first" link in the zero-plans banner. */
+  onNavigatePlans?: () => void;
 };
 
 type PaymentMethod = 'cash' | 'upi' | 'card' | 'other';
@@ -72,6 +76,7 @@ export function RenewMemberScreen({
   onLogout,
   onViewMember,
   onComplete,
+  onNavigatePlans,
 }: RenewMemberScreenProps) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(member.plan?.id ?? null);
@@ -79,7 +84,10 @@ export function RenewMemberScreen({
   // empty with no error, and a plan-less member could be renewed for a
   // silent 30-day / ₹0 span. Capture the failure with a retry, and
   // block Renew while no plan is resolved and the load failed.
+  // V11-M3: load *success with zero plans* is the same hole through
+  // the empty leg — a blocking state, not an empty picker.
   const [plansError, setPlansError] = useState<string | undefined>();
+  const [plansLoaded, setPlansLoaded] = useState(false);
   const [gymTimezone, setGymTimezone] = useState('Asia/Kolkata');
   const [renewalStartDate, setRenewalStartDate] = useState(() => suggestedRenewalStart(member.membership_end, 'Asia/Kolkata'));
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -103,26 +111,32 @@ export function RenewMemberScreen({
     type: 'error' | 'success';
   }>();
   const paymentRequestKeyRef = useRef<string | undefined>(undefined);
+  // V11-L32: stable per-action key for the WhatsApp reminder, so a
+  // timeout-retry after the server already sent it replays instead of
+  // sending the member a second WhatsApp.
+  const whatsAppKeyRef = useRef<StableKeySlot>(undefined);
 
   // Fetch available gym plans
   const loadPlans = useCallback(async () => {
     setPlansError(undefined);
+    setPlansLoaded(false);
     const res = await apiRequest<{ plans: Plan[]; gym?: { timezone?: string } }>('/api/mobile/v1/settings');
-    if (res.ok && res.data.plans.length > 0) {
+    if (res.ok) {
       setPlans(res.data.plans);
       const timezone = res.data.gym?.timezone || 'Asia/Kolkata';
       setGymTimezone(timezone);
       if (!startDateTouchedRef.current) {
         setRenewalStartDate(suggestedRenewalStart(member.membership_end, timezone));
       }
-      if (!selectedPlanId) {
+      if (res.data.plans.length > 0 && !selectedPlanId) {
         const match = res.data.plans.find((p) => p.id === member.plan?.id) || res.data.plans[0];
         setSelectedPlanId(match.id);
         setFinalPayable(match.price);
       }
-    } else if (!res.ok) {
+    } else {
       setPlansError(res.error.message);
     }
+    setPlansLoaded(true);
   }, [member.membership_end, member.plan?.id, selectedPlanId]);
 
   useEffect(() => {
@@ -137,6 +151,7 @@ export function RenewMemberScreen({
   }, [loadPlans]);
 
   const activePlan = plans.find((p) => p.id === selectedPlanId) || member.plan;
+  const plansGate = plansGateState({ loaded: plansLoaded, plansCount: plans.length, error: plansError });
   const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 0;
   const renewalDays = activePlan?.duration_days ?? 30;
   const minimumStartDate = suggestedRenewalStart(member.membership_end, gymTimezone);
@@ -164,15 +179,22 @@ export function RenewMemberScreen({
 
   const handleRenew = useCallback(async () => {
     if (renewing) return;
-    // V10-L27: no plan resolved and the plans load failed — renewing
-    // now would post a silent 30-day / ₹0 renewal for a plan-less
-    // member. (A member WITH a plan renews fine even when the fetch
-    // fails, via the member.plan fallback.)
-    if (!activePlan && plansError) {
-      Alert.alert(
-        'Plans could not be loaded',
-        `Membership plans failed to load (${plansError}). Retry loading plans before renewing — otherwise the renewal would have no plan to anchor on.`,
-      );
+    // V10-L27 / V11-M3: no plan resolved and the plans leg resolved
+    // empty or failed — renewing now would post a silent 30-day / ₹0
+    // renewal for a plan-less member. (A member WITH a plan renews
+    // fine even when the fetch fails, via the member.plan fallback.)
+    if (plansBlockSubmit(plansGate, Boolean(activePlan))) {
+      if (plansGate === 'no-plans') {
+        Alert.alert(
+          'No membership plans yet',
+          'Create a membership plan first — otherwise the renewal would have no plan to anchor on.',
+        );
+      } else {
+        Alert.alert(
+          'Plans could not be loaded',
+          `Membership plans failed to load (${plansError}). Retry loading plans before renewing — otherwise the renewal would have no plan to anchor on.`,
+        );
+      }
       return;
     }
     if (numericPayable < 0) {
@@ -219,17 +241,25 @@ export function RenewMemberScreen({
       setError(result.error.message);
     }
     setRenewing(false);
-  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, renewalStartDate, discountNote, member.id, onComplete, onLogout, activePlan, plansError]);
+  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, renewalStartDate, discountNote, member.id, onComplete, onLogout, activePlan, plansError, plansGate]);
 
   const handleSendWhatsApp = useCallback(async () => {
     if (sendingWhatsApp) return;
 
     setSendingWhatsApp(true);
     setWhatsAppFeedback(undefined);
+    // V11-L32: stable per-action key — a retry after a lost response
+    // replays instead of sending a second WhatsApp.
+    const { key: whatsAppKey, slot } = keyForAction(whatsAppKeyRef.current, `reminder:${member.id}`);
+    whatsAppKeyRef.current = slot;
     const result = await apiRequest<{ message: string; status: string }>('/api/mobile/v1/whatsapp/send-reminder', {
       method: 'POST',
+      headers: { 'Idempotency-Key': whatsAppKey },
       body: { member_id: member.id },
     });
+    if (shouldReleaseKey(result.ok, result.ok ? undefined : result.error.status)) {
+      whatsAppKeyRef.current = undefined;
+    }
 
     if (result.ok) {
       setWhatsAppFeedback({
@@ -360,6 +390,24 @@ export function RenewMemberScreen({
               <Text style={styles.errorText}>
                 Couldn&apos;t load membership plans — {plansError}
               </Text>
+              <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
+                <Text style={styles.retryLinkText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {/* V11-M3: zero plans blocks the renewal — the owner must
+              create a plan first. Only shown when no plan is resolved
+              at all; a member WITH a plan renews against it. */}
+          {plansGate === 'no-plans' && !activePlan ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>
+                No membership plans yet — create a plan first. Otherwise the renewal would have no plan to anchor on.
+              </Text>
+              {onNavigatePlans ? (
+                <TouchableOpacity onPress={onNavigatePlans} activeOpacity={0.7}>
+                  <Text style={styles.retryLinkText}>Create a plan →</Text>
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
                 <Text style={styles.retryLinkText}>Retry</Text>
               </TouchableOpacity>
@@ -591,7 +639,7 @@ export function RenewMemberScreen({
           }
           icon={<Icon name={channelMode === 'online' ? "send" : "checkmark"} size={16} color={colors.textInverse} />}
           onPress={() => void handleRenew()}
-          disabled={numericPayable <= 0}
+          disabled={numericPayable <= 0 || plansBlockSubmit(plansGate, Boolean(activePlan))}
           loading={renewing}
         />
 

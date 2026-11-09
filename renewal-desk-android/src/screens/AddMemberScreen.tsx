@@ -16,6 +16,7 @@ import { AppHeader } from '../components/AppHeader';
 import { FormField } from '../components/FormField';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { plansBlockSubmit, plansGateState } from '../services/plansGate';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { Member, Plan } from '../types';
@@ -51,6 +52,8 @@ type AddMemberScreenProps = {
   onBack: () => void;
   onLogout: () => void;
   onMemberCreated?: (member: Member) => void;
+  /** V11-M3: the "create a plan first" link in the zero-plans banner. */
+  onNavigatePlans?: () => void;
   plans?: Plan[];
   /** Convert-to-member prefill from a bot lead (name + phone). */
   prefillName?: string;
@@ -61,7 +64,7 @@ type AddMemberScreenProps = {
   leadId?: number;
 };
 
-export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: initialPlans = [], prefillName, prefillPhone, leadId }: AddMemberScreenProps) {
+export function AddMemberScreen({ onBack, onLogout, onMemberCreated, onNavigatePlans, plans: initialPlans = [], prefillName, prefillPhone, leadId }: AddMemberScreenProps) {
   const session = getCachedSession();
   const countryPrefix = getPhoneCountryPrefix(session?.gymTimezone, session?.gymCountry);
   const memberRequestKeyRef = useRef<string | undefined>(undefined);
@@ -114,29 +117,39 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   // vanished and submit created a plan-less member with a fabricated
   // 30-day span. Capture the failure with a retry, and block submit
   // while no plan is selected and the load failed.
+  // V11-M3: load *success with zero plans* is the same hole through
+  // the empty leg (a new gym has no plans yet) — treat it as a
+  // blocking state too, with a "create a plan first" link.
   const [plansError, setPlansError] = useState<string | undefined>();
+  const [plansLoaded, setPlansLoaded] = useState(false);
 
   // Ensure fresh plans are loaded
   const loadPlans = useCallback(async () => {
     setPlansError(undefined);
+    setPlansLoaded(false);
     const res = await apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings');
-    if (res.ok && res.data.plans.length > 0) {
+    if (res.ok) {
       setPlans(res.data.plans);
-      setSelectedPlanId((prev) => {
-        if (prev === null) {
-          setCustomAmount(res.data.plans[0].price);
-          return res.data.plans[0].id;
-        }
-        return prev;
-      });
-    } else if (!res.ok) {
+      if (res.data.plans.length > 0) {
+        setSelectedPlanId((prev) => {
+          if (prev === null) {
+            setCustomAmount(res.data.plans[0].price);
+            return res.data.plans[0].id;
+          }
+          return prev;
+        });
+      }
+    } else {
       setPlansError(res.error.message);
     }
+    setPlansLoaded(true);
   }, []);
 
   useEffect(() => {
     void loadPlans();
   }, [loadPlans]);
+
+  const plansGate = plansGateState({ loaded: plansLoaded, plansCount: plans.length, error: plansError });
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId);
   const standardPrice = selectedPlan?.price ? parseFloat(selectedPlan.price) : 0;
@@ -182,13 +195,22 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
     if (loading) return;
-    // V10-M8: never create a plan-less member on a failed plans load —
-    // a plan is what anchors duration, price and renewals.
-    if (plansError && !selectedPlanId) {
-      Alert.alert(
-        'Plans could not be loaded',
-        `Membership plans failed to load (${plansError}). Retry loading plans before adding the member — otherwise the member would be created without a plan.`,
-      );
+    // V10-M8 / V11-M3: never create a plan-less member — a plan is
+    // what anchors duration, price and renewals. Blocks both when
+    // the plans load failed and when it succeeded with zero plans
+    // (new gym, no plans yet) and no plan is selected.
+    if (plansBlockSubmit(plansGate, selectedPlanId !== null)) {
+      if (plansGate === 'no-plans') {
+        Alert.alert(
+          'No membership plans yet',
+          'Create a membership plan first — a member needs a plan for duration and pricing. Otherwise the member would be created without a plan.',
+        );
+      } else {
+        Alert.alert(
+          'Plans could not be loaded',
+          `Membership plans failed to load (${plansError}). Retry loading plans before adding the member — otherwise the member would be created without a plan.`,
+        );
+      }
       return;
     }
 
@@ -283,6 +305,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     validate,
     leadId,
     plansError,
+    plansGate,
   ]);
 
   const submitLabel = isPaid
@@ -377,6 +400,27 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
                 <Text style={styles.errorText}>
                   Couldn&apos;t load membership plans — {plansError}
                 </Text>
+                <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
+                  <Text style={styles.retryLinkText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+          {/* V11-M3: zero plans is a blocking state, not an empty
+              section — the owner must create a plan first, or the
+              member would be created plan-less. */}
+          {plansGate === 'no-plans' ? (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Membership Plan</Text>
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorText}>
+                  No membership plans yet — create a plan first. A member needs a plan for duration and pricing.
+                </Text>
+                {onNavigatePlans ? (
+                  <TouchableOpacity onPress={onNavigatePlans} activeOpacity={0.7}>
+                    <Text style={styles.retryLinkText}>Create a plan →</Text>
+                  </TouchableOpacity>
+                ) : null}
                 <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
                   <Text style={styles.retryLinkText}>Retry</Text>
                 </TouchableOpacity>
@@ -645,7 +689,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
             icon={<Icon name="personAdd" size={18} color={colors.textInverse} />}
             onPress={() => void handleSubmit()}
             loading={loading}
-            disabled={!fullName.trim() || !phone.trim()}
+            disabled={!fullName.trim() || !phone.trim() || plansBlockSubmit(plansGate, selectedPlanId !== null)}
           />
         </ScrollView>
       </KeyboardAvoidingView>

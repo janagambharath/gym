@@ -5,7 +5,7 @@
 // screen only renders it:
 //
 // - Named row (member_id present) → open the member, same destination
-//   the Inside tab already navigates to via onNavigateMemberDetail.
+//   Live Access navigates to via onNavigateMemberDetail.
 // - Unknown row (no member_id, terminal ID present) → open the assign
 //   flow: MemberPickerModal + POST /api/mobile/v1/rrr/mappings/bulk-resolve
 //   with the body below — the same endpoint the PWA quick-assign sheet

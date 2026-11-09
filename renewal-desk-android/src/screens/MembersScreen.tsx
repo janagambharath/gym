@@ -111,7 +111,7 @@ export function MembersScreen({ onLogout, onSelectMember, onAddMember, onImportM
         onPress={() => onSelectMember?.(item)}
         activeOpacity={0.6}
       >
-        <Avatar name={item.full_name} size={42} />
+        <Avatar name={item.full_name} size={42} photoUrl={item.profile_photo_url} />
         <View style={styles.memberInfo}>
           <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
           <Text style={styles.memberPhone}>{item.phone}</Text>

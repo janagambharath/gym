@@ -45,7 +45,7 @@ export function ImportMembersScreen({
           badgeColor={colors.brand}
           badgeBg={colors.brandSubtle}
           title="Import CSV"
-          description="Upload a CSV file exported from Excel, Google Sheets, or your previous software."
+          description="Upload a CSV file exported from Google Sheets, or your previous software."
           buttonLabel="Import CSV"
           onPress={onNavigateCSV}
           primary

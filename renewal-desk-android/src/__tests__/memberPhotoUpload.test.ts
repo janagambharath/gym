@@ -111,7 +111,7 @@ test('401 → refresh → retry re-sends the SAME Idempotency-Key with the new t
     token: 'tok-1',
     idempotencyKey: 'key-1',
     fetchImpl,
-    refreshAccessToken: async () => 'tok-2',
+    refreshAccessToken: async () => ({ ok: true as const, token: 'tok-2' }),
   });
 
   assert.deepEqual(result, { ok: true, data: { profile_photo_url: 'https://cdn.test/p.jpg' } });
@@ -133,12 +133,36 @@ test('401 with failed refresh → session-expired 401, no second upload', async 
     token: 'tok-1',
     idempotencyKey: 'key-1',
     fetchImpl,
-    refreshAccessToken: async () => undefined,
+    refreshAccessToken: async () => ({ ok: false as const, failure: 'expired' as const }),
   });
 
   assert.deepEqual(result, {
     ok: false,
     error: { message: 'Session expired. Please sign in again.', status: 401 },
+  });
+  assert.equal(calls.length, 1);
+});
+
+// V11-M5: a TRANSIENT refresh failure is a connection error, not an
+// expiry — the caller must not log the owner out on a network blip,
+// so the error carries no 401 status.
+test('401 with transient refresh failure → connection error, no 401 status', async () => {
+  const { calls, fetchImpl } = mockFetch([
+    jsonResponse({ success: false, error: { code: 'UNAUTHORIZED', message: 'expired' } }, 401),
+  ]);
+  const result = await executeMemberPhotoUpload({
+    baseUrl: BASE_URL,
+    memberId: 42,
+    image: IMAGE,
+    token: 'tok-1',
+    idempotencyKey: 'key-1',
+    fetchImpl,
+    refreshAccessToken: async () => ({ ok: false as const, failure: 'transient' as const }),
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: { message: 'Could not upload the member photo. Check your connection and try again.' },
   });
   assert.equal(calls.length, 1);
 });

@@ -21,10 +21,11 @@ test('only the gym_owner role counts as owner', () => {
   assert.equal(isOwnerRole(''), false);
 });
 
-test('staff sees no owner-only Access controls (Clear-failed, Unlock Gate)', () => {
+test('staff sees no owner-only Access controls (Clear-failed, Unlock Gate, Retry All)', () => {
   assert.deepEqual(accessOwnerControls(false), {
     showClearFailed: false,
     showRemoteUnlock: false,
+    showRetryAll: false,
   });
 });
 
@@ -32,6 +33,7 @@ test('owner sees both Access controls', () => {
   assert.deepEqual(accessOwnerControls(true), {
     showClearFailed: true,
     showRemoteUnlock: true,
+    showRetryAll: true,
   });
 });
 

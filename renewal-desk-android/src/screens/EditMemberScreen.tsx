@@ -17,6 +17,7 @@ import { FormField } from '../components/FormField';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { resolveDeletedPlan } from '../services/plansGate';
 import { canOpenDateRepair } from '../services/roleAccess';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
@@ -34,6 +35,10 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
   const canEditMembership = getCachedSession()?.userRole === 'gym_owner';
   const [member, setMember] = useState<Member | undefined>();
   const [plans, setPlans] = useState<Plan[]>([]);
+  // V11-L31: the plans leg used to fail silently — the grid just
+  // vanished and the owner could not change plans, with no error and
+  // no retry.
+  const [plansError, setPlansError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
@@ -50,6 +55,16 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+
+  const loadPlans = useCallback(async () => {
+    setPlansError(undefined);
+    const res = await apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings');
+    if (res.ok) {
+      setPlans(res.data.plans);
+    } else {
+      setPlansError(res.error.message);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +91,7 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
         setError(memberRes.error.message);
       }
       if (settingsRes.ok) setPlans(settingsRes.data.plans);
+      else setPlansError(settingsRes.error.message);
       setLoading(false);
     };
     void load();
@@ -172,6 +188,12 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
     );
   }
 
+  // V11-L31: a member on a soft-deleted plan keeps the plan id, but
+  // the grid renders only active plans — show the deleted plan's name
+  // as a disabled chip instead of reading as plan-less. Only when the
+  // plans leg succeeded: a failed load must not be read as "deleted".
+  const deletedPlan = resolveDeletedPlan(member?.plan, plans, plansError !== undefined);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <AppHeader title="Edit Member" onBack={onBack} />
@@ -251,6 +273,32 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
                 ))}
               </View>
             ) : null}
+            {/* V11-L31: plans-leg failure is no longer silent — error
+                banner + retry instead of a vanished grid. */}
+            {canEditMembership && plansError ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorText}>
+                  Couldn&apos;t load membership plans — {plansError}
+                </Text>
+                <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
+                  <Text style={styles.retryLinkText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+            {/* V11-L31: the member's current plan was deleted — show
+                its name as a disabled chip instead of plan-less. */}
+            {canEditMembership && deletedPlan ? (
+              <View style={styles.planGrid}>
+                <PrimaryButton
+                  title={`${deletedPlan.name} (deleted)`}
+                  variant="outline"
+                  size="sm"
+                  disabled
+                  onPress={() => {}}
+                  style={styles.planButton}
+                />
+              </View>
+            ) : null}
             {!canEditMembership ? <Text style={styles.readOnlyCopy}>Only the gym owner can change the plan or membership dates.</Text> : null}
             {canEditMembership ? (
               <View style={styles.dateField}>
@@ -322,6 +370,24 @@ export function EditMemberScreen({ memberId, onBack, onSaved, onNavigateDateRepa
 }
 
 const styles = StyleSheet.create({
+  errorBanner: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+  },
+  errorText: {
+    color: colors.critical,
+    fontSize: fontSize.base,
+  },
+  retryLinkText: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    marginTop: spacing.xs,
+  },
   genderField: { gap: spacing.xs },
   genderLabel: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.medium },
   genderOptions: { flexDirection: 'row', gap: spacing.sm },

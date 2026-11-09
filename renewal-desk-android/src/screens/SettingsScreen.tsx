@@ -18,6 +18,7 @@ import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { getRuntimeConfiguration } from '../config/runtime';
 import { apiRequest, deleteAccount, getCachedSession, logout } from '../services/apiClient';
+import { getAppVersion } from '../services/appVersion';
 import { canOpenDateRepair, isOwnerRole } from '../services/roleAccess';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
@@ -67,6 +68,8 @@ export function SettingsScreen({
   const [showLinkBanner, setShowLinkBanner] = useState(true);
   const [savingLinkBannerPreference, setSavingLinkBannerPreference] = useState(false);
   const session = getCachedSession();
+  // V11-L34: real version + build from the embedded app config.
+  const appVersion = getAppVersion();
   // V8-L31 (V7-L13 pattern): Date Repair is owner-only on the backend
   // (scan/apply/confirm all 403 staff) — hide the entry point for staff
   // instead of rendering a dead menu item that 403s on tap.
@@ -336,8 +339,12 @@ export function SettingsScreen({
               <Text style={styles.aboutSubtitle}>Gym Management & AI Receptionist</Text>
             </View>
           </View>
-          <InfoRow label="Version" value="1.0.0" />
-          <InfoRow label="Build" value="Production Release (Build 5)" />
+          {/* V11-L34: real version + build from the embedded app
+              config (expo-constants) — the hardcoded literals used to
+              report the same strings for every build while app.json
+              said versionCode 45. */}
+          <InfoRow label="Version" value={appVersion.versionLabel} />
+          <InfoRow label="Build" value={appVersion.buildLabel} />
           <TouchableOpacity
             style={styles.privacyRow}
             onPress={handlePrivacyPolicy}

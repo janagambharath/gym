@@ -29,12 +29,16 @@ import {
 } from '../../services/memberApiClient';
 import { ErrorState } from '../../components/ErrorState';
 import { getRuntimeConfiguration } from '../../config/runtime';
+import { getAppVersion } from '../../services/appVersion';
 
 type MemberProfileScreenProps = {
   onLogout: () => void;
 };
 
 export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
+  // V11-L34: real version + build from the embedded app config —
+  // the hardcoded "v1.0" reported the same string for every build.
+  const appVersion = getAppVersion();
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -307,7 +311,7 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
 
-        <Text style={styles.versionText}>Renewal Desk v1.0 · Member App</Text>
+        <Text style={styles.versionText}>Renewal Desk v{appVersion.versionLabel} · {appVersion.buildLabel} · Member App</Text>
       </ScrollView>
     </SafeAreaView>
   );

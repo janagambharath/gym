@@ -718,6 +718,7 @@ export type AccessEvent = {
   event_timestamp: string;
   member_id: number | null;
   member_name: string | null;
+  profile_photo_url?: string | null;
   membership_status: string | null;
   device_name: string | null;
   device_enroll_number: string;

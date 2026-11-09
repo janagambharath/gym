@@ -116,7 +116,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
           onPress={() => onSelectMember?.(item)}
           activeOpacity={0.6}
         >
-          <Avatar name={item.full_name} size={40} />
+          <Avatar name={item.full_name} size={40} photoUrl={item.profile_photo_url} />
           <View style={styles.memberInfo}>
             <Text style={styles.memberName} numberOfLines={1}>{item.full_name}</Text>
             <Text style={styles.memberDetail}>{item.phone}</Text>
