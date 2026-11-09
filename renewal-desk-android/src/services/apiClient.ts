@@ -3,6 +3,13 @@ import { clearSession, loadSession, MobileSession, saveSession } from '../storag
 import { newIdempotencyKey, hasIdempotencyKeyHeader } from './idempotencyKey';
 import { configureDisplayPreferences } from '../types';
 import { buildQrUploadHeaders } from './qrUploadHeaders';
+import {
+  executeMemberPhotoUpload,
+  type MemberPhotoImage,
+  type MemberPhotoUploadResult,
+} from './memberPhotoUpload';
+
+export type { MemberPhotoImage, MemberPhotoUploadResult } from './memberPhotoUpload';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -768,5 +775,63 @@ export async function uploadPaymentQrImage(
   } catch {
     return { ok: false, error: { message: 'Could not upload the QR image. Check your connection and try again.' } };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Member profile photo (owner-set, multipart rather than JSON)
+// ---------------------------------------------------------------------------
+
+/** Upload a member's profile photo on the owner's behalf.
+ * Mirrors uploadPaymentQrImage: multipart `photo`, 401 → refresh-once →
+ * retry with the SAME fresh Idempotency-Key (V9-L16 pattern — the
+ * backend honours it with scope `owner_member_photo_upload`, so a
+ * retried upload replays instead of executing twice). The fetch half
+ * lives in ./memberPhotoUpload so node tests can exercise it with a
+ * mocked fetch; this wrapper only supplies config, session and refresh.
+ * Backend contract: POST /api/mobile/v1/members/<id>/photo →
+ * { success: true, data: { profile_photo_url } }. */
+export async function uploadMemberPhoto(
+  memberId: number,
+  image: MemberPhotoImage,
+): Promise<ApiResult<MemberPhotoUploadResult>> {
+  // V6-L36: same safe-config pattern as apiRequest / uploadPaymentQrImage.
+  const safeConfig = getRuntimeConfigurationSafely();
+  if (!safeConfig.ok) {
+    return { ok: false, error: { message: 'API configuration is invalid.' } };
+  }
+  const config = safeConfig.config;
+  if (!config.apiBaseUrl) {
+    return { ok: false, error: { message: 'API base URL is not configured.' } };
+  }
+  // Capture into a local so the refresh closure below keeps the
+  // narrowed `string` type (property narrowing does not survive into
+  // closures).
+  const baseUrl = config.apiBaseUrl;
+
+  // V9-L16: one fresh Idempotency-Key per upload, generated ONCE per
+  // call — the 401-refresh retry re-sends the SAME key.
+  const idempotencyKey = newIdempotencyKey();
+
+  return executeMemberPhotoUpload({
+    baseUrl,
+    memberId,
+    image,
+    token: cachedSession?.accessToken,
+    idempotencyKey,
+    refreshAccessToken: cachedSession
+      ? async () => (await refreshOnce(baseUrl))?.accessToken
+      : undefined,
+  });
+}
+
+/** Remove a member's profile photo. DELETE is naturally idempotent, so
+ * no Idempotency-Key (same as the member app's removeProfilePhoto).
+ * Response: { success: true, data: { profile_photo_url: null } }. */
+export async function removeMemberPhoto(
+  memberId: number,
+): Promise<ApiResult<MemberPhotoUploadResult>> {
+  return apiRequest<MemberPhotoUploadResult>(`/api/mobile/v1/members/${memberId}/photo`, {
+    method: 'DELETE',
+  });
 }
 

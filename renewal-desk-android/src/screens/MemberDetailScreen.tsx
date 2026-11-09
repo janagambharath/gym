@@ -14,12 +14,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { AppHeader } from '../components/AppHeader';
 import { Avatar } from '../components/Avatar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { StatusBadge } from '../components/StatusBadge';
-import { apiRequest, getCachedSession } from '../services/apiClient';
+import { apiRequest, getCachedSession, removeMemberPhoto, uploadMemberPhoto } from '../services/apiClient';
 import { resolveRefreshError } from '../services/memberDetailRefresh';
 import { resolveBlockToggle } from '../services/memberAccess';
 import { Icon } from '../theme/icons';
@@ -86,6 +87,9 @@ export function MemberDetailScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [showDeactivate, setShowDeactivate] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  // Member photo upload/remove in flight — avatar taps are disabled
+  // while one runs.
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [enrollNumberInput, setEnrollNumberInput] = useState('');
   const [enrolling, setEnrolling] = useState(false);
@@ -258,6 +262,75 @@ export function MemberDetailScreen({
     setEnrollNumberInput(member.device_enroll_number ? String(member.device_enroll_number) : '');
     setShowEnrollModal(true);
   }, [member.device_enroll_number]);
+
+  // Owner-set member photo — picker + guards copied from the VYNLA
+  // member app (renewal-desk-member/src/screens/ProfileScreen.tsx:61-96):
+  // 1:1 crop, quality 0.82, no EXIF, 3 MB + MIME guards, then
+  // POST /api/mobile/v1/members/<id>/photo. The returned signed URL
+  // replaces local state immediately; the next poll re-fetch refreshes
+  // it before the 7-day expiry.
+  const handleChoosePhoto = useCallback(async () => {
+    if (photoBusy) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.82,
+        exif: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      if (asset.fileSize && asset.fileSize > 3 * 1024 * 1024) {
+        Alert.alert('Photo is too large', 'Choose a photo that is 3 MB or smaller.');
+        return;
+      }
+      const mimeType = asset.mimeType || (asset.fileName?.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+        Alert.alert('Unsupported photo', 'Choose a JPEG, PNG, or WebP image.');
+        return;
+      }
+      setPhotoBusy(true);
+      const res = await uploadMemberPhoto(member.id, {
+        uri: asset.uri,
+        name: asset.fileName || `profile.${mimeType === 'image/png' ? 'png' : 'jpg'}`,
+        mimeType,
+      });
+      if (res.ok) {
+        setMember((current) => ({ ...current, profile_photo_url: res.data.profile_photo_url }));
+        showMessage('Profile photo updated.', 'success');
+      } else {
+        if (res.error.status === 401) { onLogout(); return; }
+        showMessage(res.error.message, 'error');
+      }
+    } catch {
+      showMessage('Could not update photo. Please try again.', 'error');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }, [member.id, onLogout, photoBusy]);
+
+  const handleRemovePhoto = useCallback(() => {
+    Alert.alert('Remove profile photo?', 'The member profile will show initials instead.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setPhotoBusy(true);
+          const res = await removeMemberPhoto(member.id);
+          setPhotoBusy(false);
+          if (res.ok) {
+            setMember((current) => ({ ...current, profile_photo_url: null }));
+            showMessage('Profile photo removed.', 'success');
+          } else {
+            if (res.error.status === 401) { onLogout(); return; }
+            showMessage(res.error.message, 'error');
+          }
+        },
+      },
+    ]);
+  }, [member.id, onLogout]);
 
   const handleSaveEnrollment = useCallback(async () => {
     if (!enrollNumberInput.trim()) {
@@ -465,12 +538,34 @@ export function MemberDetailScreen({
         {/* Member profile */}
         <View style={[styles.card, styles.profileCard]}>
           <View style={styles.identityRow}>
-            <Avatar
-              name={member.full_name}
-              size={58}
-              color={colors.brandSubtle}
-              textColor={colors.brand}
-            />
+            <View style={styles.avatarColumn}>
+              <TouchableOpacity
+                onPress={() => void handleChoosePhoto()}
+                disabled={photoBusy}
+                accessibilityRole="button"
+                accessibilityLabel={member.profile_photo_url ? 'Change profile photo' : 'Add profile photo'}
+                activeOpacity={0.8}
+              >
+                <Avatar
+                  name={member.full_name}
+                  size={58}
+                  color={colors.brandSubtle}
+                  textColor={colors.brand}
+                  photoUrl={member.profile_photo_url}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => (member.profile_photo_url ? handleRemovePhoto() : void handleChoosePhoto())}
+                disabled={photoBusy}
+                accessibilityRole="button"
+                accessibilityLabel={member.profile_photo_url ? 'Remove profile photo' : 'Add profile photo'}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.photoActionText, member.profile_photo_url ? styles.photoRemoveText : undefined]}>
+                  {photoBusy ? 'Working…' : member.profile_photo_url ? 'Remove' : 'Add photo'}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.identityInfo}>
               <Text style={styles.memberName} numberOfLines={1}>{member.full_name}</Text>
               <Text style={styles.memberPhone}>{member.phone}</Text>
@@ -1233,6 +1328,19 @@ const styles = StyleSheet.create({
   },
   identityRow: {
     flexDirection: 'row',
+  },
+  avatarColumn: {
+    alignItems: 'center',
+    width: 58,
+  },
+  photoActionText: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    marginTop: spacing.xxs,
+  },
+  photoRemoveText: {
+    color: colors.critical,
   },
   memberId: {
     color: colors.muted,
