@@ -1,6 +1,6 @@
 /* Member Detail Screen */
 import { attachLiveRefresh } from '../live-refresh.js';
-import { apiRequest } from '../api.js';
+import { apiRequest, uploadFormData } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderInfoRowHtml, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
 import { icon } from '../icons.js';
@@ -62,7 +62,13 @@ export default {
           <div class="scroll-content">
             <!-- Profile Card -->
             <div style="padding:var(--sp-xxl);text-align:center;background:var(--card);border-bottom:1px solid var(--border-light)">
-              <div style="display:inline-flex">${renderAvatar(member.full_name, 'xl')}</div>
+              <div id="md-photo-wrap" role="button" tabindex="0" title="Tap to change photo" style="display:inline-flex;cursor:pointer">${renderAvatar(member.full_name, 'xl', member.profile_photo_url)}</div>
+              <input type="file" id="md-photo-input" accept="image/jpeg,image/png,image/webp" style="display:none">
+              ${member.profile_photo_url ? `
+                <div><button class="btn btn-sm btn-link" id="md-photo-remove" style="padding:0;font-size:var(--fs-xs);color:var(--danger,#b91c1c)">Remove photo</button></div>
+              ` : `
+                <div style="color:var(--muted);font-size:var(--fs-xs);margin-top:var(--sp-xs)">Tap photo to add · JPEG, PNG, or WebP · up to 3 MB</div>
+              `}
               <h2 style="font-size:var(--fs-3xl);margin-top:var(--sp-md);margin-bottom:var(--sp-xs)">${escapeHtml(member.full_name)}</h2>
               <div style="margin-bottom:var(--sp-md);display:flex;gap:var(--sp-sm);justify-content:center">
                 <a href="tel:${escapeHtml(member.phone)}" class="btn btn-secondary" style="text-decoration:none">${icon('phone', 16)} Call</a>
@@ -212,6 +218,54 @@ export default {
       // data silently. The banner above (rendered when staleRefresh is
       // set) carries the retry.
       el.querySelector('#md-refresh-retry')?.addEventListener('click', () => refreshMember());
+
+      // Member profile photo (owner-set): the avatar is tappable, the
+      // hidden input carries the file picker. A broken/expired signed URL
+      // falls back to initials (signed URLs expire in 7 days — never
+      // cache them; a successful upload re-fetches the member so the URL
+      // refreshes). Client-side MIME + 3 MB check mirrors vynla.js:452.
+      const photoWrap = el.querySelector('#md-photo-wrap');
+      photoWrap?.querySelector('img')?.addEventListener('error', () => {
+        if (photoWrap) photoWrap.innerHTML = renderAvatar(member.full_name, 'xl');
+      });
+      photoWrap?.addEventListener('click', () => {
+        el.querySelector('#md-photo-input')?.click();
+      });
+      el.querySelector('#md-photo-input')?.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) {
+          showToast('Choose a JPEG, PNG, or WebP photo up to 3 MB.', 'error');
+          e.target.value = '';
+          return;
+        }
+        const form = new FormData();
+        form.append('photo', file);
+        const res = await uploadFormData(`/api/mobile/v1/members/${member.id}/photo`, form);
+        if (res.ok) {
+          showToast('Profile photo updated', 'success');
+          await refreshMember();
+        } else {
+          showToast(res.error?.message || 'Could not upload photo', 'error');
+        }
+        e.target.value = '';
+      });
+      el.querySelector('#md-photo-remove')?.addEventListener('click', async () => {
+        const yes = await showConfirm({
+          title: 'Remove profile photo?',
+          message: `Remove the profile photo for ${member.full_name}?`,
+          confirmText: 'Remove',
+          destructive: true,
+        });
+        if (!yes) return;
+        const res = await apiRequest(`/api/mobile/v1/members/${member.id}/photo`, { method: 'DELETE' });
+        if (res.ok) {
+          showToast('Profile photo removed', 'success');
+          await refreshMember();
+        } else {
+          showToast(res.error?.message || 'Could not remove photo', 'error');
+        }
+      });
 
       el.querySelector('#btn-edit-member')?.addEventListener('click', openEdit);
       el.querySelector('#btn-edit-contact')?.addEventListener('click', openEdit);

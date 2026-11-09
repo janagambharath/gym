@@ -137,7 +137,16 @@ export function renderTabBar(activeTab) {
 
 // ─── Avatar ──────────────────────────────────────────────────────────
 
-export function renderAvatar(name, size = 'md') {
+// Photo sizes mirror the .avatar-* classes, except xl photos render at
+// 104px (the member-detail profile card / VYNLA profile size) instead of
+// the 64px initials circle.
+const AVATAR_PHOTO_SIZE = { sm: 32, md: 40, lg: 48, xl: 104 };
+
+export function renderAvatar(name, size = 'md', photoUrl = null) {
+  if (photoUrl) {
+    const px = AVATAR_PHOTO_SIZE[size] || 40;
+    return `<img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name || 'Member')} profile photo" class="avatar avatar-${size}" style="width:${px}px;height:${px}px;object-fit:cover">`;
+  }
   const initials = getInitials(name);
   const color = getAvatarColor(name);
   return `<div class="avatar avatar-${size}" style="background:${color}">${escapeHtml(initials)}</div>`;
