@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -109,25 +110,33 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // V10-M8: the plans leg used to fail silently — the plan section just
+  // vanished and submit created a plan-less member with a fabricated
+  // 30-day span. Capture the failure with a retry, and block submit
+  // while no plan is selected and the load failed.
+  const [plansError, setPlansError] = useState<string | undefined>();
 
   // Ensure fresh plans are loaded
-  useEffect(() => {
-    let cancelled = false;
-    void apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings').then((res) => {
-      if (cancelled) return;
-      if (res.ok && res.data.plans.length > 0) {
-        setPlans(res.data.plans);
-        setSelectedPlanId((prev) => {
-          if (prev === null) {
-            setCustomAmount(res.data.plans[0].price);
-            return res.data.plans[0].id;
-          }
-          return prev;
-        });
-      }
-    });
-    return () => { cancelled = true; };
+  const loadPlans = useCallback(async () => {
+    setPlansError(undefined);
+    const res = await apiRequest<{ plans: Plan[] }>('/api/mobile/v1/settings');
+    if (res.ok && res.data.plans.length > 0) {
+      setPlans(res.data.plans);
+      setSelectedPlanId((prev) => {
+        if (prev === null) {
+          setCustomAmount(res.data.plans[0].price);
+          return res.data.plans[0].id;
+        }
+        return prev;
+      });
+    } else if (!res.ok) {
+      setPlansError(res.error.message);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadPlans();
+  }, [loadPlans]);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId);
   const standardPrice = selectedPlan?.price ? parseFloat(selectedPlan.price) : 0;
@@ -173,6 +182,15 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
     if (loading) return;
+    // V10-M8: never create a plan-less member on a failed plans load —
+    // a plan is what anchors duration, price and renewals.
+    if (plansError && !selectedPlanId) {
+      Alert.alert(
+        'Plans could not be loaded',
+        `Membership plans failed to load (${plansError}). Retry loading plans before adding the member — otherwise the member would be created without a plan.`,
+      );
+      return;
+    }
 
     setLoading(true);
     setError(undefined);
@@ -264,6 +282,7 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
     selectedPlan,
     validate,
     leadId,
+    plansError,
   ]);
 
   const submitLabel = isPaid
@@ -351,6 +370,19 @@ export function AddMemberScreen({ onBack, onLogout, onMemberCreated, plans: init
           </View>
 
           {/* Plan Selection */}
+          {plansError ? (
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Membership Plan</Text>
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorText}>
+                  Couldn&apos;t load membership plans — {plansError}
+                </Text>
+                <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
+                  <Text style={styles.retryLinkText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
           {plans.length > 0 ? (
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
@@ -798,6 +830,12 @@ const styles = StyleSheet.create({
   errorText: {
     color: colors.critical,
     fontSize: fontSize.base,
+  },
+  retryLinkText: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    marginTop: spacing.xs,
   },
   flex: {
     flex: 1,

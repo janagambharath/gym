@@ -23,9 +23,14 @@ import { resolveAccessRowTap, buildQuickAssignBody } from '../services/accessRow
 import { resolveAccessListView, shouldShowFeedErrorBanner, switchAccessTab } from '../services/accessFeedState';
 import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
 import {
+  cancelQueuedAdmsCommand,
   clearFailedSyncsWithConfirm,
   reconcileMembers,
 } from '../services/accessSync';
+import {
+  retrySkippedSummary,
+  type RetrySyncResult,
+} from '../services/retrySkipReasons';
 import type {
   AccessEvent,
   AccessEventsResponse,
@@ -135,6 +140,15 @@ export function AccessScreen({
   // failure and the last good update so the screen can say so.
   const [summaryStale, setSummaryStale] = useState(false);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState<number | null>(null);
+  // V10-L26: V6-L33 only covered the stale-last-good case — a first-load
+  // summary failure (no summary at all) stayed fully silent: no cards,
+  // no device status, no failed-commands banner, no error, no retry.
+  const [summaryError, setSummaryError] = useState<string | undefined>();
+  // V10-M6: keep the last Retry All response so its skip breakdown
+  // renders under the failed-commands card (not the 3.5 s banner).
+  const [lastRetryResult, setLastRetryResult] = useState<RetrySyncResult | null>(null);
+  // V10-L33: per-row cancel in flight for a queued ADMS command.
+  const [cancellingCommandId, setCancellingCommandId] = useState<number | null>(null);
   const [events, setEvents] = useState<AccessEvent[]>([]);
   const [insideMembers, setInsideMembers] = useState<InsideMember[]>([]);
   const [insidePagination, setInsidePagination] = useState<Pagination | null>(null);
@@ -153,6 +167,10 @@ export function AccessScreen({
   const [showCheckInModal, setShowCheckInModal] = useState(false);
   const [checkInSearch, setCheckInSearch] = useState('');
   const [candidateMembers, setCandidateMembers] = useState<Member[]>([]);
+  // V10-L35: a candidate-search failure used to keep the previous
+  // query's members on screen as if they matched — a wrong-member
+  // check-in one tap away.
+  const [candidateSearchError, setCandidateSearchError] = useState<string | undefined>();
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [checkingInId, setCheckingInId] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -177,11 +195,15 @@ export function AccessScreen({
     if (res.ok) {
       setSummary(res.data);
       setSummaryStale(false);
+      setSummaryError(undefined);
       setSummaryUpdatedAt(Date.now());
     } else {
       // V6-L33: keep the last-good stats but mark them stale — never
-      // render them as live with no signal.
+      // render them as live with no signal. V10-L26: also remember the
+      // failure itself so a first load with no summary can show an
+      // inline error + retry instead of an empty, silent screen.
       setSummaryStale(true);
+      setSummaryError(res.error.message);
     }
   }, []);
 
@@ -336,6 +358,11 @@ export function AccessScreen({
     if (seq !== candidateSearchSeqRef.current) return;
     if (res.ok) {
       setCandidateMembers(res.data.members || []);
+      setCandidateSearchError(undefined);
+    } else {
+      // V10-L35: never present a stale list as the new query's results.
+      setCandidateMembers([]);
+      setCandidateSearchError(res.error.message);
     }
     setLoadingCandidates(false);
   }, []);
@@ -460,11 +487,20 @@ export function AccessScreen({
   const handleRetrySync = useCallback(async () => {
     if (retryingSync) return;
     setRetryingSync(true);
-    const res = await apiRequest<{ retried_count: number; message: string }>('/api/mobile/v1/access/retry-sync', {
+    // V10-M6: keep the full response — the backend returns the skip
+    // breakdown (skipped: [{command_id, reason}], skipped_count) and
+    // the PWA renders it under the banner. The old code typed only
+    // { retried_count, message } and showed it in a banner that
+    // cleared in 3.5 s, so the owner never learned WHY a retry skipped.
+    // Clear any stale result at the start of a new attempt (PWA
+    // V10-L15 lesson: a result card must not outlive its commands).
+    setLastRetryResult(null);
+    const res = await apiRequest<RetrySyncResult>('/api/mobile/v1/access/retry-sync', {
       method: 'POST',
     });
     setRetryingSync(false);
     if (res.ok) {
+      setLastRetryResult(res.data);
       setActionMessage(res.data?.message || 'Commands queued for retry!');
       setTimeout(() => setActionMessage(null), 3500);
       void loadAll();
@@ -472,6 +508,26 @@ export function AccessScreen({
       Alert.alert('Retry Failed', res.error.message || 'Could not retry syncs.');
     }
   }, [retryingSync, loadAll]);
+
+  // V10-L33: cancel one queued Direct ADMS command (POST
+  // /access/adms-commands/<id>/cancel, owner-only, queued rows only).
+  // A stuck queued unlock wedges the whole ADMS pipe; until now no
+  // client surfaced it. On success, refresh the summary so the row
+  // disappears from the queued list.
+  const handleCancelQueuedCommand = useCallback(async (commandId: number) => {
+    if (cancellingCommandId !== null) return;
+    setCancellingCommandId(commandId);
+    const res = await cancelQueuedAdmsCommand(apiRequest, commandId);
+    setCancellingCommandId(null);
+    if (res.ok) {
+      setActionMessage(res.data?.message || 'Queued command cancelled.');
+      setTimeout(() => setActionMessage(null), 3500);
+      void fetchSummary();
+    } else {
+      Alert.alert('Could not cancel', res.error.message || 'This command can no longer be cancelled.');
+      void fetchSummary();
+    }
+  }, [cancellingCommandId, fetchSummary]);
 
   const [reconciling, setReconciling] = useState(false);
 
@@ -494,8 +550,11 @@ export function AccessScreen({
   const [clearingFailed, setClearingFailed] = useState(false);
 
   // PWA parity: "Clear" failed syncs (POST /access/clear-failed).
-  // Irreversible — cleared commands were never delivered and can never be
-  // retried — so the operator must confirm first (same wording as PWA).
+  // V10-M7: the confirm wording branches on the gym type, exactly like
+  // the PWA (access.js:439-442). ADMS rows are marked cleared and their
+  // history is kept — "permanently delete … cannot be undone" is only
+  // true for the legacy bridge path, and the scary wording discouraged
+  // the exact tap that resolves the stuck failed-commands banner.
   const handleClearFailedSyncs = useCallback(() => {
     if (clearingFailed) return;
     setClearingFailed(true);
@@ -506,7 +565,9 @@ export function AccessScreen({
             new Promise<boolean>((resolve) => {
               Alert.alert(
                 'Clear failed syncs?',
-                'Permanently delete all failed biometric commands? This cannot be undone.',
+                summary?.adms_integration_id
+                  ? 'Clear all failed biometric commands? They will be marked cleared and hidden from this list (their history is kept).'
+                  : 'Permanently delete all failed biometric commands? This cannot be undone.',
                 [
                   { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
                   { text: 'Clear', style: 'destructive', onPress: () => resolve(true) },
@@ -517,6 +578,9 @@ export function AccessScreen({
         });
         if (res === null) return; // operator cancelled — nothing to do
         if (res.ok) {
+          // The retry result described the rows just cleared — it must
+          // not outlive them (PWA V10-L15 lesson).
+          setLastRetryResult(null);
           setActionMessage(res.data?.message || 'Failed commands cleared');
           setTimeout(() => setActionMessage(null), 3500);
           void loadAll();
@@ -527,7 +591,7 @@ export function AccessScreen({
         setClearingFailed(false);
       }
     })();
-  }, [clearingFailed, loadAll]);
+  }, [clearingFailed, loadAll, summary?.adms_integration_id]);
 
   const renderActionBanner = () => {
     if (!actionMessage) return null;
@@ -593,6 +657,87 @@ export function AccessScreen({
             </TouchableOpacity>
           ) : null}
         </View>
+      </View>
+    );
+  };
+
+  // V10-L26: first-load summary failure — no summary at all — used to
+  // render the feed with no cards, no device status, no failed-commands
+  // banner and no error. Mirror the feed-error banner: an inline error
+  // + retry above the feed whenever there is no summary to show.
+  const renderSummaryErrorBanner = () => {
+    if (summary || !summaryError) return null;
+    return (
+      <View style={styles.feedErrorBanner}>
+        <Icon name="alert" size={16} color={colors.critical} />
+        <Text style={styles.feedErrorText}>
+          Couldn&apos;t load live access stats — the failed-commands list and device status are hidden. {summaryError}
+        </Text>
+        <TouchableOpacity style={styles.feedErrorRetryBtn} onPress={onRefresh} activeOpacity={0.7}>
+          <Text style={styles.feedErrorRetryText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // V10-M6: the last Retry All result, kept in state (not the
+  // auto-clearing banner) with the grouped skip breakdown, mirroring
+  // the PWA (access.js:292-295). Labels live in
+  // services/retrySkipReasons with explicit plurals.
+  const renderRetryResult = () => {
+    if (!lastRetryResult) return null;
+    const skippedCount = lastRetryResult.skipped_count ?? 0;
+    return (
+      <View style={styles.retryResultCard}>
+        <Text style={styles.retryResultTitle}>
+          Retry All result: {lastRetryResult.retried_count ?? 0} queued
+          {skippedCount ? `, ${skippedCount} skipped` : ''}
+        </Text>
+        {skippedCount > 0 ? (
+          <Text style={styles.retryResultText}>
+            Skipped — {retrySkippedSummary(lastRetryResult.skipped)}.
+          </Text>
+        ) : null}
+      </View>
+    );
+  };
+
+  // V10-L33: queued Direct ADMS commands from the summary payload,
+  // with a per-row Cancel (owner-only endpoint). Renders nothing when
+  // the backend does not send the field yet (older backend) or when
+  // nothing is queued — the failed-commands banner only ever showed
+  // failed rows, so a stuck queued unlock was invisible until now.
+  const renderQueuedCommands = () => {
+    const queued = summary?.queued_adms_commands;
+    if (!queued || !queued.count || !queued.commands?.length) return null;
+    return (
+      <View style={styles.queuedCommandsCard}>
+        <Text style={styles.queuedCommandsTitle}>
+          {queued.count} queued Direct ADMS command{queued.count > 1 ? 's' : ''}
+        </Text>
+        {queued.commands.map((cmd) => (
+          <View key={cmd.id} style={styles.queuedCommandRow}>
+            <View style={styles.queuedCommandInfo}>
+              <Text style={styles.queuedCommandAction}>{cmd.action}</Text>
+              <Text style={styles.queuedCommandMeta}>
+                {cmd.enroll_number ? `ID ${cmd.enroll_number}` : 'No terminal ID'}
+                {cmd.queued_at ? ` · queued ${timeAgo(cmd.queued_at)}` : ''}
+              </Text>
+            </View>
+            {ownerControls.showClearFailed ? (
+              <TouchableOpacity
+                style={styles.queuedCancelBtn}
+                onPress={() => void handleCancelQueuedCommand(cmd.id)}
+                disabled={cancellingCommandId === cmd.id}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.queuedCancelBtnText}>
+                  {cancellingCommandId === cmd.id ? 'Cancelling…' : 'Cancel'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ))}
       </View>
     );
   };
@@ -960,12 +1105,15 @@ export function AccessScreen({
             <>
               {renderActionBanner()}
               {renderFeedErrorBanner()}
+              {renderSummaryErrorBanner()}
               {renderSummaryCards()}
               {renderSummaryStaleness()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
               {renderBridgeControls()}
               {renderFailedCommandsBanner()}
+              {renderRetryResult()}
+              {renderQueuedCommands()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
               {renderFilterTabs()}
@@ -1005,12 +1153,15 @@ export function AccessScreen({
             <>
               {renderActionBanner()}
               {renderFeedErrorBanner()}
+              {renderSummaryErrorBanner()}
               {renderSummaryCards()}
               {renderSummaryStaleness()}
               {renderCheckInButton()}
               {renderDeviceStatus()}
               {renderBridgeControls()}
               {renderFailedCommandsBanner()}
+              {renderRetryResult()}
+              {renderQueuedCommands()}
               {renderDeniedBanner()}
               {renderLegacyBridgeBanner()}
               {renderFilterTabs()}
@@ -1088,6 +1239,22 @@ export function AccessScreen({
               ListEmptyComponent={
                 loadingCandidates ? (
                   <ActivityIndicator style={{ padding: spacing.lg }} color={colors.brand} />
+                ) : candidateSearchError ? (
+                  // V10-L35: the search leg failed — say so with a retry
+                  // instead of "No active members found." over an empty
+                  // (cleared) list.
+                  <View style={styles.modalSearchError}>
+                    <Text style={styles.modalSearchErrorText}>
+                      Couldn&apos;t search members — {candidateSearchError}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.feedErrorRetryBtn}
+                      onPress={() => void fetchCandidateMembers(checkInSearch)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.feedErrorRetryText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <Text style={styles.modalEmptyText}>No active members found.</Text>
                 )
@@ -1326,6 +1493,82 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xxs + 2,
   },
   clearFailedBtnText: {
+    color: colors.critical,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+
+  // V10-M6: Retry All result card — kept in state, not the 3.5 s banner.
+  retryResultCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.warningBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  retryResultTitle: {
+    color: colors.warningDark,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.semibold,
+  },
+  retryResultText: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    marginTop: spacing.xxs,
+  },
+
+  // V10-L33: queued Direct ADMS commands with per-row Cancel.
+  queuedCommandsCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    ...shadows.sm,
+  },
+  queuedCommandsTitle: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    marginBottom: spacing.xs,
+  },
+  queuedCommandRow: {
+    alignItems: 'center',
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+  },
+  queuedCommandInfo: {
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  queuedCommandAction: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+  },
+  queuedCommandMeta: {
+    color: colors.muted,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  queuedCancelBtn: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xxs + 2,
+  },
+  queuedCancelBtnText: {
     color: colors.critical,
     fontSize: fontSize.xs,
     fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
@@ -1676,5 +1919,20 @@ const styles = StyleSheet.create({
     color: colors.muted,
     padding: spacing.lg,
     fontSize: fontSize.sm,
+  },
+  // V10-L35: inline candidate-search failure note + retry in the modal.
+  modalSearchError: {
+    alignItems: 'center',
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  modalSearchErrorText: {
+    color: colors.critical,
+    fontSize: fontSize.sm,
+    textAlign: 'center',
   },
 });

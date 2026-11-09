@@ -76,12 +76,32 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
   const [overrideReason, setOverrideReason] = useState('');
   const [saving, setSaving] = useState(false);
   const paymentRequestKeyRef = useRef<string | undefined>(undefined);
+  // V10-L28: the settings leg used to fail silently — the timezone
+  // stayed at the Asia/Kolkata fallback and every date on the screen
+  // was computed in the wrong zone for a non-IST gym. Surface the
+  // failure with a retry and do not render date-dependent defaults
+  // until the settings load succeeds.
+  const [settingsError, setSettingsError] = useState<string | undefined>();
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // V10-L28: the preselected-member fetch was silently ignored too —
+  // the owner arriving from member-detail saw a blank search with no
+  // signal that the member they came from failed to load.
+  const [preselectedMemberError, setPreselectedMemberError] = useState<string | undefined>();
+
+  const loadSettings = useCallback(async () => {
+    setSettingsError(undefined);
+    const res = await apiRequest<{ gym?: { timezone?: string } }>('/api/mobile/v1/settings');
+    if (res.ok) {
+      setGymTimezone(res.data.gym?.timezone || 'Asia/Kolkata');
+      setSettingsLoaded(true);
+    } else {
+      setSettingsError(res.error.message);
+    }
+  }, []);
 
   useEffect(() => {
-    void apiRequest<{ gym?: { timezone?: string } }>('/api/mobile/v1/settings').then((res) => {
-      if (res.ok) setGymTimezone(res.data.gym?.timezone || 'Asia/Kolkata');
-    });
-  }, []);
+    void loadSettings();
+  }, [loadSettings]);
 
   const minimumStartDate = (() => {
     const today = dateKeyInTimezone(new Date(), gymTimezone);
@@ -105,22 +125,29 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
       : '';
 
   // Pre-select member if provided
+  const loadPreselectedMember = useCallback(async (memberId: number) => {
+    setPreselectedMemberError(undefined);
+    const res = await apiRequest<Member>(`/api/mobile/v1/members/${memberId}`);
+    if (res.ok) {
+      setSelectedMember(res.data);
+      setRenewalStartDateOverride(undefined);
+      if (res.data.plan?.duration_days) {
+        setRenewalDays(String(res.data.plan.duration_days));
+      }
+      if (res.data.plan?.price) {
+        setAmount(res.data.plan.price);
+      }
+    } else {
+      // V10-L28: surface the failure instead of a blank search box.
+      setPreselectedMemberError(res.error.message);
+    }
+  }, []);
+
   useEffect(() => {
     if (preselectedMemberId) {
-      void apiRequest<Member>(`/api/mobile/v1/members/${preselectedMemberId}`).then((res) => {
-        if (res.ok) {
-          setSelectedMember(res.data);
-          setRenewalStartDateOverride(undefined);
-          if (res.data.plan?.duration_days) {
-            setRenewalDays(String(res.data.plan.duration_days));
-          }
-          if (res.data.plan?.price) {
-            setAmount(res.data.plan.price);
-          }
-        }
-      });
+      void loadPreselectedMember(preselectedMemberId);
     }
-  }, [preselectedMemberId]);
+  }, [preselectedMemberId, loadPreselectedMember]);
 
   // Search members
   useEffect(() => {
@@ -287,6 +314,19 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
         style={styles.flex}
       >
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {/* V10-L28: settings-load failure — dates on this screen are
+              computed in the gym timezone, so a failed load must be
+              visible with a retry, not a silent Asia/Kolkata fallback. */}
+          {settingsError ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>
+                Couldn&apos;t load gym settings — {settingsError} Dates below may be wrong until settings load.
+              </Text>
+              <TouchableOpacity onPress={() => void loadSettings()} activeOpacity={0.7}>
+                <Text style={styles.retryLinkText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           {/* Member Selection */}
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
@@ -314,6 +354,19 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
               </View>
             ) : (
               <>
+                {/* V10-L28: the preselected member failed to load — say
+                    which member was expected and offer a retry instead
+                    of a blank search box. */}
+                {preselectedMemberId && preselectedMemberError ? (
+                  <View style={styles.errorBanner}>
+                    <Text style={styles.errorText}>
+                      Couldn&apos;t load the selected member — {preselectedMemberError}
+                    </Text>
+                    <TouchableOpacity onPress={() => void loadPreselectedMember(preselectedMemberId)} activeOpacity={0.7}>
+                      <Text style={styles.retryLinkText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
                 <SearchBar
                   value={searchQuery}
                   onChangeText={(text) => {
@@ -395,38 +448,48 @@ export function RecordPaymentScreen({ onBack, preselectedMemberId, onCreated }: 
               keyboardType="number-pad"
             />
 
-            <Text style={styles.fieldLabel}>Membership Start Date</Text>
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() => setShowStartDatePicker(true)}
-              style={styles.startDateButton}
-            >
-              <Icon name="calendar" size={18} color={colors.brand} />
-              <Text style={styles.startDateText}>{renewalStartDate}</Text>
-              <Icon name="forward" size={16} color={colors.muted} />
-            </TouchableOpacity>
-            {showStartDatePicker ? (
-              <DateTimePicker
-                value={pickerDate(renewalStartDate)}
-                mode="date"
-                display="default"
-                minimumDate={isExpiredMember ? undefined : pickerDate(minimumStartDate)}
-                onChange={(_, selectedDate) => {
-                  setShowStartDatePicker(false);
-                  if (selectedDate) setRenewalStartDateOverride(dateKeyFromLocalDate(selectedDate));
-                }}
-              />
-            ) : null}
-            {isExpiredMember ? (
-              <Text style={styles.noticeText}>
-                This membership already expired — you can backdate the start to when the member actually paid.
-              </Text>
-            ) : null}
-            {renewalEndDate ? (
-              <Text style={styles.noticeText}>
-                New end date: {formatDate(renewalEndDate)}
-              </Text>
-            ) : null}
+            {/* V10-L28: date-dependent defaults render only once the
+                settings leg has succeeded — until then the gym timezone
+                is an unverified fallback and the start/end dates would
+                be computed in the wrong zone. */}
+            {settingsLoaded ? (
+              <>
+                <Text style={styles.fieldLabel}>Membership Start Date</Text>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => setShowStartDatePicker(true)}
+                  style={styles.startDateButton}
+                >
+                  <Icon name="calendar" size={18} color={colors.brand} />
+                  <Text style={styles.startDateText}>{renewalStartDate}</Text>
+                  <Icon name="forward" size={16} color={colors.muted} />
+                </TouchableOpacity>
+                {showStartDatePicker ? (
+                  <DateTimePicker
+                    value={pickerDate(renewalStartDate)}
+                    mode="date"
+                    display="default"
+                    minimumDate={isExpiredMember ? undefined : pickerDate(minimumStartDate)}
+                    onChange={(_, selectedDate) => {
+                      setShowStartDatePicker(false);
+                      if (selectedDate) setRenewalStartDateOverride(dateKeyFromLocalDate(selectedDate));
+                    }}
+                  />
+                ) : null}
+                {isExpiredMember ? (
+                  <Text style={styles.noticeText}>
+                    This membership already expired — you can backdate the start to when the member actually paid.
+                  </Text>
+                ) : null}
+                {renewalEndDate ? (
+                  <Text style={styles.noticeText}>
+                    New end date: {formatDate(renewalEndDate)}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <Text style={styles.noticeText}>Loading gym settings to set the membership dates…</Text>
+            )}
 
             {selectedMember?.plan?.duration_days && parsedRenewalDays !== selectedMember.plan.duration_days ? (
               <FormField
@@ -498,6 +561,24 @@ const styles = StyleSheet.create({
   methodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   notice: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.sm },
   noticeText: { color: colors.muted, flex: 1, fontSize: fontSize.sm },
+  // V10-L28: slim settings / preselected-member error banner + retry.
+  errorBanner: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  errorText: {
+    color: colors.critical,
+    fontSize: fontSize.sm,
+  },
+  retryLinkText: {
+    color: colors.brand,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.bold,
+    marginTop: spacing.xs,
+  },
   safeArea: { backgroundColor: colors.background, flex: 1 },
   searchResult: {
     alignItems: 'center',

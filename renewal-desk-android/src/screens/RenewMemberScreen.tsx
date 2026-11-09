@@ -75,6 +75,11 @@ export function RenewMemberScreen({
 }: RenewMemberScreenProps) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(member.plan?.id ?? null);
+  // V10-L27: the plans leg used to fail silently — the picker rendered
+  // empty with no error, and a plan-less member could be renewed for a
+  // silent 30-day / ₹0 span. Capture the failure with a retry, and
+  // block Renew while no plan is resolved and the load failed.
+  const [plansError, setPlansError] = useState<string | undefined>();
   const [gymTimezone, setGymTimezone] = useState('Asia/Kolkata');
   const [renewalStartDate, setRenewalStartDate] = useState(() => suggestedRenewalStart(member.membership_end, 'Asia/Kolkata'));
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -100,28 +105,36 @@ export function RenewMemberScreen({
   const paymentRequestKeyRef = useRef<string | undefined>(undefined);
 
   // Fetch available gym plans
+  const loadPlans = useCallback(async () => {
+    setPlansError(undefined);
+    const res = await apiRequest<{ plans: Plan[]; gym?: { timezone?: string } }>('/api/mobile/v1/settings');
+    if (res.ok && res.data.plans.length > 0) {
+      setPlans(res.data.plans);
+      const timezone = res.data.gym?.timezone || 'Asia/Kolkata';
+      setGymTimezone(timezone);
+      if (!startDateTouchedRef.current) {
+        setRenewalStartDate(suggestedRenewalStart(member.membership_end, timezone));
+      }
+      if (!selectedPlanId) {
+        const match = res.data.plans.find((p) => p.id === member.plan?.id) || res.data.plans[0];
+        setSelectedPlanId(match.id);
+        setFinalPayable(match.price);
+      }
+    } else if (!res.ok) {
+      setPlansError(res.error.message);
+    }
+  }, [member.membership_end, member.plan?.id, selectedPlanId]);
+
   useEffect(() => {
     let cancelled = false;
-    void apiRequest<{ plans: Plan[]; gym?: { timezone?: string } }>('/api/mobile/v1/settings').then((res) => {
+    void (async () => {
       if (cancelled) return;
-      if (res.ok && res.data.plans.length > 0) {
-        setPlans(res.data.plans);
-        const timezone = res.data.gym?.timezone || 'Asia/Kolkata';
-        setGymTimezone(timezone);
-        if (!startDateTouchedRef.current) {
-          setRenewalStartDate(suggestedRenewalStart(member.membership_end, timezone));
-        }
-        if (!selectedPlanId) {
-          const match = res.data.plans.find((p) => p.id === member.plan?.id) || res.data.plans[0];
-          setSelectedPlanId(match.id);
-          setFinalPayable(match.price);
-        }
-      }
-    });
+      await loadPlans();
+    })();
     return () => {
       cancelled = true;
     };
-  }, [member.membership_end, member.plan?.id, selectedPlanId]);
+  }, [loadPlans]);
 
   const activePlan = plans.find((p) => p.id === selectedPlanId) || member.plan;
   const standardPrice = activePlan?.price ? parseFloat(activePlan.price) : 0;
@@ -151,6 +164,17 @@ export function RenewMemberScreen({
 
   const handleRenew = useCallback(async () => {
     if (renewing) return;
+    // V10-L27: no plan resolved and the plans load failed — renewing
+    // now would post a silent 30-day / ₹0 renewal for a plan-less
+    // member. (A member WITH a plan renews fine even when the fetch
+    // fails, via the member.plan fallback.)
+    if (!activePlan && plansError) {
+      Alert.alert(
+        'Plans could not be loaded',
+        `Membership plans failed to load (${plansError}). Retry loading plans before renewing — otherwise the renewal would have no plan to anchor on.`,
+      );
+      return;
+    }
     if (numericPayable < 0) {
       Alert.alert('Invalid Amount', 'Payable amount cannot be negative.');
       return;
@@ -195,7 +219,7 @@ export function RenewMemberScreen({
       setError(result.error.message);
     }
     setRenewing(false);
-  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, renewalStartDate, discountNote, member.id, onComplete, onLogout]);
+  }, [renewing, numericPayable, selectedPlanId, standardPrice, derivedDiscount, channelMode, paymentMethod, renewalDays, renewalStartDate, discountNote, member.id, onComplete, onLogout, activePlan, plansError]);
 
   const handleSendWhatsApp = useCallback(async () => {
     if (sendingWhatsApp) return;
@@ -331,6 +355,16 @@ export function RenewMemberScreen({
         {/* 1. Plan Selector Card */}
         <View style={styles.card}>
           <SectionHeader title="1. Select Target Plan" icon={<Icon name="clipboard" size={18} color={colors.brand} />} />
+          {plansError ? (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>
+                Couldn&apos;t load membership plans — {plansError}
+              </Text>
+              <TouchableOpacity onPress={() => void loadPlans()} activeOpacity={0.7}>
+                <Text style={styles.retryLinkText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <View style={styles.planChipsContainer}>
             {plans.map((p) => {
               const isSelected = p.id === selectedPlanId;
@@ -627,6 +661,13 @@ const styles = StyleSheet.create({
   errorText: {
     color: colors.critical,
     fontSize: fontSize.base,
+  },
+  // V10-L27: retry link inside the plans-load error banner.
+  retryLinkText: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    marginTop: spacing.xs,
   },
   memberCard: {
     alignItems: 'center',

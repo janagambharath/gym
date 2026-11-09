@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  cancelQueuedAdmsCommand,
   clearFailedSyncs,
   clearFailedSyncsWithConfirm,
   reconcileMembers,
@@ -71,4 +72,19 @@ test('clearFailedSyncsWithConfirm calls clear-failed only after the operator con
   assert.deepEqual(calls, [{ path: '/api/mobile/v1/access/clear-failed', method: 'POST' }]);
   assert.equal(res?.ok, true);
   if (res?.ok) assert.equal(res.data.cleared_count, 2);
+});
+
+// V10-L33: cancel one queued Direct ADMS command (owner-only endpoint).
+test('cancelQueuedAdmsCommand POSTs to /api/mobile/v1/access/adms-commands/<id>/cancel', async () => {
+  const calls: Call[] = [];
+  const res = await cancelQueuedAdmsCommand(
+    mockRequest(calls, {
+      ok: true,
+      data: { command_id: 42, action: 'unlock_door', status: 'cancelled', message: 'Queued Direct ADMS command cancelled.' },
+    } as unknown as AccessSyncResult<{ queued_count: number; cleared_count: number; message: string }>),
+    42,
+  );
+  assert.deepEqual(calls, [{ path: '/api/mobile/v1/access/adms-commands/42/cancel', method: 'POST' }]);
+  assert.equal(res.ok, true);
+  if (res.ok) assert.equal(res.data.command_id, 42);
 });

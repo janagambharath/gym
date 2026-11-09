@@ -152,6 +152,11 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
 
   const [whatsappStatus, setWhatsappStatus] = useState<string>('not_connected');
   const [checklist, setChecklist] = useState<WhatsAppChecklist | null>(null);
+  // V10-M10: the status leg used to fail silently — the default
+  // 'not_connected' rendered as fact ("Not Connected" + Connect) and
+  // funnelled a connected gym into re-running setup. Track the failure
+  // and render an error + retry in place of the status card.
+  const [statusError, setStatusError] = useState<string | undefined>();
 
   // Fetch WhatsApp connection status & broadcast stats
   const fetchWhatsAppStatus = useCallback(() => {
@@ -161,9 +166,12 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
     }>('/api/mobile/v1/whatsapp/status').then((res) => {
       if (res.ok) {
         setWhatsappStatus(res.data.state.toLowerCase());
+        setStatusError(undefined);
         if (res.data.checklist) {
           setChecklist(res.data.checklist);
         }
+      } else {
+        setStatusError(res.error.message);
       }
     });
 
@@ -443,7 +451,29 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
       <AppHeader title="WhatsApp & Broadcasts" onBack={onBack} />
 
       <View style={styles.container}>
-        {/* Connection Status */}
+        {/* Connection Status — V10-M10: while the status leg has failed,
+            render the error + retry here instead of the "Not Connected"
+            copy, which would be a guess, not a fact. */}
+        {statusError ? (
+          <View style={styles.statusCard}>
+            <View style={styles.statusRow}>
+              <Icon name="alert" size={24} color={colors.critical} />
+              <View style={styles.statusInfo}>
+                <Text style={styles.statusTitle}>WhatsApp Business Account</Text>
+                <Text style={styles.statusState}>
+                  Couldn&apos;t check the connection status — {statusError}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.statusRetryBtn}
+                onPress={fetchWhatsAppStatus}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.statusRetryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
         <TouchableOpacity
           style={styles.statusCard}
           onPress={() => setOnboardingModalVisible(true)}
@@ -525,6 +555,7 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
             </View>
           ) : null}
         </TouchableOpacity>
+        )}
 
         {/* 4-Tab Toggle */}
         <View style={styles.tabToggle}>
@@ -1034,6 +1065,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: spacing.lg,
     ...shadows.sm,
+  },
+  // V10-M10: retry for a failed connection-status load.
+  statusRetryBtn: {
+    backgroundColor: colors.critical,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  statusRetryText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   statusDot: { borderRadius: 6, height: 12, width: 12 },
   statusInfo: { flex: 1, marginLeft: spacing.md },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -66,6 +66,19 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
 
   // Action modal state
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
+  // V10-L29: reset-password / toggle-active had no in-flight guard — a
+  // double-tap minted two temp passwords (and apiRequest mints a fresh
+  // Idempotency-Key per call, so the backend could not dedupe them).
+  // In-flight flags disable the buttons, and a stable per-action key
+  // (cleared after success) makes a lost-response retry replay instead
+  // of minting a second password / flipping the state twice.
+  const [resettingId, setResettingId] = useState<number | null>(null);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
+  const resetKeyRef = useRef<{ staffId: number; key: string } | undefined>(undefined);
+  const toggleKeyRef = useRef<{ staffId: number; key: string } | undefined>(undefined);
+
+  const createStaffActionKey = (): string =>
+    `staff-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 
   // Edit staff modal state (GAP 3 parity: PATCH /api/mobile/v1/staff/<id>,
   // same endpoint the PWA uses for staff updates — name + role only; the
@@ -140,30 +153,50 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
   }, [nameInput, emailInput, phoneInput, roleInput, passwordInput, fetchStaff]);
 
   const handleToggleActive = useCallback(async () => {
-    if (!selectedStaff) return;
+    if (!selectedStaff || togglingId !== null) return;
     const willBeActive = !selectedStaff.is_active;
+    setTogglingId(selectedStaff.id);
+    // Stable per-action key: a retry after a lost response replays the
+    // same toggle instead of flipping active→inactive→active.
+    const idempotencyKey = toggleKeyRef.current?.staffId === selectedStaff.id
+      ? toggleKeyRef.current.key
+      : createStaffActionKey();
+    toggleKeyRef.current = { staffId: selectedStaff.id, key: idempotencyKey };
     const res = await apiRequest(`/api/mobile/v1/staff/${selectedStaff.id}`, {
       method: 'PATCH',
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: { is_active: willBeActive },
     });
+    setTogglingId(null);
     if (res.ok) {
+      toggleKeyRef.current = undefined;
       setSelectedStaff(null);
       void fetchStaff();
     } else {
       Alert.alert('Error', res.error.message || 'Could not update staff status.');
     }
-  }, [selectedStaff, fetchStaff]);
+  }, [selectedStaff, fetchStaff, togglingId]);
 
   const handleResetPassword = useCallback(async () => {
-    if (!selectedStaff) return;
+    if (!selectedStaff || resettingId !== null) return;
+    setResettingId(selectedStaff.id);
+    // Stable per-action key, cleared after success so a later
+    // DELIBERATE reset mints a fresh password (PWA V9-L9 pattern).
+    const idempotencyKey = resetKeyRef.current?.staffId === selectedStaff.id
+      ? resetKeyRef.current.key
+      : createStaffActionKey();
+    resetKeyRef.current = { staffId: selectedStaff.id, key: idempotencyKey };
     const res = await apiRequest<{
       id: number;
       new_password: string;
       invite_whatsapp_url: string;
     }>(`/api/mobile/v1/staff/${selectedStaff.id}/reset-password`, {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
     });
+    setResettingId(null);
     if (res.ok) {
+      resetKeyRef.current = undefined;
       const invite = {
         full_name: selectedStaff.full_name,
         email: selectedStaff.email,
@@ -175,7 +208,7 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
     } else {
       Alert.alert('Error', res.error.message || 'Could not reset password.');
     }
-  }, [selectedStaff]);
+  }, [selectedStaff, resettingId]);
 
   const openEditStaff = useCallback((staff: StaffMember) => {
     setSelectedStaff(null);
@@ -410,12 +443,22 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
                 <Text style={styles.actionBtnText}>Edit Details</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.actionBtn} onPress={handleResetPassword}>
+              <TouchableOpacity
+                style={[styles.actionBtn, resettingId !== null && { opacity: 0.5 }]}
+                onPress={handleResetPassword}
+                disabled={resettingId !== null || togglingId !== null}
+              >
                 <Icon name="lock" size={18} color={colors.brand} />
-                <Text style={styles.actionBtnText}>Reset Password</Text>
+                <Text style={styles.actionBtnText}>
+                  {resettingId !== null ? 'Resetting…' : 'Reset Password'}
+                </Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.actionBtn} onPress={handleToggleActive}>
+              <TouchableOpacity
+                style={[styles.actionBtn, togglingId !== null && { opacity: 0.5 }]}
+                onPress={handleToggleActive}
+                disabled={togglingId !== null || resettingId !== null}
+              >
                 <Icon
                   name={selectedStaff?.is_active ? 'warning' : 'check'}
                   size={18}
@@ -427,7 +470,9 @@ export function StaffScreen({ onBack }: StaffScreenProps) {
                     { color: selectedStaff?.is_active ? colors.critical : colors.success },
                   ]}
                 >
-                  {selectedStaff?.is_active ? 'Deactivate Account' : 'Reactivate Account'}
+                  {togglingId !== null
+                    ? 'Updating…'
+                    : selectedStaff?.is_active ? 'Deactivate Account' : 'Reactivate Account'}
                 </Text>
               </TouchableOpacity>
             </View>

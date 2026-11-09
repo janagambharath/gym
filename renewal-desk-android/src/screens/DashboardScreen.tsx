@@ -20,7 +20,7 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
-import { formatCurrency, formatDate, formatDateTime, getDaysText, getMemberDisplayStatus } from '../types';
+import { formatCurrency, formatDate, formatDateTime, getDaysText, getEffectiveTimezone, getInvalidStoredTimezone, getMemberDisplayStatus } from '../types';
 
 const PILLAR_TONES: Record<'revenue' | 'retain' | 'recover', {
   label: string;
@@ -99,6 +99,11 @@ export function DashboardScreen({
   const [lastUpdated, setLastUpdated] = useState<string>();
 
   const session = getCachedSession();
+  // V10-L34 (PWA V9-L12 mirror): an invalid stored gym timezone
+  // (Yodha's literal 'india') used to warn only in the console while
+  // every date silently fell back to device-local time. Name the stored
+  // value and the effective zone visibly, with the fix location.
+  const invalidStoredTimezone = getInvalidStoredTimezone();
   const hasAttention = Boolean(
     data && (data.expiring_soon > 0 || data.pending_payments > 0 || data.expired > 0 || (data.bot_summary?.handover_count ?? 0) > 0),
   );
@@ -210,6 +215,17 @@ export function DashboardScreen({
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* V10-L34: invalid stored gym timezone — visible above the
+          dashboard content regardless of whether the data legs loaded,
+          so a broken timezone can never pass as "(gym time)" again. */}
+      {invalidStoredTimezone ? (
+        <View style={styles.timezoneWarning}>
+          <Text style={styles.timezoneWarningText}>
+            Showing {getEffectiveTimezone()} time — stored timezone “{invalidStoredTimezone}” is invalid. Fix it in Gym Profile (Settings) so dates show in gym time.
+          </Text>
+        </View>
+      ) : null}
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -1043,6 +1059,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  // V10-L34: invalid stored gym timezone warning (PWA V9-L12 mirror).
+  timezoneWarning: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warningBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  timezoneWarningText: {
+    color: colors.warningDark,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
   },
   staleBannerText: {
     color: colors.warningDark,

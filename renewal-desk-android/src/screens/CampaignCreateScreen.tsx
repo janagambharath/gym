@@ -71,16 +71,26 @@ export function CampaignCreateScreen({
   // Preview state
   const [dbPreview, setDbPreview] = useState<SegmentPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // V10-L30: a failed segment preview used to leave dbPreview stale/null
+  // with no signal — surface it as a warning instead of silently
+  // proceeding with a stale audience count.
+  const [previewError, setPreviewError] = useState<string | undefined>();
 
   // Template & Cooldown state
   const [templates, setTemplates] = useState<CampaignTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<CampaignTemplate | null>(null);
   const [templatesLoading, setTemplatesLoading] = useState(false);
+  // V10-L30: a templates-load failure dead-ended the wizard — an empty
+  // list, a generic "Select Template" alert, no error and no retry.
+  const [templatesError, setTemplatesError] = useState<string | undefined>();
 
   // Cooldown Protection
   const [cooldownResult, setCooldownResult] = useState<CooldownCheckResult | null>(null);
   const [excludeRecent, setExcludeRecent] = useState(true);
   const [checkingCooldown, setCheckingCooldown] = useState(false);
+  // V10-L30: a failed cooldown check left cooldownResult unset, so the
+  // campaign could launch with no 7-day cooldown signal at all.
+  const [cooldownError, setCooldownError] = useState<string | undefined>();
 
   // Campaign Meta & Send
   const [campaignName, setCampaignName] = useState('');
@@ -139,6 +149,9 @@ export function CampaignCreateScreen({
       if (!active) return;
       if (res.ok) {
         setDbPreview(res.data);
+        setPreviewError(undefined);
+      } else {
+        setPreviewError(res.error.message);
       }
       setPreviewLoading(false);
     });
@@ -211,8 +224,30 @@ export function CampaignCreateScreen({
     setCheckingCooldown(false);
     if (res.ok) {
       setCooldownResult(res.data);
+      setCooldownError(undefined);
+    } else {
+      // V10-L30: warn instead of silently launching with no cooldown
+      // signal — recent contacts may not be excluded.
+      setCooldownError(res.error.message);
     }
   }, []);
+
+  // Load approved templates for the current purpose (V10-L30: extracted
+  // so the template step's Retry button re-runs the same fetch).
+  const loadTemplates = useCallback(async () => {
+    setTemplatesLoading(true);
+    setTemplatesError(undefined);
+    const res = await apiRequest<{ templates: CampaignTemplate[] }>(
+      `/api/mobile/v1/campaigns/templates?purpose=${purpose}`,
+    );
+    setTemplatesLoading(false);
+    if (res.ok && res.data.templates.length > 0) {
+      setTemplates(res.data.templates);
+      setSelectedTemplate(res.data.templates[0]);
+    } else if (!res.ok) {
+      setTemplatesError(res.error.message);
+    }
+  }, [purpose]);
 
   // Load templates & check cooldown when transitioning from Step 1 to Step 2
   const goToTemplateStep = useCallback(async () => {
@@ -232,15 +267,7 @@ export function CampaignCreateScreen({
     setStep('template');
 
     // Fetch approved templates for this purpose
-    const res = await apiRequest<{ templates: CampaignTemplate[] }>(
-      `/api/mobile/v1/campaigns/templates?purpose=${purpose}`,
-    );
-    setTemplatesLoading(false);
-
-    if (res.ok && res.data.templates.length > 0) {
-      setTemplates(res.data.templates);
-      setSelectedTemplate(res.data.templates[0]);
-    }
+    await loadTemplates();
 
     // Check Cooldown
     let phones: string[] = [];
@@ -259,15 +286,19 @@ export function CampaignCreateScreen({
       const presetObj = PROMO_PRESETS.find((p) => p.id === promoPreset);
       setCampaignName(`${presetObj?.label || 'Promotion'} — ${dateStr}`);
     }
-  }, [audienceSource, dbPreview, importResult, purpose, promoPreset, checkCooldown]);
+  }, [audienceSource, dbPreview, importResult, purpose, promoPreset, checkCooldown, loadTemplates]);
 
   const goToReviewStep = useCallback(() => {
+    if (templatesError) {
+      Alert.alert('Templates could not be loaded', `${templatesError} Retry loading templates before continuing.`);
+      return;
+    }
     if (!selectedTemplate) {
       Alert.alert('Select Template', 'Please select a WhatsApp template.');
       return;
     }
     setStep('review');
-  }, [selectedTemplate]);
+  }, [selectedTemplate, templatesError]);
 
   // Launch Campaign
   const onLaunchCampaign = useCallback(async () => {
@@ -512,6 +543,17 @@ export function CampaignCreateScreen({
               </View>
 
               {/* Live Preview of Segment Count & Members */}
+              {/* V10-L30: a failed preview must warn — the audience
+                  count below may be stale or missing, and Continue
+                  gates on it. */}
+              {previewError && !previewLoading ? (
+                <View style={styles.previewErrorBox}>
+                  <Icon name="warning" size={16} color={colors.warning} />
+                  <Text style={styles.previewErrorText}>
+                    Couldn&apos;t load the audience preview ({previewError}) — the member count may be out of date.
+                  </Text>
+                </View>
+              ) : null}
               {previewLoading ? (
                 <View style={{ marginTop: spacing.md }}>
                   <CardSkeleton count={2} />
@@ -671,6 +713,27 @@ export function CampaignCreateScreen({
 
           {templatesLoading ? (
             <CardSkeleton count={2} />
+          ) : templatesError ? (
+            // V10-L30: inline error + Retry — the wizard must not
+            // dead-end on a transient templates failure.
+            <View style={styles.templatesErrorCard}>
+              <Text style={styles.templatesErrorText}>
+                Couldn&apos;t load WhatsApp templates — {templatesError}
+              </Text>
+              <TouchableOpacity
+                style={styles.templatesRetryBtn}
+                onPress={() => void loadTemplates()}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.templatesRetryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : templates.length === 0 ? (
+            <View style={styles.templatesErrorCard}>
+              <Text style={styles.templatesErrorText}>
+                No approved WhatsApp templates are available for this purpose yet.
+              </Text>
+            </View>
           ) : (
             templates.map((tpl) => (
               <TouchableOpacity
@@ -724,6 +787,16 @@ export function CampaignCreateScreen({
 
             {checkingCooldown ? (
               <ActivityIndicator size="small" color={colors.brand} style={{ marginVertical: spacing.xs }} />
+            ) : cooldownError ? (
+              // V10-L30: the 7-day cooldown check failed — warn instead
+              // of showing "All contacts are clean" when nothing was
+              // actually checked.
+              <View style={styles.cooldownWarning}>
+                <Icon name="warning" size={16} color={colors.warning} />
+                <Text style={styles.cooldownWarningText}>
+                  Couldn&apos;t check the 7-day cooldown ({cooldownError}) — contacts messaged recently may not be excluded.
+                </Text>
+              </View>
             ) : cooldownResult && cooldownResult.in_cooldown_count > 0 ? (
               <View style={styles.cooldownWarning}>
                 <Icon name="warning" size={16} color={colors.warning} />
@@ -752,7 +825,12 @@ export function CampaignCreateScreen({
           </View>
 
           {/* Continue Button to Step 3 */}
-          <TouchableOpacity style={styles.primaryButton} onPress={goToReviewStep} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={[styles.primaryButton, templatesError && styles.primaryButtonDisabled]}
+            onPress={goToReviewStep}
+            disabled={!!templatesError}
+            activeOpacity={0.8}
+          >
             <Text style={styles.primaryButtonText}>Continue to Review & Launch</Text>
             <Icon name="forward" size={16} color={colors.textInverse} />
           </TouchableOpacity>
@@ -1408,6 +1486,46 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   cooldownWarningText: {
+    flex: 1,
+    fontSize: fontSize.xs,
+    color: colors.warningDark,
+    fontWeight: fontWeight.medium,
+  },
+  // V10-L30: templates-load error card + retry on the template step.
+  templatesErrorCard: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  templatesErrorText: {
+    color: colors.critical,
+    fontSize: fontSize.sm,
+  },
+  templatesRetryBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.critical,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  templatesRetryText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+  // V10-L30: segment-preview failure warning on the audience step.
+  previewErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.warningSurface,
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    gap: spacing.xs,
+  },
+  previewErrorText: {
     flex: 1,
     fontSize: fontSize.xs,
     color: colors.warningDark,

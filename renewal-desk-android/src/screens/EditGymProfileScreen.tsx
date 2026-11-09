@@ -5,6 +5,7 @@ import { apiRequest } from '../services/apiClient';
 import { resolveSettingsLoadView } from '../services/settingsLoadGate';
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme/tokens';
 import type { GymSettings, SettingsResponse } from '../types';
+import { isValidTimezone } from '../types';
 import { AppHeader } from '../components/AppHeader';
 import { ErrorState } from '../components/ErrorState';
 import { FormField } from '../components/FormField';
@@ -62,6 +63,17 @@ export function EditGymProfileScreen({ onBack, onSaved }: EditGymProfileScreenPr
     if (!loaded) return;
     if (!name.trim()) {
       setError('Gym name cannot be empty.');
+      return;
+    }
+    // V10-L34: the timezone field is free text and used to accept
+    // anything — the invalid stored value 'india' (Yodha) got in
+    // through a path like this. Refuse an invalid IANA zone on save
+    // instead of letting it re-enter the database.
+    const typedTimezone = timezone.trim();
+    if (typedTimezone && !isValidTimezone(typedTimezone)) {
+      setError(
+        `"${typedTimezone}" is not a valid timezone. Use an IANA timezone like Asia/Kolkata, Asia/Dubai, Europe/London, or America/New_York.`,
+      );
       return;
     }
     setSaving(true);

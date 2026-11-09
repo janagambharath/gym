@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Modal,
@@ -173,6 +173,15 @@ export function OwnerLeadsScreen({ onBack }: OwnerLeadsScreenProps) {
   const [error, setError] = useState<string | undefined>();
   const [showForm, setShowForm] = useState(false);
   const [savingLead, setSavingLead] = useState(false);
+  // V10-L36: stable per-form idempotency key (AddMember / RecordPayment
+  // / RenewMember pattern). The in-flight guard covers double-taps, but
+  // a submit that times out after the server committed, then a user
+  // retry, used to mint a fresh key per call and create a duplicate
+  // lead. Cleared after success so the next lead gets a fresh key.
+  const leadRequestKeyRef = useRef<string | undefined>(undefined);
+
+  const createLeadRequestKey = (): string =>
+    `lead-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
   const [actioningId, setActioningId] = useState<number | null>(null);
 
   // Add-lead form
@@ -312,8 +321,14 @@ export function OwnerLeadsScreen({ onBack }: OwnerLeadsScreenProps) {
       return;
     }
     setSavingLead(true);
+    // V10-L36: reuse the per-form key across retries of this same
+    // submit, so a timeout retry replays instead of duplicating the
+    // lead. A 4xx clears it (the submit was rejected, not committed).
+    const idempotencyKey = leadRequestKeyRef.current ?? createLeadRequestKey();
+    leadRequestKeyRef.current = idempotencyKey;
     const res = await apiRequest<{ lead: OwnerLead }>('/api/mobile/v1/owner/leads', {
       method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
       body: {
         name: name.trim(),
         phone: normalizedPhone,
@@ -326,6 +341,7 @@ export function OwnerLeadsScreen({ onBack }: OwnerLeadsScreenProps) {
     });
     setSavingLead(false);
     if (res.ok) {
+      leadRequestKeyRef.current = undefined;
       setName('');
       setPhone('');
       setInterestedPlan('');
@@ -336,6 +352,9 @@ export function OwnerLeadsScreen({ onBack }: OwnerLeadsScreenProps) {
       Alert.alert('Lead saved', 'Lead saved to the follow-up queue.');
       void load();
     } else {
+      if (res.error.status && res.error.status < 500) {
+        leadRequestKeyRef.current = undefined;
+      }
       Alert.alert('Could not save lead', res.error.message);
     }
   };

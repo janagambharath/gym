@@ -34,6 +34,13 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
   const [expired, setExpired] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
+  // V10-M9: per-leg errors (PWA V9-M6 mirror). A single failed leg used
+  // to clear the error and silently hide that section — and when the
+  // failed leg was the only non-empty one, the screen rendered a false
+  // "All caught up!". Each leg now carries its own error, rendered
+  // inline in its section with retry.
+  const [upcomingError, setUpcomingError] = useState<string | undefined>();
+  const [expiredError, setExpiredError] = useState<string | undefined>();
   const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
 
@@ -50,13 +57,22 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
 
       if (upcomingRes.ok) {
         setUpcoming(upcomingRes.data.members);
+        setUpcomingError(undefined);
       } else if (upcomingRes.error.status === 401) {
         onLogout();
         return;
+      } else {
+        setUpcomingError(upcomingRes.error.message);
       }
 
       if (expiredRes.ok) {
         setExpired(expiredRes.data.members);
+        setExpiredError(undefined);
+      } else if (expiredRes.error.status === 401) {
+        onLogout();
+        return;
+      } else {
+        setExpiredError(expiredRes.error.message);
       }
 
       if (!upcomingRes.ok && !expiredRes.ok) {
@@ -182,7 +198,10 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
 
   const totalCount = today.length + thisWeek.length + upcomingLater.length + expired.length;
 
-  if (totalCount === 0) {
+  // V10-M9: never render "All caught up!" while either leg has failed —
+  // the failed leg may be the only non-empty one, and the success state
+  // would lie in the optimistic direction.
+  if (totalCount === 0 && !upcomingError && !expiredError) {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
@@ -196,6 +215,25 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
       </SafeAreaView>
     );
   }
+
+  // V10-M9: inline per-leg error with retry, rendered in place of the
+  // section whose fetch failed — the section must not silently vanish.
+  const renderLegError = (title: string, message: string | undefined) => (
+    <View style={styles.section}>
+      <View style={styles.sectionHeaderRow}>
+        <View style={[styles.sectionDot, { backgroundColor: colors.critical }]} />
+        <Text style={styles.sectionTitle}>{title}</Text>
+      </View>
+      <View style={styles.legErrorCard}>
+        <Text style={styles.legErrorText}>
+          Couldn&apos;t load {title.toLowerCase()} — {message}
+        </Text>
+        <TouchableOpacity style={styles.legErrorRetryBtn} onPress={refresh} activeOpacity={0.7}>
+          <Text style={styles.legErrorRetryText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -219,6 +257,9 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
         }
         renderItem={() => (
           <View style={styles.content}>
+            {/* V10-M9: the upcoming leg failed — show the failure inline
+                instead of silently hiding every upcoming section. */}
+            {upcomingError ? renderLegError('Upcoming renewals', upcomingError) : null}
             {/* Expiring Today */}
             {today.length > 0 ? (
               <View style={styles.section}>
@@ -268,6 +309,7 @@ export function RenewalsScreen({ onLogout, onSelectMember, onRenew, onNavigateCa
             ) : null}
 
             {/* Expired */}
+            {expiredError ? renderLegError('Expired memberships', expiredError) : null}
             {expired.length > 0 ? (
               <View style={styles.section}>
                 <View style={styles.sectionHeaderRow}>
@@ -404,6 +446,30 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: spacing.md,
+  },
+  legErrorCard: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  legErrorText: {
+    color: colors.critical,
+    fontSize: fontSize.sm,
+  },
+  legErrorRetryBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.critical,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  legErrorRetryText: {
+    color: colors.textInverse,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   sectionDot: {
     borderRadius: 4,

@@ -404,6 +404,24 @@ let displayPreferences: DisplayPreferences = {
   country: 'IN', currency: 'INR', timezone: 'Asia/Kolkata',
 };
 
+/** The last invalid stored gym timezone seen (e.g. Yodha's literal
+ * 'india'). Mirrors the PWA V9-L12: formatters used to fall back to
+ * device-local time silently while the UI still claimed "(gym time)".
+ * The bad value is remembered so the Dashboard can warn the owner
+ * instead (V10-L34); the effective zone falls back to Asia/Kolkata
+ * EXPLICITLY, never silently to device-local. */
+let invalidStoredTimezone: string | null = null;
+
+/** The stored timezone that failed validation, or null when it is valid. */
+export function getInvalidStoredTimezone(): string | null {
+  return invalidStoredTimezone;
+}
+
+/** The timezone actually used for display (always a valid IANA zone). */
+export function getEffectiveTimezone(): string {
+  return displayPreferences.timezone;
+}
+
 /** Timezones already warned about, so a broken gym timezone is loud once
  * instead of spamming the log on every formatted date. */
 const warnedInvalidTimezones = new Set<string>();
@@ -412,7 +430,7 @@ function warnInvalidTimezoneOnce(timezone: string): void {
   if (warnedInvalidTimezones.has(timezone)) return;
   warnedInvalidTimezones.add(timezone);
   console.warn(
-    `[display] Invalid gym timezone "${timezone}" — dates will use the device timezone until the gym profile is fixed in Settings.`,
+    `[display] Invalid gym timezone "${timezone}" — dates will use Asia/Kolkata until the gym profile is fixed in Settings.`,
   );
 }
 
@@ -463,13 +481,21 @@ export function configureDisplayPreferences(preferences: Partial<DisplayPreferen
   // every shared formatter silently fell back to device-local times.
   // Warn loudly here so the bad value is visible; the formatters and
   // safeDateKeyInTimezone still fall back instead of throwing.
-  if (preferences.timezone && !isValidTimezone(preferences.timezone)) {
-    warnInvalidTimezoneOnce(preferences.timezone);
+  // V10-L34 (PWA V9-L12 mirror): remember the invalid stored value and
+  // fall back to Asia/Kolkata EXPLICITLY, so the Dashboard warning can
+  // name the stored value and the effective zone instead of the UI
+  // silently claiming "(gym time)" while showing device-local times.
+  const storedTz = preferences.timezone ?? displayPreferences.timezone;
+  if (storedTz && !isValidTimezone(storedTz)) {
+    invalidStoredTimezone = storedTz;
+    warnInvalidTimezoneOnce(storedTz);
+  } else if (storedTz) {
+    invalidStoredTimezone = null;
   }
   displayPreferences = {
     country: preferences.country?.toUpperCase() || displayPreferences.country,
     currency: preferences.currency?.toUpperCase() || displayPreferences.currency,
-    timezone: preferences.timezone || displayPreferences.timezone,
+    timezone: storedTz && isValidTimezone(storedTz) ? storedTz : (storedTz ? 'Asia/Kolkata' : displayPreferences.timezone),
   };
 }
 
@@ -664,6 +690,21 @@ export type AccessSummary = {
   remote_unlock_path?: 'bridge' | 'adms';
   /** Direct Cloud (ADMS) integration id, or null when the gym is on the legacy bridge. Set by /access/summary; gates the bridge-only Re-sync button. */
   adms_integration_id?: number | null;
+  /**
+   * Queued Direct ADMS commands (V10-L33) — added to the summary
+   * payload by the backend in the same fix-all. Absent (undefined) on
+   * an older backend: the screen renders nothing in that case.
+   * Exact contract: { count, commands: [{ id, action, enroll_number, queued_at }] }.
+   */
+  queued_adms_commands?: {
+    count: number;
+    commands: {
+      id: number;
+      action: string;
+      enroll_number: string | null;
+      queued_at: string | null;
+    }[];
+  } | null;
 };
 
 export type AccessEvent = {
