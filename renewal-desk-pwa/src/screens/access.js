@@ -34,6 +34,31 @@ export default {
     // indication — toast once and show a staleness note on the card.
     let summaryErrorShown = false;
     let summaryLoadedAt = null;
+    // Retry All result (2026-11-09): the last retry-sync response, kept
+    // across the reload so the skip breakdown stays visible under the
+    // banner instead of vanishing with the 3s toast.
+    let lastRetryResult = null;
+
+    // Human labels for the retry-sync skip reasons (backend
+    // _retry_failed_adms_commands). Grouped counts answer "why could
+    // these not be retried" without listing bare command ids.
+    const RETRY_SKIP_LABELS = {
+      test_action: 'test command',
+      unlock_door: 'door unlock',
+      unresolvable_member: 'unknown member',
+      requeue_failed: 'could not re-queue',
+      unsupported_action: 'other command',
+      commands_disabled: 'commands disabled',
+      terminal_never_polled: 'terminal never connected',
+    };
+    function retrySkippedSummary(skipped) {
+      const counts = {};
+      for (const s of skipped || []) counts[s.reason] = (counts[s.reason] || 0) + 1;
+      return Object.entries(counts).map(([reason, n]) => {
+        const label = RETRY_SKIP_LABELS[reason] || 'other command';
+        return `${n} ${label}${n > 1 ? 's' : ''}`;
+      }).join(', ');
+    }
 
     // One feed row — shared by the full render and load-more appends so
     // appended rows look and behave exactly like the first page.
@@ -264,6 +289,13 @@ export default {
               </div>
             ` : ''}
 
+            ${lastRetryResult ? `
+              <div id="retry-reasons" class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);font-size:var(--fs-xs);color:var(--muted)">
+                <div style="font-weight:var(--fw-semibold);color:#B45309">Retry All result: ${formatInteger(lastRetryResult.retried_count || 0)} queued${lastRetryResult.skipped_count ? `, ${formatInteger(lastRetryResult.skipped_count)} skipped` : ''}</div>
+                ${lastRetryResult.skipped_count > 0 ? `<div style="margin-top:var(--sp-xs)">Skipped — ${escapeHtml(retrySkippedSummary(lastRetryResult.skipped))}.</div>` : ''}
+              </div>
+            ` : ''}
+
             ${s.denied_today > 0 ? `
               <div class="card" id="banner-denied" style="margin-top:var(--sp-md);padding:var(--sp-md);background:var(--critical-surface);border-color:var(--critical-border);display:flex;align-items:center;justify-content:space-between;cursor:pointer">
                 <div style="display:flex;align-items:center;gap:var(--sp-sm)">
@@ -389,6 +421,9 @@ export default {
         const btn = scroll.querySelector('#btn-retry-sync');        if (btn) btn.disabled = true;
         const res = await apiRequest('/api/mobile/v1/access/retry-sync', { method: 'POST' });
         if (res.ok) {
+          // Keep the response so the skip breakdown renders under the
+          // banner after the reload (the toast alone only shows counts).
+          lastRetryResult = res.data || null;
           showToast(res.data?.message || 'Commands queued for retry', 'success');
           await loadData();
         } else {
@@ -397,9 +432,14 @@ export default {
         }
       });
 
-      // Clear Failed Biometric Commands (irreversible — for bridge migration)
+      // Clear Failed Biometric Commands. ADMS rows are marked cleared
+      // (history kept), never deleted — the old "permanently delete"
+      // wording is only true for the legacy bridge path.
       scroll.querySelector('#btn-clear-failed')?.addEventListener('click', async () => {
-        if (!confirm('Permanently delete all failed biometric commands? This cannot be undone.')) return;
+        const clearMsg = s.adms_integration_id
+          ? 'Clear all failed biometric commands? They will be marked cleared and hidden from this list (their history is kept).'
+          : 'Permanently delete all failed biometric commands? This cannot be undone.';
+        if (!confirm(clearMsg)) return;
         const btn = scroll.querySelector('#btn-clear-failed');        if (btn) btn.disabled = true;
         const res = await apiRequest('/api/mobile/v1/access/clear-failed', { method: 'POST' });
         if (res.ok) {

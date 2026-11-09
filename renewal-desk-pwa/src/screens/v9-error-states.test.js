@@ -815,3 +815,94 @@ test('V8-L26 partial access: summary-failed + feed-OK shows error + retry, not "
     assert.match(el.innerHTML, /Biometric Device Online/);
   } finally { restore(); }
 });
+
+// RETRY REASONS (2026-11-09): after Retry All, the skip breakdown must
+// render under the banner (grouped by reason), not vanish with the toast —
+// the server returns skipped[] per row, the toast only shows the counts.
+test('access retry: skipped breakdown renders grouped reasons under the banner', async () => {
+  const SUMMARY = { device_online: true, device_name: 'Arun Gym Entry', entries_today: 85, exits_today: 0, denied_today: 0, failed_commands: 8, adms_integration_id: 5, adms_online: true, adms_commands_enabled: true, adms_device_name: 'Arun Gym Entry', last_event_at: '2026-11-09T10:50:00Z' };
+  const SKIPPED = [
+    { command_id: 1, reason: 'test_action' },
+    { command_id: 2, reason: 'test_action' },
+    { command_id: 3, reason: 'test_action' },
+    { command_id: 4, reason: 'test_action' },
+    { command_id: 5, reason: 'test_action' },
+    { command_id: 6, reason: 'unlock_door' },
+    { command_id: 7, reason: 'unlock_door' },
+    { command_id: 8, reason: 'unresolvable_member' },
+  ];
+  const { calls, restore } = installFetch(async (url) => {
+    if (url.includes('/api/mobile/v1/access/retry-sync')) {
+      return okData({ retried_count: 0, skipped_count: 8, skipped: SKIPPED, message: 'Queued 0 failed command(s) for retry; 8 could not be retried.' });
+    }
+    if (url.includes('/api/mobile/v1/access/summary')) return okData({ ...SUMMARY });
+    if (url.includes('/api/mobile/v1/access/events')) return okData({ events: [{ id: 1, event_type: 'ENTRY', member_id: 7, member_name: 'Prem', event_timestamp: '2026-11-09T10:50:00Z' }], pagination: { total: 1, total_pages: 1, page: 1 } });
+    return errData(404, 'not found');
+  });
+  try {
+    const el = await mount(access);
+    assert.match(el.innerHTML, /failed to sync/);
+    assert.ok(el.querySelector('#btn-retry-sync'), 'Retry All exists');
+    assert.equal(el.querySelector('#retry-reasons'), null, 'no reasons before retry');
+    el.querySelector('#btn-retry-sync').click();
+    await tick();
+    await tick();
+    const reasons = el.querySelector('#retry-reasons');
+    assert.ok(reasons, 'reasons detail renders after retry');
+    assert.match(reasons.innerHTML, /0 queued, 8 skipped/);
+    assert.match(reasons.innerHTML, /5 test commands/);
+    assert.match(reasons.innerHTML, /2 door unlocks/);
+    assert.match(reasons.innerHTML, /1 unknown member/);
+    assert.equal(calls.filter((c) => c.url.includes('/retry-sync')).length, 1, 'one retry POST');
+  } finally { restore(); }
+});
+
+// CLEAR CONFIRM (2026-11-09): ADMS gyms mark failed rows cleared (history
+// kept), never delete — the confirm must not claim permanent deletion.
+// Bridge gyms still delete, so the old wording stays for them.
+test('access clear: ADMS confirm says marked cleared, bridge confirm still says permanently delete', async () => {
+  const SUMMARY_ADMS = { device_online: true, entries_today: 85, exits_today: 0, denied_today: 0, failed_commands: 2, adms_integration_id: 3, adms_online: true, adms_commands_enabled: true, last_event_at: '2026-11-09T10:50:00Z' };
+  const SUMMARY_BRIDGE = { device_online: true, entries_today: 85, exits_today: 0, denied_today: 0, failed_commands: 2, bridge_online: true, last_event_at: '2026-11-09T10:50:00Z' };
+  const EVENTS = { events: [{ id: 1, event_type: 'ENTRY', member_id: 7, member_name: 'Prem', event_timestamp: '2026-11-09T10:50:00Z' }], pagination: { total: 1, total_pages: 1, page: 1 } };
+  const prevConfirm = globalThis.confirm;
+  let captured = null;
+  globalThis.confirm = (msg) => { captured = msg; return false; };
+  try {
+    // ADMS gym.
+    {
+      const { calls, restore } = installFetch(async (url) => {
+        if (url.includes('/api/mobile/v1/access/summary')) return okData({ ...SUMMARY_ADMS });
+        if (url.includes('/api/mobile/v1/access/events')) return okData({ ...EVENTS });
+        return errData(404, 'not found');
+      });
+      try {
+        const el = await mount(access);
+        captured = null;
+        el.querySelector('#btn-clear-failed').click();
+        await tick();
+        assert.ok(captured, 'confirm asked');
+        assert.match(captured, /marked cleared/);
+        assert.doesNotMatch(captured, /Permanently delete/);
+        assert.equal(calls.filter((c) => c.url.includes('/clear-failed')).length, 0, 'no clear POST when confirm declined');
+      } finally { restore(); }
+    }
+    // Bridge gym.
+    {
+      const { restore } = installFetch(async (url) => {
+        if (url.includes('/api/mobile/v1/access/summary')) return okData({ ...SUMMARY_BRIDGE });
+        if (url.includes('/api/mobile/v1/access/events')) return okData({ ...EVENTS });
+        return errData(404, 'not found');
+      });
+      try {
+        const el = await mount(access);
+        captured = null;
+        el.querySelector('#btn-clear-failed').click();
+        await tick();
+        assert.ok(captured, 'confirm asked');
+        assert.match(captured, /Permanently delete/);
+      } finally { restore(); }
+    }
+  } finally {
+    globalThis.confirm = prevConfirm;
+  }
+});
