@@ -148,7 +148,12 @@ async function attemptRefresh() {
     if (!envelope.success || !envelope.data) {
       clearSession();
       cachedSession = undefined;
-      return undefined;
+      // V11-L22: a 200 with success:false is a DEFINITIVE failure (the
+      // session is already cleared) — returning undefined ("transient")
+      // used to report "could not reach the server" forever while every
+      // retry 401d and the session-expired event never fired. Return
+      // null so apiRequest routes to login.
+      return null;
     }
     const newSession = {
       accessToken: envelope.data.access_token,
@@ -302,6 +307,10 @@ export async function apiRequest(path, options = {}) {
           message: errorMessage(envelope.error, envelope.message || `Request failed (${response.status}).`),
           code: envelope.error?.code,
           status: response.status,
+          // V11-H4: per-row validation details (e.g. batch-create's
+          // error.details.errors) ride here so screens can surface
+          // WHICH row failed instead of a generic message.
+          details: envelope.error?.details,
         },
         message: typeof envelope.message === 'string' ? envelope.message : undefined,
       };

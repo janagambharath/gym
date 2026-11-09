@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/live-refresh.test.js src/utils.test.js src/api-idempotency.test.js src/screens/v7-error-states.test.js src/screens/v8-error-states.test.js src/screens/v9-error-states.test.js src/screens/v10-error-states.test.js src/screens/member-photo.test.js"
+    "test": "node --test src/live-refresh.test.js src/utils.test.js src/api-idempotency.test.js src/screens/v7-error-states.test.js src/screens/v8-error-states.test.js src/screens/v9-error-states.test.js src/screens/v10-error-states.test.js src/screens/v11-error-states.test.js src/screens/member-photo.test.js"
   },
   "devDependencies": {
     "vite": "^6.0.0",

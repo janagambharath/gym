@@ -103,6 +103,18 @@ export default {
       total = res.data.pagination?.total ?? payments.length;
       if (append) page = fetchPage;
 
+      // V11-L14: a summary-leg failure used to silently drop the Today /
+      // Pending / Count cards (the Pending count drives the verify
+      // workflow) with no signal. Show an inline notice + retry in the
+      // summary slot instead (mirror subscription.js).
+      if (page === 1 && sumRes && !sumRes.ok) {
+        el.querySelector('#pay-summary').innerHTML = `
+          <div style="padding:var(--sp-lg)"><div class="card card-body" style="display:flex;align-items:center;justify-content:space-between;gap:var(--sp-md);background:var(--warning-surface,#fef3c7)">
+            <span style="font-size:var(--fs-sm);color:var(--warning,#92400e)">Could not load the payment summary (${sumRes.error?.message || 'check your connection'}).</span>
+            <button class="btn btn-sm btn-secondary" id="pay-summary-retry">Try again</button>
+          </div></div>`;
+        el.querySelector('#pay-summary-retry')?.addEventListener('click', () => loadPayments());
+      }
       if (sumRes?.ok) {
         const s = sumRes.data;
         el.querySelector('#pay-summary').innerHTML = `

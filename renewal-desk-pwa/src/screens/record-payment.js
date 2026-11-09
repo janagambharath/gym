@@ -95,11 +95,24 @@ async function mountRecord(el, params) {
     el.querySelector('#rp-change')?.addEventListener('click', () => { selectedMember = null; render(); });
     const searchInput = el.querySelector('#rp-search');
     if (searchInput) {
+      let lastSearchQuery = '';
       const doSearch = debounce(async (q) => {
         if (!q) { el.querySelector('#rp-results').innerHTML = ''; return; }
+        lastSearchQuery = q;
         const r = await apiRequest(`/api/mobile/v1/members?q=${encodeURIComponent(q)}&page_size=5`);
-        if (!r.ok) return;
-        el.querySelector('#rp-results').innerHTML = (r.data.members||[]).map(m => `<div class="list-item" data-mid="${m.id}" style="cursor:pointer"><div class="list-item-title">${escapeHtml(m.full_name)}</div><div class="list-item-subtitle">${escapeHtml(m.phone)}</div></div>`).join('');
+        // V11-M2: a search failure used to silently keep the PREVIOUS
+        // query's results on screen as if they matched — recording a
+        // payment against the stale list can attach money to the wrong
+        // member. Clear the results and show the error with retry
+        // (same pattern as the access check-in candidate fix, V10-L35).
+        const resultsEl = el.querySelector('#rp-results');
+        if (!resultsEl) return;
+        if (!r.ok) {
+          resultsEl.innerHTML = `<div style="padding:var(--sp-md);text-align:center;color:var(--critical);font-size:var(--fs-sm)">Couldn’t search members (${escapeHtml(r.error?.message || 'check your connection')}). <button type="button" class="btn btn-sm btn-secondary" id="rp-search-retry">Try again</button></div>`;
+          resultsEl.querySelector('#rp-search-retry')?.addEventListener('click', () => doSearch(lastSearchQuery));
+          return;
+        }
+        resultsEl.innerHTML = (r.data.members||[]).map(m => `<div class="list-item" data-mid="${m.id}" style="cursor:pointer"><div class="list-item-title">${escapeHtml(m.full_name)}</div><div class="list-item-subtitle">${escapeHtml(m.phone)}</div></div>`).join('');
         el.querySelectorAll('[data-mid]').forEach(item => item.addEventListener('click', () => {
           selectedMember = (r.data.members||[]).find(x => String(x.id)===item.dataset.mid); render();
         }));

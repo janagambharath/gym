@@ -1,6 +1,6 @@
 /* Member Detail Screen */
 import { attachLiveRefresh } from '../live-refresh.js';
-import { apiRequest, uploadFormData } from '../api.js';
+import { apiRequest, checkInMember, uploadFormData } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderInfoRowHtml, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
 import { icon } from '../icons.js';
@@ -29,6 +29,14 @@ export default {
     // the key rotates after a successful send so a later deliberate
     // reminder is a new action, not a replay.
     let reminderKey = uuid();
+
+    // V11-L12 (V10-L25 partial): one stable idempotency key per
+    // screen mount for Check In / Check Out — the same pattern as the
+    // access modal (access.js checkinKey via checkInMember). The old
+    // raw apiRequest minted a fresh key per call, so a retry after a
+    // lost response punched twice. Rotates after a completed
+    // check-in/out so a later deliberate tap is a new action.
+    let detailCheckinKey = uuid();
 
     // Function to render the entire screen with current member state
     const render = () => {
@@ -275,18 +283,17 @@ export default {
         const isCheckingOut = member.is_inside;
         btn.disabled = true;
         btn.textContent = isCheckingOut ? 'Checking out...' : 'Checking in...';
-        const res = await apiRequest('/api/mobile/v1/access/checkin', {
-          method: 'POST',
-          body: { member_id: member.id, type: isCheckingOut ? 'EXIT' : 'ENTRY' },
-        });
+        const res = await checkInMember(member.id, isCheckingOut ? 'EXIT' : 'ENTRY', { idempotencyKey: detailCheckinKey });
         // V6-M14: the backend returns HTTP 200 success:true with the denial
         // only in the top-level message + data.event_type — do NOT flip
         // is_inside or toast success on a denial.
         if (res.ok && res.data?.event_type === 'ACCESS_DENIED') {
+          detailCheckinKey = uuid();
           showToast(res.message || res.data?.message || `${member.full_name} was denied access — membership is not active.`, 'error');
           btn.disabled = false;
           btn.innerHTML = member.is_inside ? `${icon('back', 18)} Check Out Member` : `${icon('access', 18, 'white')} Check In Member (Attendance)`;
         } else if (res.ok) {
+          detailCheckinKey = uuid();
           member.is_inside = !isCheckingOut;
           showToast(res.data?.message || (isCheckingOut ? `${member.full_name} checked out` : `${member.full_name} checked in!`), 'success');
           render();

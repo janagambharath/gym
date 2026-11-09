@@ -59,6 +59,17 @@ function loadSession() {
 function saveSession(data) { session = data; localStorage.setItem(SESSION_KEY, JSON.stringify(data)); }
 function clearSession() { session = null; localStorage.removeItem(SESSION_KEY); }
 
+// V11-M8: revoke the server session on sign-out, then clear locally.
+// POST /api/member/v1/auth/logout revokes the caller's refresh token
+// (same shape as the owner logout: refresh token in the body). The call
+// is best-effort — the endpoint did not exist yet when this was wired,
+// so a failure still signs the member out locally.
+async function signOutMember() {
+  try { await api('/api/member/v1/auth/logout', { method: 'POST', body: { refresh_token: session?.refreshToken } }); } catch { /* local clear is the fallback */ }
+  clearSession();
+  renderLogin();
+}
+
 let memberRefreshInFlight;
 async function refreshMemberSession() {
   if (memberRefreshInFlight) return memberRefreshInFlight;
@@ -186,6 +197,10 @@ function memberLoadError(active, message, retry) {
 
 let resendTimer = null;
 
+// V11-M11: one-time paused-after-renew notice, set by renderRenew's claim
+// handler and consumed once by the next renderHome.
+let homeNotice = null;
+
 function renderLogin(message = '') {
   beginPage('login');
   if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
@@ -204,7 +219,13 @@ function renderLogin(message = '') {
     sendBtn.textContent = 'Send WhatsApp code';
     if (!result.ok) return renderLogin(result.error);
     const data = result.data || {};
-    renderOtp(phone, data.challenge || data.challenge_token, {
+    // V11-H6: the backend deliberately returns success:true with
+    // challenge:null for unknown/staff/multi-gym numbers (V9-L2
+    // anti-enumeration). Never enter the OTP step without a challenge —
+    // no code is coming and every verify would 400.
+    const challenge = data.challenge || data.challenge_token;
+    if (!challenge) return renderLogin('No member account found for this number — ask your gym.');
+    renderOtp(phone, challenge, {
       delivery_ok: data.delivery_ok,
       delivery_warning: data.delivery_warning,
       delivery_error: data.delivery_error,
@@ -352,9 +373,15 @@ function renderOtp(phone, initialChallenge, meta = {}, alertNotice = null) {
       return;
     }
     const data = result.data || {};
-    if (data.challenge || data.challenge_token) {
-      currentChallenge = data.challenge || data.challenge_token;
+    // V11-H6: a resend that comes back with no challenge means no code
+    // is coming — say so instead of repeating the "code sent" banner.
+    if (!data.challenge && !data.challenge_token) {
+      bannerContainer.innerHTML = notice('No member account found for this number — ask your gym.', 'error');
+      resendBtn.disabled = false;
+      resendBtn.textContent = 'Resend code';
+      return;
     }
+    currentChallenge = data.challenge || data.challenge_token;
     if (data.wa_chat_url) {
       meta.wa_chat_url = data.wa_chat_url;
     }
@@ -428,15 +455,27 @@ async function renderHome(background = false) {
   }
   const d = result.data, member = d.member || {}, gym = d.gym || {}, branding = d.branding || {};
   applyGymPrefs(gym);
+  // V11-M11: one-time notice set by renderRenew when a claim succeeded
+  // while the member was paused — consumed here, then cleared.
+  const pausedRenew = homeNotice;
+  homeNotice = null;
+  const waDigits = (pausedRenew?.gymPhone || '').replace(/\D/g, '');
+  const waNumber = waDigits.length === 10 ? `91${waDigits}` : waDigits;
+  const pausedNoticeHtml = pausedRenew ? `<div style="margin:14px 0;padding:14px;border-radius:12px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;font-size:14px;line-height:1.55"><strong>Door access is still paused.</strong> Your renewal${pausedRenew.amount ? ` of ${money(pausedRenew.amount)}` : ''} is recorded, but door access stays paused until the gym resumes it.${pausedRenew.gymPhone ? ` <a href="tel:${esc(pausedRenew.gymPhone)}" style="color:#1d4ed8;font-weight:700">Call the gym to resume</a>${waNumber ? ` · <a href="https://wa.me/${waNumber}?text=${encodeURIComponent('Hi, I just renewed my membership but my door access is still paused. Could you please resume it?')}" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;font-weight:700">WhatsApp the gym</a>` : ''}` : ' Ask your gym to resume access.'}</div>` : '';
   const access = await api('/api/member/v1/access?per_page=1');
   if (version !== pageVersion) return;
-  const photo = member.profile_photo_url ? `<img src="${esc(member.profile_photo_url)}" alt="${esc(member.full_name||'Member')} profile" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #ffffff99">` : `<div aria-hidden="true" style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:#ffffff30;font-size:28px;font-weight:800">${esc((member.full_name||'M').slice(0,1).toUpperCase())}</div>`;
+  // V11-L47: an expired (7-day) or revoked signed photo URL renders a
+  // broken avatar without an error fallback — fall back to initials.
+  const initialsHtml = `<div aria-hidden="true" style="width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:#ffffff30;font-size:28px;font-weight:800">${esc((member.full_name||'M').slice(0,1).toUpperCase())}</div>`;
+  const photo = member.profile_photo_url ? `<img id="home-photo" src="${esc(member.profile_photo_url)}" alt="${esc(member.full_name||'Member')} profile" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #ffffff99">` : initialsHtml;
   const days = member.days_left;
   const banners = (branding.announcements||[]).slice(0,3).map((item)=>`<article style="padding:14px 16px;background:#eff6ff;border-radius:14px;margin-top:10px"><strong>${esc(item.title||'Gym update')}</strong><p style="margin:6px 0 0;color:#475569;line-height:1.45">${esc(item.message||'')}</p></article>`).join('');
   const offers = (branding.offers||[]).slice(0,3).map((item)=>`<article style="padding:14px 16px;background:#f0fdf4;border-radius:14px;margin-top:10px"><strong>${esc(item.title||'Gym offer')}</strong><p style="margin:6px 0 0;color:#475569;line-height:1.45">${esc(item.description||'')}</p></article>`).join('');
-  memberPage('home', `<header style="padding:28px 22px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-radius:0 0 26px 26px"><div style="display:flex;align-items:center;gap:14px">${photo}<div><div style="font-size:13px;opacity:.85">${esc(gym.name || branding.gym_name || 'Your Gym')}</div><h1 style="font-size:24px;margin:5px 0">Hi, ${esc((member.full_name || session.member?.full_name || 'Member').split(' ')[0])}</h1></div></div><div style="display:flex;align-items:end;gap:10px;margin-top:22px"><strong style="font-size:44px;line-height:1">${days == null ? '—' : Math.max(days,0)}</strong><span style="padding-bottom:4px;opacity:.9">${member.is_expired?'membership expired':'days remaining'}</span></div><div style="margin-top:12px;display:inline-block;padding:6px 10px;background:#ffffff22;border-radius:999px;font-size:12px;font-weight:700">${esc(String(member.status||'active').toUpperCase())}</div></header><section style="padding:18px"><article style="background:#fff;border-radius:18px;padding:18px;box-shadow:0 3px 14px #0f172a0c"><div style="color:#64748b;font-size:12px;font-weight:700;letter-spacing:.08em">CURRENT MEMBERSHIP</div><h2 style="margin:7px 0">${esc(member.plan_name || 'Membership')}</h2><div>${pageDate(member.membership_start)} – ${pageDate(member.membership_end)}</div><div style="color:#64748b;margin-top:7px">${esc(member.plan_price ? money(member.plan_price) : '')}</div></article>${d.pending_payment ? notice(`Payment ${money(d.pending_payment.amount)} is waiting for gym confirmation.`, 'warning') : ''}<div style="display:flex;gap:10px;margin-top:14px"><div style="flex:1;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px"><strong style="font-size:22px">${access.ok ? access.data.summary?.today_entries||0 : '—'}</strong><div style="color:#64748b;font-size:12px;margin-top:3px">Visits today</div></div><div style="flex:1;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px"><strong style="font-size:16px">${pageDate(access.ok ? access.data.summary?.last_visit : null)}</strong><div style="color:#64748b;font-size:12px;margin-top:3px">Last visit</div></div></div><button id="renew" style="width:100%;margin-top:14px;padding:15px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:700;font-size:16px">Renew membership</button>${gym.address ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${gym.name||''} ${gym.address}`)}" style="display:block;margin-top:12px;padding:14px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;color:#1d4ed8;text-decoration:none">📍 ${esc(gym.address)} · Get directions</a>` : ''}${banners ? `<h2 style="font-size:18px;margin:24px 0 8px">Gym updates</h2>${banners}` : ''}${offers ? `<h2 style="font-size:18px;margin:24px 0 8px">Member offers</h2>${offers}` : ''}<button id="signout" style="margin:22px 0 4px;padding:10px 0;border:0;background:none;color:#64748b">Sign out</button></section>`);
+  memberPage('home', `<header style="padding:28px 22px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-radius:0 0 26px 26px"><div style="display:flex;align-items:center;gap:14px">${photo}<div><div style="font-size:13px;opacity:.85">${esc(gym.name || branding.gym_name || 'Your Gym')}</div><h1 style="font-size:24px;margin:5px 0">Hi, ${esc((member.full_name || session.member?.full_name || 'Member').split(' ')[0])}</h1></div></div><div style="display:flex;align-items:end;gap:10px;margin-top:22px"><strong style="font-size:44px;line-height:1">${days == null ? '—' : Math.max(days,0)}</strong><span style="padding-bottom:4px;opacity:.9">${member.is_expired?'membership expired':'days remaining'}</span></div><div style="margin-top:12px;display:inline-block;padding:6px 10px;background:#ffffff22;border-radius:999px;font-size:12px;font-weight:700">${esc(String(member.status||'active').toUpperCase())}</div></header><section style="padding:18px"><article style="background:#fff;border-radius:18px;padding:18px;box-shadow:0 3px 14px #0f172a0c"><div style="color:#64748b;font-size:12px;font-weight:700;letter-spacing:.08em">CURRENT MEMBERSHIP</div><h2 style="margin:7px 0">${esc(member.plan_name || 'Membership')}</h2><div>${pageDate(member.membership_start)} – ${pageDate(member.membership_end)}</div><div style="color:#64748b;margin-top:7px">${esc(member.plan_price ? money(member.plan_price) : '')}</div></article>${d.pending_payment ? notice(`Payment ${money(d.pending_payment.amount)} is waiting for gym confirmation.`, 'warning') : ''}${pausedNoticeHtml}<div style="display:flex;gap:10px;margin-top:14px"><div style="flex:1;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px"><strong style="font-size:22px">${access.ok ? access.data.summary?.today_entries||0 : '—'}</strong><div style="color:#64748b;font-size:12px;margin-top:3px">Visits today</div></div><div style="flex:1;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:14px"><strong style="font-size:16px">${pageDate(access.ok ? access.data.summary?.last_visit : null)}</strong><div style="color:#64748b;font-size:12px;margin-top:3px">Last visit</div></div></div><button id="renew" style="width:100%;margin-top:14px;padding:15px;border:0;border-radius:12px;background:#2563eb;color:white;font-weight:700;font-size:16px">Renew membership</button>${gym.address ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${gym.name||''} ${gym.address}`)}" style="display:block;margin-top:12px;padding:14px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;color:#1d4ed8;text-decoration:none">📍 ${esc(gym.address)} · Get directions</a>` : ''}${banners ? `<h2 style="font-size:18px;margin:24px 0 8px">Gym updates</h2>${banners}` : ''}${offers ? `<h2 style="font-size:18px;margin:24px 0 8px">Member offers</h2>${offers}` : ''}<button id="signout" style="margin:22px 0 4px;padding:10px 0;border:0;background:none;color:#64748b">Sign out</button></section>`);
+  // V11-L47: replace a failed photo with initials.
+  document.querySelector('#home-photo')?.addEventListener('error', (event) => { event.currentTarget.outerHTML = initialsHtml; });
   document.querySelector('#renew').onclick = () => renderRenew();
-  document.querySelector('#signout').onclick = () => { clearSession(); renderLogin(); };
+  document.querySelector('#signout').onclick = signOutMember;
 }
 
 async function renderProfile() {
@@ -445,15 +484,33 @@ async function renderProfile() {
   if (version !== pageVersion) return;
   if (!result.ok) { if(result.status===401){clearSession();return renderLogin(result.error);} return memberLoadError('profile',result.error,renderProfile); } const d = result.data, m = d.member || {}, gym = d.gym || {};
   applyGymPrefs(gym);
-  const avatar = m.profile_photo_url ? `<img src="${esc(m.profile_photo_url)}" alt="Profile photo" style="width:104px;height:104px;border-radius:50%;object-fit:cover">` : `<div style="width:104px;height:104px;border-radius:50%;display:grid;place-items:center;background:#dbeafe;color:#1d4ed8;font-size:38px;font-weight:800">${esc((m.full_name||'M').slice(0,1).toUpperCase())}</div>`;
+  // V11-L47: fall back to initials if the signed photo URL expired.
+  const profileInitials = `<div style="width:104px;height:104px;border-radius:50%;display:grid;place-items:center;background:#dbeafe;color:#1d4ed8;font-size:38px;font-weight:800">${esc((m.full_name||'M').slice(0,1).toUpperCase())}</div>`;
+  const avatar = m.profile_photo_url ? `<img id="profile-photo-img" src="${esc(m.profile_photo_url)}" alt="Profile photo" style="width:104px;height:104px;border-radius:50%;object-fit:cover">` : profileInitials;
   memberPage('profile', `<section style="padding:22px"><h1 style="font-size:26px;margin:6px 0 18px">My profile</h1><article style="background:#fff;border-radius:18px;padding:20px;text-align:center;box-shadow:0 3px 14px #0f172a0c"><div>${avatar}</div><h2 style="margin:12px 0 4px">${esc(m.full_name||'Member')}</h2><div style="color:#64748b">${esc(m.phone||'')}</div><label for="photo" style="display:inline-block;margin-top:14px;padding:10px 14px;background:#eff6ff;color:#1d4ed8;border-radius:10px;font-weight:700;cursor:pointer">${m.profile_photo_url?'Change photo':'Add profile photo'}</label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp" style="display:none">${m.profile_photo_url?'<button id="remove-photo" style="display:block;margin:10px auto 0;border:0;background:none;color:#b91c1c">Remove photo</button>':''}<p style="font-size:12px;color:#64748b;margin:12px 0 0">JPEG, PNG, or WebP · up to 3 MB</p></article><form id="profile-form" style="background:#fff;border-radius:18px;padding:18px;margin-top:14px"><h2 style="font-size:17px;margin:0 0 14px">Contact details</h2><label style="display:block;font-size:13px;font-weight:700;margin:12px 0 6px">Email</label><input name="email" type="email" maxlength="255" value="${esc(m.email||'')}" placeholder="you@example.com" style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px"><label style="display:block;font-size:13px;font-weight:700;margin:12px 0 6px">Address</label><textarea name="address" maxlength="2000" rows="3" placeholder="Your address" style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px">${esc(m.address||'')}</textarea><label style="display:block;font-size:13px;font-weight:700;margin:12px 0 6px">Gender (optional)</label><select name="gender" style="box-sizing:border-box;width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;background:white;font-size:16px"><option value="" ${!m.gender?'selected':''}>Prefer not to say</option>${['female','male','other'].map((value)=>`<option value="${value}" ${String(m.gender||'').toLowerCase()===value?'selected':''}>${value[0].toUpperCase()+value.slice(1)}</option>`).join('')}</select><button id="save-profile" style="width:100%;margin-top:16px;padding:14px;border:0;border-radius:11px;background:#2563eb;color:#fff;font-weight:700">Save details</button><p style="font-size:12px;color:#64748b;line-height:1.45">Your name and phone are managed by your gym so your membership and access records stay matched.</p></form><article style="background:#fff;border-radius:18px;padding:18px;margin-top:14px"><h2 style="font-size:17px;margin:0 0 8px">${esc(gym.name||'Your gym')}</h2><div style="color:#64748b">${esc(gym.phone||'Phone not provided')}</div><div style="color:#64748b;margin-top:6px">${esc(gym.address||'Address not provided')}</div>${gym.phone?`<a href="tel:${esc(gym.phone)}" style="display:inline-block;margin-top:12px;color:#1d4ed8">Call the gym</a>`:''}</article><button id="signout" style="margin-top:16px;padding:12px;border:0;background:none;color:#64748b">Sign out</button></section>`);
-  document.querySelector('#photo').addEventListener('change', async (event)=>{
+  // V11-L47: replace a failed photo with initials.
+  document.querySelector('#profile-photo-img')?.addEventListener('error', (event) => { event.currentTarget.outerHTML = profileInitials; });
+  const photoInput = document.querySelector('#photo');
+  const photoLabel = document.querySelector('label[for="photo"]');
+  photoInput.addEventListener('change', async (event)=>{
     const file = event.target.files?.[0]; if (!file) return;
+    // V11-L40: no in-flight guard meant a second pick mid-upload fired a
+    // second POST (two files, last-writer-wins, first orphaned).
+    if (photoInput.disabled) return;
     if (!['image/jpeg','image/png','image/webp'].includes(file.type) || file.size > 3*1024*1024) { alert('Choose a JPEG, PNG, or WebP photo up to 3 MB.'); return; }
     const form = new FormData(); form.append('photo',file);
-    const uploaded = await api('/api/member/v1/profile/photo',{method:'POST',body:form});
-    if (!uploaded.ok) { alert(uploaded.error); return; }
-    await renderProfile();
+    photoInput.disabled = true;
+    if (photoLabel) { photoLabel.style.opacity = '0.5'; photoLabel.style.pointerEvents = 'none'; }
+    try {
+      const uploaded = await api('/api/member/v1/profile/photo',{method:'POST',body:form});
+      if (!uploaded.ok) { alert(uploaded.error); return; }
+      await renderProfile();
+    } finally {
+      // On success renderProfile() replaced this DOM; on failure the
+      // re-enable below restores the picker.
+      photoInput.disabled = false;
+      if (photoLabel) { photoLabel.style.opacity = ''; photoLabel.style.pointerEvents = ''; }
+    }
   });
   document.querySelector('#remove-photo')?.addEventListener('click',async()=>{
     if (!window.confirm('Remove your profile photo?')) return;
@@ -467,7 +524,7 @@ async function renderProfile() {
     if (!saved.ok) { alert(saved.error); return; }
     alert('Your details were saved.'); await renderProfile();
   });
-  document.querySelector('#signout').onclick=()=>{clearSession();renderLogin();};
+  document.querySelector('#signout').onclick=signOutMember;
 }
 
 async function renderMembership(background = false) {
@@ -479,8 +536,12 @@ async function renderMembership(background = false) {
   if(!result.ok){if(result.status===401){clearSession();return renderLogin(result.error);} return memberLoadError('membership',result.error,renderMembership);}
   const d=result.data||{},m=d.membership||{},history=d.renewal_history||[];
   applyGymPrefs(d.gym);
-  memberPage('membership',`<section style="padding:22px"><h1 style="font-size:26px">Membership</h1><article style="background:#fff;border-radius:18px;padding:20px;margin-top:14px"><div style="font-size:12px;color:#64748b;font-weight:700">CURRENT PLAN</div><h2>${esc(m.plan_name||'Membership')}</h2><div>${esc(String(m.status||'').toUpperCase())} · ${esc(m.days_left==null?'—':`${Math.max(m.days_left,0)} days left`)}</div><div style="color:#64748b;margin-top:12px">Started ${pageDate(m.membership_start)}<br>Valid through ${pageDate(m.membership_end)}</div><div style="font-weight:700;margin-top:12px">${m.plan_price?money(m.plan_price):''} ${m.plan_duration_days?`· ${m.plan_duration_days} days`:''}</div><button id="renew" style="width:100%;margin-top:18px;padding:14px;border:0;border-radius:11px;background:#2563eb;color:white;font-weight:700">Renew membership</button></article><h2 style="font-size:18px;margin:24px 0 10px">Renewal history</h2>${history.length?history.map((item)=>`<article style="background:#fff;border-radius:14px;padding:15px;margin-top:9px"><strong>${esc(item.plan_name||'Renewal')}</strong><div style="color:#64748b;margin-top:6px">${pageDate(item.new_start)} – ${pageDate(item.new_end)}</div><div style="margin-top:6px">${money(item.amount)}</div></article>`).join(''):'<p style="color:#64748b">Your confirmed renewals will appear here.</p>'}</section>`);
+  // V11-H8: mirror the RN demand callout — the gym's discounted renewal
+  // offer, with its locked price, on the membership page too.
+  const demandBanner = d.active_renewal_demand ? `<article style="background:#fffbeb;border:1.5px solid #f59e0b;border-radius:18px;padding:18px;margin-top:14px"><div style="font-size:12px;color:#b45309;font-weight:700">SPECIAL RENEWAL OFFER</div><h2 style="margin:7px 0">${esc(d.active_renewal_demand.plan_name)}</h2><div><span style="text-decoration:line-through;color:#64748b">${money(d.active_renewal_demand.standard_price)}</span> <strong style="font-size:22px">${money(d.active_renewal_demand.final_payable || d.active_renewal_demand.amount)}</strong>${d.active_renewal_demand.savings && Number(d.active_renewal_demand.savings) > 0 ? ` <span style="color:#15803d;font-weight:700">Save ${money(d.active_renewal_demand.savings)}</span>` : ''}</div><button id="renew-demand" style="width:100%;margin-top:14px;padding:14px;border:0;border-radius:11px;background:#2563eb;color:white;font-weight:700">Renew at this price</button></article>` : '';
+  memberPage('membership',`<section style="padding:22px"><h1 style="font-size:26px">Membership</h1><article style="background:#fff;border-radius:18px;padding:20px;margin-top:14px"><div style="font-size:12px;color:#64748b;font-weight:700">CURRENT PLAN</div><h2>${esc(m.plan_name||'Membership')}</h2><div>${esc(String(m.status||'').toUpperCase())} · ${esc(m.days_left==null?'—':`${Math.max(m.days_left,0)} days left`)}</div><div style="color:#64748b;margin-top:12px">Started ${pageDate(m.membership_start)}<br>Valid through ${pageDate(m.membership_end)}</div><div style="font-weight:700;margin-top:12px">${m.plan_price?money(m.plan_price):''} ${m.plan_duration_days?`· ${m.plan_duration_days} days`:''}</div><button id="renew" style="width:100%;margin-top:18px;padding:14px;border:0;border-radius:11px;background:#2563eb;color:white;font-weight:700">Renew membership</button></article>${demandBanner}<h2 style="font-size:18px;margin:24px 0 10px">Renewal history</h2>${history.length?history.map((item)=>`<article style="background:#fff;border-radius:14px;padding:15px;margin-top:9px"><strong>${esc(item.plan_name||'Renewal')}</strong><div style="color:#64748b;margin-top:6px">${pageDate(item.new_start)} – ${pageDate(item.new_end)}</div><div style="margin-top:6px">${money(item.amount)}</div></article>`).join(''):'<p style="color:#64748b">Your confirmed renewals will appear here.</p>'}</section>`);
   document.querySelector('#renew').onclick=renderRenew;
+  document.querySelector('#renew-demand')?.addEventListener('click', renderRenew);
 }
 
 async function renderAttendance(page=1,prior=[],background=false) {
@@ -554,7 +615,7 @@ async function renderPayments(page=1,prior=[],background=false) {
 
 async function renderRenew() {
   const version = beginPage('renew');
-  shell('<div style="padding:48px;text-align:center">Loading payment details…</div>'); const [plans, payment] = await Promise.all([api('/api/member/v1/plans'), api('/api/member/v1/payment-info')]);
+  shell('<div style="padding:48px;text-align:center">Loading payment details…</div>'); const [plans, payment, dash] = await Promise.all([api('/api/member/v1/plans'), api('/api/member/v1/payment-info'), api('/api/member/v1/dashboard')]);
   if (version !== pageVersion) return;
   // V6-L31: a failed plans/payment-info fetch used to silently bounce the
   // member home with no error and no retry. Render an error state with
@@ -564,17 +625,52 @@ async function renderRenew() {
     return memberLoadError('membership', err || 'Could not load payment details.', renderRenew);
   }
   const list = plans.data.plans || [], p = payment.data;
-  shell(`<section style="max-width:600px;margin:auto;padding:24px"><button id="back" style="border:0;background:none;color:#2563eb">← Home</button><h1>Renew membership</h1><p style="color:#64748b">Choose a plan, pay using your gym's QR, then submit the payment reference.</p><div id="plans">${list.map((plan) => `<button class="plan" data-id="${plan.id}" data-name="${esc(plan.name)}" data-price="${plan.price}" style="width:100%;text-align:left;margin:10px 0;padding:16px;border:1px solid #cbd5e1;border-radius:14px;background:white"><strong>${esc(plan.name)}</strong><span style="float:right;color:#2563eb;font-weight:700">${money(plan.price)}</span><br><small>${plan.duration_days} days</small></button>`).join('') || notice('No renewal plans are available.', true)}</div><div id="pay" style="display:none;background:white;border-radius:16px;padding:18px;margin-top:16px"><h2 id="plan-name"></h2>${p.qr_public_url ? `<img src="${esc(p.qr_public_url)}" alt="Payment QR" style="width:220px;height:220px;display:block;margin:12px auto;object-fit:contain">` : `<div style="text-align:center;padding:18px;background:#fef3c7;border-radius:12px;margin:12px 0;color:#92400e"><strong>No payment QR available</strong><br>Ask your gym to upload their payment QR code.</div>`}<p><strong>UPI:</strong> ${esc(p.upi_id || 'Contact your gym')}</p><p>${esc(p.instructions || '')}</p><input id="reference" placeholder="UPI transaction reference (optional)" style="width:100%;box-sizing:border-box;padding:13px;border:1px solid #cbd5e1;border-radius:10px"><button id="claim" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:700">I've made the payment</button></div></section>`);
+  // V11-H8: the staff-created discounted renewal demand is the gym's own
+  // offer — surface it with its locked price (mirror of the RN demand
+  // card). The dashboard fetch is best-effort: a failed dashboard must
+  // not block renewing at plan price.
+  const demand = dash.ok ? dash.data.active_renewal_demand : null;
+  const demandGymPhone = dash.ok ? (dash.data.gym?.phone || null) : null;
+  if (dash.ok && dash.data.gym) applyGymPrefs(dash.data.gym);
+  shell(`<section style="max-width:600px;margin:auto;padding:24px"><button id="back" style="border:0;background:none;color:#2563eb">← Home</button><h1>Renew membership</h1>${demand ? `<article style="background:#fffbeb;border:1.5px solid #f59e0b;border-radius:16px;padding:18px;margin-top:14px"><div style="font-size:12px;color:#b45309;font-weight:700">SPECIAL RENEWAL OFFER FROM YOUR GYM</div><h2 style="margin:8px 0 4px">${esc(demand.plan_name)}</h2><div><span style="text-decoration:line-through;color:#64748b">${money(demand.standard_price)}</span> <strong style="font-size:26px">${money(demand.final_payable || demand.amount)}</strong>${demand.savings && Number(demand.savings) > 0 ? ` <span style="color:#15803d;font-weight:700">Save ${money(demand.savings)}</span>` : ''}</div><p style="color:#64748b;margin:10px 0 0">This price is set by your gym and locked for this renewal — the full-price plans below do not apply.</p></article>` : `<p style="color:#64748b">Choose a plan, pay using your gym's QR, then submit the payment reference.</p>`}<div id="plans">${demand ? '' : list.map((plan) => `<button class="plan" data-id="${plan.id}" data-name="${esc(plan.name)}" data-price="${plan.price}" style="width:100%;text-align:left;margin:10px 0;padding:16px;border:1px solid #cbd5e1;border-radius:14px;background:white"><strong>${esc(plan.name)}</strong><span style="float:right;color:#2563eb;font-weight:700">${money(plan.price)}</span><br><small>${plan.duration_days} days</small></button>`).join('') || notice('No renewal plans are available.', true)}</div><div id="pay" style="display:none;background:white;border-radius:16px;padding:18px;margin-top:16px"><h2 id="plan-name"></h2>${p.qr_public_url ? `<img src="${esc(p.qr_public_url)}" alt="Payment QR" style="width:220px;height:220px;display:block;margin:12px auto;object-fit:contain">` : `<div style="text-align:center;padding:18px;background:#fef3c7;border-radius:12px;margin:12px 0;color:#92400e"><strong>No payment QR available</strong><br>Ask your gym to upload their payment QR code.</div>`}<p><strong>UPI:</strong> ${esc(p.upi_id || 'Contact your gym')}</p><p>${esc(p.instructions || '')}</p><input id="reference" placeholder="UPI transaction reference (optional)" style="width:100%;box-sizing:border-box;padding:13px;border:1px solid #cbd5e1;border-radius:10px"><button id="claim" style="width:100%;margin-top:12px;padding:14px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:700">I've made the payment</button></div></section>`);
   document.querySelector('#app main')?.insertAdjacentHTML('beforeend',memberNav('membership')); bindMemberNav();
   document.querySelector('#back').onclick = renderHome; let selected;
   document.querySelectorAll('.plan').forEach((button) => button.onclick = () => { selected = button.dataset.id; document.querySelector('#plan-name').textContent = `${button.dataset.name} — ${money(button.dataset.price)}`; document.querySelector('#pay').style.display = 'block'; window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); });
+  // V11-H8: with a demand the price is locked — preselect it and show
+  // the payment section immediately (no plan list is rendered).
+  if (demand) {
+    selected = demand.plan_id ? String(demand.plan_id) : undefined;
+    document.querySelector('#plan-name').textContent = `${demand.plan_name} — ${money(demand.final_payable || demand.amount)}`;
+    document.querySelector('#pay').style.display = 'block';
+  }
   document.querySelector('#claim').onclick = async () => {
-    if (!selected) return;
+    if (!selected && !demand) return;
     const btn = document.querySelector('#claim');
     if (btn.disabled) return;
     btn.disabled = true;
-    const result = await api('/api/member/v1/renew/claim', { method: 'POST', body: { plan_id: Number(selected), reference: document.querySelector('#reference').value.trim() || undefined } });
-    if (result.ok) { alert('Payment claim submitted. Your gym will verify it shortly.'); renderHome(); }
+    // V11-H8: the amount being paid is the demand's locked price when a
+    // demand exists, else the selected plan's price.
+    const payableAmount = demand ? (demand.final_payable || demand.amount) : document.querySelector(`.plan[data-id="${selected}"]`)?.dataset.price;
+    const result = await api('/api/member/v1/renew/claim', { method: 'POST', body: { plan_id: selected ? Number(selected) : undefined, reference: document.querySelector('#reference').value.trim() || undefined } });
+    if (result.ok) {
+      // V11-H8: already_pending IS the demand — the member already has a
+      // live request, so never report a fresh submission. (The backend's
+      // already_pending payload carries no amount; use the locked price
+      // the member was paying.)
+      const claimData = result.data || {};
+      // V11-M11: a paused member's renewal is recorded but the door
+      // stays blocked until the gym resumes it — say so on success and
+      // carry the resume actions onto the home screen.
+      const after = await api('/api/member/v1/dashboard');
+      const isPaused = after.ok && String(after.data.member?.status || '').toLowerCase() === 'paused';
+      if (isPaused) homeNotice = { amount: claimData.amount || payableAmount, gymPhone: (after.ok && after.data.gym?.phone) || demandGymPhone };
+      if (claimData.already_pending) {
+        alert(`You already have a pending payment request${payableAmount ? ` for ${money(payableAmount)}` : ''} — the gym will confirm it.${isPaused ? ' Your renewal is recorded, but door access stays paused until the gym resumes it.' : ''}`);
+      } else {
+        alert(`Payment claim submitted. Your gym will verify it shortly.${isPaused ? ' Note: your membership is paused, so door access stays paused until the gym resumes it — even after this payment is verified.' : ''}`);
+      }
+      renderHome();
+    }
     else { alert(result.error); btn.disabled = false; }
   };
 }

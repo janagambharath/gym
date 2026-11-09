@@ -16,8 +16,8 @@ export default { async mount(el) {
     <div class="list-item" data-cid="${c.id}">
       <div style="width:40px;height:40px;border-radius:var(--r-lg);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">${icon('megaphone',18,'var(--brand)')}</div>
       <div class="list-item-content">
-        <div class="list-item-title">${escapeHtml(c.name||SEGMENT_LABELS[c.segment]||'Campaign')}</div>
-        <div class="list-item-subtitle">${escapeHtml(SEGMENT_LABELS[c.segment]||c.segment||'')} · ${formatInteger(c.recipient_count||0)} recipients</div>
+        <div class="list-item-title">${escapeHtml(c.name||SEGMENT_LABELS[c.segment_type]||'Campaign')}</div>
+        <div class="list-item-subtitle">${escapeHtml(SEGMENT_LABELS[c.segment_type]||c.segment_type||'')} · ${formatInteger(c.total_recipients ?? 0)} recipients</div>
       </div>
       <div class="list-item-right">
         <span style="font-size:var(--fs-xs);color:var(--muted)">${formatDateTime(c.created_at)}</span>

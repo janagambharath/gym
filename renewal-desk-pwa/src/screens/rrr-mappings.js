@@ -135,6 +135,15 @@ async function searchMembers(query, bid, el) {
   const q = (query || '').trim();
   const res = await apiRequest(`/api/mobile/v1/members?page=1&page_size=50${q ? `&q=${encodeURIComponent(q)}` : ''}`);
   if (seq !== memberSearchSeq) return; // a newer search superseded this one
+  // V11-L13: a failed search used to render "No members found" — a
+  // failure reading as "this member doesn't exist" can end with a
+  // namesake pick and misattributed punches. Show an error state with
+  // retry instead, and keep the previous results untouched.
+  if (!res.ok) {
+    results.innerHTML = `<div class="bm-no-results" style="color:#dc2626">Couldn’t search members (${esc(res.error?.message || 'check your connection')}). <button type="button" class="btn btn-sm btn-secondary" data-bm-search-retry="${esc(bid)}">Try again</button></div>`;
+    results.querySelector('[data-bm-search-retry]')?.addEventListener('click', () => searchMembers(query, bid, el));
+    return;
+  }
   const members = res.ok ? (res.data.members || []) : [];
   const total = res.ok ? (res.data.pagination?.total ?? members.length) : 0;
   // Merge search results into allMembers — wirePicks looks the tapped

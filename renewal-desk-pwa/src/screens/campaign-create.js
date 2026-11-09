@@ -83,10 +83,45 @@ async function load(el) {
     const yes = await showConfirm({title:'Send Campaign',message:countText,confirmText:'Send'});
     if (!yes) return;
     const btn = el.querySelector('#cc-send'); btn.disabled = true;
-    const body = { name:el.querySelector('#cc-name').value.trim(), segment:el.querySelector('#cc-segment').value,
-      template_id:el.querySelector('#cc-templ')?.value||null, message:el.querySelector('#cc-msg')?.value.trim()||null };
+    // V11-C1: the backend reads ONLY segment_type / whatsapp_template_name
+    // / message_template (app/mobile_api/campaigns.py:181,199-200) — the
+    // old {segment, template_id, message} keys were all silently ignored,
+    // so every campaign was built against the default all_expired segment
+    // with no template. Template ids ARE the Meta template names
+    // (get_approved_templates returns id == name), so the chosen template
+    // id is the whatsapp_template_name; the typed message (free-text path)
+    // or the template body is the message_template the send path uses
+    // for offer/announcement text.
+    const templId = el.querySelector('#cc-templ')?.value || null;
+    const templ = templId ? templates.find(t => String(t.id ?? t.name) === String(templId)) : null;
+    const body = { name: el.querySelector('#cc-name').value.trim(),
+      segment_type: el.querySelector('#cc-segment').value,
+      whatsapp_template_name: templId,
+      message_template: el.querySelector('#cc-msg')?.value.trim()
+        || templ?.body || templ?.message || templ?.text || templ?.content || null };
     const r = await apiRequest('/api/mobile/v1/campaigns', { method: 'POST', body, headers: { 'Idempotency-Key': campaignKey } });
-    if (r.ok) { showToast('Campaign launched!','success'); navigate.pop(); }
-    else { showToast(r.error.message,'error'); btn.disabled = false; }
+    if (!r.ok) { showToast(r.error.message, 'error'); btn.disabled = false; return; }
+    // V11-C1: POST /campaigns creates a DRAFT only. Send it now (same
+    // create-then-send flow as Android's onLaunchCampaign) and toast
+    // "launched" ONLY after the send returns — a create-only success is
+    // a saved draft, never a launch.
+    const campaignId = r.data?.id;
+    const sendRes = await apiRequest(`/api/mobile/v1/campaigns/${campaignId}/send`, { method: 'POST' });
+    if (sendRes.ok) {
+      const sent = sendRes.data?.sent, total = sendRes.data?.total, failed = sendRes.data?.failed;
+      showToast(
+        (typeof sent === 'number' && typeof total === 'number')
+          ? `Campaign launched! Sent to ${formatInteger(sent)} of ${formatInteger(total)} members${failed > 0 ? ` (${formatInteger(failed)} failed)` : ''}.`
+          : 'Campaign launched!',
+        'success');
+      navigate.pop();
+    } else {
+      // The draft exists — do NOT claim a launch. Land on its detail
+      // page (which has a Send button for draft/failed campaigns) so the
+      // owner can retry sending this same campaign instead of creating
+      // a duplicate.
+      showToast(`Campaign saved as a draft — sending failed (${sendRes.error?.message || 'try again from the campaign detail'}).`, 'error');
+      navigate.push('campaign-detail', { campaignId: String(campaignId) });
+    }
   });
 }

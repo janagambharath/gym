@@ -1021,6 +1021,9 @@ test('V10-L25 campaign-create: campaign POST carries one stable key reused acros
   let postMode = 'fail';
   const { calls, restore } = installFetch(async (url, options) => {
     if (url.includes('/api/mobile/v1/campaigns/templates')) return okData({ templates: [{ id: 1, name: 'Renewal nudge', body: 'Hi {name}!' }] });
+    // V11-C1: a successful create now calls POST /campaigns/<id>/send —
+    // the send is a separate POST and must not be counted as a create.
+    if (url.includes('/campaigns/9/send') && (options?.method || 'GET') === 'POST') return okData({ sent: 1, total: 1, failed: 0 });
     if (url.includes('/api/mobile/v1/campaigns') && (options?.method || 'GET') === 'POST' && !url.includes('segments')) {
       if (postMode === 'fail') return errData(500, 'Campaign failed');
       return okData({ id: 9 });
@@ -1040,15 +1043,19 @@ test('V10-L25 campaign-create: campaign POST carries one stable key reused acros
       await tick(); await tick();
     };
     await submit();
-    let posts = calls.filter((c) => c.url.includes('/api/mobile/v1/campaigns') && (c.options?.method || 'GET') === 'POST');
+    // V11-C1: count create POSTs only (exclude the send POST).
+    const createPosts = (list) => list.filter((c) => c.url.includes('/api/mobile/v1/campaigns') && (c.options?.method || 'GET') === 'POST' && !c.url.includes('/send'));
+    let posts = createPosts(calls);
     assert.equal(posts.length, 1, 'one campaign POST');
     const firstKey = posts[0].options.headers['Idempotency-Key'];
     assert.ok(firstKey, 'campaign POST carries a key');
     assert.equal(el.querySelector('#cc-send').disabled, false, 'Send re-enabled after failure');
+    postMode = 'ok';
     await submit();
-    posts = calls.filter((c) => c.url.includes('/api/mobile/v1/campaigns') && (c.options?.method || 'GET') === 'POST');
+    posts = createPosts(calls);
     assert.equal(posts.length, 2, 'retry posts again');
     assert.equal(posts[1].options.headers['Idempotency-Key'], firstKey, 'failed retry reuses the key');
+    assert.equal(calls.filter((c) => c.url.includes('/campaigns/9/send')).length, 1, 'successful create triggers the send');
   } finally { restore(); }
 });
 

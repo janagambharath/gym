@@ -263,7 +263,7 @@ export default {
                 </span>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-xs)">
-                <button class="btn btn-secondary btn-sm" id="btn-reconcile-all" style="font-size:var(--fs-xs);padding:6px 10px">🔄 Re-sync Members</button>
+                ${isOwner ? `<button class="btn btn-secondary btn-sm" id="btn-reconcile-all" style="font-size:var(--fs-xs);padding:6px 10px">🔄 Re-sync Members</button>` : ''}
                 <button class="btn btn-secondary btn-sm" id="btn-bridge-pairing" style="font-size:var(--fs-xs);padding:6px 10px">🔑 Pairing Code</button>
               </div>
             </div>
@@ -415,7 +415,11 @@ export default {
             showToast(res.data?.message || 'Re-sync queued for device', 'success');
             await loadData();
           } else {
-            showToast(res.error?.message || 'Re-sync failed', 'error');
+            // V11-L5: reconcile is owner-only — a 403 means a staff
+            // session reached a button the UI should have hidden; say so
+            // plainly instead of a generic failure (same pattern as retry-sync).
+            if (res.error?.status === 403) showToast('Only the gym owner can re-sync members', 'error');
+            else showToast(res.error?.message || 'Re-sync failed', 'error');
           }
           recBtn.disabled = false;
           recBtn.textContent = '🔄 Re-sync Members';

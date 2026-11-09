@@ -140,7 +140,10 @@ export function renderTabBar(activeTab) {
 // Photo sizes mirror the .avatar-* classes, except xl photos render at
 // 104px (the member-detail profile card / VYNLA profile size) instead of
 // the 64px initials circle.
-const AVATAR_PHOTO_SIZE = { sm: 32, md: 40, lg: 48, xl: 104 };
+// V11-L16: staff screens call renderAvatar(name, 44) / (name, 48) —
+// numeric sizes now have matching CSS classes AND photo sizes, so the
+// initials circles no longer collapse to text-sized pills.
+const AVATAR_PHOTO_SIZE = { sm: 32, md: 40, lg: 48, xl: 104, 44: 44, 48: 48 };
 
 export function renderAvatar(name, size = 'md', photoUrl = null) {
   if (photoUrl) {

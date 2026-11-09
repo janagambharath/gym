@@ -8,6 +8,12 @@ let delTotal = 0;
 let delTotalPages = 1;
 let delQuery = '';
 let delMembers = [];
+// V11-L23: ids whose deactivate failed — kept checked across the reload
+// so the owner can retry just those instead of re-running the batch.
+let delFailedIds = new Set();
+// Names + reasons for the last failed batch, re-rendered after the reload
+// (the reload replaces #rrr-del-result, so the list lives here).
+let delLastFailures = [];
 
 export default { async mount(el) { await load(el); } };
 
@@ -66,7 +72,7 @@ async function load(el, append = false) {
     <div class="rrr-del-list" id="rrr-member-list">
       ${members.map(m => `
         <label class="rrr-del-item">
-          <input type="checkbox" class="rrr-del-check" value="${m.id}" data-enroll="${esc(m.device_enroll_number || '')}">
+          <input type="checkbox" class="rrr-del-check" value="${m.id}" data-enroll="${esc(m.device_enroll_number || '')}" ${delFailedIds.has(String(m.id)) ? 'checked' : ''}>
           <div class="rrr-del-info">
             <div class="rrr-del-name">${esc(m.full_name || m.first_name || 'Unknown')}</div>
             <div class="rrr-del-meta">ID ${esc(m.device_enroll_number || '')} · ${esc(m.status || '')} ${m.membership_end ? '· ends ' + esc(m.membership_end) : ''}</div>
@@ -133,7 +139,17 @@ async function load(el, append = false) {
   });
   
   checkboxes.forEach(cb => cb.addEventListener('change', updateCount));
-  
+  // V11-L23: failed members stay checked across the reload (see
+  // delFailedIds above) — sync the count/button to match on load, and
+  // re-show the last failure list (the reload wipes #rrr-del-result).
+  updateCount();
+  if (delLastFailures.length) {
+    const resultEl = el.querySelector('#rrr-del-result');
+    if (resultEl) {
+      resultEl.innerHTML = `<div style="padding:16px;font-weight:600;color:#d97706;text-align:center">⚠ ${delLastFailures.length} failed — still selected below<div style="text-align:left;font-weight:400;margin-top:var(--sp-sm)">${delLastFailures.map(f => `<div style="font-size:var(--fs-sm);margin-top:4px">• ${esc(f.name)} — ${esc(f.reason)}</div>`).join('')}</div></div>`;
+    }
+  }
+
   deleteBtn?.addEventListener('click', async () => {
     const selected = [...el.querySelectorAll('.rrr-del-check:checked')].map(cb => cb.value);
     if (!selected.length) return;
@@ -142,19 +158,36 @@ async function load(el, append = false) {
     deleteBtn.disabled = true;
     deleteBtn.textContent = 'Deactivating...';
     const resultEl = el.querySelector('#rrr-del-result');
-    
-    let success = 0, failed = 0;
+
+    let success = 0;
+    // V11-L23: the old result reported only counts ("✓ N deactivated,
+    // ⚠ M failed") — the owner had to guess WHICH members still needed
+    // deactivating. Name every failure with its reason.
+    const failures = [];
     for (const memberId of selected) {
+      const member = delMembers.find(m => String(m.id) === String(memberId));
+      const displayName = member?.full_name || member?.first_name || `Member ${memberId}`;
       try {
         const res = await apiRequest(`/api/mobile/v1/members/${memberId}/deactivate`, { method: 'POST' });
         if (res.ok) success++;
-        else failed++;
-      } catch(e) { failed++; }
+        else failures.push({ id: memberId, name: displayName, reason: res.error?.message || 'Failed' });
+      } catch (e) { failures.push({ id: memberId, name: displayName, reason: e?.message || 'Request failed' }); }
     }
-    
-    resultEl.innerHTML = `<p style="padding:16px;text-align:center;font-weight:600;color:${failed ? '#d97706' : '#16a34a'};">
-      ${failed ? `✓ ${success} deactivated, ⚠ ${failed} failed` : `✓ All ${success} deactivated`}
-    </p>`;
-    setTimeout(() => load(el), 2000);
+
+    delFailedIds = new Set(failures.map(f => String(f.id)));
+    delLastFailures = failures;
+    resultEl.innerHTML = `<div style="padding:16px;font-weight:600;color:${failures.length ? '#d97706' : '#16a34a'};text-align:center">
+      ${failures.length ? `✓ ${success} deactivated, ⚠ ${failures.length} failed` : `✓ All ${success} deactivated`}
+      ${failures.length ? `<div style="text-align:left;font-weight:400;margin-top:var(--sp-sm)">${failures.map(f => `<div style="font-size:var(--fs-sm);margin-top:4px">• ${esc(f.name)} — ${esc(f.reason)}</div>`).join('')}</div><div style="font-size:var(--fs-sm);font-weight:400;margin-top:var(--sp-sm)">Failed members stay selected below — fix the cause and tap Deactivate again.</div>` : ''}
+    </div>`;
+    if (failures.length) {
+      // Keep the failure list visible; reload the list (failed members
+      // stay checked) instead of wiping the result after 2s.
+      deleteBtn.disabled = false;
+      deleteBtn.textContent = `🗑️ Deactivate ${failures.length} member${failures.length === 1 ? '' : 's'}`;
+      setTimeout(() => load(el), 1500);
+    } else {
+      setTimeout(() => load(el), 2000);
+    }
   });
 }

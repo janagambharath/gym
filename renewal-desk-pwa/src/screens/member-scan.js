@@ -27,6 +27,12 @@ export default { mount(el) {
   </div></div>`;
   bindHeaderEvents(el, { onBack:()=>navigate.pop() });
   let scanning = false;
+  // V11-L18: ONE stable key per scan session (screen mount), reused
+  // across retries of the same scan. The old code minted uuid() fresh
+  // inside handleFile on every attempt — contradicting its own comment
+  // — so a retry after a lost response could not replay and paid for a
+  // second vision call.
+  const scanKey = uuid();
   const setPickersEnabled = (enabled) => {
     for (const id of ['#ms-file', '#ms-gallery']) {
       const input = el.querySelector(id);
@@ -52,14 +58,14 @@ export default { mount(el) {
     preview.innerHTML = `<div class="full-loader"><div class="spinner"></div><div class="full-loader-text">Analyzing image with AI...</div></div>`;
     try {
       const dataUrl = await readAsDataUrl(file);
-      // One stable key per scan attempt — the backend records the key
-      // only on success (scope scan_member_records), so a failed scan
-      // never blocks a retry, while a retry after a lost response
-      // replays instead of paying for a second vision call.
+      // The scanKey above is stable for this scan session — the backend
+      // records the key only on success (scope scan_member_records), so
+      // a failed scan never blocks a retry, while a retry after a lost
+      // response replays instead of paying for a second vision call.
       const data = await apiRequest('/api/mobile/v1/members/scan', {
         method: 'POST',
         body: { images: [dataUrl] },
-        headers: { 'Idempotency-Key': uuid() },
+        headers: { 'Idempotency-Key': scanKey },
       });
       if (data.ok && data.data?.members) { navigate.replace('member-scan-review', { members: JSON.stringify(data.data.members) }); return; }
       showToast(data.error?.message || 'Scan failed', 'error');

@@ -296,7 +296,7 @@ test('V7-M12 campaigns: fetch failure shows error, not "No campaigns" + New Camp
   const { calls, restore } = installFetch(async (url) => {
     if (url.includes('/api/mobile/v1/campaigns')) {
       if (mode === 'fail') return errData(500, 'Campaigns unavailable');
-      return okData({ campaigns: [{ id: 1, name: 'Diwali Blast', segment: 'all', recipient_count: 10, status: 'sent', created_at: '2026-11-06T10:00:00Z' }] });
+      return okData({ campaigns: [{ id: 1, name: 'Diwali Blast', segment_type: 'all_expired', total_recipients: 10, status: 'sent', created_at: '2026-11-06T10:00:00Z' }] });
     }
     return errData(404, 'not found');
   });
@@ -440,7 +440,7 @@ test('V7-L11 campaign-detail: 500 shows error + retry, 404 shows "not found" wit
     if (url.includes('/api/mobile/v1/campaigns/9')) {
       if (mode === 'fail500') return errData(500, 'Campaign load failed');
       if (mode === 'fail404') return errData(404, 'not found');
-      return okData({ name: 'Diwali', status: 'sent', segment: 'all', recipient_count: 5, sent_count: 5, delivered_count: 4, failed_count: 1, created_at: '2026-11-06T10:00:00Z', recipients: [] });
+      return okData({ name: 'Diwali', status: 'sent', segment_type: 'all_expired', total_recipients: 5, total_sent: 5, total_delivered: 4, total_read: 3, total_replied: 1, total_renewed: 0, total_revenue_recovered: '0', created_at: '2026-11-06T10:00:00Z' });
     }
     return errData(404, 'not found');
   });

@@ -116,7 +116,7 @@ async function load(el, background = false) {
     <section class="rrr-connection-grid">
       <article class="rrr-connect-card rrr-connect-card-primary">
         <div class="rrr-card-top"><span class="rrr-option-icon">☁</span><div>${livePill(direct)}<h2>Direct Cloud</h2><p>No gym PC or bridge required for attendance.</p></div></div>
-        ${direct ? directPanel(direct, commands, commandsFailed) : directForm()}
+        ${direct ? directPanel(direct, commands, commandsFailed) : directForm(getCachedSession()?.tenantName || '')}
       </article>
       <article class="rrr-connect-card">
         <div class="rrr-card-top"><span class="rrr-option-icon rrr-option-muted">⌘</span><div><span class="rrr-status-pill">FALLBACK</span><h2>eBioServer Bridge</h2><p>Use only when your licensed eBioServer stays on a gym PC.</p></div></div>
@@ -172,12 +172,15 @@ function wireDirectForm(el) {
   });
 }
 
-function directForm() {
+function directForm(gymName = '') {
+  // V11-L21: the friendly-name field used to pre-fill every gym's device
+  // as "Elite Gym Entry" — another gym's name saved into this gym's
+  // device identity. Default to the gym's own name (empty when unknown).
   return `<form id="rrr-direct-form" class="rrr-direct-form">
     <label>Terminal serial number
       <input name="device_serial" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Example: X2008-123456" required>
     </label>
-    <label>Friendly name <input name="device_name" value="Elite Gym Entry" maxlength="120" autocapitalize="off"></label>
+    <label>Friendly name <input name="device_name" value="${esc(gymName)}" maxlength="120" autocapitalize="off" placeholder="e.g. ${esc(gymName || 'Main Entrance')}"></label>
     <p id="rrr-direct-error" class="rrr-form-error" role="alert"></p>
     <button class="rrr-primary-button" type="submit">Continue <span>→</span></button>
   </form>`;
@@ -349,7 +352,12 @@ function wireDirectPanel(el, direct, commands, commandsFailed = false) {
       method: 'POST', body,
     });
     if (!response.ok) {
-      el.querySelectorAll('[data-adms-action]').forEach(b => { b.disabled = false; });
+      // V11-L20: a failed test POST used to blanket-enable every
+      // [data-adms-action] button — including the ones disabled in
+      // markup because the terminal is offline. Restore each button's
+      // disabled state from the `connected` flag instead.
+      const connected = isLive(direct);
+      el.querySelectorAll('[data-adms-action]').forEach(b => { b.disabled = !connected; });
       errorEl.textContent = apiMessage(response, 'The terminal did not accept another test yet.');
       return;
     }
@@ -368,15 +376,24 @@ function pollCommand(el, integrationId, commandId) {
     tries += 1;
     const r = await apiRequest(`/api/mobile/v1/rrr/integrations/${integrationId}/adms/commands`);
     const list = r.ok ? r.data.commands || [] : [];
-    const cmd = list.find(c => c.id === commandId) || list[0];
+    // V11-L19: the old `|| list[0]` fallback tracked a DIFFERENT command
+    // once the polled one aged out of the latest-20 window — its
+    // acked/failed status was shown as this test's progress and the
+    // poll could stop early on another command's terminal state. If the
+    // command isn't in the list, keep polling for it; only stop on the
+    // MATCHED command's terminal state (or the try budget).
+    const cmd = list.find(c => c.id === commandId);
     if (cmd && progressEl()) progressEl().textContent = progressText(cmd);
-    if (!cmd || tries >= 24 || cmd.status === 'acked' || cmd.status === 'failed') {
+    if (cmd && (cmd.status === 'acked' || cmd.status === 'failed')) {
       stopPoll();
       delete el.dataset.pendingCommand;
-      if (tries >= 24 && cmd && !['acked', 'failed'].includes(cmd.status) && progressEl()) {
-        progressEl().textContent = 'Still waiting — the terminal may be offline. It will pick the command up when it reconnects.';
-      }
-      if (cmd && ['acked', 'failed'].includes(cmd.status)) setTimeout(() => { if (el.isConnected && el.dataset.screenActive !== 'false') void load(el); }, 1500);
+      setTimeout(() => { if (el.isConnected && el.dataset.screenActive !== 'false') void load(el); }, 1500);
+      return;
+    }
+    if (tries >= 24) {
+      stopPoll();
+      delete el.dataset.pendingCommand;
+      if (progressEl()) progressEl().textContent = 'Still waiting — the terminal may be offline. It will pick the command up when it reconnects.';
       return;
     }
   };

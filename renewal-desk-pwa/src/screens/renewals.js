@@ -2,7 +2,7 @@
 import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState, renderSectionHeader } from '../components.js';
+import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState, renderSectionHeader, showToast } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml, formatInteger } from '../utils.js';
 
@@ -16,6 +16,10 @@ export default {
 
     bindHeaderEvents(el, { actions: [{ onClick: () => navigate.push('campaigns') }] });
 
+    // V11-L15: background (live-refresh) failures used to be fully
+    // silent — a stale renewals list sat indefinitely while the owner
+    // believed it was live. Toast once (mirror members.js/payments.js).
+    let bgErrorShown = false;
     async function load(background = false, keepExpiredCount = false) {
     if (!background && !keepExpiredCount) expiredShown = 20;
     const [upRes, expRes] = await Promise.all([
@@ -25,16 +29,24 @@ export default {
 
     const scroll = el.querySelector('#renewals-list');
     if (!upRes.ok && !expRes.ok) {
-      if (!background) {
-        scroll.innerHTML = renderErrorState(upRes.error?.message || 'Failed to load');
-        // V9-M6: the total-failure Try Again button was dead — no
-        // #retry-btn binding was ever attached. Bind it to reload.
-        scroll.querySelector('#retry-btn')?.addEventListener('click', () => load());
+      // V11-L15: a background total failure used to return silently too
+      // (the toast below only covered partial failures) — toast once.
+      if (background) {
+        if (!bgErrorShown) { bgErrorShown = true; showToast('Could not refresh renewals — showing the last loaded list.', 'error'); }
+        return;
       }
+      scroll.innerHTML = renderErrorState(upRes.error?.message || 'Failed to load');
+      // V9-M6: the total-failure Try Again button was dead — no
+      // #retry-btn binding was ever attached. Bind it to reload.
+      scroll.querySelector('#retry-btn')?.addEventListener('click', () => load());
       return;
     }
 
-    if (background && (!upRes.ok || !expRes.ok)) return;
+    if (background && (!upRes.ok || !expRes.ok)) {
+      if (!bgErrorShown) { bgErrorShown = true; showToast('Could not refresh renewals — showing the last loaded list.', 'error'); }
+      return;
+    }
+    bgErrorShown = false;
     // V9-M6: a single-leg failure used to silently hide that section — if
     // the other leg was empty the screen claimed "All members are up to
     // date!". Surface the failed leg instead of hiding it.

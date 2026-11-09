@@ -31,6 +31,11 @@ export default {
     // the wrong one. A fresh key per click would not dedupe a retry.
     let resetPasswordKey = null;
     let resetPasswordStaffId = null;
+    // V11-L17: one stable key per add-staff form, reused across retries
+    // of the same create (the backend honours scope create_staff, so a
+    // retry after a lost response replays the SAME temp password instead
+    // of creating a duplicate staff account). Rotates after success.
+    let staffCreateKey = uuid();
 
     async function loadData() {
       const res = await apiRequest('/api/mobile/v1/staff');
@@ -240,8 +245,9 @@ export default {
           password: el.querySelector('#st-pass')?.value.trim() || undefined,
         };
 
-        const res = await apiRequest('/api/mobile/v1/staff', { method: 'POST', body });
+        const res = await apiRequest('/api/mobile/v1/staff', { method: 'POST', body, headers: { 'Idempotency-Key': staffCreateKey } });
         if (res.ok) {
+          staffCreateKey = uuid();
           showAddModal = false;
           createdInvite = res.data;
           showToast(`Staff account created for ${body.full_name}`, 'success');
