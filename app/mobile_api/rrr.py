@@ -283,6 +283,7 @@ def register_rrr_routes(bp):
         }})
 
     @bp.post("/rrr/integrations/adms/provision")
+    @limiter.limit("10 per hour")
     @token_required
     @roles_required("gym_owner")
     def provision_direct_adms():
@@ -290,8 +291,27 @@ def register_rrr_routes(bp):
 
         Access-control automation is deliberately not enabled by this route.
         Owners can later run a narrowly scoped, acknowledged test command.
+
+        V10-M2: re-provisioning a commissioned gym never silently
+        demotes it — the same serial re-provisions idempotently with
+        its flags preserved, and a different serial on a commissioned
+        gym is a 409 (a new terminal needs its own supervised
+        commissioning). Rate-limited and idempotency-keyed so a stray
+        double-tap cannot re-demote a live gym either.
         """
         payload = request.get_json(silent=True) or {}
+        # V10-M2: a same-key retry replays the stored response instead
+        # of re-running provision (the one-time token is redacted from
+        # the stored body — see below).
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="adms_provision",
+            headers=request.headers,
+            payload=payload,
+        )
+        if replay is not None:
+            return replay
         serial = str(payload.get("device_serial") or "").strip()[:120]
         name = str(payload.get("device_name") or "Elite Gym eSSL terminal").strip()[:160]
         if not serial:
@@ -314,6 +334,24 @@ def register_rrr_routes(bp):
                 allow_serial_fallback=False,
             )
             db.session.add(row)
+        # V10-M2: an already-commissioned gym keeps its flags on a
+        # same-serial re-provision (re-fetch settings / stray
+        # double-tap). A different serial is refused: the new terminal
+        # has not passed the supervised physical test, and silently
+        # demoting the live gym would switch off automatic block/unblock
+        # until the test repeats. There is no self-serve decommission
+        # path today — a genuine terminal replacement goes via support.
+        already_commissioned = bool(
+            row.commands_enabled or row.commissioning_status == "physical_test_passed"
+        )
+        if already_commissioned and row.device_serial != serial:
+            return error_response(
+                "ALREADY_COMMISSIONED",
+                f"This gym is already commissioned with terminal {row.device_serial}. "
+                "Re-provisioning a different terminal needs a fresh supervised commissioning — "
+                "contact support to replace the commissioned terminal.",
+                409,
+            )
         row.device_serial = serial
         row.device_name = name
         # Token issuance, hash-only (C1/H7): a fresh row gets a new
@@ -326,11 +364,15 @@ def register_rrr_routes(bp):
             token_for_response = row.issue_adms_token()
         elif row.adms_path_token:
             token_for_response = row.adms_path_token
-        row.status = "not_configured"
-        row.commands_enabled = False
-        row.commissioning_status = "not_started"
+        # V10-M2: only a not-yet-commissioned row is (re)set to
+        # not_configured here. A commissioned same-serial re-provision
+        # preserves status / commands_enabled / commissioning_status.
+        if not already_commissioned:
+            row.status = "not_configured"
+            row.commands_enabled = False
+            row.commissioning_status = "not_started"
         audit(action="direct_adms_provisioned", resource_type="rrr_integration", resource_id=row.id,
-              gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": serial})
+              gym_id=g.gym_id, actor_id=g.user_id, metadata={"serial": serial, "already_commissioned": already_commissioned})
         db.session.commit()
         if token_for_response is not None:
             settings = adms_terminal_settings(request.host_url, path_token=token_for_response)
@@ -342,14 +384,59 @@ def register_rrr_routes(bp):
                 "Token is stored as a hash and cannot be shown again. "
                 "Rotate the token to re-provision this terminal."
             )
-        settings["warning"] = (
-            "Attendance works immediately. Automatic block/unblock unlocks after "
-            "the supervised commissioning test on the integrations screen."
-        )
-        return jsonify({"success": True, "data": {
+        if already_commissioned:
+            settings["warning"] = (
+                "This terminal is already commissioned; automatic block/unblock stays enabled."
+            )
+        else:
+            settings["warning"] = (
+                "Attendance works immediately. Automatic block/unblock unlocks after "
+                "the supervised commissioning test on the integrations screen."
+            )
+        response_body = {"success": True, "data": {
             "integration": integration_payload(row),
             "terminal_settings": settings,
-        }})
+        }}
+        # V10-M2: record the idempotency replay row — with the one-time
+        # token redacted. settings["path"] embeds the token
+        # ("/iclock/<token>") and the token is hash-only by design
+        # (C1/H7), so it must never be persisted in clear in the
+        # idempotency table. A same-key retry replays the redacted body;
+        # the caller already received the token in the first response.
+        record_body = {"success": True, "data": {
+            "integration": response_body["data"]["integration"],
+            "terminal_settings": dict(settings),
+        }}
+        if token_for_response is not None:
+            record_body["data"]["terminal_settings"]["path"] = "/iclock"
+            record_body["data"]["terminal_settings"]["token_note"] = (
+                "Token was issued with the original response and is not stored. "
+                "Rotate the token to re-provision this terminal."
+            )
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="adms_provision",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=200,
+            response_body=record_body,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            replayed = replay_after_conflict(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="adms_provision",
+                key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if replayed is not None:
+                return replayed
+            raise
+        return jsonify(response_body)
 
     @bp.post("/rrr/integrations/<int:integration_id>/adms/rotate-token")
     @limiter.limit("20 per hour")
@@ -1605,6 +1692,18 @@ def register_rrr_routes(bp):
                 + " Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint."
             ),
         }}
+        # V10-M1: audit BEFORE the commit — an audit staged after the
+        # final commit is rolled back by teardown and lost in prod.
+        audit(
+            action="bulk_remove_expired",
+            resource_type="gym",
+            resource_id=g.gym_id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"members_queued": queued, "total_expired": len(all_targets),
+                      "skipped_not_blockable": skipped,
+                      "skipped_terminal_not_ready": skipped_not_ready},
+        )
         record_idempotency(
             gym_id=g.gym_id,
             user_id=g.user_id,
@@ -1628,17 +1727,6 @@ def register_rrr_routes(bp):
             if replayed is not None:
                 return replayed
             raise
-
-        audit(
-            action="bulk_remove_expired",
-            resource_type="gym",
-            resource_id=g.gym_id,
-            gym_id=g.gym_id,
-            actor_id=g.user_id,
-            metadata={"members_queued": queued, "total_expired": len(all_targets),
-                      "skipped_not_blockable": skipped,
-                      "skipped_terminal_not_ready": skipped_not_ready},
-        )
 
         return jsonify(response_body)
 
@@ -1691,6 +1779,17 @@ def register_rrr_routes(bp):
             "queued": bool(cmd),
             "message": f"Queued terminal block for {member.full_name or member.id}. Direct ADMS uses Grp=100 and preserves the terminal user and fingerprint.",
         }}
+        # V10-M1: audit BEFORE the commit — an audit staged after the
+        # final commit is rolled back by teardown and lost in prod.
+        audit(
+            action="remove_member_from_terminal",
+            resource_type="member",
+            resource_id=member.id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"enroll_number": member.device_enroll_number,
+                      "method": "membership_state_block"},
+        )
         record_idempotency(
             gym_id=g.gym_id,
             user_id=g.user_id,
@@ -1714,16 +1813,6 @@ def register_rrr_routes(bp):
             if replayed is not None:
                 return replayed
             raise
-
-        audit(
-            action="remove_member_from_terminal",
-            resource_type="member",
-            resource_id=member.id,
-            gym_id=g.gym_id,
-            actor_id=g.user_id,
-            metadata={"enroll_number": member.device_enroll_number,
-                      "method": "membership_state_block"},
-        )
 
         return jsonify(response_body)
 
@@ -1828,6 +1917,16 @@ def register_rrr_routes(bp):
             "unblocks_queued": unblocks_queued,
             "message": f"Restored {restored} members.",
         }}
+        # V10-M1: audit BEFORE the commit — an audit staged after the
+        # final commit is rolled back by teardown and lost in prod.
+        audit(
+            action="bulk_restore_members",
+            resource_type="gym",
+            resource_id=g.gym_id,
+            gym_id=g.gym_id,
+            actor_id=g.user_id,
+            metadata={"restored": restored, "unblocks_queued": unblocks_queued},
+        )
         record_idempotency(
             gym_id=g.gym_id,
             user_id=g.user_id,
@@ -1852,22 +1951,17 @@ def register_rrr_routes(bp):
                 return replayed
             raise
 
-        audit(
-            action="bulk_restore_members",
-            resource_type="gym",
-            resource_id=g.gym_id,
-            gym_id=g.gym_id,
-            actor_id=g.user_id,
-            metadata={"restored": restored, "unblocks_queued": unblocks_queued},
-        )
-
         return jsonify(response_body)
 
     @bp.delete("/rrr/attendance/unmapped")
     @token_required
-    @roles_required("gym_owner", "staff")
+    @roles_required("gym_owner")
     def clear_unmapped_punches():
         """Delete all unmapped punch entries for this gym.
+
+        Owner-only (V10-L5): wiping the whole mapping queue /
+        unattributed attendance history in one call is destructive and
+        must not be a staff action.
 
         Removes RRRAttendanceEvent rows with no linked member (member_id IS NULL).
         Mapped punches and members are untouched. Used to clean the slate
@@ -1877,8 +1971,7 @@ def register_rrr_routes(bp):
             RRRAttendanceEvent.gym_id == g.gym_id,
             RRRAttendanceEvent.member_id.is_(None),
         ).delete(synchronize_session=False)
-        db.session.commit()
-
+        # V10-M1: audit BEFORE the commit.
         audit(
             action="rrr_clear_unmapped_punches",
             resource_type="gym",
@@ -1887,5 +1980,6 @@ def register_rrr_routes(bp):
             actor_id=g.user_id,
             metadata={"deleted": deleted},
         )
+        db.session.commit()
         return jsonify({"success": True, "data": {"deleted": deleted}})
 

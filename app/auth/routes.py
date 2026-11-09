@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from datetime import date, timedelta
+from datetime import timedelta
 from urllib.parse import urljoin, urlparse
 
 from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
@@ -24,6 +24,7 @@ from app.models import Gym, MembershipPlan, NotificationTemplate, QRSettings, Us
 from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.mobile_api.token_service import revoke_all_user_tokens
 from app.services.audit_service import audit
+from app.services.timezone_service import today_for_gym
 from app.utils.helpers import slugify
 
 
@@ -176,7 +177,10 @@ def register():
             email=form.email.data.lower().strip(),
             phone=form.phone.data.strip(),
             status="active",
-            trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
+            # V10-L4: web signup collects no timezone — the Gym default
+            # is Asia/Kolkata, so compute the trial end in that zone
+            # instead of the server-local date.
+            trial_ends_at=today_for_gym("Asia/Kolkata") + timedelta(days=DEFAULT_TRIAL_DAYS),
             max_members=50,
         )
         db.session.add(gym)

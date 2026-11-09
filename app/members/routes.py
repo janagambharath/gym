@@ -699,7 +699,9 @@ def _parse_amount(raw_value: str | None) -> Decimal | None:
     except (AttributeError, InvalidOperation):
         return None
     # Match the mobile paths: max 2 decimal places so Postgres/SQLite agree.
-    if amount < 0 or not amount.is_finite() or amount.as_tuple().exponent < -2:
+    # V10-L2: finite FIRST — "NaN" < 0 raises InvalidOperation before
+    # is_finite() is reached (the try above wraps only the Decimal parse).
+    if not amount.is_finite() or amount < 0 or amount.as_tuple().exponent < -2:
         return None
     return amount
 

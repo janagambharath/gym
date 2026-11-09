@@ -645,6 +645,11 @@ def register_members_routes(bp):
                     _initial_amt = Decimal(str(_raw_amount).strip())
                 except InvalidOperation:
                     return error_response("VALIDATION_ERROR", "Invalid amount.", 400)
+                # V10-L2: finite FIRST — "NaN" < 0 raises
+                # InvalidOperation, outside the parse try/except and
+                # outside the creation try, so the 500 was unhandled.
+                if not _initial_amt.is_finite():
+                    return error_response("VALIDATION_ERROR", "Amount must be a finite number.", 400)
                 if _initial_amt < 0:
                     return error_response("VALIDATION_ERROR", "Amount cannot be negative.", 400)
             if _raw_amount is not None and str(_raw_amount).strip() != "" and data.get("paid", True):

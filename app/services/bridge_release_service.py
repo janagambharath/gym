@@ -211,6 +211,10 @@ def upload_bridge_release(
         resource_id=new_release.id,
         metadata={"version": clean_version, "build": build_number, "channel": release_channel},
     )
+    # V10-M1: the admin caller redirects without committing, so an
+    # audit staged after the commit above would be rolled back by
+    # teardown and lost in prod. Persist it here.
+    db.session.commit()
     return new_release, None
 
 
@@ -240,6 +244,9 @@ def update_release_channel(release_id: int, new_channel: str) -> tuple[bool, str
         resource_id=release.id,
         metadata={"version": release.version, "old_channel": old_channel, "new_channel": new_channel},
     )
+    # V10-M1: the admin caller redirects without committing — persist
+    # the audit row here (see bridge_release_uploaded above).
+    db.session.commit()
     return True, f"Release v{release.version} updated to {new_channel.upper()} channel."
 
 
@@ -332,5 +339,8 @@ def upgrade_gym_bridge(gym_id: int, target_version: str, user_id: int | None = N
         gym_id=gym.id,
         metadata={"old_version": old_version, "new_version": target_release.version, "channel": target_release.release_channel},
     )
+    # V10-M1: the admin caller redirects without committing — persist
+    # the audit row here (see bridge_release_uploaded above).
+    db.session.commit()
     return True, f"Gym '{gym.name}' bridge record upgraded to v{target_release.version} ({target_release.release_channel.upper()})."
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -81,7 +81,8 @@ def create():
     form = _payment_form()
     member_id = request.args.get("member_id", type=int)
     if request.method == "GET":
-        form.paid_on.data = date.today()
+        # V10-L4: gym-local today, not the server-local date.
+        form.paid_on.data = today_for_gym(current_user.gym.timezone or "Asia/Kolkata")
         if member_id:
             member = (
                 Member.query.filter_by(id=member_id, gym_id=current_user.gym_id)

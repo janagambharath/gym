@@ -1290,6 +1290,78 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
     return command
 
 
+def queue_adms_create_user(member: Member) -> RRRAdmsCommand | None:
+    """Queue a terminal-user creation for a member (V10-L9 retry path).
+
+    Re-drives a failed ``create_user`` enrollment only when the member
+    is currently proven enableable (:func:`member_is_proven_enableable`
+    — active, end date today or later); otherwise returns ``None`` so
+    the caller skips with ``"not_enableable"``. This mirrors the
+    advanced endpoint's queue-time guard (``app/mobile_api/rrr.py``)
+    and the serve-time create_user re-check (V7-L8,
+    ``app/adms/routes.py``), so a re-queued creation is judged twice
+    before it can reach a terminal. Does not commit.
+
+    A queued/delivered ``create_user`` for the same enroll is returned
+    as-is (already in the desired state) instead of stacking a second
+    enrollment.
+    """
+
+    integration = _adms_integration(member.gym_id)
+    if integration is None or not integration.commands_enabled:
+        return None
+    if integration.last_success_at is None:
+        # The terminal never checked in; do not pile commands into the void.
+        return None
+    if not member_is_proven_enableable(member):
+        return None
+
+    try:
+        enroll_number = resolve_adms_enroll_number(member)
+    except ValueError:
+        return None
+    if not enroll_number:
+        return None
+
+    latest = db.session.execute(
+        select(RRRAdmsCommand)
+        .where(
+            RRRAdmsCommand.integration_id == integration.id,
+            RRRAdmsCommand.test_enroll_number == enroll_number,
+            RRRAdmsCommand.action == "create_user",
+        )
+        .order_by(RRRAdmsCommand.id.desc())
+        .limit(1)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if latest is not None and latest.status in ("queued", "delivered"):
+        return latest
+
+    command = RRRAdmsCommand(
+        gym_id=member.gym_id,
+        integration_id=integration.id,
+        action="create_user",
+        test_enroll_number=enroll_number,
+        command_text=adms_command_text(
+            "create_user", enroll_number, member_name=member.full_name
+        ),
+        requested_by_id=None,
+        # V7-M1/V7-L10: stamp intent on the row itself.
+        intended_member_id=member.id,
+    )
+    db.session.add(command)
+    db.session.flush()
+    audit(
+        action="adms_create_user_queued",
+        resource_type="rrr_adms_command",
+        resource_id=command.id,
+        gym_id=member.gym_id,
+        metadata={"member_id": member.id, "enroll_number": enroll_number,
+                  "retry": True},
+    )
+    return command
+
+
 # V6-L9 (2026-11-06): _queue_template_restore_commands was DELETED here.
 # It was dead code — no caller ever queued a fingerprint-template restore —
 # so its presence implied a restore happens on unblock/re-enroll when none

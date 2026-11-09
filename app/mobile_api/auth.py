@@ -1,7 +1,7 @@
 """Mobile API authentication endpoints."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import g, jsonify, request
@@ -23,6 +23,7 @@ from app.models.gym import DEFAULT_TRIAL_DAYS
 from app.models.user import User
 from app.services.audit_service import audit
 from app.services.mobile_billing_service import SUPPORTED_LOCALES, entitlement_for
+from app.services.timezone_service import today_for_gym
 from app.utils.helpers import password_policy_error, slugify
 
 
@@ -171,7 +172,9 @@ def register_auth_routes(bp):
                 status="active",
                 subscription_status="trial",
                 billing_source="MANUAL",
-                trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
+                # V10-L4: gym-local today — the submitted timezone is
+                # already validated as IANA in _registration_error.
+                trial_ends_at=today_for_gym(data["timezone"].strip()) + timedelta(days=DEFAULT_TRIAL_DAYS),
                 max_members=50,
             )
             db.session.add(gym)
@@ -362,7 +365,9 @@ def register_auth_routes(bp):
                 status="active",
                 subscription_status="trial",
                 billing_source="MANUAL",
-                trial_ends_at=date.today() + timedelta(days=DEFAULT_TRIAL_DAYS),
+                # V10-L4: gym-local today (today_for_gym falls back to
+                # Asia/Kolkata for an invalid stored timezone).
+                trial_ends_at=today_for_gym(timezone) + timedelta(days=DEFAULT_TRIAL_DAYS),
                 max_members=50,
             )
             db.session.add(gym)
@@ -551,6 +556,7 @@ def register_auth_routes(bp):
         return jsonify({"success": True, "data": {"message": f"Revoked {count} sessions."}})
 
     @bp.route("/auth/change-password", methods=["POST"])
+    @limiter.limit("5 per minute")
     @token_required
     def change_password():
         """Mobile counterpart of the web change-password page.
@@ -568,6 +574,11 @@ def register_auth_routes(bp):
         user = g.current_user
 
         if not current_password or not user.check_password(current_password):
+            # V10-L6: a wrong current password counts toward lockout,
+            # like the login path — otherwise an already-valid bearer
+            # token is a free password-guessing oracle.
+            user.record_failed_login()
+            db.session.commit()
             return error_response(
                 "INVALID_PASSWORD", "Current password is incorrect.", 403
             )
@@ -634,6 +645,7 @@ def register_auth_routes(bp):
         })
 
     @bp.route("/auth/account", methods=["DELETE"])
+    @limiter.limit("5 per minute")
     @token_required
     def delete_account():
         user = g.current_user
@@ -645,6 +657,10 @@ def register_auth_routes(bp):
         data = request.get_json(silent=True) or {}
         password = data.get("password", "")
         if not password or not user.check_password(password):
+            # V10-L6: count the wrong guess toward lockout, like login
+            # and change-password.
+            user.record_failed_login()
+            db.session.commit()
             return error_response(
                 "INVALID_PASSWORD",
                 "Password confirmation is required to delete your account.",

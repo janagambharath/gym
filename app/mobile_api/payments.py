@@ -352,6 +352,11 @@ def register_payments_routes(bp):
         # V9-L29: standard_price is money stored in Numeric(10,2) —
         # a 3-decimal value would be silently rounded on Postgres
         # (and the stored triple could go arithmetically inconsistent).
+        # V10-L2: reject non-finite BEFORE any exponent comparison —
+        # Decimal("NaN").as_tuple().exponent is the string 'n' and
+        # raises TypeError, and NaN < 0 raises InvalidOperation.
+        if standard_price is not None and not standard_price.is_finite():
+            return error_response("VALIDATION_ERROR", "standard_price must be a finite number.", 400)
         if standard_price is not None and standard_price.as_tuple().exponent < -2:
             return error_response("VALIDATION_ERROR", "standard_price must have at most 2 decimal places.", 400)
 
@@ -359,13 +364,19 @@ def register_payments_routes(bp):
             amount = Decimal(str(data.get("amount", data.get("final_payable", "0"))).strip() or "0")
         except (InvalidOperation, TypeError):
             return error_response("VALIDATION_ERROR", "Invalid amount.", 400)
+        # V10-L2: finite FIRST — "NaN" < 0 raises InvalidOperation
+        # before the is_finite() check below could ever run, and the
+        # validation sits before the function's first try:, so the 500
+        # was unhandled.
+        if not amount.is_finite():
+            return error_response("VALIDATION_ERROR", "Amount must be a finite number.", 400)
         if amount < 0:
             return error_response("VALIDATION_ERROR", "Amount cannot be negative.", 400)
         # V8-L14: no upper bound (fat-finger risk) — a typo'd ₹1,50,000
         # payment verified and inflated payment_backed_amount until
         # noticed and refunded. Same ₹99,999,999.99 cap direct renew
         # uses (renewals.py), so the two creation paths agree.
-        if not amount.is_finite() or amount > Decimal("99999999.99"):
+        if amount > Decimal("99999999.99"):
             return error_response("VALIDATION_ERROR", "Amount must be at most 99999999.99.", 400)
         # V9-L29: Numeric(10,2) rounds ₹100.999 → ₹101.00 silently
         # on Postgres while direct renew, bulk renew and CSV import
@@ -388,6 +399,9 @@ def register_payments_routes(bp):
         # V9-L29: same 2-decimal rule as amount/standard_price (a
         # derived discount from two 2dp values is already 2dp; only a
         # caller-supplied 3-decimal discount can trip this).
+        # V10-L2: finite first (see standard_price above).
+        if not discount.is_finite():
+            return error_response("VALIDATION_ERROR", "discount must be a finite number.", 400)
         if discount.as_tuple().exponent < -2:
             return error_response("VALIDATION_ERROR", "discount must have at most 2 decimal places.", 400)
 

@@ -9,6 +9,7 @@ from app.extensions import db
 from app.mobile_api.errors import error_response
 from app.mobile_api.token_service import decode_access_token
 from app.models.user import User
+from app.services.timezone_service import today_for_gym
 
 
 # Paths that are always accessible regardless of subscription state.
@@ -29,15 +30,16 @@ def _is_subscription_exempt() -> bool:
 
 def _is_trial_expired(gym) -> bool:
     """Return True when the gym's trial has expired and no paid subscription is active."""
-    from datetime import date as dt_date
-
     status = (gym.subscription_status or "trial").lower()
     if status in ("active", "pending", "grace_period"):
         return False
     if status == "trial":
         if gym.trial_ends_at is None:
             return False  # No trial end date set yet — treat as active trial
-        return gym.trial_ends_at < dt_date.today()
+        # V10-L4: gym-local today, not server-local — in the 00:00–05:30
+        # IST window the server date is a day behind, so a trial that
+        # ended yesterday (gym-local) kept API access for ~5.5 hours.
+        return gym.trial_ends_at < today_for_gym(gym.timezone or "Asia/Kolkata")
     # Expired, cancelled, payment_failed — all locked
     return True
 

@@ -35,9 +35,13 @@ from app.services.bridge_service import (
     bridge_enable_must_be_cancelled,
     cancel_adms_command,
     cancel_bridge_command,
+    member_is_proven_enableable,
+    queue_adms_create_user,
     queue_adms_membership_command,
     queue_gym_reconciliation,
     resolve_adms_command_member,
+    resolve_adms_enroll_number,
+    resolve_adms_member,
 )
 from app.services.idempotency_service import (
     begin_idempotency,
@@ -51,9 +55,15 @@ _logger = logging.getLogger(__name__)
 # Membership-state actions a failed ADMS row may be retried as. Everything
 # else is skipped, never re-driven: test actions never touch a real
 # member, unlock_door is a physical door opening that must never be
-# re-driven from a stale row (V9-L14), and the sync/enrollment/admin
-# actions are not membership-state commands.
-_ADMS_RETRYABLE_ACTIONS = frozenset({"block", "unblock"})
+# re-driven from a stale row (V9-L14), and the sync/enrollment-admin
+# actions are not membership-state commands. V10-L9 adds create_user:
+# a failed enrollment re-drives only for a member who is currently
+# proven enableable (else the "not_enableable" skip).
+_ADMS_RETRYABLE_ACTIONS = frozenset({"block", "unblock", "create_user"})
+# V10-L12: retry-sync processes at most this many failed rows per call
+# and reports the remainder, so a large failed backlog cannot turn one
+# request into an unbounded, all-or-nothing batch.
+_ADMS_RETRY_BATCH_LIMIT = 50
 _ADMS_RETRY_SKIP_TEST_ACTIONS = frozenset({
     "probe_info",
     "block_test",
@@ -83,36 +93,136 @@ def _supersede_failed_adms_row(row, new_command_id):
     row.status = "cancelled"
 
 
+def _adms_requeue_failure_reason(member):
+    """Split a queue refusal into its cause (V10-L8).
+
+    ``"no_terminal_identity"`` when the member has no enroll number —
+    the common case, since commands-disabled / terminal-never-polled
+    are pre-filtered before the loop — versus ``"requeue_failed"`` for
+    anything else. The PWA renders the ``no_terminal_identity`` label
+    (same string) in the retry-reasons breakdown.
+    """
+    try:
+        enroll = resolve_adms_enroll_number(member)
+    except ValueError:
+        enroll = None
+    return "no_terminal_identity" if not enroll else "requeue_failed"
+
+
+def _requeue_one_failed_adms_row(adms, row):
+    """Re-derive a single failed ADMS row from current membership state.
+
+    Returns ``(outcome, new_command, reason, resolution)`` where
+    outcome is "queued" (a fresh command was created by this call),
+    "already" (the desired state was already queued/delivered/acked —
+    no fresh row), or "skipped" (``new_command`` is None and
+    ``reason`` names why). ``resolution`` is "current_holder" when
+    the member came from the live holder of the row's enroll number,
+    "intended_member" when it fell back to the stamped intended
+    member, else None (V10-L10). Raises on an unexpected failure so
+    the caller can turn one bad row into a "requeue_failed" skip
+    (V10-L12) instead of a 500 for the whole batch.
+    """
+    from app.models.rrr import RRRAdmsCommand
+
+    if row.action not in _ADMS_RETRYABLE_ACTIONS:
+        if row.action == "unlock_door":
+            reason = "unlock_door"
+        elif row.action in _ADMS_RETRY_SKIP_TEST_ACTIONS:
+            reason = "test_action"
+        else:
+            reason = "unsupported_action"
+        return "skipped", None, reason, None
+
+    # V10-L10: resolve the CURRENT holder of the terminal identity
+    # first — the enroll may have been recycled since the failure, and
+    # re-deriving from the stale intended member would stamp the wrong
+    # member's intent on the fresh row. The stamped intended member is
+    # only the fallback (the deleted-member case, which then stays
+    # skipped as unresolvable).
+    member = resolve_adms_member(adms.gym_id, row.test_enroll_number)
+    if member is not None:
+        resolution = "current_holder"
+    else:
+        member = resolve_adms_command_member(row)
+        resolution = "intended_member" if member is not None else None
+    if member is None:
+        return "skipped", None, "unresolvable_member", None
+
+    # V10-L9: a failed enrollment re-drives only for a member who is
+    # currently proven enableable; anything else is a "not_enableable"
+    # skip, never a blind re-enroll. The serve-time create_user
+    # re-check (V7-L8) judges the re-queued creation a second time.
+    if row.action == "create_user":
+        if not member_is_proven_enableable(member):
+            return "skipped", None, "not_enableable", resolution
+        max_id_before = db.session.query(db.func.max(RRRAdmsCommand.id)).scalar() or 0
+        new_command = queue_adms_create_user(member)
+        if new_command is None:
+            return "skipped", None, _adms_requeue_failure_reason(member), resolution
+        outcome = "queued" if new_command.id > max_id_before else "already"
+        return outcome, new_command, None, resolution
+
+    max_id_before = db.session.query(db.func.max(RRRAdmsCommand.id)).scalar() or 0
+    new_command = queue_adms_membership_command(member)
+    if new_command is None:
+        return "skipped", None, _adms_requeue_failure_reason(member), resolution
+    # V10-L8: only a row freshly created by this call counts as
+    # "queued" — a deduped queued/delivered/acked row means the desired
+    # state was already in flight or achieved.
+    outcome = "queued" if new_command.id > max_id_before else "already"
+    return outcome, new_command, None, resolution
+
+
 def _retry_failed_adms_commands(adms):
     """Retry this gym's failed Direct ADMS commands from current state.
 
-    Each failed ``block``/``unblock`` row is resolved back to its member
-    (intended member first, else the current holder of the terminal
-    identity) and the action is RE-DERIVED from that member's current
-    membership state via :func:`queue_adms_membership_command` — the
-    failed row's own action is never replayed. A failed block for a
-    member who has since renewed therefore becomes a fresh unblock, and
-    a failed unblock for a now-expired member becomes a fresh block,
-    which the serve-time fail-safe guard still judges before it can
-    reach the terminal (an active member is never blocked). The old
+    Each failed ``block``/``unblock``/``create_user`` row is resolved
+    back to its member (current holder of the terminal identity first,
+    else the stamped intended member — V10-L10) and the action is
+    RE-DERIVED from that member's current membership state via
+    :func:`queue_adms_membership_command` / :func:`queue_adms_create_user`
+    — the failed row's own action is never replayed. A failed block for
+    a member who has since renewed therefore becomes a fresh unblock,
+    and a failed unblock for a now-expired member becomes a fresh
+    block, which the serve-time fail-safe guard still judges before it
+    can reach the terminal (an active member is never blocked). The old
     failed row is stamped ``cancelled`` / ``superseded_by_retry``.
 
     Rows that cannot be safely re-derived are left ``failed`` and
     reported in ``skipped``: test actions, ``unlock_door``, other
-    non-membership actions, unresolvable members, and rows the queue
-    refuses (commands disabled / terminal never polled). The caller
-    commits; this helper only flushes via the queue function.
+    non-membership actions, unresolvable members, not-enableable
+    enrollments, members with no terminal identity, and rows the queue
+    refuses (commands disabled / terminal never polled). At most
+    ``_ADMS_RETRY_BATCH_LIMIT`` rows are processed per call (V10-L12);
+    the remainder is reported so the owner can tap Retry All again.
+    Each row runs inside its own savepoint, so one bad row becomes a
+    "requeue_failed" skip instead of a 500 for the whole batch.
+
+    V10-M1: the audit is staged BEFORE the single commit below, so
+    the retry audit row is persisted with the supersedes — never
+    after the commit, where teardown would roll it back.
     """
     from app.models.rrr import RRRAdmsCommand
 
+    total_failed = RRRAdmsCommand.query.filter_by(
+        integration_id=adms.id, status="failed"
+    ).count()
     failed_rows = (
         RRRAdmsCommand.query.filter_by(integration_id=adms.id, status="failed")
         .order_by(RRRAdmsCommand.id)
+        .limit(_ADMS_RETRY_BATCH_LIMIT)
         .all()
     )
+    remaining_failed_count = max(0, total_failed - len(failed_rows))
+
     retried_count = 0
-    retried_ids = []
+    already_count = 0
+    retried_ids = []  # V10-L8: ids of the FRESH commands queued by this call
+    already_ids = []  # ids of pre-existing rows already in the desired state
+    superseded_ids = []  # V10-L8: failed row ids this call superseded
     skipped = []
+    member_resolution = {}  # V10-L10: failed row id -> resolution that won
     if not adms.commands_enabled:
         skipped = [
             {"command_id": row.id, "reason": "commands_disabled"}
@@ -125,32 +235,32 @@ def _retry_failed_adms_commands(adms):
         ]
     else:
         for row in failed_rows:
-            if row.action not in _ADMS_RETRYABLE_ACTIONS:
-                if row.action == "unlock_door":
-                    reason = "unlock_door"
-                elif row.action in _ADMS_RETRY_SKIP_TEST_ACTIONS:
-                    reason = "test_action"
-                else:
-                    reason = "unsupported_action"
+            try:
+                with db.session.begin_nested():
+                    outcome, new_command, reason, resolution = (
+                        _requeue_one_failed_adms_row(adms, row)
+                    )
+                    if outcome in ("queued", "already"):
+                        _supersede_failed_adms_row(row, new_command.id)
+            except Exception:
+                _logger.warning(
+                    "ADMS retry failed for command %s", row.id, exc_info=True
+                )
+                skipped.append({"command_id": row.id, "reason": "requeue_failed"})
+                continue
+            if outcome == "skipped":
                 skipped.append({"command_id": row.id, "reason": reason})
                 continue
-            member = resolve_adms_command_member(row)
-            if member is None:
-                skipped.append(
-                    {"command_id": row.id, "reason": "unresolvable_member"}
-                )
-                continue
-            new_command = queue_adms_membership_command(member)
-            if new_command is None:
-                skipped.append(
-                    {"command_id": row.id, "reason": "requeue_failed"}
-                )
-                continue
-            _supersede_failed_adms_row(row, new_command.id)
-            retried_count += 1
-            retried_ids.append(row.id)
+            if resolution is not None:
+                member_resolution[str(row.id)] = resolution
+            superseded_ids.append(row.id)
+            if outcome == "queued":
+                retried_count += 1
+                retried_ids.append(new_command.id)
+            else:
+                already_count += 1
+                already_ids.append(new_command.id)
 
-    db.session.commit()
     audit(
         action="retry_failed_adms_syncs",
         resource_type="rrr_integration",
@@ -159,26 +269,37 @@ def _retry_failed_adms_commands(adms):
         actor_id=g.current_user.id,
         metadata={
             "retried_count": retried_count,
+            "already_in_desired_state_count": already_count,
             "skipped_count": len(skipped),
             "retried_command_ids": retried_ids,
+            "already_in_desired_state_ids": already_ids,
+            "superseded_command_ids": superseded_ids,
+            "member_resolution": member_resolution,
+            "remaining_failed_count": remaining_failed_count,
             "skipped": skipped,
         },
     )
+    db.session.commit()
+    parts = []
+    if retried_count:
+        parts.append(f"Queued {retried_count} failed command(s) for retry")
+    if already_count:
+        parts.append(f"{already_count} already in the desired state")
     if skipped:
-        message = (
-            f"Queued {retried_count} failed command(s) for retry; "
-            f"{len(skipped)} could not be retried."
+        parts.append(f"{len(skipped)} could not be retried")
+    if remaining_failed_count:
+        parts.append(
+            f"{remaining_failed_count} still failed (retry again for the next batch)"
         )
-    else:
-        message = (
-            f"Queued {retried_count} failed command(s) for immediate retry."
-        )
+    message = "; ".join(parts) + "." if parts else "No failed commands to retry."
     return jsonify({
         "success": True,
         "data": {
             "retried_count": retried_count,
+            "already_in_desired_state_count": already_count,
             "skipped_count": len(skipped),
             "skipped": skipped,
+            "remaining_failed_count": remaining_failed_count,
             "message": message,
         },
     })
@@ -282,12 +403,39 @@ def register_access_routes(bp):
                 RRRAdmsCommand.integration_id == adms.id,
                 RRRAdmsCommand.status == "failed",
             ).count()
+            # V10-L33: queued ADMS commands for the Live Access screen —
+            # the stuck-queued wedge (V9-L14) has an owner Cancel
+            # endpoint but no operator surface. Latest ~20 queued rows,
+            # newest first; count is the full queued total.
+            queued_rows = (
+                RRRAdmsCommand.query.filter_by(
+                    integration_id=adms.id, status="queued"
+                )
+                .order_by(RRRAdmsCommand.id.desc())
+                .limit(20)
+                .all()
+            )
+            summary["queued_adms_commands"] = {
+                "count": RRRAdmsCommand.query.filter_by(
+                    integration_id=adms.id, status="queued"
+                ).count(),
+                "commands": [
+                    {
+                        "id": row.id,
+                        "action": row.action,
+                        "enroll_number": row.test_enroll_number,
+                        "queued_at": row.created_at.isoformat() if row.created_at else None,
+                    }
+                    for row in queued_rows
+                ],
+            }
         else:
             summary["adms_integration_id"] = None
             summary["adms_online"] = False
             summary["adms_last_seen_at"] = None
             summary["adms_commands_enabled"] = False
             summary["adms_device_name"] = None
+            summary["queued_adms_commands"] = {"count": 0, "commands": []}
 
         # The top status card should show live if EITHER the bridge or the
         # direct ADMS terminal is online. Prefer the ADMS device name when
@@ -548,6 +696,19 @@ def register_access_routes(bp):
         except (TypeError, ValueError):
             delay_seconds = 5
         reason = str(data.get("reason") or "").strip()[:500] or None
+        # V10-L1: mirror the ADMS branch's pending-command guard — a
+        # double-tap (or a retried request after a slow response) must
+        # not queue two unlock_door bridge commands.
+        existing_unlock = BridgeCommand.query.filter(
+            BridgeCommand.bridge_id == bridge.id,
+            BridgeCommand.command_type == "unlock_door",
+            BridgeCommand.status.in_(["pending", "leased"]),
+        ).first()
+        if existing_unlock is not None:
+            return jsonify({"success": False, "error": {
+                "code": "COMMAND_PENDING",
+                "message": "Wait for the current bridge unlock command acknowledgement before unlocking.",
+            }}), 409
 
         cmd = BridgeCommand(
             bridge_id=bridge.id,
@@ -580,9 +741,14 @@ def register_access_routes(bp):
 
     @bp.route("/access/retry-sync", methods=["POST"])
     @token_required
-    @roles_required("gym_owner", "staff")
+    @roles_required("gym_owner")
     def retry_sync():
-        """Retry all failed biometric commands for this gym."""
+        """Retry all failed biometric commands for this gym.
+
+        Owner-only (V10-L11): the ADMS branch re-derives and queues
+        door commands, and retry is the only door-command-queueing
+        endpoint that was open to staff.
+        """
         from app.models.rrr import RRRIntegration
         adms = RRRIntegration.query.filter_by(
             gym_id=g.gym_id, connector_type="adms_direct"
@@ -625,7 +791,8 @@ def register_access_routes(bp):
             cmd.last_error = None
             retried_count += 1
 
-        db.session.commit()
+        # V10-M1: audit BEFORE the commit — an audit staged after the
+        # final commit is rolled back by teardown and lost in prod.
         audit(
             action="retry_failed_biometric_syncs",
             resource_type="bridge",
@@ -634,6 +801,7 @@ def register_access_routes(bp):
             actor_id=g.current_user.id,
             metadata={"retried_count": retried_count},
         )
+        db.session.commit()
 
         return jsonify({
             "success": True,
@@ -675,7 +843,7 @@ def register_access_routes(bp):
                 # only the status/result_code change.
                 row.status = "cancelled"
                 row.result_code = "owner_cleared"
-            db.session.commit()
+            # V10-M1: audit BEFORE the commit.
             audit(
                 action="clear_failed_adms_commands",
                 resource_type="rrr_integration",
@@ -684,6 +852,7 @@ def register_access_routes(bp):
                 actor_id=g.current_user.id,
                 metadata={"cleared_count": cleared_count},
             )
+            db.session.commit()
             return jsonify({
                 "success": True,
                 "data": {
@@ -703,7 +872,7 @@ def register_access_routes(bp):
         for cmd in failed_cmds:
             db.session.delete(cmd)
 
-        db.session.commit()
+        # V10-M1: audit BEFORE the commit.
         audit(
             action="clear_failed_biometric_commands",
             resource_type="bridge",
@@ -712,6 +881,7 @@ def register_access_routes(bp):
             actor_id=g.current_user.id,
             metadata={"cleared_count": cleared_count},
         )
+        db.session.commit()
 
         return jsonify({
             "success": True,
@@ -756,7 +926,7 @@ def register_access_routes(bp):
         cancel_adms_command(
             command, marker=OWNER_CANCELLED_MARKER, error=OWNER_CANCELLED_ERROR
         )
-        db.session.commit()
+        # V10-M1: audit BEFORE the commit.
         audit(
             action="adms_command_cancelled_by_owner",
             resource_type="rrr_adms_command",
@@ -765,6 +935,7 @@ def register_access_routes(bp):
             actor_id=g.current_user.id,
             metadata={"action": command.action},
         )
+        db.session.commit()
         return jsonify({
             "success": True,
             "data": {
@@ -790,7 +961,7 @@ def register_access_routes(bp):
                 "message": "Complete supervised Direct ADMS setup before reconciling access.",
             }}), 403
         count = queue_gym_reconciliation(g.gym_id)
-        db.session.commit()
+        # V10-M1: audit BEFORE the commit.
         audit(
             action="reconcile_biometric_all_mobile",
             resource_type="rrr_integration" if adms is not None else "bridge",
@@ -799,6 +970,7 @@ def register_access_routes(bp):
             actor_id=g.current_user.id,
             metadata={"queued_count": count},
         )
+        db.session.commit()
         return jsonify({
             "success": True,
             "data": {

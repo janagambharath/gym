@@ -213,8 +213,8 @@ def retry_command(command_id: str):
     command.lease_expires_at = None
     command.retry_attempt += 1
     command.not_before = utcnow()
-    db.session.commit()
-
+    # V10-M1: audit BEFORE the commit — an audit staged after the
+    # final commit is rolled back by teardown and lost in prod.
     audit(
         action="retry_bridge_command",
         resource_type="bridge_command",
@@ -222,6 +222,7 @@ def retry_command(command_id: str):
         gym_id=gym_id,
         metadata={"member_id": command.member_id, "command_type": command.command_type},
     )
+    db.session.commit()
     flash("Command queued for immediate retry by the bridge.", "success")
     return redirect(url_for("biometric.commands"))
 
@@ -262,15 +263,19 @@ def settings():
                     device_serial=device_serial,
                 )
                 db.session.add(installation)
-                db.session.commit()
+                # V10-M1: flush so the audit carries the new row's id,
+                # then audit BEFORE the commit.
+                db.session.flush()
                 audit(action="provision_bridge", resource_type="bridge_installation", resource_id=installation.id)
+                db.session.commit()
                 flash("Bridge credentials generated! Save your API key safely.", "success")
             else:
                 flash("Bridge is already provisioned for this gym.", "info")
         elif action == "rotate_key" and installation:
             new_api_key = installation.rotate_key()
-            db.session.commit()
+            # V10-M1: audit BEFORE the commit.
             audit(action="rotate_bridge_key", resource_type="bridge_installation", resource_id=installation.id)
+            db.session.commit()
             flash("Bridge API key rotated! Update appsettings.json on your gym laptop.", "warning")
 
     return render_template(
@@ -297,8 +302,9 @@ def sync_member(member_id: int):
         return redirect(url_for("members.detail", member_id=member.id))
 
     queue_membership_command(member)
-    db.session.commit()
+    # V10-M1: audit BEFORE the commit.
     audit(action="manual_biometric_sync", resource_type="member", resource_id=member.id)
+    db.session.commit()
     flash(f"Biometric access command queued for {member.full_name}.", "success")
     return redirect(url_for("members.detail", member_id=member.id))
 

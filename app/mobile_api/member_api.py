@@ -1402,6 +1402,15 @@ def member_renew_with_plan():
             if custom_amount is not None and str(custom_amount).strip() != ""
             else None
         )
+        # V10-L3: reject non-finite HERE, before the <= 0 comparison
+        # below — Decimal("NaN") <= 0 raises InvalidOperation, so
+        # without this the except would silently swallow NaN to None
+        # and the renewal would proceed at the plan price.
+        if custom_amount is not None and not custom_amount.is_finite():
+            return jsonify({
+                "success": False,
+                "error": {"code": "VALIDATION_ERROR", "message": "Custom amount must be a finite number."},
+            }), 422
         if custom_amount is not None and custom_amount <= 0:
             custom_amount = None
     except (InvalidOperation, TypeError, AttributeError):
@@ -1439,6 +1448,17 @@ def member_renew_with_plan():
                     "code": "VALIDATION_ERROR",
                     "message": f"Custom amount cannot exceed the plan price (₹{_cap}).",
                 },
+            }), 422
+
+    if custom_amount is not None:
+        # V10-L3: same 2-decimal rule as create_payment / direct
+        # renew — a 3-decimal value would be silently rounded by
+        # Numeric(10,2) on Postgres. (Non-finite is rejected at parse
+        # time above: NaN <= 0 raises InvalidOperation there.)
+        if custom_amount.as_tuple().exponent < -2:
+            return jsonify({
+                "success": False,
+                "error": {"code": "VALIDATION_ERROR", "message": "Custom amount must have at most 2 decimal places."},
             }), 422
 
     if plan is None and custom_amount is None:

@@ -680,7 +680,7 @@ def register_settings_routes(bp):
         from app.services.bridge_service import queue_gym_reconciliation
 
         count = queue_gym_reconciliation(g.gym_id)
-        db.session.commit()
+        # V10-M1: audit BEFORE the commit.
         audit(
             action="bridge_reconcile",
             resource_type="bridge",
@@ -689,6 +689,7 @@ def register_settings_routes(bp):
             actor_id=g.current_user.id,
             metadata={"queued_count": count},
         )
+        db.session.commit()
         return jsonify({"success": True, "data": {
             "queued_count": count,
             "message": f"Re-syncing {count} enrolled member(s) to biometric device.",

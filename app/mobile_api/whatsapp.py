@@ -339,11 +339,14 @@ def register_whatsapp_routes(bp):
     @roles_required("gym_owner", "staff")
     def broadcast_stats():
         """Return audience counts for announcement broadcasts."""
-        from datetime import date, timedelta
+        from datetime import timedelta
         from app.services.broadcast_service import get_target_members
+        from app.services.timezone_service import today_for_gym
 
         gym = g.current_user.gym
-        today = date.today()
+        # V10-L4: "expiring in 7 days" segments are gym-local, not
+        # server-local.
+        today = today_for_gym(gym.timezone or "Asia/Kolkata")
         seven_days = today + timedelta(days=7)
 
         active_count = len(get_target_members(gym.id, "active"))
@@ -829,7 +832,8 @@ def register_whatsapp_routes(bp):
             if "email" in data:
                 gym.email = (data.get("email") or "").strip()
             
-            db.session.commit()
+            # V10-M1: audit BEFORE the commit — an audit staged after
+            # the final commit is rolled back by teardown and lost in prod.
             audit(
                 action="mobile_update_whatsapp_profile",
                 resource_type="gym",
@@ -837,6 +841,7 @@ def register_whatsapp_routes(bp):
                 gym_id=gym.id,
                 actor_id=g.current_user.id,
             )
+            db.session.commit()
 
         return jsonify({
             "success": True,

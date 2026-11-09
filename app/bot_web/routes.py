@@ -123,15 +123,17 @@ def toggle_handover(conv_id: int):
 
     is_human = conv.handover_status in ["human_requested", "human_active"]
     conv.handover_status = "bot_active" if is_human else "human_active"
-    db.session.commit()
-
-    action_label = "Handed Back to AI Receptionist" if is_human else "Human Staff Takeover Active"
+    # V10-M1: audit BEFORE the commit — an audit staged after the
+    # final commit is rolled back by teardown and lost in prod.
     audit(
         action="toggle_bot_handover",
         resource_type="bot_conversation",
         resource_id=conv.id,
         metadata={"handover_status": conv.handover_status},
     )
+    db.session.commit()
+
+    action_label = "Handed Back to AI Receptionist" if is_human else "Human Staff Takeover Active"
     flash(f"Conversation {conv.phone}: {action_label}.", "success")
     return redirect(url_for("bot_web.inbox", conv_id=conv.id))
 
@@ -168,14 +170,16 @@ def send_staff_message(conv_id: int):
     conv.last_message_at = datetime.now(timezone.utc)
     conv.handover_status = "human_active"  # Automatically maintain human handover once staff replies
     db.session.add(msg)
-    db.session.commit()
-
+    # V10-M1: flush so the audit carries the new row's id, then audit
+    # BEFORE the commit.
+    db.session.flush()
     audit(
         action="send_staff_reply",
         resource_type="bot_message",
         resource_id=msg.id,
         metadata={"to": conv.phone, "conv_id": conv.id},
     )
+    db.session.commit()
     flash("Message sent to WhatsApp.", "success")
     return redirect(url_for("bot_web.inbox", conv_id=conv.id))
 
@@ -225,13 +229,14 @@ def update_lead_status(lead_id: int):
     if notes:
         lead.notes = notes
 
-    db.session.commit()
+    # V10-M1: audit BEFORE the commit.
     audit(
         action="update_lead_status",
         resource_type="bot_lead",
         resource_id=lead.id,
         metadata={"status": lead.status},
     )
+    db.session.commit()
     flash("Lead status updated.", "success")
     return redirect(url_for("bot_web.leads"))
 
@@ -262,8 +267,9 @@ def setup():
             trial_days = request.form.get("trial_duration_days")
             config.trial_duration_days = int(trial_days) if trial_days else None
             config.handover_enabled = bool(request.form.get("handover_enabled"))
-            db.session.commit()
+            # V10-M1: audit BEFORE the commit.
             audit(action="update_bot_config", resource_type="gym_bot_config", resource_id=config.id)
+            db.session.commit()
             flash("AI Receptionist business profile updated.", "success")
         elif action == "add_faq":
             question = (request.form.get("question") or "").strip()
@@ -271,16 +277,20 @@ def setup():
             if question and answer:
                 faq = BotFAQ(gym_id=gym_id, question=question, answer=answer, enabled=True)
                 db.session.add(faq)
-                db.session.commit()
+                # V10-M1: flush so the audit carries the new row's id,
+                # then audit BEFORE the commit.
+                db.session.flush()
                 audit(action="create_bot_faq", resource_type="bot_faq", resource_id=faq.id)
+                db.session.commit()
                 flash("New FAQ added to AI knowledge base.", "success")
         elif action == "delete_faq":
             faq_id = request.form.get("faq_id", type=int)
             faq = BotFAQ.query.filter_by(id=faq_id, gym_id=gym_id).first()
             if faq:
                 db.session.delete(faq)
-                db.session.commit()
+                # V10-M1: audit BEFORE the commit.
                 audit(action="delete_bot_faq", resource_type="bot_faq", resource_id=faq_id)
+                db.session.commit()
                 flash("FAQ deleted.", "info")
 
         return redirect(url_for("bot_web.setup"))

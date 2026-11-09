@@ -1089,7 +1089,12 @@ def devicecmd(path_token: str | None = None):
     # terminal (e.g. it executed the command before the cancel landed)
     # is acknowledged on the wire but leaves the durable state alone; the
     # owner re-queues if the change is still wanted.
-    if (command.result_code or "").startswith(("CANCELLED_", "STALE_")):
+    # V10-L7: the two newer terminal codes carry no CANCELLED_/STALE_
+    # prefix ("superseded_by_retry" from ADMS retry, "owner_cleared"
+    # from ADMS clear-failed), so the status check is what protects
+    # them — a late/duplicate devicecmd must never resurrect a
+    # cancelled row to acked/failed.
+    if command.status == "cancelled" or (command.result_code or "").startswith(("CANCELLED_", "STALE_")):
         audit(
             action="adms_command_ack_ignored",
             resource_type="rrr_adms_command",
