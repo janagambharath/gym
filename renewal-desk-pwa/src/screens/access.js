@@ -1,11 +1,11 @@
 /* Access Control Screen */
 import { attachLiveRefresh } from '../live-refresh.js';
-import { apiRequest, checkInMember } from '../api.js';
+import { apiRequest, checkInMember, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { router } from '../router.js';
 import { renderHeader, bindHeaderEvents, renderListSkeleton, renderEmptyState, renderErrorState, renderAvatar, showToast, showConfirm } from '../components.js';
 import { icon } from '../icons.js';
-import { formatDateTime, formatInteger, escapeHtml } from '../utils.js';
+import { formatDateTime, formatTime, formatInteger, escapeHtml, uuid } from '../utils.js';
 
 export default {
   async mount(el) {
@@ -42,23 +42,34 @@ export default {
     // Human labels for the retry-sync skip reasons (backend
     // _retry_failed_adms_commands). Grouped counts answer "why could
     // these not be retried" without listing bare command ids.
+    // V10-L14: each label carries an explicit plural — the naive +'s'
+    // produced "could not re-queues", "commands disableds", "terminal
+    // never connecteds".
     const RETRY_SKIP_LABELS = {
-      test_action: 'test command',
-      unlock_door: 'door unlock',
-      unresolvable_member: 'unknown member',
-      requeue_failed: 'could not re-queue',
-      unsupported_action: 'other command',
-      commands_disabled: 'commands disabled',
-      terminal_never_polled: 'terminal never connected',
+      test_action: { label: 'test command', plural: 'test commands' },
+      unlock_door: { label: 'door unlock', plural: 'door unlocks' },
+      unresolvable_member: { label: 'unknown member', plural: 'unknown members' },
+      requeue_failed: { label: 'could not re-queue', plural: 'could not re-queue' },
+      unsupported_action: { label: 'other command', plural: 'other commands' },
+      commands_disabled: { label: 'commands disabled', plural: 'commands disabled' },
+      terminal_never_polled: { label: 'terminal never connected', plural: 'terminals never connected' },
+      // New skip reasons from the backend crew (same fix-all).
+      no_terminal_identity: { label: 'no terminal identity', plural: 'no terminal identities' },
+      not_enableable: { label: 'member not eligible', plural: 'members not eligible' },
     };
     function retrySkippedSummary(skipped) {
       const counts = {};
       for (const s of skipped || []) counts[s.reason] = (counts[s.reason] || 0) + 1;
       return Object.entries(counts).map(([reason, n]) => {
-        const label = RETRY_SKIP_LABELS[reason] || 'other command';
-        return `${n} ${label}${n > 1 ? 's' : ''}`;
+        const entry = RETRY_SKIP_LABELS[reason] || { label: 'other command', plural: 'other commands' };
+        return `${n} ${n > 1 ? entry.plural : entry.label}`;
       }).join(', ');
     }
+    // V10 (contingent gating): retry-sync / clear-failed / ADMS cancel
+    // are owner-only server-side. Hide their buttons for a known staff
+    // session; an unknown role (no session cached yet) still shows them
+    // and the server enforces — the UI gate is cosmetic, never the guard.
+    const isOwner = getCachedSession()?.userRole !== 'staff';
 
     // One feed row — shared by the full render and load-more appends so
     // appended rows look and behave exactly like the first page.
@@ -282,16 +293,30 @@ export default {
                   ${icon('alert', 16, '#B45309')}
                   <span><strong>${formatInteger(s.failed_commands)} command(s)</strong> failed to sync</span>
                 </div>
-                <div style="display:flex;gap:8px">
+                ${isOwner ? `<div style="display:flex;gap:8px">
                   <button class="btn btn-sm btn-primary" id="btn-retry-sync" style="font-size:var(--fs-xs);padding:4px 10px">Retry All</button>
                   <button class="btn btn-sm" id="btn-clear-failed" style="font-size:var(--fs-xs);padding:4px 10px;background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA">Clear</button>
-                </div>
+                </div>` : ''}
+              </div>
+            ` : ''}
+
+            ${Array.isArray(s.queued_adms_commands?.commands) && s.queued_adms_commands.commands.length ? `
+              <div class="card" id="queued-commands" style="margin-top:var(--sp-md);padding:var(--sp-md)">
+                <div style="font-weight:var(--fw-bold);font-size:var(--fs-xs);text-transform:uppercase;color:var(--muted);letter-spacing:0.5px;margin-bottom:var(--sp-sm)">Queued door commands (${formatInteger(s.queued_adms_commands.count ?? s.queued_adms_commands.commands.length)})</div>
+                ${s.queued_adms_commands.commands.map(c => `
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--sp-sm);padding:var(--sp-xs) 0;border-top:1px solid var(--border)">
+                    <div style="font-size:var(--fs-sm);min-width:0">
+                      <div style="font-weight:var(--fw-semibold)">${escapeHtml(c.action || 'command')}${c.enroll_number != null ? ` · ID ${escapeHtml(String(c.enroll_number))}` : ''}</div>
+                      ${c.queued_at ? `<div style="font-size:var(--fs-xs);color:var(--muted)">Queued ${escapeHtml(formatDateTime(c.queued_at))}</div>` : ''}
+                    </div>
+                    ${isOwner ? `<button class="btn btn-sm" data-cancel-adms="${c.id}" style="font-size:var(--fs-xs);padding:4px 10px;flex-shrink:0">Cancel</button>` : ''}
+                  </div>`).join('')}
               </div>
             ` : ''}
 
             ${lastRetryResult ? `
               <div id="retry-reasons" class="card" style="margin-top:var(--sp-md);padding:var(--sp-md);font-size:var(--fs-xs);color:var(--muted)">
-                <div style="font-weight:var(--fw-semibold);color:#B45309">Retry All result: ${formatInteger(lastRetryResult.retried_count || 0)} queued${lastRetryResult.skipped_count ? `, ${formatInteger(lastRetryResult.skipped_count)} skipped` : ''}</div>
+                <div style="font-weight:var(--fw-semibold);color:#B45309">Retry All result: ${formatInteger(lastRetryResult.retried_count || 0)} queued${lastRetryResult.skipped_count ? `, ${formatInteger(lastRetryResult.skipped_count)} skipped` : ''}${lastRetryResult.retried_at ? ` · Retried ${escapeHtml(formatTime(lastRetryResult.retried_at))}` : ''}</div>
                 ${lastRetryResult.skipped_count > 0 ? `<div style="margin-top:var(--sp-xs)">Skipped — ${escapeHtml(retrySkippedSummary(lastRetryResult.skipped))}.</div>` : ''}
               </div>
             ` : ''}
@@ -419,17 +444,47 @@ export default {
       // Retry Failed Biometric Syncs
       scroll.querySelector('#btn-retry-sync')?.addEventListener('click', async () => {
         const btn = scroll.querySelector('#btn-retry-sync');        if (btn) btn.disabled = true;
+        // V10-L15: a new attempt supersedes the previous result — clear
+        // it first so a failed retry cannot leave a stale card behind.
+        lastRetryResult = null;
+        scroll.querySelector('#retry-reasons')?.remove();
         const res = await apiRequest('/api/mobile/v1/access/retry-sync', { method: 'POST' });
         if (res.ok) {
           // Keep the response so the skip breakdown renders under the
           // banner after the reload (the toast alone only shows counts).
-          lastRetryResult = res.data || null;
+          // V10-L15: timestamp it so its age is visible.
+          lastRetryResult = { ...(res.data || {}), retried_at: new Date().toISOString() };
           showToast(res.data?.message || 'Commands queued for retry', 'success');
           await loadData();
         } else {
-          showToast(res.error?.message || 'Could not retry syncs', 'error');
+          // V10 (contingent gating): retry-sync is owner-only — a 403
+          // means a staff session reached a button the UI should have
+          // hidden; say so plainly instead of a generic failure.
+          if (res.error?.status === 403) showToast('Only the gym owner can retry failed commands', 'error');
+          else showToast(res.error?.message || 'Could not retry syncs', 'error');
           if (btn) btn.disabled = false;
         }
+      });
+
+      // Cancel one queued ADMS door command (V10-L33). The endpoint is
+      // owner-only and only queued rows can be cancelled; on success the
+      // summary refreshes so the row disappears from the list.
+      scroll.querySelectorAll('[data-cancel-adms]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          btn.textContent = 'Cancelling…';
+          const res = await apiRequest(`/api/mobile/v1/access/adms-commands/${btn.dataset.cancelAdms}/cancel`, { method: 'POST' });
+          if (res.ok) {
+            showToast(res.message || res.data?.message || 'Queued command cancelled', 'success');
+            await loadData();
+          } else {
+            if (res.error?.status === 403) showToast('Only the gym owner can cancel queued commands', 'error');
+            else showToast(res.error?.message || 'Could not cancel this command', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Cancel';
+          }
+        });
       });
 
       // Clear Failed Biometric Commands. ADMS rows are marked cleared
@@ -443,6 +498,9 @@ export default {
         const btn = scroll.querySelector('#btn-clear-failed');        if (btn) btn.disabled = true;
         const res = await apiRequest('/api/mobile/v1/access/clear-failed', { method: 'POST' });
         if (res.ok) {
+          // V10-L15: the rows the retry-result card described are gone —
+          // clear it so it cannot contradict the now-empty banner.
+          lastRetryResult = null;
           showToast(res.data?.message || 'Failed commands cleared', 'success');
           await loadData();
         } else {
@@ -484,6 +542,11 @@ export default {
       const searchInput = modal.querySelector('#checkin-search');
       const listContainer = modal.querySelector('#checkin-members-list');
       let debounceTimeout = null;
+      // V10-L25: one stable key per modal open, reused across retries of
+      // the same check-in (the backend honours scope access_checkin, so
+      // a retry after a lost response replays instead of punching twice);
+      // it rotates after a successful check-in.
+      let checkinKey = uuid();
 
       async function fetchAndRenderMembers(query = '') {
         // V3-L22: the search query used to drop the status=active filter,
@@ -517,11 +580,15 @@ export default {
 
         listContainer.querySelectorAll('.btn-do-checkin').forEach(btn => {
           btn.addEventListener('click', async () => {
+            // V10-L25: explicit guard — a disabled button fires no click
+            // in a real browser, but a programmatic/double tap must not
+            // slip past either (same guard as send-reminder, V10-L13).
+            if (btn.disabled) return;
             const mid = btn.dataset.mid;
             const name = btn.dataset.mname;
             btn.disabled = true;
             btn.textContent = 'Checking in...';
-            const res = await checkInMember(mid, 'ENTRY');
+            const res = await checkInMember(mid, 'ENTRY', { idempotencyKey: checkinKey });
             // V6-M14: the backend returns HTTP 200 success:true with the
             // denial only in the top-level message + data.event_type — a
             // green "checked in successfully!" toast here would lie about
@@ -532,6 +599,7 @@ export default {
               btn.textContent = 'Check In';
             } else if (res.ok) {
               showToast(`${name} checked in successfully!`, 'success');
+              checkinKey = uuid();
               modal.remove();
               await loadData();
             } else {

@@ -41,7 +41,20 @@ async function mountRecord(el, params) {
   const plans = settingsRes.data.plans || [];
   const timezone = settingsRes.data.gym?.timezone || 'Asia/Kolkata';
   const today = dateKeyInTimezone(new Date(), timezone);
-  if (preId) { const r = await apiRequest(`/api/mobile/v1/members/${preId}`); if (r.ok) selectedMember = r.data; }
+  // V10-L17: a failed prefilled-member fetch used to fail silently — the
+  // form rendered a blank search with no signal that the member the
+  // owner came from failed to load. Error-state with retry, same gate
+  // as renew-member (V8-L24) and the settings leg above.
+  if (preId) {
+    const r = await apiRequest(`/api/mobile/v1/members/${preId}`);
+    if (r.ok) selectedMember = r.data;
+    else {
+      el.innerHTML = `${renderHeader({ title: 'Record Payment', showBack: true })}<div class="scroll-view"><div class="scroll-content form-scroll-content">${renderErrorState(r.error?.message || 'Could not load this member.')}</div></div>`;
+      bindHeaderEvents(el, { onBack: () => navigate.pop() });
+      el.querySelector('#retry-btn')?.addEventListener('click', () => mountRecord(el, params));
+      return;
+    }
+  }
   // Draft typed values survive re-render (member pick / "Change") — M24.
   let draft = {};
   const captureDraft = () => {

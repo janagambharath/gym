@@ -1,7 +1,18 @@
 /* Gym Profile Screen — edit gym name, contact, address, timezone */
 import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast } from '../components.js';
-import { escapeHtml } from '../utils.js';
+import { escapeHtml, isValidTimezone } from '../utils.js';
+
+// V10-M5: the timezone was a free-text input with no validation — the
+// invalid stored value 'india' (Yodha) got in through a path like this.
+// A <select> of real IANA zones makes a bad value untypeable; the submit
+// still validates with isValidTimezone() as defence in depth.
+const TIMEZONE_OPTIONS = [
+  'Asia/Kolkata', 'Asia/Dubai', 'Asia/Kathmandu', 'Asia/Dhaka',
+  'Asia/Karachi', 'Asia/Colombo', 'Asia/Singapore', 'Asia/Tokyo',
+  'Australia/Sydney', 'Europe/London', 'Europe/Paris',
+  'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+];
 export default { async mount(el) { await load(el); } };
 
 async function load(el) {
@@ -28,24 +39,41 @@ async function load(el) {
     wrap.querySelector('#retry-btn')?.addEventListener('click', () => load(el));
     return;
   }
+  const currentTz = s.timezone || 'Asia/Kolkata';
+  const tzOptions = TIMEZONE_OPTIONS.map(tz => ({ value: tz, label: tz }));
+  if (!TIMEZONE_OPTIONS.includes(currentTz)) {
+    // Keep the gym's stored value visible (labelled as-is) even when it
+    // is not a known zone — the owner can see what is stored and pick a
+    // valid replacement; submit refuses to save an invalid value.
+    tzOptions.push({ value: currentTz, label: `${currentTz} (current)` });
+  }
   wrap.innerHTML = `
     <form id="gp-form" style="display:flex;flex-direction:column;gap:var(--sp-md);padding:var(--sp-lg)">
       ${renderFormField({id:'gp-name',label:'Gym Name',value:s.name||'',required:true})}
       ${renderFormField({id:'gp-email',label:'Email',type:'email',value:s.email||''})}
       ${renderFormField({id:'gp-phone',label:'Phone',type:'tel',value:s.phone||''})}
       ${renderFormField({id:'gp-address',label:'Address',type:'textarea',value:s.address||''})}
-      ${renderFormField({id:'gp-timezone',label:'Timezone',value:s.timezone||'Asia/Kolkata'})}
+      ${renderFormField({id:'gp-timezone',label:'Timezone',value:currentTz,options:tzOptions})}
+      ${!isValidTimezone(currentTz) ? `<div style="font-size:var(--fs-sm);color:var(--warning)">The stored timezone “${escapeHtml(currentTz)}” is not a valid timezone — pick a valid one above before saving.</div>` : ''}
       <button type="submit" class="btn btn-primary btn-lg btn-full" id="gp-save">Save Changes</button>
     </form>`;
   el.querySelector('#gp-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = el.querySelector('#gp-save'); btn.disabled = true; btn.textContent = 'Saving…';
+    const timezone = el.querySelector('#gp-timezone').value.trim() || 'Asia/Kolkata';
+    if (!isValidTimezone(timezone)) {
+      // V10-M5: refuse + name the bad value instead of saving it and
+      // silently breaking every gym-time display again.
+      showToast(`“${timezone}” is not a valid timezone — pick one from the list.`, 'error');
+      btn.disabled = false; btn.textContent = 'Save Changes';
+      return;
+    }
     const body = {
       name: el.querySelector('#gp-name').value.trim(),
       email: el.querySelector('#gp-email').value.trim(),
       phone: el.querySelector('#gp-phone').value.trim(),
       address: el.querySelector('#gp-address').value.trim(),
-      timezone: el.querySelector('#gp-timezone').value.trim() || 'Asia/Kolkata',
+      timezone,
     };
     if (!body.name) { showToast('Gym name is required','error'); btn.disabled = false; btn.textContent = 'Save Changes'; return; }
     const r = await apiRequest('/api/mobile/v1/settings', { method:'PATCH', body });

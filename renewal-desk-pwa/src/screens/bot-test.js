@@ -4,6 +4,11 @@ import { renderHeader, bindHeaderEvents, showToast } from '../components.js';
 import { icon } from '../icons.js'; import { escapeHtml } from '../utils.js';
 export default { mount(el) {
   let messages = [{ role:'bot', text:'Hello! I\'m your AI receptionist. How can I help you today?' }];
+  // V10-L20: sendMessage used to re-render the whole screen on every
+  // send and every reply, destroying the input (focus lost after every
+  // message) and letting rapid sends interleave. Append bubbles in
+  // place instead, and disable Send while a reply is in flight.
+  let sending = false;
   const render = () => {
     el.innerHTML = `${renderHeader({title:'Test Bot',showBack:true})}
       <div class="scroll-view" id="bt-scroll"><div class="chat-container" id="bt-chat">
@@ -19,13 +24,27 @@ export default { mount(el) {
     el.querySelector('#bt-input').addEventListener('keydown', (e)=>{ if(e.key==='Enter') sendMessage(); });
   };
   async function sendMessage() {
+    if (sending) return;
     const input = el.querySelector('#bt-input'); const text = input.value.trim();
-    if (!text) return; input.value = '';
-    messages.push({role:'user',text}); render();
+    if (!text) return;
+    sending = true;
+    const sendBtn = el.querySelector('#bt-send');
+    if (sendBtn) sendBtn.disabled = true;
+    input.value = '';
+    messages.push({role:'user',text});
+    const chat = el.querySelector('#bt-chat');
+    const scroll = el.querySelector('#bt-scroll');
+    // Append in place — the input element survives, so focus is kept.
+    chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble outgoing">${escapeHtml(text)}</div>`);
+    scroll.scrollTop = scroll.scrollHeight;
     const r = await apiRequest('/api/mobile/v1/bot/test',{method:'POST',body:{message:text}});
-    if (r.ok && r.data.response) messages.push({role:'bot',text:r.data.response});
-    else messages.push({role:'bot',text:'Sorry, I couldn\'t process that. Please try again.'});
-    render();
+    const reply = (r.ok && r.data.response) ? r.data.response : 'Sorry, I couldn\'t process that. Please try again.';
+    messages.push({role:'bot',text:reply});
+    chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${escapeHtml(reply)}</div>`);
+    scroll.scrollTop = scroll.scrollHeight;
+    sending = false;
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
   }
   render();
 }};

@@ -26,6 +26,17 @@ async function load(el, params) {
     const settingsRes = await apiRequest('/api/mobile/v1/settings');
     const plansFailed = !settingsRes.ok;
     const plans = settingsRes.ok ? (settingsRes.data.plans || []) : [];
+    // V10-M3: the plans leg returns active plans only, so a member on a
+    // soft-deleted plan had no matching option — the select fell back to
+    // the placeholder and submit sent plan_id: null, silently unassigning
+    // the plan on any unrelated edit. Keep the current plan visible as a
+    // disabled "(deleted)" option; the submit below omits plan_id for it
+    // instead of nulling it.
+    const currentPlanMissing = m.plan?.id != null && !plans.some(p => p.id === m.plan.id);
+    const planOptions = plans.map(p => ({ value: p.id, label: p.name }));
+    if (currentPlanMissing) {
+      planOptions.push({ value: m.plan.id, label: `${m.plan.name || 'Plan'} (deleted)`, disabled: true });
+    }
 
     el.innerHTML = `
       ${renderHeader({ title: 'Edit Member', showBack: true })}
@@ -36,7 +47,7 @@ async function load(el, params) {
           ${renderFormField({ id: 'em-email', label: 'Email', type: 'email', value: m.email || '' })}
           ${renderFormField({ id: 'em-gender', label: 'Gender', value: m.gender || '', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }] })}
           ${renderFormField({ id: 'em-address', label: 'Address', type: 'textarea', value: m.address || '' })}
-          ${renderFormField({ id: 'em-plan', label: 'Plan', value: m.plan?.id || '', options: plans.map(p => ({ value: p.id, label: p.name })) })}
+          ${renderFormField({ id: 'em-plan', label: 'Plan', value: m.plan?.id || '', options: planOptions })}
           ${plansFailed ? `<div class="empty-state" style="padding:var(--sp-md)"><div class="empty-state-text">Could not load the membership plans (${escapeHtml(settingsRes.error?.message || 'check your connection')}) — saving is blocked so the member's plan can't be silently unassigned.</div><button class="btn btn-primary" id="em-plans-retry">Try Again</button></div>` : ''}
           ${renderFormField({ id: 'em-start', label: 'Start Date', type: 'date', value: m.membership_start || '' })}
           <div class="form-group">
@@ -109,10 +120,18 @@ async function load(el, params) {
         phone: phone,
         email: el.querySelector('#em-email').value.trim() || null,
         gender: el.querySelector('#em-gender').value || null,
-        plan_id: el.querySelector('#em-plan').value ? Number(el.querySelector('#em-plan').value) : null,
         notes: el.querySelector('#em-notes').value.trim() || null,
         address: el.querySelector('#em-address').value.trim() || null,
       };
+      // V10-M3: never send plan_id: null unless the owner deliberately
+      // cleared it via an explicit "Remove plan" control (there is none
+      // on this screen). A deleted plan still selected, or no plan
+      // selected at all, omits the field — the backend keeps the
+      // member's current plan instead of unassigning it.
+      const selectedPlanId = el.querySelector('#em-plan').value ? Number(el.querySelector('#em-plan').value) : null;
+      if (selectedPlanId != null && plans.some(p => p.id === selectedPlanId)) {
+        body.plan_id = selectedPlanId;
+      }
       if (startDate) body.membership_start = startDate;
       if (endDate) body.membership_end = endDate;
 

@@ -17,6 +17,9 @@ async function load(el) {
   const raw = res.data || {};
   // The subscription endpoint carries no member count (L11) — the members
   // list pagination total is the authoritative "members used" figure.
+  // V10-L18: a failed members leg used to drop the row silently, so the
+  // page looked complete while missing the usage-against-limit figure.
+  const membersFailed = !membersRes.ok;
   const membersUsed = membersRes.ok ? membersRes.data.pagination?.total : null;
   // Normalize the subscription/status payload into the screen's shape.
   const s = {
@@ -30,7 +33,7 @@ async function load(el) {
   scroll.innerHTML = `<div class="scroll-content">
     <div style="padding:var(--sp-lg)"><div class="card card-body" style="text-align:center">
       <div style="width:56px;height:56px;border-radius:var(--r-full);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--sp-md)">${icon('star',28,'var(--brand)')}</div>
-      <h3 style="margin-bottom:var(--sp-sm)">${escapeHtml(s.plan_name||s.plan||'Free')}</h3>
+      <h3 style="margin-bottom:var(--sp-sm)">${escapeHtml(s.plan_name || 'Free')}</h3>
       ${renderBadge(s.status||'active')}
     </div></div>
     <div style="padding:0 var(--sp-lg) var(--sp-lg)"><div class="card card-body">
@@ -38,7 +41,10 @@ async function load(el) {
       ${s.current_period_end ? renderInfoRow('Next Billing', formatDate(s.current_period_end)) : ''}
       ${s.member_limit ? renderInfoRow('Member Limit', String(s.member_limit)) : ''}
       ${s.members_used != null ? renderInfoRow('Members Used', String(s.members_used)) : ''}
+      ${membersFailed ? `<div style="font-size:var(--fs-sm);color:var(--warning);padding:var(--sp-sm) 0">Could not load member count — <button class="btn btn-sm btn-secondary" id="sub-members-retry">retry</button></div>` : ''}
       ${s.amount ? renderInfoRow('Amount', formatCurrency(s.amount)) : ''}
     </div></div>
   </div>`;
+  // V10-L18: retry re-runs the whole load (both legs).
+  scroll.querySelector('#sub-members-retry')?.addEventListener('click', () => load(el));
 }

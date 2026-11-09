@@ -24,7 +24,9 @@ async function load(el, pillar) {
     btn.disabled = true;
     const status = btn.dataset.status;
     const outcome = status === 'closed' ? await showPrompt({ title: 'Owner-reported recovery', message: 'Enter the amount confirmed in your payment records (₹). This is owner-reported, not independently verified.', defaultValue: '0', inputType: 'number', confirmText: 'Save' }) : null;
-    if (status === 'closed' && outcome === null) return;
+    // V10-L16: cancelling the prompt used to return with the button
+    // still disabled — the row stayed dead until reload. Re-enable it.
+    if (status === 'closed' && outcome === null) { btn.disabled = false; return; }
     const response = await apiRequest(`/api/mobile/v1/rrr/opportunities/${btn.dataset.id}`, { method: 'PATCH', body: { status, ...(status === 'closed' ? { outcome_revenue: outcome } : {}) } });
     if (response.ok) load(el, pillar);
     // V8-L22: a failed status change used to fail silently — the tap just

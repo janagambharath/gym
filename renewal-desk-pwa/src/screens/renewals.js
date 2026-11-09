@@ -1,7 +1,7 @@
 /* Renewals Screen */
 import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest } from '../api.js';
-import { navigate, handleLogout } from '../app.js';
+import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderMemberCard, renderListSkeleton, renderEmptyState, renderErrorState, renderSectionHeader } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml, formatInteger } from '../utils.js';

@@ -95,9 +95,12 @@ export default { async mount(el) {
       return;
     }
     const pg = res.data.pagination || {};
-    total = pg.total ?? (res.data.notifications || res.data || []).length;
-    page = pg.page ?? fetchPage;
     const fresh = res.data.notifications || res.data || [];
+    // V10-L23: derive the total from the parsed array, never from the raw
+    // envelope — res.data.length is undefined when data is an object
+    // without `notifications`, which hid "Load more" even with more pages.
+    total = pg.total ?? (Array.isArray(fresh) ? fresh.length : notifs.length);
+    page = pg.page ?? fetchPage;
     if (!Array.isArray(fresh)) return;
     // V5-M11: dedupe by id — a new notification landing between page
     // fetches shifts rows and the boundary row renders twice.

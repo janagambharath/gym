@@ -301,7 +301,7 @@ export function renderFormField({ id, label, type = 'text', value = '', placehol
   if (options) {
     input = `<select class="form-input" id="${id}" ${required ? 'required' : ''}>
       <option value="" disabled ${!value ? 'selected' : ''}>${placeholder || 'Select...'}</option>
-      ${options.map(o => `<option value="${escapeHtml(String(o.value))}" ${String(o.value) === String(value) ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+      ${options.map(o => `<option value="${escapeHtml(String(o.value))}" ${String(o.value) === String(value) ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}>${escapeHtml(o.label)}</option>`).join('')}
     </select>`;
   } else if (type === 'textarea') {
     input = `<textarea class="form-input" id="${id}" placeholder="${escapeHtml(placeholder)}" ${required ? 'required' : ''}>${escapeHtml(value)}</textarea>`;

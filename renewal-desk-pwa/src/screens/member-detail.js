@@ -4,7 +4,7 @@ import { apiRequest } from '../api.js';
 import { navigate, handleLogout } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderBadge, renderInfoRow, renderInfoRowHtml, renderSectionHeader, showToast, showConfirm, showPrompt, renderErrorState } from '../components.js';
 import { icon } from '../icons.js';
-import { escapeHtml, formatDate, formatDateTime, formatCurrency, getMemberDisplayStatus, getMemberStatusColor, getDaysText, getInitials, getAvatarColor } from '../utils.js';
+import { escapeHtml, formatDate, formatDateTime, formatCurrency, getMemberDisplayStatus, getMemberStatusColor, getDaysText, getInitials, getAvatarColor, uuid } from '../utils.js';
 
 export default {
   async mount(el, params) {
@@ -22,6 +22,13 @@ export default {
       el.innerHTML = renderErrorState('Member not found');
       return;
     }
+
+    // V10-L13/L25: one stable idempotency key per pending reminder send.
+    // A re-tap after a failed or lost send reuses the key (the backend
+    // replays scope whatsapp_send_reminder instead of sending twice);
+    // the key rotates after a successful send so a later deliberate
+    // reminder is a new action, not a replay.
+    let reminderKey = uuid();
 
     // Function to render the entire screen with current member state
     const render = () => {
@@ -374,7 +381,11 @@ export default {
           body: { days, reason }
         });
         if (res.ok) {
-          showToast(res.data?.message || 'Membership paused successfully', 'success');
+          // V10-L24: the backend puts the human message top-level
+          // (res.message), not res.data.message — the old read always
+          // fell back to the generic text instead of e.g. "paused for
+          // 14 days. Gate access disabled."
+          showToast(res.message || res.data?.message || 'Membership paused successfully', 'success');
           member = res.data?.data || res.data;
           render();
         } else {
@@ -391,7 +402,8 @@ export default {
         if (!yes) return;
         const res = await apiRequest(`/api/mobile/v1/members/${member.id}/unfreeze`, { method: 'POST' });
         if (res.ok) {
-          showToast('Membership resumed!', 'success');
+          // V10-L24: same top-level-message shape as freeze.
+          showToast(res.message || res.data?.message || 'Membership resumed!', 'success');
           member = res.data?.data || res.data;
           render();
         } else {
@@ -400,8 +412,20 @@ export default {
       });
 
       el.querySelector('#btn-send-reminder')?.addEventListener('click', async () => {
-        const res = await apiRequest('/api/mobile/v1/whatsapp/send-reminder', { method: 'POST', body: { member_id: member.id } });
-        showToast(res.ok ? 'Reminder sent!' : res.error.message, res.ok ? 'success' : 'error');
+        // V10-L13: no in-flight guard used to let a double-tap send two
+        // reminders (apiRequest mints a fresh key per call). Disable
+        // while the POST is in flight; re-enable on failure.
+        const btn = el.querySelector('#btn-send-reminder');
+        if (!btn || btn.disabled) return;
+        btn.disabled = true;
+        const res = await apiRequest('/api/mobile/v1/whatsapp/send-reminder', { method: 'POST', body: { member_id: member.id }, headers: { 'Idempotency-Key': reminderKey } });
+        if (res.ok) {
+          showToast('Reminder sent!', 'success');
+          reminderKey = uuid();
+        } else {
+          showToast(res.error.message, 'error');
+        }
+        btn.disabled = false;
       });
 
       el.querySelector('#btn-deactivate')?.addEventListener('click', async () => {

@@ -248,6 +248,13 @@ export async function boot() {
   // Restore session
   const session = restoreSession();
 
+  // V10-M4: the API client fires 'session-expired' once when a token
+  // refresh definitively fails (401/403) — the session is already
+  // cleared, so route straight to login instead of leaving every screen
+  // on a retry button that can only 401 again. Screens need no
+  // per-screen 401 handling for this case.
+  window.addEventListener('session-expired', () => showAuthFlow());
+
   if (session) {
     await showMainApp();
   } else {

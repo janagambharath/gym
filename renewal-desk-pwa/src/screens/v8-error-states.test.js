@@ -367,7 +367,14 @@ test('gym-profile: renders real gym values from data.gym; save sends them back, 
     el.querySelector('#gp-email').value = 'owner@yodha.example';
     el.querySelector('#gp-phone').value = '9000000000';
     el.querySelector('#gp-address').value = 'Hayathnagar';
+    // V10-M5: the stored 'india' is shown as stored, but saving it is now
+    // refused (it is not a valid IANA zone) — the owner must pick a valid
+    // zone first. The real-values-not-blanks intent below is unchanged.
     el.querySelector('#gp-timezone').value = 'india';
+    el.querySelector('#gp-form').dispatchEvent({ type: 'submit' });
+    await tick();
+    assert.equal(calls.find((c) => (c.options?.method || 'GET') === 'PATCH'), undefined, 'no save with an invalid timezone');
+    el.querySelector('#gp-timezone').value = 'Asia/Kolkata';
     el.querySelector('#gp-form').dispatchEvent({ type: 'submit' });
     await tick();
     const patch = calls.find((c) => (c.options?.method || 'GET') === 'PATCH');
@@ -377,7 +384,7 @@ test('gym-profile: renders real gym values from data.gym; save sends them back, 
     assert.equal(body.email, 'owner@yodha.example');
     assert.equal(body.phone, '9000000000');
     assert.equal(body.address, 'Hayathnagar');
-    assert.equal(body.timezone, 'india');
+    assert.equal(body.timezone, 'Asia/Kolkata');
   } finally { restore(); }
 });
 

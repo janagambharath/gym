@@ -187,7 +187,10 @@ function render(el, memberLoadFailed = false) {
       <div class="bm-footer-info"><span id="bm-count">0</span> ready to link</div>
       <button class="bm-link-all" id="bm-link-all">Link all →</button>
     </div>
-    ${groups.length ? `<div class="bm-danger-row">
+    ${/* V10 (contingent gating): DELETE /rrr/attendance/unmapped is
+      owner-only server-side — hide the button for a known staff session
+      (an unknown role still shows it; the server enforces). */
+      groups.length && getCachedSession()?.userRole !== 'staff' ? `<div class="bm-danger-row">
       <button class="bm-clear-all" id="bm-clear-all">Clear all unmapped entries</button>
     </div>` : ''}
     

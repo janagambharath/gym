@@ -1,6 +1,6 @@
 import { apiRequest } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml, formatCurrency } from '../utils.js';
+import { escapeHtml, formatCurrency, uuid } from '../utils.js';
 import { icon } from '../icons.js';
 import { showToast } from '../components.js';
 
@@ -24,6 +24,11 @@ async function load(el) {
     <section class="rrr-panel owner-cash-close"><div class="rrr-panel-head"><div><h2>${data.cash_close.closed ? 'Cash close recorded' : 'Close cash for today'}</h2><p>${data.cash_close.closed ? `Counted ${formatCurrency(data.cash_close.counted_cash)} · variance ${formatCurrency(data.cash_close.variance)}` : 'Enter the physical cash counted at the desk. This does not change payment records.'}</p></div></div><form id="cash-close-form" class="owner-close-form"><label>Physical cash counted<input type="number" min="0" step="0.01" required name="counted_cash" value="${data.cash_close.closed ? escapeHtml(data.cash_close.counted_cash) : escapeHtml(data.today.expected_cash)}"></label><label>Notes<textarea rows="2" name="notes" maxlength="1000" placeholder="Optional: float, refund, or variance explanation">${escapeHtml(data.cash_close.notes || '')}</textarea></label><button class="rrr-add-button" type="submit">${data.cash_close.closed ? 'Update cash close' : 'Record cash close'}</button></form></section>
   </main>`;
   el.querySelector('#finance-back')?.addEventListener('click', () => navigate.pop());
+  // V10-L25: one stable key per form load, reused across retries of the
+  // same cash close (the backend honours scope owner_cash_close, so a
+  // retry after a lost response replays instead of closing twice). A
+  // successful close re-runs load(), which mints a fresh key.
+  const cashCloseKey = uuid();
   el.querySelector('#cash-close-form')?.addEventListener('submit', async event => {
     event.preventDefault();
     const btn = event.currentTarget.querySelector('[type="submit"]');
@@ -31,7 +36,7 @@ async function load(el) {
     btn.disabled = true;
     try {
       const form = new FormData(event.currentTarget);
-      const response = await apiRequest('/api/mobile/v1/owner/cash-close', { method: 'POST', body: { counted_cash: form.get('counted_cash'), notes: form.get('notes') } });
+      const response = await apiRequest('/api/mobile/v1/owner/cash-close', { method: 'POST', body: { counted_cash: form.get('counted_cash'), notes: form.get('notes') }, headers: { 'Idempotency-Key': cashCloseKey } });
       if (response.ok) { showToast(`Cash close saved. Variance: ${formatCurrency(response.data.variance)}`, 'success'); await load(el); }
       else showToast(response.error?.message || 'Could not save cash close.', 'error');
     } finally { btn.disabled = false; }

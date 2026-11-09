@@ -6,6 +6,7 @@ import { router } from '../router.js';
 import { renderHeader, bindHeaderEvents, renderAvatar, renderMenuItem, renderBadge, renderInfoRow, showConfirm, showToast } from '../components.js';
 import { icon } from '../icons.js';
 import { escapeHtml } from '../utils.js';
+import { APP_VERSION, APP_BUILD_TIME } from '../version.js';
 
 export default {
   async mount(el) {
@@ -72,6 +73,11 @@ export default {
           <button class="btn btn-secondary btn-full" id="btn-logout">${icon('logout', 18)} Sign Out</button>
           <button class="btn btn-danger btn-full btn-sm" id="btn-delete" style="margin-top:var(--sp-md)">Delete Account & Data</button>
         </div>
+
+        <!-- V10-L19: build/version indicator — which bundle this phone is
+             running, so a stale cached bundle can be diagnosed without
+             devtools. -->
+        <div id="app-version" style="text-align:center;padding:0 var(--sp-lg) var(--sp-xl);font-size:var(--fs-xs);color:var(--muted)">App version ${escapeHtml(APP_VERSION)}${APP_BUILD_TIME ? ` · built ${escapeHtml(APP_BUILD_TIME)}` : ''}</div>
       </div></div>`;
 
     bindHeaderEvents(el, {

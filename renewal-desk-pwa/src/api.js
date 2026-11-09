@@ -75,12 +75,28 @@ let refreshInFlight;
 /** @type {Promise<{token: string, refreshToken: string}|null|undefined>|undefined} */
 let memberRefreshInFlight;
 
+// V10-M4: the owner session definitively expired (refresh 401/403). Fired
+// once per expiry episode — app.js routes to the login flow on it, so
+// screens never sit on a retry button that can only 401 again. Reset
+// whenever a session is (re-)established.
+let sessionExpiredNotified = false;
+function notifySessionExpired() {
+  if (sessionExpiredNotified) return;
+  sessionExpiredNotified = true;
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new CustomEvent('session-expired'));
+    }
+  } catch { /* ignore */ }
+}
+
 // ─── Session Management ──────────────────────────────────────────────
 
 /** @param {import('./session.js').Session|undefined} session */
 export function setCachedSession(session) {
   cachedSession = session;
   if (session) {
+    sessionExpiredNotified = false;
     configureDisplayPreferences({
       country: session.gymCountry,
       currency: session.gymCurrency,
@@ -120,6 +136,11 @@ async function attemptRefresh() {
       if (response.status === 401 || response.status === 403) {
         clearSession();
         cachedSession = undefined;
+        // V10-L22/M4: a definitive 401/403 from the refresh endpoint
+        // means the session is dead (null). Anything else — network
+        // error, 5xx, malformed envelope — is transient (undefined):
+        // the session is fine and a retry may succeed.
+        return null;
       }
       return undefined;
     }
@@ -143,6 +164,7 @@ async function attemptRefresh() {
     };
     saveSession(newSession);
     cachedSession = newSession;
+    sessionExpiredNotified = false;
     return newSession;
   } catch {
     return undefined;
@@ -253,7 +275,17 @@ export async function apiRequest(path, options = {}) {
       } else if (cachedSession) {
         const refreshed = await refreshOnce();
         if (refreshed) response = await makeRequest(refreshed.accessToken);
-        else return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+        else if (refreshed === null) {
+          // V10-M4: refresh definitively failed (401/403) — the session
+          // is dead and the session is already cleared. Tell app.js once
+          // so it routes to login; a per-screen retry could only 401 again.
+          notifySessionExpired();
+          return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+        } else {
+          // V10-L22: transient refresh failure (network / 5xx) — the
+          // session is fine; say so instead of claiming it expired.
+          return { ok: false, error: { message: 'Could not reach the server. Check your connection and retry.' } };
+        }
       }
     }
 
@@ -427,7 +459,14 @@ export async function uploadFormData(path, formData, timeoutMs = 60000) {
     if (response.status === 401 && cachedSession) {
       const refreshed = await refreshOnce();
       if (refreshed) response = await doFetch(refreshed.accessToken);
-      else return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+      else if (refreshed === null) {
+        // V10-M4/L22: definitive expiry — notify once so app.js routes
+        // to login instead of leaving a dead retry button.
+        notifySessionExpired();
+        return { ok: false, error: { message: 'Session expired. Please sign in again.', status: 401 } };
+      } else {
+        return { ok: false, error: { message: 'Could not reach the server. Check your connection and retry.' } };
+      }
     }
     const envelope = await response.json().catch(() => ({}));
     // V3-L33: envelope.error can be an object — interpolating it raw
@@ -440,10 +479,17 @@ export async function uploadFormData(path, formData, timeoutMs = 60000) {
   }
 }
 
-/** Record manual member check-in or check-out */
-export async function checkInMember(memberId, type = 'ENTRY') {
+/** Record manual member check-in or check-out.
+ *  V10-L25: callers may pass a stable per-action idempotency key
+ *  (reused across retries of the same check-in); the backend honours
+ *  scope "access_checkin", so a retry after a lost response replays
+ *  instead of punching twice. Without one, apiRequest mints a fresh
+ *  key per call as usual. */
+export async function checkInMember(memberId, type = 'ENTRY', options = {}) {
+  const headers = options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : undefined;
   return apiRequest('/api/mobile/v1/access/checkin', {
     method: 'POST',
     body: { member_id: memberId, type },
+    ...(headers ? { headers } : {}),
   });
 }
