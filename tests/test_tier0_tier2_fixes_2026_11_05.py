@@ -290,7 +290,7 @@ def test_group_test_resolving_to_confirmed_member_refused_at_serve(client, seed_
     # The member-targeting test cancels in place; the terminal-local fake serves.
     assert res.get_data(as_text=True) == f"C:{ghost.id}:{ghost.command_text}\n"
     saved = db.session.get(RRRAdmsCommand, trapped.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert "belongs to a member" in (saved.result_message or "")
 
 

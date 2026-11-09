@@ -279,7 +279,7 @@ class RRRAdmsCommand(TenantMixin, TimestampMixin, db.Model):
             name="ck_rrr_adms_command_action",
         ),
         CheckConstraint(
-            "status IN ('queued', 'delivered', 'acked', 'failed')",
+            "status IN ('queued', 'delivered', 'acked', 'failed', 'cancelled')",
             name="ck_rrr_adms_command_status",
         ),
         Index("ix_rrr_adms_command_device_status", "integration_id", "status", "id"),

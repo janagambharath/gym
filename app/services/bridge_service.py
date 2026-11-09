@@ -624,6 +624,30 @@ def resolve_adms_member(gym_id: int, enroll_number: str | None) -> Member | None
     return None
 
 
+def resolve_adms_command_member(command: RRRAdmsCommand) -> Member | None:
+    """Resolve an ADMS command row back to the live member it was for.
+
+    Intended member first (``intended_member_id`` stamped at queue time,
+    V7-M1 — survives the 90-day audit purge and mapping deletion), then
+    the current holder of the row's terminal identity via
+    :func:`resolve_adms_member` (confirmed mapping, else device enroll
+    number). A soft-deleted holder never resolves on either branch, and
+    a member from another gym is never returned. Returns ``None`` when
+    the row's member cannot be proven — the caller must leave such a row
+    alone (skip, never retry it blind).
+    """
+    intended_id = adms_command_intended_member_id(command)
+    if intended_id is not None:
+        member = db.session.get(Member, intended_id)
+        if (
+            member is not None
+            and member.gym_id == command.gym_id
+            and member.deleted_at is None
+        ):
+            return member
+    return resolve_adms_member(command.gym_id, command.test_enroll_number)
+
+
 def cancel_adms_command(
     command: RRRAdmsCommand,
     *,
@@ -633,9 +657,18 @@ def cancel_adms_command(
     """Terminal-state a stale ADMS disable/enable (see :func:`cancel_bridge_command`).
 
     Pass the STALE_ENABLE_* pair when cancelling an enable.
+
+    The row is stamped status='cancelled', NOT 'failed': a cancelled row
+    was never a terminal rejection — it is a deliberate non-serve (stale
+    state, owner cancel, expired unlock, retired legacy DELETE). Stamping
+    it 'failed' inflated the Live Access "N command(s) failed to sync"
+    count with rows nobody could retry, and the ADMS retry/clear paths
+    only ever operate on status='failed'. Cancelled rows are terminal
+    history: getrequest only serves queued/delivered, so a cancelled row
+    can never reach a terminal.
     """
 
-    command.status = "failed"
+    command.status = "cancelled"
     command.result_code = marker
     command.result_message = error
     command.acknowledged_at = utcnow()
@@ -1230,7 +1263,7 @@ def queue_adms_membership_command(member: Member, *, force: bool = False) -> RRR
             # redundant Grp=100 block is idempotent, a missing one is not.
             if adms_command_intended_member_id(latest) == member.id:
                 return latest
-        # "failed" (or a forced repair, or an acked/delivered command for a
+        # "failed"/"cancelled" (or a forced repair, or an acked/delivered command for a
         # different member) always queues a fresh command below.
 
     command = RRRAdmsCommand(
@@ -1404,7 +1437,7 @@ def queue_manual_adms_member_command(
             # queue a fresh command — unknown intent also re-queues, since
             # a redundant Grp=100 block is idempotent but a missing
             # unblock is not.
-        # "failed" (or a delivered/acked command for a different member or
+        # "failed"/"cancelled" (or a delivered/acked command for a different member or
         # the opposite action) always queues a fresh command below.
 
     command = RRRAdmsCommand(

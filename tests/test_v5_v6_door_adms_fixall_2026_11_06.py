@@ -660,7 +660,7 @@ def test_owner_block_cancelled_when_enroll_reassigned_to_another_member(client, 
     body = _getrequest_body(client, "m6a-token", "M6A-X2008")
     assert "C:" not in body, body
     saved = db.session.get(RRRAdmsCommand, manual.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_COMMAND_SUPERSEDED_MARKER
 
 
@@ -869,7 +869,7 @@ def test_devicecmd_ignores_ack_for_guard_cancelled_block(client, seed_gym):
     body = _getrequest_body(client, "l8-token", "L8-X2008")
     assert "C:" not in body, body
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_DISABLE_MARKER
 
     # A late Return=0 ack from the terminal must not flip it back.
@@ -879,7 +879,7 @@ def test_devicecmd_ignores_ack_for_guard_cancelled_block(client, seed_gym):
     )
     assert res.status_code == 200
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_DISABLE_MARKER
 
 

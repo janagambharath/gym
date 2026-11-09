@@ -477,5 +477,5 @@ def test_null_end_active_member_block_cancelled_at_adms_serve(client, seed_gym):
     assert res.status_code == 200
     assert "C:" not in res.get_data(as_text=True)
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_DISABLE_MARKER

@@ -212,7 +212,7 @@ def test_v7m1_intended_member_fallback_never_blocks_live_holder(client, seed_gym
     body = _getrequest_body(client, "v7m1b-token", "V7M1B-X2008")
     assert "Grp=100" not in body, body
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == "CANCELLED_STALE_STATE"
 
 
@@ -330,7 +330,7 @@ def test_v7l8_create_user_cancelled_when_linked_to_expired_member(client, seed_g
     body = _getrequest_body(client, "v7l8-token", "V7L8-X2008")
     assert "C:" not in body, body
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == "CANCELLED_STALE_ENABLE"
 
 
@@ -461,5 +461,5 @@ def test_v7l10_displace_still_cancels_stale_block_after_audit_purge(seed_gym):
     db.session.commit()
 
     saved = db.session.get(RRRAdmsCommand, stale.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == "CANCELLED_SUPERSEDED"

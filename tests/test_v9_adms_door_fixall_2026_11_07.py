@@ -299,7 +299,7 @@ def test_v9l14_stale_queued_adms_unlock_expires_on_getrequest(client, seed_gym):
     assert res.status_code == 200
     assert res.get_data(as_text=True) == "OK"
     saved = db.session.get(RRRAdmsCommand, stale.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == "CANCELLED_STALE_UNLOCK"
 
 
@@ -365,7 +365,7 @@ def test_v9l14_owner_can_cancel_queued_adms_row_and_pipe_unwedges(client, seed_g
     )
     assert res.status_code == 200, res.get_data(as_text=True)[:300]
     saved = db.session.get(RRRAdmsCommand, unlock.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == "CANCELLED_BY_OWNER"
 
     # Cancelling again is a 409 — terminal rows are history, not re-cancellable.

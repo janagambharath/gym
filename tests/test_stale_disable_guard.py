@@ -176,7 +176,7 @@ def test_adms_getrequest_cancels_stale_block_but_serves_freeze(client, seed_gym,
         f"C:{paused_command.id}:{paused_command.command_text}\n"
     )
     saved_stale = db.session.get(RRRAdmsCommand, stale_command.id)
-    assert saved_stale.status == "failed"
+    assert saved_stale.status == "cancelled"
     assert saved_stale.result_code == STALE_DISABLE_MARKER
     assert db.session.get(RRRAdmsCommand, paused_command.id).status == "delivered"
 
@@ -307,7 +307,7 @@ def test_adms_getrequest_failsafe_active_past_and_null_end(client, seed_gym):
     )
     for cancelled in commands[:2]:
         saved = db.session.get(RRRAdmsCommand, cancelled.id)
-        assert saved.status == "failed"
+        assert saved.status == "cancelled"
         assert saved.result_code == STALE_DISABLE_MARKER
     assert db.session.get(RRRAdmsCommand, commands[2].id).status == "delivered"
 
@@ -430,7 +430,7 @@ def test_adms_getrequest_cancels_legacy_test_deletes_and_serves_group_block(clie
     assert response.get_data(as_text=True) == f"C:{legit.id}:{legit.command_text}\n"
     for cmd in test_cmds:
         saved = db.session.get(RRRAdmsCommand, cmd.id)
-        assert saved.status == "failed"
+        assert saved.status == "cancelled"
         assert saved.result_code == STALE_DISABLE_MARKER
 
 
@@ -450,16 +450,18 @@ def test_adms_getrequest_wire_text_delete_fallback(client, seed_gym):
     assert response.status_code == 200
     assert response.get_data(as_text=True) == "OK"
     saved = db.session.get(RRRAdmsCommand, sneaky.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_DISABLE_MARKER
 
 
 def test_adms_getrequest_cancels_stale_enable_but_serves_active_and_create_user(client, seed_gym):
-    """H8: unblock for an expired member cancels; active serves. B-H2:
-    create_user is exempt from the enable guard (creation is its purpose),
-    so it serves even when the enroll number resolves to an expired member
-    — previously it was cancelled with CANCELLED_STALE_ENABLE and the
-    advanced endpoint could never create a new terminal user."""
+    """H8: unblock for an expired member cancels; active serves. V7-L8:
+    the create_user exemption is NOT blanket at serve time — it is
+    re-checked against the enable guard when the enroll resolves to a
+    member, so a create queued for an ID that was linked to an expired
+    member before the terminal polled cancels instead of opening the
+    door with firmware-default access. Only an unmapped enroll (no
+    member row) still serves as a genuine creation."""
     from app.services.bridge_service import STALE_ENABLE_MARKER
 
     integration = _adms_integration(
@@ -481,19 +483,39 @@ def test_adms_getrequest_cancels_stale_enable_but_serves_active_and_create_user(
         integration, "create_user", "104", "DATA UPDATE USERINFO PIN=104\tName=Expired Enable\tPri=0")
     legit_unblock = _adms_command(
         integration, "unblock", "105", "DATA UPDATE USERINFO PIN=105\tName=Active Enable\tPri=0")
+    # Genuine creation: enroll 106 resolves to no member, so it serves.
+    new_create = _adms_command(
+        integration, "create_user", "106", "DATA UPDATE USERINFO PIN=106\tName=New User\tPri=0")
 
     response = client.get("/iclock/h8-token/getrequest?SN=H8-X2008")
     assert response.status_code == 200
-    # Queue order: the stale unblock cancels in place, then the exempt
-    # create_user is the first servable command.
+    # Queue order: both stale enables cancel in place, then the legit
+    # unblock for the active member is the first servable command.
     assert response.get_data(as_text=True) == (
-        f"C:{stale_create.id}:DATA UPDATE USERINFO PIN=104\tName=Expired Enable\tPri=0\n"
+        f"C:{legit_unblock.id}:DATA UPDATE USERINFO PIN=105\tName=Active Enable\tPri=0\n"
     )
     saved_stale = db.session.get(RRRAdmsCommand, stale_unblock.id)
-    assert saved_stale.status == "failed"
+    assert saved_stale.status == "cancelled"
     assert saved_stale.result_code == STALE_ENABLE_MARKER
-    assert db.session.get(RRRAdmsCommand, stale_create.id).status == "delivered"
-    assert db.session.get(RRRAdmsCommand, legit_unblock.id).status == "queued"
+    saved_create = db.session.get(RRRAdmsCommand, stale_create.id)
+    assert saved_create.status == "cancelled"
+    assert saved_create.result_code == STALE_ENABLE_MARKER
+    assert db.session.get(RRRAdmsCommand, legit_unblock.id).status == "delivered"
+    assert db.session.get(RRRAdmsCommand, new_create.id).status == "queued"
+
+    # Second poll: ack the delivered unblock first (getrequest re-sends
+    # delivered-before-queued until the terminal acks), then the unmapped
+    # create_user serves — creation still works.
+    ack = client.get(
+        f"/iclock/h8-token/devicecmd?SN=H8-X2008&ID={legit_unblock.id}&Return=0"
+    )
+    assert ack.status_code == 200
+    response = client.get("/iclock/h8-token/getrequest?SN=H8-X2008")
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == (
+        f"C:{new_create.id}:DATA UPDATE USERINFO PIN=106\tName=New User\tPri=0\n"
+    )
+    assert db.session.get(RRRAdmsCommand, new_create.id).status == "delivered"
 
 
 def test_bridge_lease_cancels_stale_enable_but_serves_active(seed_gym):

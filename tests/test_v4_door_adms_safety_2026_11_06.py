@@ -169,7 +169,7 @@ def test_active_member_block_still_cancelled_at_adms_serve(client, seed_gym):
     body = _getrequest_body(client, "h2b-token", "H2B-X2008")
     assert "C:" not in body, body
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_DISABLE_MARKER
 
 
@@ -195,7 +195,7 @@ def test_restored_member_stale_block_self_corrects_at_adms_serve(client, seed_gy
     body = _getrequest_body(client, "h2c-token", "H2C-X2008")
     assert "C:" not in body, body
     saved = db.session.get(RRRAdmsCommand, cmd.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_DISABLE_MARKER
 
 
@@ -350,7 +350,7 @@ def test_remap_displaces_stale_adms_manual_block(client, seed_gym):
     db.session.commit()
 
     saved = db.session.get(RRRAdmsCommand, stale.id)
-    assert saved.status == "failed"
+    assert saved.status == "cancelled"
     assert saved.result_code == STALE_COMMAND_SUPERSEDED_MARKER
     # Active B must not be blocked: nothing servable for the enroll.
     body = _getrequest_body(client, "m3-token", "M3-X2008")
@@ -435,7 +435,7 @@ def test_expired_new_holder_gets_own_block_after_remap(client, seed_gym):
     remap_unresolved(gym_id, "114", holder_b, owner.id)
     db.session.commit()
 
-    assert db.session.get(RRRAdmsCommand, stale.id).status == "failed"
+    assert db.session.get(RRRAdmsCommand, stale.id).status == "cancelled"
     fresh = RRRAdmsCommand.query.filter_by(
         gym_id=gym_id, test_enroll_number="114", status="queued"
     ).one()

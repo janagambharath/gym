@@ -315,7 +315,7 @@ def test_getrequest_skips_cancelled_first_candidate_to_next_servable(
     first = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
     assert first.get_data(as_text=True) == f"C:{freeze.id}:{freeze.command_text}\n"
     saved_stale = db.session.get(RRRAdmsCommand, stale.id)
-    assert saved_stale.status == "failed"
+    assert saved_stale.status == "cancelled"
     assert saved_stale.result_code == STALE_DISABLE_MARKER
 
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, freeze.id, 0))
@@ -359,7 +359,7 @@ def test_getrequest_group_test_requires_confirmed_fake_member_and_name(
         f"C:{ghost_unblock.id}:{ghost_unblock.command_text}\n"
     )
     saved_trapped = db.session.get(RRRAdmsCommand, trapped_block.id)
-    assert saved_trapped.status == "failed"
+    assert saved_trapped.status == "cancelled"
     assert "explicitly confirmed fake account" in (saved_trapped.result_message or "")
 
 
@@ -515,7 +515,7 @@ def test_historical_destructive_adms_command_is_cancelled_before_delivery(client
     )
     response = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
     assert response.get_data(as_text=True) == "OK"
-    assert db.session.get(RRRAdmsCommand, old_delete.id).status == "failed"
+    assert db.session.get(RRRAdmsCommand, old_delete.id).status == "cancelled"
 
 
 # ─── USERINFO sync round-trip ──────────────────────────────────────────────
