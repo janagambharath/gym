@@ -35,8 +35,6 @@ import type {
   AccessEvent,
   AccessEventsResponse,
   AccessSummary,
-  InsideMember,
-  InsideMembersResponse,
   Member,
   Pagination,
 } from '../types';
@@ -44,7 +42,7 @@ import { formatDate, formatShortDate, formatTime } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-type FilterTab = 'all' | 'inside' | 'entry' | 'exit' | 'denied';
+type FilterTab = 'all' | 'entry' | 'exit' | 'denied';
 
 type AccessScreenProps = {
   onBack?: () => void;
@@ -150,12 +148,10 @@ export function AccessScreen({
   // V10-L33: per-row cancel in flight for a queued ADMS command.
   const [cancellingCommandId, setCancellingCommandId] = useState<number | null>(null);
   const [events, setEvents] = useState<AccessEvent[]>([]);
-  const [insideMembers, setInsideMembers] = useState<InsideMember[]>([]);
-  const [insidePagination, setInsidePagination] = useState<Pagination | null>(null);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [search, setSearch] = useState('');
-  // V4-M15: the feed/inside search is debounced — the raw keystrokes only
+  // V4-M15: the feed search is debounced — the raw keystrokes only
   // update the input; fetches run against this settled value, 350 ms after
   // the user stops typing (same pattern as the check-in modal below).
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -209,15 +205,13 @@ export function AccessScreen({
 
   // ── Fetch events ─────────────────────────────────────────────────
 
-  // V4-M15: sequence guard — only the latest feed/inside request may apply
+  // V4-M15: sequence guard — only the latest feed request may apply
   // its results, so a slow response for an old query can never overwrite
   // newer results (same pattern as the check-in candidate fetch below).
   const eventsSeqRef = useRef(0);
-  const insideSeqRef = useRef(0);
 
   const fetchEvents = useCallback(
     async (page = 1, append = false) => {
-      if (activeTab === 'inside') return;
       const seq = ++eventsSeqRef.current;
       const typeParam =
         activeTab === 'entry' ? '&type=entry' :
@@ -243,48 +237,18 @@ export function AccessScreen({
     [activeTab, debouncedSearch],
   );
 
-  // ── Fetch inside members ─────────────────────────────────────────
-
-  // V6-L12: the Inside tab used to fetch only page 1 (50 rows) — members
-  // past 50 were invisible, including their Check Out buttons. Page it
-  // like the feed, deduped by id across pages.
-  const fetchInsideMembers = useCallback(async (page = 1, append = false) => {
-    if (activeTab !== 'inside') return;
-    const seq = ++insideSeqRef.current;
-    const searchParam = debouncedSearch.trim() ? `&search=${encodeURIComponent(debouncedSearch.trim())}` : '';
-    const res = await apiRequest<InsideMembersResponse>(
-      `/api/mobile/v1/access/inside?page=${page}&per_page=50${searchParam}`,
-    );
-    if (seq !== insideSeqRef.current) return;
-    if (res.ok) {
-      if (append) {
-        setInsideMembers((prev) => {
-          const seen = new Set(prev.map((m) => m.id));
-          return [...prev, ...res.data.members.filter((m) => !seen.has(m.id))];
-        });
-      } else {
-        setInsideMembers(res.data.members);
-      }
-      setInsidePagination(res.data.pagination ?? null);
-      setError(undefined);
-    } else {
-      if (!append) setError(res.error.message);
-      else Alert.alert('Could not load more', res.error.message);
-    }
-  }, [activeTab, debouncedSearch]);
-
   // ── Initial + refresh load ───────────────────────────────────────
 
   const loadAll = useCallback(async () => {
     await Promise.all([
       fetchSummary(),
-      activeTab === 'inside' ? fetchInsideMembers() : fetchEvents(1),
+      fetchEvents(1),
     ]);
     setLoading(false);
-  }, [fetchSummary, fetchEvents, fetchInsideMembers, activeTab]);
+  }, [fetchSummary, fetchEvents]);
 
   // V4-M15: settle the shared search 350 ms after the last keystroke so
-  // the feed/inside fetches fire once per pause in typing, not once per
+  // the feed fetches fire once per pause in typing, not once per
   // keystroke. Clearing the box settles immediately (tab switch / X tap
   // must not wait out the debounce with a stale query).
   useEffect(() => {
@@ -301,7 +265,7 @@ export function AccessScreen({
     const run = async () => {
       await Promise.all([
         fetchSummary(),
-        activeTab === 'inside' ? fetchInsideMembers() : fetchEvents(1),
+        fetchEvents(1),
       ]);
       if (!cancelled) {
         setLoading(false);
@@ -311,7 +275,7 @@ export function AccessScreen({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, fetchEvents, fetchInsideMembers, fetchSummary, refreshToken], 15000);
+  }, [activeTab, fetchEvents, fetchSummary, refreshToken], 15000);
 
   // ── Pull-to-refresh ──────────────────────────────────────────────
 
@@ -325,14 +289,6 @@ export function AccessScreen({
 
   const onEndReached = useCallback(async () => {
     if (loadingMore) return;
-    if (activeTab === 'inside') {
-      // V6-L12: page the Inside list too.
-      if (!insidePagination || insidePagination.page >= insidePagination.total_pages) return;
-      setLoadingMore(true);
-      await fetchInsideMembers(insidePagination.page + 1, true);
-      setLoadingMore(false);
-      return;
-    }
     if (
       !pagination ||
       pagination.page >= pagination.total_pages
@@ -341,7 +297,7 @@ export function AccessScreen({
     setLoadingMore(true);
     await fetchEvents(pagination.page + 1, true);
     setLoadingMore(false);
-  }, [activeTab, loadingMore, pagination, fetchEvents, insidePagination, fetchInsideMembers]);
+  }, [activeTab, loadingMore, pagination, fetchEvents]);
 
   // Sequence guard: only the latest search may apply its results, so a
   // slow earlier request can never overwrite a newer one.
@@ -436,7 +392,7 @@ export function AccessScreen({
   }, [requestRemoteUnlock]);
 
   // ── V9-L25: feed row taps ───────────────────────────────────────
-  // Named rows open the member (same destination the Inside tab uses);
+  // Named rows open the member;
   // Unknown rows open the assign picker — the PWA quick-assign flow
   // (pick a member → link the terminal ID via bulk-resolve, feed
   // refreshes to show the name). Rows with neither do nothing.
@@ -603,19 +559,19 @@ export function AccessScreen({
     );
   };
 
-  // V7-M10: a feed/Inside fetch failure used to be invisible once the
+  // V7-M10: a feed fetch failure used to be invisible once the
   // summary loaded — `error` only rendered via the `error && !summary`
-  // full-screen gate, so staff stared at stale rows (or a false "nobody
-  // inside") with no signal. Show an inline banner + retry above the
-  // stale list whenever the feed/Inside fetch failed.
+  // full-screen gate, so staff stared at stale rows with no signal.
+  // Show an inline banner + retry above the stale list whenever the
+  // feed fetch failed.
   const renderFeedErrorBanner = () => {
-    const itemCount = activeTab === 'inside' ? insideMembers.length : events.length;
+    const itemCount = events.length;
     if (!shouldShowFeedErrorBanner({ error, summaryLoaded: !!summary, itemCount })) return null;
     return (
       <View style={styles.feedErrorBanner}>
         <Icon name="alert" size={16} color={colors.critical} />
         <Text style={styles.feedErrorText}>
-          Couldn&apos;t load the latest {activeTab === 'inside' ? 'inside list' : 'events'} — showing last loaded data. {error}
+          Couldn&apos;t load the latest events — showing last loaded data. {error}
         </Text>
         <TouchableOpacity style={styles.feedErrorRetryBtn} onPress={onRefresh} activeOpacity={0.7}>
           <Text style={styles.feedErrorRetryText}>Retry</Text>
@@ -813,12 +769,6 @@ export function AccessScreen({
     if (!summary) return null;
     return (
       <View style={styles.summaryRow}>
-        <View style={[styles.summaryCard, { borderLeftColor: colors.success }]}>
-          <Text style={[styles.summaryNumber, { color: colors.success }]}>
-            {summary.inside_now}
-          </Text>
-          <Text style={styles.summaryLabel}>Inside Now</Text>
-        </View>
         <View style={[styles.summaryCard, { borderLeftColor: colors.brand }]}>
           <Text style={[styles.summaryNumber, { color: colors.brand }]}>
             {summary.entries_today}
@@ -910,7 +860,6 @@ export function AccessScreen({
 
   const TABS: { key: FilterTab; label: string }[] = [
     { key: 'all', label: 'All' },
-    { key: 'inside', label: 'Inside' },
     { key: 'entry', label: 'Entries' },
     { key: 'exit', label: 'Exits' },
     { key: 'denied', label: 'Denied' },
@@ -989,49 +938,16 @@ export function AccessScreen({
     );
   };
 
-  const renderInsideMemberItem = ({ item }: { item: InsideMember }) => (
-    <View style={styles.eventCard}>
-      <TouchableOpacity
-        style={styles.eventLeft}
-        onPress={() => onNavigateMemberDetail?.({ id: item.id, full_name: item.full_name, phone: item.phone, status: item.status } as any)}
-      >
-        <Avatar name={item.full_name} size={40} />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.eventCenter}
-        onPress={() => onNavigateMemberDetail?.({ id: item.id, full_name: item.full_name, phone: item.phone, status: item.status } as any)}
-      >
-        <Text style={styles.eventName} numberOfLines={1}>
-          {item.full_name}
-        </Text>
-        <Text style={styles.eventTime}>
-          {item.entered_at ? `Since ${formatAccessTime(item.entered_at)}` : 'Inside'}
-        </Text>
-      </TouchableOpacity>
-      <View style={styles.eventRight}>
-        <TouchableOpacity
-          style={[styles.smallCheckOutBtn, checkingInId === item.id && { opacity: 0.5 }]}
-          disabled={checkingInId === item.id}
-          onPress={() => void handleManualCheckIn(item.id, 'EXIT')}
-        >
-          <Text style={styles.smallCheckOutText}>
-            {checkingInId === item.id ? '...' : 'Check Out'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   const renderEmpty = () => {
     if (loading) return null;
-    // V7-M10: a failed feed/Inside fetch must never fall through to the
-    // misleading "No members are currently inside." / "No access events
-    // today." empty state — show the error + retry instead.
-    if (resolveAccessListView({ loading, error, itemCount: activeTab === 'inside' ? insideMembers.length : events.length }) === 'error') {
+    // V7-M10: a failed feed fetch must never fall through to the
+    // misleading "No access events today." empty state — show the
+    // error + retry instead.
+    if (resolveAccessListView({ loading, error, itemCount: events.length }) === 'error') {
       return (
         <View style={styles.emptyContainer}>
           <Icon name="alert" size={48} color={colors.critical} />
-          <Text style={styles.emptyTitle}>Couldn&apos;t load {activeTab === 'inside' ? 'who is inside' : 'access events'}.</Text>
+          <Text style={styles.emptyTitle}>Couldn&apos;t load access events.</Text>
           <Text style={styles.emptySubtitle}>{error}</Text>
           <TouchableOpacity style={styles.feedErrorRetryBtn} onPress={onRefresh} activeOpacity={0.7}>
             <Text style={styles.feedErrorRetryText}>Try again</Text>
@@ -1040,11 +956,9 @@ export function AccessScreen({
       );
     }
     const message =
-      activeTab === 'inside'
-        ? 'No members are currently inside.'
-        : activeTab === 'denied'
-          ? 'No access denied events today.'
-          : 'No access events today.';
+      activeTab === 'denied'
+        ? 'No access denied events today.'
+        : 'No access events today.';
     return (
       <View style={styles.emptyContainer}>
         <Icon name="shield" size={48} color={colors.muted} />
@@ -1096,55 +1010,6 @@ export function AccessScreen({
       </View>
 
       {/* Content */}
-      {activeTab === 'inside' ? (
-        <FlatList
-          data={insideMembers}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={renderInsideMemberItem}
-          ListHeaderComponent={
-            <>
-              {renderActionBanner()}
-              {renderFeedErrorBanner()}
-              {renderSummaryErrorBanner()}
-              {renderSummaryCards()}
-              {renderSummaryStaleness()}
-              {renderCheckInButton()}
-              {renderDeviceStatus()}
-              {renderBridgeControls()}
-              {renderFailedCommandsBanner()}
-              {renderRetryResult()}
-              {renderQueuedCommands()}
-              {renderDeniedBanner()}
-              {renderLegacyBridgeBanner()}
-              {renderFilterTabs()}
-              {/* Search */}
-              <View style={styles.searchContainer}>
-                <Icon name="search" size={16} color={colors.muted} />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search members…"
-                  placeholderTextColor={colors.muted}
-                  value={search}
-                  onChangeText={setSearch}
-                />
-                {search ? (
-                  <TouchableOpacity onPress={() => setSearch('')}>
-                    <Icon name="close" size={16} color={colors.muted} />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </>
-          }
-          ListEmptyComponent={renderEmpty}
-          ListFooterComponent={renderFooter}
-          contentContainerStyle={styles.listContent}
-          onEndReached={onEndReached}
-          onEndReachedThreshold={0.3}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />
-          }
-        />
-      ) : (
         <FlatList
           data={events}
           keyExtractor={(item) => String(item.id)}
@@ -1192,7 +1057,6 @@ export function AccessScreen({
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />
           }
         />
-      )}
 
       {/* Manual Check In Modal */}
       <Modal visible={showCheckInModal} animationType="slide" transparent>
@@ -1357,7 +1221,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
 
-  // V7-M10: inline feed/Inside error banner + retry (above a stale list).
+  // V7-M10: inline feed error banner + retry (above a stale list).
   feedErrorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1833,19 +1697,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSize.xs,
     lineHeight: 16,
-  },
-  smallCheckOutBtn: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  smallCheckOutText: {
-    color: colors.text,
-    fontSize: fontSize.xs,
-    fontWeight: fontWeight.semibold,
   },
   modalOverlay: {
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

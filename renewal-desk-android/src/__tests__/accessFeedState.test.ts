@@ -6,11 +6,9 @@ import {
   switchAccessTab,
 } from '../services/accessFeedState';
 
-// V7-M10: a feed/Inside fetch failure was invisible once the summary loaded
-// — `error` only rendered via the `error && !summary` full-screen gate,
-// and the Inside tab fell back to the misleading "No members are currently
-// inside." empty state. The list area must never present a failed load as
-// an empty room.
+// V7-M10: a feed fetch failure was invisible once the summary loaded
+// — `error` only rendered via the `error && !summary` full-screen gate.
+// The list area must never present a failed load as an empty room.
 
 test('failed fetch with an empty list is an error view, never the empty state', () => {
   assert.equal(
@@ -81,8 +79,8 @@ test('no banner on a successful fetch', () => {
 // The shortcut used to do setActiveTab('denied') only.
 
 test('tab switch lands on the new tab with search and error cleared', () => {
-  assert.deepEqual(switchAccessTab('inside'), {
-    activeTab: 'inside',
+  assert.deepEqual(switchAccessTab('entry'), {
+    activeTab: 'entry',
     search: '',
     error: undefined,
   });

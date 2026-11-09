@@ -24,6 +24,10 @@ export type Member = {
   whatsapp_opted_in: boolean;
   has_biometric: boolean;
   device_enroll_number?: string | null;
+  // Member profile photo (owner-set from MemberDetailScreen, or
+  // member-set from VYNLA). Signed URL, expires in 7 days — never
+  // cached long-term; re-fetch the member to refresh it.
+  profile_photo_url?: string | null;
   is_inside?: boolean;
   door_blocked?: boolean;
   door_access_pending?: boolean;
@@ -724,20 +728,6 @@ export type AccessEvent = {
 
 export type AccessEventsResponse = {
   events: AccessEvent[];
-  pagination: Pagination;
-};
-
-export type InsideMember = {
-  id: number;
-  full_name: string;
-  phone: string;
-  status: string;
-  entered_at: string | null;
-  has_biometric: boolean;
-};
-
-export type InsideMembersResponse = {
-  members: InsideMember[];
   pagination: Pagination;
 };
 

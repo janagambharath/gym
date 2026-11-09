@@ -1,20 +1,18 @@
 /**
- * Live Access feed / Inside-list state — pure helpers, free of react-native
+ * Live Access feed state — pure helpers, free of react-native
  * imports so the failure-visibility rules can be covered by node tests.
  *
- * V7-M10: a feed or Inside fetch failure used to be invisible whenever the
+ * V7-M10: a feed fetch failure used to be invisible whenever the
  * summary loaded — `error` only rendered via the `error && !summary`
- * full-screen gate in AccessScreen, and the Inside tab fell back to the
- * misleading "No members are currently inside." empty state while the 15 s
- * poll kept failing silently. The list area must never present a failed
- * load as an empty room.
+ * full-screen gate in AccessScreen. The list area must never present
+ * a failed load as an empty room.
  */
 
 export type AccessListView = 'loading' | 'error' | 'empty' | 'list';
 
 /**
  * What the list area shows. A failed fetch is an error view even when the
- * list is empty — never the "nobody inside" / "no events" empty state.
+ * list is empty — never the "no events" empty state.
  */
 export function resolveAccessListView(args: {
   loading: boolean;
@@ -27,7 +25,7 @@ export function resolveAccessListView(args: {
 }
 
 /**
- * Inline error banner above the list. Shown when the feed/Inside fetch
+ * Inline error banner above the list. Shown when the feed fetch
  * failed but the summary loaded (the `error && !summary` full-screen
  * ErrorState already covers the no-summary case) and there are stale rows
  * on screen. When the list is empty the error view from
