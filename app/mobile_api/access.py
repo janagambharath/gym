@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import timezone
 from flask import g, jsonify, request
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
@@ -58,8 +59,11 @@ _logger = logging.getLogger(__name__)
 # re-driven from a stale row (V9-L14), and the sync/enrollment-admin
 # actions are not membership-state commands. V10-L9 adds create_user:
 # a failed enrollment re-drives only for a member who is currently
-# proven enableable (else the "not_enableable" skip).
-_ADMS_RETRYABLE_ACTIONS = frozenset({"block", "unblock", "create_user"})
+# proven enableable (else the "not_enableable" skip). V11-L10 adds
+# sync_users: a failed terminal-user scan re-drives as a fresh scan row
+# (no member involved — see the special case in
+# _requeue_one_failed_adms_row).
+_ADMS_RETRYABLE_ACTIONS = frozenset({"block", "unblock", "create_user", "sync_users"})
 # V10-L12: retry-sync processes at most this many failed rows per call
 # and reports the remainder, so a large failed backlog cannot turn one
 # request into an unbounded, all-or-nothing batch.
@@ -125,6 +129,45 @@ def _requeue_one_failed_adms_row(adms, row):
     """
     from app.models.rrr import RRRAdmsCommand
 
+    # V11-L10: a failed terminal-user scan re-drives as a fresh sync_users
+    # row — it has no member, so it cannot go through the membership
+    # re-derivation below. Queued/delivered scans are returned as-is by
+    # the dedupe (never stacked); only a failed scan mints a fresh row.
+    if row.action == "sync_users":
+        if not adms.commands_enabled or adms.last_success_at is None:
+            return "skipped", None, "requeue_failed", None
+        max_id_before = db.session.query(db.func.max(RRRAdmsCommand.id)).scalar() or 0
+        existing = (
+            RRRAdmsCommand.query.filter_by(
+                integration_id=adms.id, action="sync_users"
+            )
+            .filter(RRRAdmsCommand.status.in_(("queued", "delivered")))
+            .order_by(RRRAdmsCommand.id.desc())
+            .first()
+        )
+        if existing is not None:
+            return "already", existing, None, None
+        from app.services.bridge_service import adms_command_text
+
+        new_command = RRRAdmsCommand(
+            gym_id=adms.gym_id,
+            integration_id=adms.id,
+            action="sync_users",
+            command_text=adms_command_text("sync_users", None),
+            requested_by_id=None,
+        )
+        db.session.add(new_command)
+        db.session.flush()
+        audit(
+            action="adms_membership_sync_users_queued",
+            resource_type="rrr_adms_command",
+            resource_id=new_command.id,
+            gym_id=adms.gym_id,
+            metadata={"retried_from_command_id": row.id},
+        )
+        outcome = "queued" if new_command.id > max_id_before else "already"
+        return outcome, new_command, None, None
+
     if row.action not in _ADMS_RETRYABLE_ACTIONS:
         if row.action == "unlock_door":
             reason = "unlock_door"
@@ -177,7 +220,7 @@ def _requeue_one_failed_adms_row(adms, row):
 def _retry_failed_adms_commands(adms):
     """Retry this gym's failed Direct ADMS commands from current state.
 
-    Each failed ``block``/``unblock``/``create_user`` row is resolved
+    Each failed ``block``/``unblock``/``create_user``/``sync_users`` row is resolved
     back to its member (current holder of the terminal identity first,
     else the stamped intended member — V10-L10) and the action is
     RE-DERIVED from that member's current membership state via
@@ -517,6 +560,7 @@ def register_access_routes(bp):
     @bp.route("/access/checkin", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def access_checkin():
         """Record manual member check-in or check-out directly from the app."""
         data = request.get_json(silent=True) or {}
@@ -597,14 +641,34 @@ def register_access_routes(bp):
     @bp.route("/access/unlock", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def remote_unlock():
         """Queue an explicitly confirmed unlock through the gym's active connector.
 
         Direct ADMS always takes priority over a paired bridge. The owner
         must confirm the physical action; success means the command was
         queued, not that the terminal has acknowledged it yet.
+
+        V11-L3: honours Idempotency-Key (scope ``remote_unlock``,
+        fingerprinted on confirm + delay) so a lost-response retry
+        replays instead of firing the door a second time, and the
+        pending-command guard runs under a row lock on the
+        integration/bridge so two concurrent submits cannot both pass
+        it before either commits.
         """
         data = request.get_json(silent=True) or {}
+        # Idempotency first: only success responses are recorded, so a
+        # validation/conflict failure never consumes the key and a
+        # corrected retry still works.
+        idempotency_key, request_hash, replay = begin_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="remote_unlock",
+            headers=request.headers,
+            payload={"confirm": data.get("confirm"), "delay_seconds": data.get("delay_seconds")},
+        )
+        if replay is not None:
+            return replay
         from app.models.rrr import RRRAdmsCommand, RRRIntegration
         integration = RRRIntegration.query.filter_by(
             gym_id=g.gym_id, connector_type="adms_direct"
@@ -632,6 +696,14 @@ def register_access_routes(bp):
                 delay_seconds = max(1, min(30, int(data.get("delay_seconds") or 5)))
             except (TypeError, ValueError):
                 delay_seconds = 5
+            # V11-L3: hold the integration row lock across the
+            # guard + insert so two concurrent unlocks cannot both
+            # pass the guard before either commits.
+            integration = (
+                db.session.execute(
+                    select(RRRIntegration).where(RRRIntegration.id == integration.id).with_for_update()
+                ).scalar_one()
+            )
             existing = RRRAdmsCommand.query.filter(
                 RRRAdmsCommand.integration_id == integration.id,
                 RRRAdmsCommand.status.in_(["queued", "delivered"]),
@@ -660,13 +732,23 @@ def register_access_routes(bp):
                 metadata={"delay_seconds": delay_seconds, "command_id": command.id,
                           **({"reason": reason} if reason else {})},
             )
-            db.session.commit()
-            return jsonify({"success": True, "data": {
+            response_body = {"success": True, "data": {
                 "command_id": command.id,
                 "delay_seconds": delay_seconds,
                 "status": command.status,
                 "message": "Direct ADMS unlock command queued; waiting for the terminal acknowledgement.",
-            }}), 201
+            }}
+            record_idempotency(
+                gym_id=g.gym_id,
+                user_id=g.user_id,
+                scope="remote_unlock",
+                key=idempotency_key,
+                request_hash=request_hash,
+                status_code=201,
+                response_body=response_body,
+            )
+            db.session.commit()
+            return jsonify(response_body), 201
 
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
@@ -696,6 +778,13 @@ def register_access_routes(bp):
         except (TypeError, ValueError):
             delay_seconds = 5
         reason = str(data.get("reason") or "").strip()[:500] or None
+        # V11-L3: hold the bridge row lock across the guard + insert
+        # (same race as the ADMS branch).
+        bridge = (
+            db.session.execute(
+                select(BridgeInstallation).where(BridgeInstallation.id == bridge.id).with_for_update()
+            ).scalar_one()
+        )
         # V10-L1: mirror the ADMS branch's pending-command guard — a
         # double-tap (or a retried request after a slow response) must
         # not queue two unlock_door bridge commands.
@@ -728,26 +817,34 @@ def register_access_routes(bp):
             metadata={"delay_seconds": delay_seconds, "command_id": cmd.id,
                       **({"reason": reason} if reason else {})},
         )
+        response_body = {"success": True, "data": {
+            "command_id": cmd.id,
+            "delay_seconds": delay_seconds,
+            "message": f"Door unlock command queued for {delay_seconds} seconds.",
+        }}
+        record_idempotency(
+            gym_id=g.gym_id,
+            user_id=g.user_id,
+            scope="remote_unlock",
+            key=idempotency_key,
+            request_hash=request_hash,
+            status_code=201,
+            response_body=response_body,
+        )
         db.session.commit()
 
-        return jsonify({
-            "success": True,
-            "data": {
-                "command_id": cmd.id,
-                "delay_seconds": delay_seconds,
-                "message": f"Door unlock command queued for {delay_seconds} seconds.",
-            },
-        }), 201
+        return jsonify(response_body), 201
 
     @bp.route("/access/retry-sync", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def retry_sync():
         """Retry all failed biometric commands for this gym.
 
         Owner-only (V10-L11): the ADMS branch re-derives and queues
-        door commands, and retry is the only door-command-queueing
-        endpoint that was open to staff.
+        door commands. Reconcile (V11-L5) is owner-only for the same
+        reason — no door-command-queueing endpoint is open to staff.
         """
         from app.models.rrr import RRRIntegration
         adms = RRRIntegration.query.filter_by(
@@ -814,6 +911,7 @@ def register_access_routes(bp):
     @bp.route("/access/clear-failed", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def clear_failed():
         """Permanently delete failed biometric commands for this gym.
 
@@ -894,6 +992,7 @@ def register_access_routes(bp):
     @bp.route("/access/adms-commands/<int:command_id>/cancel", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def cancel_adms_command_route(command_id: int):
         """Owner-cancel a queued Direct ADMS command (V9-L14).
 
@@ -948,9 +1047,15 @@ def register_access_routes(bp):
 
     @bp.route("/access/reconcile", methods=["POST"])
     @token_required
-    @roles_required("gym_owner", "staff")
+    @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def reconcile_all():
-        """Re-sync all active gym members' access states to the biometric device."""
+        """Re-sync all active gym members' access states to the biometric device.
+
+        Owner-only (V11-L5, like retry-sync): reconcile force-queues door
+        commands for every enrolled member, with a wider blast radius
+        than retry — staff must not trigger it.
+        """
         from app.models.rrr import RRRIntegration
         adms = RRRIntegration.query.filter_by(
             gym_id=g.gym_id, connector_type="adms_direct"
@@ -960,7 +1065,10 @@ def register_access_routes(bp):
                 "code": "NOT_COMMISSIONED",
                 "message": "Complete supervised Direct ADMS setup before reconciling access.",
             }}), 403
-        count = queue_gym_reconciliation(g.gym_id)
+        # V11-L11: batched (100 members/call) with per-row isolation —
+        # the result reports remaining + the cursor for the next batch.
+        result = queue_gym_reconciliation(g.gym_id)
+        count = result["queued"]
         # V10-M1: audit BEFORE the commit.
         audit(
             action="reconcile_biometric_all_mobile",
@@ -968,13 +1076,25 @@ def register_access_routes(bp):
             resource_id=adms.id if adms is not None else None,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"queued_count": count},
+            metadata={"queued_count": count, "remaining_count": result["remaining"],
+                      "failed_member_ids": result["failed"]},
         )
         db.session.commit()
+        message = f"Re-sync queued for {count} enrolled member(s)."
+        if result["remaining"]:
+            message += (
+                f" {result['remaining']} member(s) remaining — tap Re-sync again "
+                "to continue."
+            )
         return jsonify({
             "success": True,
             "data": {
                 "queued_count": count,
-                "message": f"Re-sync queued for {count} enrolled member(s).",
+                "remaining_count": result["remaining"],
+                "total_count": result["total"],
+                "skipped_manual_block_count": result["skipped_manual_block"],
+                "failed_member_ids": result["failed"],
+                "next_start_after_member_id": result["next_start_after_member_id"],
+                "message": message,
             },
         })

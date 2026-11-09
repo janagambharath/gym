@@ -82,6 +82,10 @@ class PaymentVerification(TenantMixin, TimestampMixin, db.Model):
     rejected_by_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # V11-M10 — why a payment was rejected, shown to the member
+    # alongside the REJECTED status (with the next step). Free text,
+    # capped at 500 chars by the service layer.
+    rejected_reason = db.Column(db.String(500), nullable=True)
     cancelled_at = db.Column(db.DateTime(timezone=True), nullable=True)
     cancelled_by_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True

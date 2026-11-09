@@ -858,6 +858,30 @@ def _register_cli(app: Flask) -> None:
                     db.session.rollback()
                     app.logger.exception("Projection backfill failed for gym %s", gym.id)
 
+                # V11-H3: door-command reconcile belongs in this CLI too —
+                # it is the manual fallback / cron-service shape when the
+                # scheduler is off, and it previously ran only in the
+                # APScheduler job. Same shared function as the scheduler
+                # (blocks AND unblocks, ADMS + bridge), same per-gym
+                # containment: one gym's failure must not abort the rest.
+                try:
+                    from app.services.bridge_service import (
+                        reconcile_failed_membership_commands,
+                    )
+
+                    counts = reconcile_failed_membership_commands(gym)
+                    if any(counts.values()):
+                        db.session.commit()
+                        app.logger.info(
+                            json.dumps(
+                                {"event": "door_reconcile", "gym_id": gym.id, **counts}
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Door-command reconciliation failed for gym %s", gym.id)
+
                 if _gym_errors:
                     gym_errors[gym.id] = _gym_errors
         finally:

@@ -295,208 +295,32 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     "RRR projection backfill failed for gym %s", gym.id
                 )
 
-            # Reconcile failed blocks: expired members whose block command
-            # never acked (terminal offline, timeout, etc.) get re-queued.
-            # Without this, a single failed block leaves the member with
-            # terminal access indefinitely.
+            # V11-H3: reconcile failed door commands (blocks AND unblocks)
+            # for both ADMS and bridge gyms. Shared with the `flask
+            # run-reminders` CLI via
+            # app.services.bridge_service.reconcile_failed_membership_commands
+            # — the block-only inline scans used to live here, and the CLI
+            # had no reconcile at all, so in the CLI-cron deployment shape
+            # even failed blocks never self-healed. A renewed member whose
+            # unblock failed once is now re-driven by the active-member
+            # unblock scan (guarded by member_is_proven_enableable; an
+            # expired/paused/deleted member is never unblocked).
             try:
-                from app.services.bridge_service import queue_membership_command
-                from app.models import Member
-                from app.models.rrr import RRRAdmsCommand, RRRIntegration
-                from sqlalchemy import and_, or_, select
                 from app.services.bridge_service import (
-                    adms_command_intended_member_id,
-                    member_is_proven_blockable_including_deleted,
-                    resolve_adms_enroll_number,
+                    reconcile_failed_membership_commands,
                 )
-                from app.services.timezone_service import today_for_gym
 
-                integration = RRRIntegration.query.filter_by(
-                    gym_id=gym.id, connector_type="adms_direct"
-                ).first()
-                if integration and integration.commands_enabled:
-                    # M12 residual: mapping-only members (a confirmed
-                    # RRR identity mapping but no device_enroll_number
-                    # on the member row) must be covered too — their
-                    # failed blocks were never re-queued. resolve_adms_
-                    # enroll_number prefers the mapping, so the loop
-                    # below resolves both kinds.
-                    from app.models.rrr import RRRIdentityMapping
-
-                    mapping_member_ids = select(RRRIdentityMapping.member_id).where(
-                        RRRIdentityMapping.gym_id == gym.id,
-                        RRRIdentityMapping.status == "confirmed",
+                counts = reconcile_failed_membership_commands(gym)
+                if any(counts.values()):
+                    db.session.commit()
+                    app.logger.info(
+                        "Re-queued failed door commands for gym %s: %s",
+                        gym.id, counts,
                     )
-                    # V3-M8: paused members are proven blockable by
-                    # design (freeze = block the door), so their failed
-                    # blocks must reconcile too — previously only
-                    # "expired" was scanned and a failed freeze block
-                    # left the member with door access indefinitely.
-                    # The end-date filter applies to expired members
-                    # only: a paused member is blockable on any dates,
-                    # and member_is_proven_blockable is re-checked per
-                    # member below before anything is re-queued.
-                    expired_linked = (
-                        Member.query.filter(
-                            Member.gym_id == gym.id,
-                            or_(
-                                and_(
-                                    Member.status == "expired",
-                                    Member.membership_end < today_for_gym(gym.timezone),
-                                    Member.deleted_at.is_(None),
-                                ),
-                                and_(
-                                    Member.status == "paused",
-                                    Member.deleted_at.is_(None),
-                                ),
-                                # V5-M5: a delete-time block that failed
-                                # once was never re-driven — include
-                                # soft-deleted members in the block scan
-                                # (judged by the including-deleted guard
-                                # below), or an ex-member keeps door
-                                # access indefinitely after one transient
-                                # failure.
-                                Member.deleted_at.isnot(None),
-                            ),
-                            or_(
-                                Member.device_enroll_number.isnot(None),
-                                Member.id.in_(mapping_member_ids),
-                            ),
-                        ).all()
-                    )
-                    requeued = 0
-                    for m in expired_linked:
-                        # Explicit fail-safe guard (C2/H8 batch): the
-                        # expired+past filter above already implies
-                        # proven-blockable, but never requeue on the
-                        # filter alone — re-check the guard predicate.
-                        # V5-M5: including-deleted variant, so a deleted
-                        # member's failed block is re-driven too.
-                        if not member_is_proven_blockable_including_deleted(m):
-                            continue
-                        try:
-                            enroll = resolve_adms_enroll_number(m)
-                        except ValueError:
-                            continue
-                        if not enroll:
-                            continue
-                        acked = RRRAdmsCommand.query.filter_by(
-                            integration_id=integration.id,
-                            action="block",
-                            test_enroll_number=enroll,
-                            status="acked",
-                        ).first()
-                        # V4-L8: an acked block for this enroll belongs to
-                        # the member it was queued for — a recycled ID must
-                        # not inherit the previous holder's ack (the
-                        # terminal may have been re-enabled between
-                        # holders). Unknown intent re-queues.
-                        if acked is not None and adms_command_intended_member_id(acked) != m.id:
-                            acked = None
-                        if not acked:
-                            queue_membership_command(m, force=True)
-                            requeued += 1
-                    if requeued:
-                        db.session.commit()
-                        app.logger.info(
-                            "Re-queued %s failed block commands for gym %s",
-                            requeued, gym.id,
-                        )
-            except Exception:
-                db.session.rollback()
-                app.logger.exception("Block reconciliation failed for gym %s", gym.id)
-
-            # Reconcile failed blocks for legacy TCP-bridge (.exe) gyms.
-            # The branch above only covers adms_direct integrations, so a
-            # bridge gym whose disable_user command burned through its
-            # bounded retries stayed unblocked indefinitely (Yodha Fitness,
-            # 2026-10-21: member expired 8 days, block never re-queued).
-            # Same rule as ADMS: expired + linked + no acked block on
-            # record -> re-queue. queue_membership_command dedupes
-            # pending/leased commands, so repeat scans cannot flood.
-            try:
-                from app.models import Member
-                from app.models.bridge import BridgeCommand
-                from sqlalchemy import and_, or_
-                from app.services.bridge_service import (
-                    _active_installation,
-                    desired_command_type,
-                    member_is_proven_blockable_including_deleted,
-                    queue_membership_command,
-                )
-                from app.services.timezone_service import today_for_gym
-
-                installation = _active_installation(gym.id)
-                if installation is not None:
-                    # V3-M8: same widening as the ADMS branch above —
-                    # paused members are proven blockable, so a failed
-                    # freeze block must be re-driven here too.
-                    # V5-M5: soft-deleted members included, judged by the
-                    # including-deleted guard below — a delete-time
-                    # bridge block that failed once is re-driven instead
-                    # of leaving the ex-member with access forever.
-                    expired_linked = (
-                        Member.query.filter(
-                            Member.gym_id == gym.id,
-                            or_(
-                                and_(
-                                    Member.status == "expired",
-                                    Member.membership_end < today_for_gym(gym.timezone),
-                                    Member.deleted_at.is_(None),
-                                ),
-                                and_(
-                                    Member.status == "paused",
-                                    Member.deleted_at.is_(None),
-                                ),
-                                Member.deleted_at.isnot(None),
-                            ),
-                            Member.device_enroll_number.is_not(None),
-                        ).all()
-                    )
-                    changed = False
-                    requeued = 0
-                    for m in expired_linked:
-                        if desired_command_type(m) != "disable_user":
-                            continue
-                        # Explicit fail-safe guard: do not even queue a
-                        # disable the lease guard would cancel (e.g. an
-                        # active member with a past end date, which the
-                        # desired-state check alone would disable).
-                        # V5-M5: including-deleted variant.
-                        if not member_is_proven_blockable_including_deleted(m):
-                            continue
-                        latest = (
-                            BridgeCommand.query.filter_by(
-                                bridge_id=installation.id, member_id=m.id
-                            )
-                            .order_by(
-                                BridgeCommand.created_at.desc(),
-                                BridgeCommand.id.desc(),
-                            )
-                            .first()
-                        )
-                        if (
-                            latest is not None
-                            and latest.status == "acked"
-                            and latest.command_type == "disable_user"
-                        ):
-                            continue
-                        if latest is None or latest.status == "failed":
-                            requeued += 1
-                        queue_membership_command(m, force=True)
-                        changed = True
-                    if changed:
-                        db.session.commit()
-                    if requeued:
-                        app.logger.info(
-                            "Re-queued %s failed bridge block commands for gym %s",
-                            requeued,
-                            gym.id,
-                        )
             except Exception:
                 db.session.rollback()
                 app.logger.exception(
-                    "Bridge block reconciliation failed for gym %s", gym.id
+                    "Door-command reconciliation failed for gym %s", gym.id
                 )
 
             # Auto-link unmapped biometric IDs (fully automatic, no manual trigger)

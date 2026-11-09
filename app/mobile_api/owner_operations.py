@@ -14,7 +14,7 @@ from flask import g, jsonify, request
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import GymCashClose, Member, PaymentVerification, User
@@ -215,6 +215,7 @@ def register_owner_operation_routes(bp):
     @bp.post("/owner/cash-close")
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def close_cash():
         payload = request.get_json(silent=True) or {}
         try:
@@ -296,6 +297,7 @@ def register_owner_operation_routes(bp):
     @bp.post("/owner/leads")
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def create_owner_lead():
         payload = request.get_json(silent=True) or {}
         name = str(payload.get("name") or "").strip()[:160]
@@ -357,6 +359,7 @@ def register_owner_operation_routes(bp):
     @bp.patch("/owner/leads/<int:lead_id>")
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def update_owner_lead(lead_id: int):
         lead = BotLead.query.filter_by(gym_id=g.gym_id, id=lead_id).first()
         if lead is None:

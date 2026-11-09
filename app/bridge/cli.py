@@ -110,6 +110,11 @@ def register_bridge_commands(app: Flask) -> None:
     def bridge_reconcile(gym_id: int | None, gym_slug: str | None) -> None:
         """Queue the current membership state for every enrolled member."""
         gym = _resolve_gym(gym_id, gym_slug)
-        queued = queue_gym_reconciliation(gym.id)
+        result = queue_gym_reconciliation(gym.id)
         db.session.commit()
-        click.echo(f"Queued/reconciled {queued} enrolled member(s).")
+        click.echo(f"Queued/reconciled {result['queued']} enrolled member(s).")
+        if result["remaining"]:
+            click.echo(
+                f"{result['remaining']} member(s) remaining — run again with "
+                f"the next batch (after member {result['next_start_after_member_id']})."
+            )

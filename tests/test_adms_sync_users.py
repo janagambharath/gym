@@ -5,6 +5,7 @@ the cdata handler stores it as the command's result_data; smart matching
 reads it like a bridge snapshot.
 """
 import json
+from datetime import datetime, timezone
 
 from app.adms.routes import _parse_userinfo_line
 from app.extensions import db
@@ -40,6 +41,10 @@ def _seed_adms(app, seed_gym):
             # commissioned path (M12 gate).
             status="connected",
             commands_enabled=True,
+            # V11-L6: enroll-scan gates on the live 5-min online check,
+            # which needs a recent sighting — a terminal that never
+            # polled (last_success_at None) correctly 409s now.
+            last_success_at=datetime.now(timezone.utc),
             # The ingest test posts to the token path; a null token made
             # the upload hit the unknown-device path instead of ingesting.
             adms_path_token="sync-test-token",

@@ -8,7 +8,7 @@ from flask import current_app, g, jsonify, request, url_for
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import Gym, MembershipPlan, QRSettings
@@ -108,6 +108,7 @@ def register_settings_routes(bp):
     @bp.route("/settings", methods=["PATCH"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def update_settings():
         data = request.get_json(silent=True) or {}
         gym = g.current_user.gym
@@ -176,6 +177,7 @@ def register_settings_routes(bp):
     @bp.route("/settings/payment", methods=["GET", "PUT", "PATCH"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("30 per minute")
     def payment_settings():
         qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
         if request.method == "GET":
@@ -240,6 +242,7 @@ def register_settings_routes(bp):
     @bp.route("/settings/payment/qr", methods=["POST", "DELETE"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def payment_qr_image():
         """Let gym owners replace the QR shown in VYNLA from their app."""
         qr = QRSettings.query.filter_by(gym_id=g.gym_id).first()
@@ -351,6 +354,7 @@ def register_settings_routes(bp):
     @bp.route("/plans", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def create_plan():
         data = request.get_json(silent=True) or {}
         name = (data.get("name") or "").strip()
@@ -436,6 +440,7 @@ def register_settings_routes(bp):
     @bp.route("/plans/<int:plan_id>", methods=["PATCH"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def update_plan(plan_id: int):
         plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=g.gym_id, is_active=True).first()
         if plan is None:
@@ -489,6 +494,7 @@ def register_settings_routes(bp):
     @bp.route("/plans/<int:plan_id>", methods=["DELETE"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def delete_plan(plan_id: int):
         plan = MembershipPlan.query.filter_by(id=plan_id, gym_id=g.gym_id, is_active=True).first()
         if plan is None:
@@ -553,6 +559,7 @@ def register_settings_routes(bp):
     @bp.route("/settings/bridge/provision", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per hour")
     def bridge_provision():
         """Provision a new biometric bridge for this gym."""
         from app.models.bridge import BridgeInstallation
@@ -603,6 +610,7 @@ def register_settings_routes(bp):
     @bp.route("/settings/bridge/deactivate", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def bridge_deactivate():
         """Deactivate the biometric bridge."""
         from app.models.bridge import BridgeInstallation
@@ -675,11 +683,14 @@ def register_settings_routes(bp):
     @bp.route("/settings/bridge/reconcile", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def bridge_reconcile():
         """Force re-sync all enrolled members' access state to the device."""
         from app.services.bridge_service import queue_gym_reconciliation
 
-        count = queue_gym_reconciliation(g.gym_id)
+        # V11-L11: batched — see queue_gym_reconciliation for the shape.
+        result = queue_gym_reconciliation(g.gym_id)
+        count = result["queued"]
         # V10-M1: audit BEFORE the commit.
         audit(
             action="bridge_reconcile",
@@ -687,12 +698,22 @@ def register_settings_routes(bp):
             resource_id=None,
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
-            metadata={"queued_count": count},
+            metadata={"queued_count": count, "remaining_count": result["remaining"],
+                      "failed_member_ids": result["failed"]},
         )
         db.session.commit()
+        message = f"Re-syncing {count} enrolled member(s) to biometric device."
+        if result["remaining"]:
+            message += (
+                f" {result['remaining']} member(s) remaining — re-sync again "
+                "to continue."
+            )
         return jsonify({"success": True, "data": {
             "queued_count": count,
-            "message": f"Re-syncing {count} enrolled member(s) to biometric device.",
+            "remaining_count": result["remaining"],
+            "total_count": result["total"],
+            "next_start_after_member_id": result["next_start_after_member_id"],
+            "message": message,
         }})
 
     @bp.route("/settings/bridge/pairing-code", methods=["GET", "POST"])
@@ -724,6 +745,7 @@ def register_settings_routes(bp):
     @bp.route("/settings/bridge/commands", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def queue_bridge_device_command():
         """Queue a direct access command from mobile to the gym PC biometric connector.
 

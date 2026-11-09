@@ -667,7 +667,7 @@ def register_rrr_routes(bp):
         ).first()
         if integration is None:
             return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
-        if integration.status != "connected":
+        if not direct_adms_terminal_is_online(integration):
             return error_response("DEVICE_OFFLINE", "The terminal is not connected.", 409)
         if not integration.commands_enabled:
             return error_response(
@@ -1331,11 +1331,34 @@ def register_rrr_routes(bp):
             gym_id=g.gym_id, connector_type="adms_direct"
         ).first()
         if integration is not None:
-            if not integration.commands_enabled or integration.status != "connected":
+            if not integration.commands_enabled:
                 return error_response(
                     "NOT_COMMISSIONED",
                     "Complete supervised commissioning before scanning terminal users.",
                     403,
+                )
+            # V11-L6: gate on the live 5-min online check, not the sticky
+            # stored status (which is set to "connected" on first contact
+            # and never reset on timeout) — a terminal offline for days
+            # used to get 201 "queued" instead of 409 DEVICE_OFFLINE.
+            if not direct_adms_terminal_is_online(integration):
+                return error_response(
+                    "DEVICE_OFFLINE",
+                    "The terminal is not connected.",
+                    409,
+                )
+            # V11-L8: same in-flight guard as the test/advanced/unlock
+            # endpoints — repeated taps used to stack sync_users rows and
+            # wedge the single-command pipe.
+            existing = RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.integration_id == integration.id,
+                RRRAdmsCommand.status.in_(("queued", "delivered")),
+            ).first()
+            if existing is not None:
+                return error_response(
+                    "COMMAND_PENDING",
+                    "A command is already in flight. Wait for acknowledgement.",
+                    409,
                 )
             cmd = RRRAdmsCommand(
                 integration_id=integration.id,
@@ -1355,6 +1378,17 @@ def register_rrr_routes(bp):
         bridge = BridgeInstallation.query.filter_by(gym_id=g.gym_id, is_active=True).first()
         if not bridge:
             return error_response("NOT_FOUND", "No paired bridge or ADMS integration for this gym. Pair the PC connector or provision ADMS first.", 404)
+        # V11-L8: same in-flight guard on the bridge leg.
+        existing_bridge = BridgeCommand.query.filter(
+            BridgeCommand.bridge_id == bridge.id,
+            BridgeCommand.status.in_(("pending", "leased")),
+        ).first()
+        if existing_bridge is not None:
+            return error_response(
+                "COMMAND_PENDING",
+                "A command is already in flight. Wait for acknowledgement.",
+                409,
+            )
         cmd = BridgeCommand(
             bridge_id=bridge.id,
             gym_id=g.gym_id,
@@ -1967,10 +2001,36 @@ def register_rrr_routes(bp):
         Mapped punches and members are untouched. Used to clean the slate
         before manual re-linking.
         """
+        from sqlalchemy import func as _func
+
+        from app.models.rrr import RRRIntegration
+
+        # V11-L9: the rows deleted here were counted in
+        # integration.unmapped_records at ingest — decrement each
+        # integration's counter by its resolved share (floored at 0),
+        # or the PWA "unknown punches" number never comes down.
+        resolved_counts = (
+            db.session.query(
+                RRRAttendanceEvent.integration_id,
+                _func.count(RRRAttendanceEvent.id),
+            )
+            .filter(
+                RRRAttendanceEvent.gym_id == g.gym_id,
+                RRRAttendanceEvent.member_id.is_(None),
+                RRRAttendanceEvent.processing_status == "unmapped",
+                RRRAttendanceEvent.integration_id.is_not(None),
+            )
+            .group_by(RRRAttendanceEvent.integration_id)
+            .all()
+        )
         deleted = RRRAttendanceEvent.query.filter(
             RRRAttendanceEvent.gym_id == g.gym_id,
             RRRAttendanceEvent.member_id.is_(None),
         ).delete(synchronize_session=False)
+        for integration_id, resolved in resolved_counts:
+            row = db.session.get(RRRIntegration, integration_id)
+            if row is not None and row.gym_id == g.gym_id:
+                row.unmapped_records = max(0, row.unmapped_records - resolved)
         # V10-M1: audit BEFORE the commit.
         audit(
             action="rrr_clear_unmapped_punches",

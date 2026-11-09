@@ -37,6 +37,7 @@ from app.mobile_api.token_service import (
     create_access_token,
     create_member_refresh_token,
     decode_access_token,
+    revoke_member_refresh_token,
     rotate_member_refresh_token,
 )
 from app.models import (
@@ -398,12 +399,17 @@ def _get_gym_branding(gym: Gym | None) -> dict:
         .all()
     )
     for b in recent_broadcasts:
-        det = b.details or {}
-        preview = det.get("preview") or b.target_name or "Gym Announcement"
+        # V11-L37: AuditLog carries metadata_json (there is no
+        # ``details``/``target_name`` attribute — the old code raised
+        # AttributeError on ANY gym with a broadcast row, so
+        # announcements 500'd the whole branding payload). Full text +
+        # real subject (stored by broadcast_service); "preview" is the
+        # legacy fallback for rows written before the fix.
+        det = b.metadata_json or {}
         announcements.append({
             "id": b.id,
-            "title": "Gym Announcement",
-            "message": preview,
+            "title": det.get("subject") or "Gym Announcement",
+            "message": det.get("announcement_text") or det.get("preview") or "Gym Announcement",
             "date": b.created_at.isoformat() if b.created_at else None,
         })
 
@@ -426,12 +432,14 @@ def _get_gym_branding(gym: Gym | None) -> dict:
                 "created_at": c.created_at.isoformat() if c.created_at else None,
             })
 
-    # A gym may upload its payment QR from the dashboard or owner app.
-    qr = gym.qr_settings
-
+    # V11-M9: the gym has no logo field — the payment QR used to be
+    # returned here as logo_url, so members saw a payment instrument
+    # where the gym's logo should be. Return null; clients fall back
+    # to initials. A real owner-uploaded logo is a separate feature,
+    # not built here.
     return {
         "gym_name": gym.name,
-        "logo_url": _member_qr_url(qr),
+        "logo_url": None,
         "primary_color": "#2563EB",
         "secondary_color": "#1D4ED8",
         "accent_color": "#EFF6FF",
@@ -484,7 +492,15 @@ def request_otp():
             .all()
         )
         gym_ids = {m.gym_id for m in matches}
-        member = matches[0] if len(gym_ids) == 1 and matches else None
+        # V11-H1 (reader side): same-gym matches used to collapse to
+        # matches[0] with no ordering — whoever held a shared phone
+        # got the FIRST member's session and the other member's record
+        # was unreachable. When >1 live member in one gym shares a
+        # phone, mint NO challenge: fall through to the generic
+        # no-challenge response below (same as unknown numbers, so
+        # anti-enumeration is preserved). Never silently bind to an
+        # arbitrary member.
+        member = matches[0] if len(gym_ids) == 1 and len(matches) == 1 else None
 
     if not member:
         # V9-L2: the old 404 (unknown) vs 403 is_staff (staff phone) vs
@@ -793,6 +809,42 @@ def refresh_member_session():
     })
 
 
+@member_bp.route("/auth/logout", methods=["POST"])
+@member_token_required
+def logout_member_session():
+    """Sign the member out server-side (V11-M8).
+
+    Revokes the refresh token supplied in the body so the session
+    cannot be rotated afterwards. The short-lived (15-minute) access
+    token itself is stateless and cannot be revoked; it simply
+    expires. The call is idempotent: an absent, unknown, or already
+    revoked refresh token still returns success (sign-out is local
+    state the client is discarding either way) with
+    ``refresh_token_revoked`` reporting what actually happened.
+    """
+    data = request.get_json(silent=True) or {}
+    raw_token = str(data.get("refresh_token") or "").strip()
+    revoked = False
+    if raw_token:
+        revoked = revoke_member_refresh_token(raw_token)
+        audit(
+            action="member_logout",
+            resource_type="member",
+            resource_id=g.member_id,
+            gym_id=g.gym_id,
+            actor_id=None,
+            metadata={"member_id": g.member_id, "refresh_token_revoked": revoked},
+        )
+        db.session.commit()
+    return jsonify({
+        "success": True,
+        "data": {
+            "message": "Signed out.",
+            "refresh_token_revoked": revoked,
+        },
+    })
+
+
 @member_bp.route("/auth/account", methods=["DELETE"])
 @member_token_required
 def delete_member_account():
@@ -925,7 +977,12 @@ def member_dashboard():
     today = today_for_gym(gym_timezone)
 
     days_left = (member.membership_end - today).days if member.membership_end else None
-    is_expired = member.membership_end and member.membership_end < today
+    # V11-L45: ONE expiry semantic — Member.is_expired (end None →
+    # expired, matching refresh_status). The old inline computation
+    # returned False for a missing end date, disagreeing with the
+    # model. Clients can tell "no expiry set" from membership_end
+    # being null and should surface "ask your gym" for it.
+    is_expired = member.is_expired
 
     # Recent renewals for this member
     renewals = (
@@ -1033,7 +1090,8 @@ def member_membership():
     today = today_for_gym(gym_timezone)
 
     days_left = (member.membership_end - today).days if member.membership_end else None
-    is_expired = member.membership_end and member.membership_end < today
+    # V11-L45: same single semantic as the dashboard (see above).
+    is_expired = member.is_expired
 
     # Renewal history
     renewals = (
@@ -1146,6 +1204,7 @@ def member_plans():
 
 @member_bp.route("/renew/claim", methods=["POST"])
 @member_token_required
+@limiter.limit("10 per minute")
 def claim_payment():
     """Member claims they have paid — creates a payment verification for the gym owner.
 
@@ -1245,6 +1304,17 @@ def claim_payment():
     )
     db.session.add(payment)
     db.session.flush()
+    # V11-L46: member money actions leave an audit trail (before
+    # commit, V10-M1 pattern) — a claim with no audit row was
+    # invisible to the owner except via the payment row itself.
+    audit(
+        action="member_payment_claimed",
+        resource_type="payment_verification",
+        resource_id=payment.id,
+        gym_id=member.gym_id,
+        actor_id=None,
+        metadata={"member_id": member.id, "plan_id": plan.id if plan else None, "amount": str(amount)},
+    )
     response_body = {
         "success": True,
         "message": "Payment submitted! The gym will verify your payment and renew your membership.",
@@ -1296,6 +1366,7 @@ def claim_payment():
 
 @member_bp.route("/renew/request", methods=["POST"])
 @member_token_required
+@limiter.limit("10 per minute")
 def request_renewal():
     """Member requests a renewal — creates a payment claim for the gym owner to verify.
 
@@ -1333,6 +1404,16 @@ def request_renewal():
         renewal_days=plan.duration_days if plan else 30,
     )
     db.session.add(payment)
+    db.session.flush()
+    # V11-L46: audit the member submission before commit (V10-M1 pattern).
+    audit(
+        action="member_renewal_requested",
+        resource_type="payment_verification",
+        resource_id=payment.id,
+        gym_id=member.gym_id,
+        actor_id=None,
+        metadata={"member_id": member.id, "plan_id": plan.id if plan else None, "amount": str(amount)},
+    )
     db.session.commit()
 
     return jsonify({
@@ -1489,6 +1570,7 @@ def member_renew_with_plan():
 
 @member_bp.route("/renew/initiate-upi", methods=["POST"])
 @member_token_required
+@limiter.limit("10 per minute")
 def initiate_upi_renewal():
     """Initiate an automated UPI renewal for the member.
     Enforces that the payable amount is authoritative (member cannot tamper with it).
@@ -1561,6 +1643,15 @@ def initiate_upi_renewal():
     merchant_name = gym.name or "Gym Renewal"
     ref = demand.reference if demand.reference else f"VYNLA-{demand.id}-{int(time.time())}"
     demand.reference = ref
+    # V11-L46: audit the UPI initiation before commit (V10-M1 pattern).
+    audit(
+        action="member_upi_renewal_initiated",
+        resource_type="payment_verification",
+        resource_id=demand.id,
+        gym_id=g.gym_id,
+        actor_id=None,
+        metadata={"member_id": member.id, "plan_id": demand.plan_id, "amount": str(demand.amount)},
+    )
     db.session.commit()
 
     encoded_pn = urllib.parse.quote(merchant_name)
@@ -1595,6 +1686,7 @@ def initiate_upi_renewal():
 
 @member_bp.route("/renew/confirm-upi", methods=["POST"])
 @member_token_required
+@limiter.limit("10 per minute")
 def confirm_upi_payment():
     """Verify UPI transaction settlement and automatically extend membership."""
     member = g.current_member
@@ -1730,7 +1822,20 @@ def confirm_upi_payment():
     else:
         # Move to pending verification and record member's reference
         payment.status = "pending"
-        payment.notes = f"Payment confirmation submitted via VYNLA UPI. Reference: {payment.reference or 'N/A'}"
+        # V11-L38: APPEND the confirmation note — the old assignment
+        # overwrote payment.notes and erased the claim context (the
+        # pattern fail_upi_payment already uses).
+        _confirm_note = f"Payment confirmation submitted via VYNLA UPI. Reference: {payment.reference or 'N/A'}"
+        payment.notes = f"{payment.notes}\n{_confirm_note}".strip() if payment.notes else _confirm_note
+        # V11-L46: audit the member submission before commit (V10-M1 pattern).
+        audit(
+            action="member_upi_payment_confirmed_pending",
+            resource_type="payment_verification",
+            resource_id=payment.id,
+            gym_id=g.gym_id,
+            actor_id=None,
+            metadata={"member_id": member.id, "reference": payment.reference},
+        )
         db.session.commit()
 
         return jsonify({
@@ -1776,39 +1881,76 @@ def check_payment_status(payment_id: int):
 
 @member_bp.route("/renew/fail-upi", methods=["POST"])
 @member_token_required
+@limiter.limit("10 per minute")
 def fail_upi_payment():
-    """Handle cancelled or failed UPI payment attempt."""
+    """Handle cancelled or failed UPI payment attempt.
+
+    V11-L39: return the ACTUAL outcome. The old code returned
+    ``success: True`` whenever ``payment_id`` was absent, unknown, or
+    not ``processing`` — including the race where staff verified the
+    payment a moment earlier, so the member was told the payment was
+    "not completed" when it had in fact gone through.
+    """
     member = g.current_member
     data = request.get_json(silent=True) or {}
     payment_id = data.get("payment_id")
 
+    payment = None
     if payment_id:
         payment = PaymentVerification.query.filter_by(
             id=payment_id, member_id=member.id, gym_id=g.gym_id
         ).first()
-        if payment and payment.status == "processing":
-            payment.status = "pending"
-            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            failure_note = f"UPI payment cancelled or failed by member on {now_str}."
-            payment.notes = f"{payment.notes}\n{failure_note}".strip() if payment.notes else failure_note
-            audit(
-                action="upi_payment_failed",
-                resource_type="PaymentVerification",
-                resource_id=payment.id,
-                gym_id=g.gym_id,
-                actor_id=None,
-                metadata={
-                    "member_id": member.id,
-                    "payment_id": payment.id,
-                    "amount": str(payment.amount),
-                    "reason": data.get("reason", "member_cancelled_or_failed"),
-                },
+        if payment is None:
+            return jsonify({"success": False, "error": "Payment record not found."}), 404
+    else:
+        payment = (
+            PaymentVerification.query.filter(
+                PaymentVerification.member_id == member.id,
+                PaymentVerification.gym_id == g.gym_id,
+                PaymentVerification.status.in_(["pending", "processing"]),
             )
-            db.session.commit()
+            .order_by(PaymentVerification.created_at.desc())
+            .first()
+        )
+        if payment is None:
+            return jsonify({
+                "success": False,
+                "error": "No payment in flight to cancel.",
+                "data": {"cancelled": False, "status": None},
+            })
 
+    if payment.status == "processing":
+        payment.status = "pending"
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        failure_note = f"UPI payment cancelled or failed by member on {now_str}."
+        payment.notes = f"{payment.notes}\n{failure_note}".strip() if payment.notes else failure_note
+        audit(
+            action="upi_payment_failed",
+            resource_type="PaymentVerification",
+            resource_id=payment.id,
+            gym_id=g.gym_id,
+            actor_id=None,
+            metadata={
+                "member_id": member.id,
+                "payment_id": payment.id,
+                "amount": str(payment.amount),
+                "reason": data.get("reason", "member_cancelled_or_failed"),
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            "success": True,
+            "message": "Payment was not completed. You can try again whenever you are ready.",
+            "data": {"payment_id": payment.id, "status": "pending", "cancelled": True},
+        })
+
+    # Found, but not in flight any more (e.g. staff verified it a
+    # moment earlier): say so, with the real status, instead of a
+    # false success.
     return jsonify({
-        "success": True,
-        "message": "Payment was not completed. You can try again whenever you are ready.",
+        "success": False,
+        "error": f"Payment is {payment.status}, not awaiting UPI completion.",
+        "data": {"payment_id": payment.id, "status": payment.status, "cancelled": False},
     })
 
 
@@ -1853,6 +1995,9 @@ def member_payments():
                     "paid_on": p.paid_on.isoformat() if p.paid_on else None,
                     "created_at": p.created_at.isoformat() if p.created_at else None,
                     "verified_at": p.verified_at.isoformat() if p.verified_at else None,
+                    # V11-M10: why the payment was rejected, if it was.
+                    "rejected_reason": p.rejected_reason,
+                    "rejected_at": p.rejected_at.isoformat() if p.rejected_at else None,
                 }
                 for p in payments
             ],

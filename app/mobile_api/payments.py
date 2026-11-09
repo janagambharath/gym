@@ -12,7 +12,7 @@ from sqlalchemy.orm import joinedload
 
 import urllib.parse
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.date_rules import plan_days_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
@@ -120,6 +120,10 @@ def _serialize_payment(p: PaymentVerification) -> dict:
         "created_by": p.created_by.full_name if p.created_by else None,
         "verified_by": p.verified_by.full_name if p.verified_by else None,
         "verified_at": p.verified_at.isoformat() if p.verified_at else None,
+        "rejected_at": p.rejected_at.isoformat() if p.rejected_at else None,
+        "rejected_by": p.rejected_by.full_name if getattr(p, "rejected_by", None) else None,
+        # V11-M10: why the payment was rejected — surfaced to the member.
+        "rejected_reason": p.rejected_reason,
         "refunded_at": p.refunded_at.isoformat() if p.refunded_at else None,
         "refunded_by": p.refunded_by.full_name if getattr(p, "refunded_by", None) else None,
         "created_at": p.created_at.isoformat() if p.created_at else None,
@@ -296,6 +300,7 @@ def register_payments_routes(bp):
     @bp.route("/payments", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("30 per minute")
     def create_payment():
         data = request.get_json(silent=True) or {}
         idempotency_key = valid_key(request.headers.get("Idempotency-Key"))
@@ -695,6 +700,7 @@ def register_payments_routes(bp):
     @bp.route("/payments/<int:payment_id>/verify", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def verify_payment_endpoint(payment_id: int):
         # A timeout retry after a successful verify must replay the
         # stored success, not 409 "already verified" (the client cannot
@@ -794,13 +800,21 @@ def register_payments_routes(bp):
     @bp.route("/payments/<int:payment_id>/reject", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def reject_payment_endpoint(payment_id: int):
+        # V11-M10: the caller may supply the reason the payment is
+        # being rejected; it is stored on the row and surfaced to the
+        # member. It is part of the idempotency fingerprint so a
+        # same-key retry with a different reason 409s instead of
+        # silently keeping the first reason.
+        _reject_data = request.get_json(silent=True) or {}
+        _reject_reason = (_reject_data.get("reason") or "").strip() or None
         idempotency_key, request_hash, replay = begin_idempotency(
             gym_id=g.gym_id,
             user_id=g.user_id,
             scope="reject_payment",
             headers=request.headers,
-            payload={"payment_id": payment_id},
+            payload={"payment_id": payment_id, "reason": _reject_reason or ""},
         )
         if replay is not None:
             return replay
@@ -809,10 +823,11 @@ def register_payments_routes(bp):
         if payment is None:
             return error_response("NOT_FOUND", "Payment not found.", 404)
         try:
-            reject_payment(payment, verified_by_id=g.current_user.id)
+            reject_payment(payment, verified_by_id=g.current_user.id, reason=_reject_reason)
             audit(action="reject_payment", resource_type="payment_verification", resource_id=payment.id,
-                  gym_id=g.gym_id, actor_id=g.current_user.id)
-            response_body = {"success": True, "data": {"message": "Payment rejected."}}
+                  gym_id=g.gym_id, actor_id=g.current_user.id,
+                  metadata={"reason": _reject_reason} if _reject_reason else None)
+            response_body = {"success": True, "data": {"message": "Payment rejected.", "rejected_reason": _reject_reason}}
             record_idempotency(
                 gym_id=g.gym_id,
                 user_id=g.user_id,
@@ -845,6 +860,7 @@ def register_payments_routes(bp):
     @bp.route("/payments/<int:payment_id>/cancel", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def cancel_payment_endpoint(payment_id: int):
         idempotency_key, request_hash, replay = begin_idempotency(
             gym_id=g.gym_id,
@@ -901,6 +917,7 @@ def register_payments_routes(bp):
     @bp.route("/payments/<int:payment_id>", methods=["DELETE"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def delete_payment_endpoint(payment_id: int):
 
         idempotency_key, request_hash, replay = begin_idempotency(
@@ -962,6 +979,7 @@ def register_payments_routes(bp):
     @bp.route("/payments/<int:payment_id>/refund", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def refund_payment_endpoint(payment_id: int):
         idempotency_key, request_hash, replay = begin_idempotency(
             gym_id=g.gym_id,

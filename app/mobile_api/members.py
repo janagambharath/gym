@@ -47,6 +47,20 @@ from app.services.mobile_member_import_service import validate_csv
 from app.utils.helpers import normalize_phone_e164
 
 
+def _phone_taken_by_other(gym_id: int, phone: str, exclude_member_id: int | None = None) -> bool:
+    """V11-H1 — True when another NON-DELETED member of this gym
+    already holds ``phone``. Soft-deleted rows are excluded so a
+    deactivated member's number can be reused on re-add (same
+    exclusion the bulk-import guard already uses). The partial unique
+    index uq_members_gym_phone_active is the race backstop."""
+    query = Member.query.filter_by(gym_id=gym_id, phone=phone).filter(
+        Member.deleted_at.is_(None)
+    )
+    if exclude_member_id is not None:
+        query = query.filter(Member.id != exclude_member_id)
+    return db.session.query(query.exists()).scalar() or False
+
+
 def _serialize_member(m: Member) -> dict:
     return {
         "id": m.id,
@@ -556,6 +570,7 @@ def register_members_routes(bp):
     @bp.route("/members", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("30 per minute")
     def create_member():
         data = request.get_json(silent=True) or {}
         # V3-M23: honour Idempotency-Key like create_payment does — the
@@ -595,6 +610,14 @@ def register_members_routes(bp):
                 "VALIDATION_ERROR",
                 "This phone number is reserved for internal testing.",
                 400,
+            )
+        # V11-H1: no silent duplicates — a second member on the same
+        # phone makes Vynla OTP login bind to the wrong member.
+        if _phone_taken_by_other(g.gym_id, phone):
+            return error_response(
+                "DUPLICATE_PHONE",
+                "Another member in this gym already uses this phone number.",
+                409,
             )
 
         try:
@@ -851,8 +874,17 @@ def register_members_routes(bp):
                 )
             try:
                 db.session.commit()
-            except IntegrityError:
+            except IntegrityError as exc:
                 db.session.rollback()
+                # V11-H1: a concurrent create racing past the
+                # pre-check hits the partial unique index — report it
+                # as the duplicate it is, not a generic create failure.
+                if "uq_members_gym_phone_active" in str(exc):
+                    return error_response(
+                        "DUPLICATE_PHONE",
+                        "Another member in this gym already uses this phone number.",
+                        409,
+                    )
                 # A concurrent retry may have won the unique-key race.
                 # Replay its stored response instead of a second member.
                 if idempotency_key:
@@ -946,6 +978,14 @@ def register_members_routes(bp):
                     "This phone number is reserved for internal testing.",
                     400,
                 )
+            # V11-H1: a phone change must not point a member at
+            # another member's phone (same 409 as create).
+            if _phone_taken_by_other(g.gym_id, phone, exclude_member_id=member.id):
+                return error_response(
+                    "DUPLICATE_PHONE",
+                    "Another member in this gym already uses this phone number.",
+                    409,
+                )
             member.phone = phone
 
         if "email" in data:
@@ -957,6 +997,16 @@ def register_members_routes(bp):
         if "address" in data:
             member.address = (data["address"] or "").strip() or None
         if "plan_id" in data:
+            # V11-L2: an explicit null silently unassigned the plan
+            # (backend half of V10-M3 — both clients already omit).
+            # There is no "remove plan" control anywhere, so a null
+            # can never be deliberate owner intent: reject it.
+            if data["plan_id"] is None:
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "plan_id cannot be null. Send the current plan id to keep the plan; removing a plan is not supported from this endpoint.",
+                    422,
+                )
             if data["plan_id"]:
                 plan = MembershipPlan.query.filter_by(id=data["plan_id"], gym_id=g.gym_id, is_active=True).first()
                 if plan is None:
@@ -1049,7 +1099,7 @@ def register_members_routes(bp):
         )
         try:
             db.session.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             db.session.rollback()
             replayed = replay_after_conflict(
                 gym_id=g.gym_id,
@@ -1060,6 +1110,14 @@ def register_members_routes(bp):
             )
             if replayed is not None:
                 return replayed
+            # V11-H1: a concurrent phone change racing past the
+            # pre-check hits the partial unique index.
+            if "uq_members_gym_phone_active" in str(exc):
+                return error_response(
+                    "DUPLICATE_PHONE",
+                    "Another member in this gym already uses this phone number.",
+                    409,
+                )
             raise
         return jsonify(response_body)
 

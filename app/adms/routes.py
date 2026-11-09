@@ -29,11 +29,58 @@ from app.services.rrr_service import normalize_attendance
 log = logging.getLogger(__name__)
 
 
+# V11-L10: USERINFO snapshot cap. The terminal uploads its whole user
+# table in one POST; at ~50 bytes per user the old 256 KB cap broke at
+# ~5,200 terminal users, and the failed scan had no retry path and no
+# distinguishable failure. 2 MiB covers ~40,000 users; oversize now
+# fails the sync_users row with USERINFO_TOO_LARGE (retryable via
+# retry-sync) instead of leaving it unacked to time out silently.
+USERINFO_SNAPSHOT_MAX_BYTES = 2_097_152
+USERINFO_TOO_LARGE_CODE = "USERINFO_TOO_LARGE"
+
+
 adms_bp = Blueprint("adms", __name__)
 
 
 def _plain(text: str = "OK", status: int = 200) -> Response:
     return Response(text, status=status, mimetype="text/plain")
+
+
+def _cancel_adms_command_audited(command, *, marker=None, error=None) -> None:
+    """Stamp a guard-cancelled ADMS command AND audit it (V11-L7).
+
+    ``cancel_adms_command`` stamps the row only, so a serve-time guard
+    cancellation used to leave no audit row — the owner-visible trail
+    could not answer "why didn't this block serve / why did this
+    command vanish". The audit is staged here, before the caller's
+    commit (V10-M1). Deliberately NOT inside ``cancel_adms_command``
+    itself: the owner-cancel endpoint already audits
+    ``adms_command_cancelled_by_owner`` separately, and a helper-level
+    audit would double-count there.
+    """
+    from app.services.audit_service import audit
+    from app.services.bridge_service import (
+        STALE_DISABLE_ERROR,
+        STALE_DISABLE_MARKER,
+        cancel_adms_command,
+    )
+
+    cancel_adms_command(
+        command,
+        marker=marker if marker is not None else STALE_DISABLE_MARKER,
+        error=error if error is not None else STALE_DISABLE_ERROR,
+    )
+    audit(
+        action="adms_command_cancelled_at_serve",
+        resource_type="rrr_adms_command",
+        resource_id=command.id,
+        gym_id=command.gym_id,
+        metadata={
+            "action": command.action,
+            "enroll_number": command.test_enroll_number,
+            "result_code": command.result_code,
+        },
+    )
 
 
 def _serial() -> str:
@@ -525,15 +572,26 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
     if not users:
         return 0
     # M4: reject, don't truncate, an oversized snapshot — truncation could
-    # produce invalid JSON that readers silently drop.
+    # produce invalid JSON that readers silently drop. V11-L10: fail the
+    # scan row with a distinguishable code (retryable via retry-sync)
+    # instead of leaving it unacked to time out silently.
     payload = json.dumps({"users": users, "count": len(users)})
-    if len(payload) > 262144:
+    if len(payload) > USERINFO_SNAPSHOT_MAX_BYTES:
         log.warning(
-            "Rejecting oversized USERINFO snapshot (%d bytes, gym %s): "
-            "sync command left unacked.",
+            "Rejecting oversized USERINFO snapshot (%d bytes, %d users, gym %s): "
+            "sync command failed as USERINFO_TOO_LARGE.",
             len(payload),
+            len(users),
             integration.gym_id,
         )
+        cmd.status = "failed"
+        cmd.result_code = USERINFO_TOO_LARGE_CODE
+        cmd.result_message = (
+            f"USERINFO snapshot too large ({len(payload)} bytes, "
+            f"{len(users)} users; limit {USERINFO_SNAPSHOT_MAX_BYTES} bytes). "
+            "Split the terminal user list or contact support."
+        )
+        cmd.acknowledged_at = utcnow()
         return 0
     cmd.result_data = payload
     cmd.status = "acked"
@@ -839,7 +897,6 @@ def getrequest(path_token: str | None = None):
         STALE_ENABLE_MARKER,
         adms_command_intended_member_id,
         adms_command_is_forbidden,
-        cancel_adms_command,
         disable_must_be_cancelled,
         disable_must_be_cancelled_including_deleted,
         enable_must_be_cancelled,
@@ -859,7 +916,7 @@ def getrequest(path_token: str | None = None):
         # Never deliver legacy/delete-shaped rows, even if queued before
         # destructive ADMS actions were removed.
         if adms_command_is_forbidden(candidate):
-            cancel_adms_command(
+            _cancel_adms_command_audited(
                 candidate,
                 error="Destructive ADMS delete commands are disabled. Use the reversible Grp=100/Grp=1 access update.",
             )
@@ -874,13 +931,13 @@ def getrequest(path_token: str | None = None):
         if candidate.action in ADMS_TEST_ACTIONS:
             member = resolve_adms_member(integration.gym_id, candidate.test_enroll_number)
             if member is None and candidate.test_member_id is not None:
-                cancel_adms_command(
+                _cancel_adms_command_audited(
                     candidate,
                     error="Test refused: the confirmed test member no longer matches this ID. Queue the test again.",
                 )
                 continue
             if member is not None:
-                cancel_adms_command(
+                _cancel_adms_command_audited(
                     candidate,
                     error="Test refused: that ID belongs to a member. Group tests run only against a terminal-only fake account — the explicitly confirmed fake account must have no Renewal Desk member row.",
                 )
@@ -927,7 +984,7 @@ def getrequest(path_token: str | None = None):
                     ):
                         member = intended
             if disable_must_be_cancelled_including_deleted(member):
-                cancel_adms_command(candidate)
+                _cancel_adms_command_audited(candidate)
                 continue
         elif candidate.action in ADMS_DISABLE_ACTIONS:
             # Owners may deliberately block an active member, but a stale or
@@ -951,7 +1008,7 @@ def getrequest(path_token: str | None = None):
                     if intended is not None and intended.gym_id == integration.gym_id:
                         member = intended
             if member is None:
-                cancel_adms_command(
+                _cancel_adms_command_audited(
                     candidate,
                     error="The member no longer resolves to this terminal ID. Confirm the biometric mapping and queue the access change again.",
                 )
@@ -965,7 +1022,7 @@ def getrequest(path_token: str | None = None):
             # resolved member is the only holder on record.
             intended_member_id = adms_command_intended_member_id(candidate)
             if intended_member_id is not None and intended_member_id != member.id:
-                cancel_adms_command(
+                _cancel_adms_command_audited(
                     candidate,
                     marker=STALE_COMMAND_SUPERSEDED_MARKER,
                     error="Superseded: terminal ID remapped to another member; queue the access change again if still needed.",
@@ -1002,7 +1059,7 @@ def getrequest(path_token: str | None = None):
                     member.status if member else None,
                     member.membership_end if member else None,
                 )
-                cancel_adms_command(
+                _cancel_adms_command_audited(
                     candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
                 )
                 continue

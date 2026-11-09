@@ -495,6 +495,23 @@ def backfill_unmapped_punches(gym_id: int, external_id: str, member: Member) -> 
             process_rrr_attendance_to_access_event(event)
         else:
             _backfill_bridge_punch(event, member)
+    # V11-L9: unmapped_records was a cumulative ever-count — incremented
+    # on every unmapped ingest, never decremented — while the PWA shows
+    # it as the live "unknown punches" queue. Each punch resolved here
+    # decrements its own integration's counter (floored at 0, so a
+    # pre-fix inflated counter converges instead of going negative).
+    # Does not commit; the caller owns the commit.
+    if events:
+        from collections import Counter
+
+        per_integration = Counter(
+            event.integration_id for event in events
+            if event.integration_id is not None
+        )
+        for integration_id, resolved in per_integration.items():
+            row = db.session.get(RRRIntegration, integration_id)
+            if row is not None and row.gym_id == gym_id:
+                row.unmapped_records = max(0, row.unmapped_records - resolved)
     return len(events)
 
 

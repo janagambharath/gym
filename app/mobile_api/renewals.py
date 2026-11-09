@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.date_rules import plan_days_error
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
@@ -122,6 +122,7 @@ def register_renewals_routes(bp):
     @bp.route("/renewals/<int:member_id>", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("30 per minute")
     def renew_member(member_id: int):
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -191,6 +192,17 @@ def register_renewals_routes(bp):
                 400,
             )
 
+        # V11-H2: mirror the V8-M2 verify gate — a ₹0 direct renew is
+        # a complimentary membership, an owner decision, audited. Staff
+        # could otherwise hand out free memberships with no payment
+        # record at all (this path creates no PaymentVerification row).
+        if amount <= 0 and (g.current_user is None or g.current_user.role != "gym_owner"):
+            return error_response(
+                "FORBIDDEN",
+                "Only the gym owner can grant a zero-amount (complimentary) renewal.",
+                403,
+            )
+
         notes = (data.get("notes") or "").strip()
 
         # Load member with lock to prevent concurrent renewal.
@@ -229,13 +241,23 @@ def register_renewals_routes(bp):
             db.session.rollback()
             return error_response("VALIDATION_ERROR", _plan_err, 400)
 
+        # V11-L1: copy the create_payment pattern verbatim for both
+        # fields — finite + 2dp checks immediately after parsing,
+        # BEFORE any comparison. The old code parsed inside a try and
+        # silently defaulted on failure, so "NaN" 500'd at the first
+        # comparison outside the try and "100.999" was silently
+        # rounded by Numeric(10,2) on store.
         raw_standard = data.get("standard_price")
         standard_price: Decimal | None = None
         if raw_standard is not None and str(raw_standard).strip():
             try:
                 standard_price = Decimal(str(raw_standard).strip())
             except (InvalidOperation, TypeError):
-                standard_price = None
+                return error_response("VALIDATION_ERROR", "Invalid standard_price.", 400)
+            if not standard_price.is_finite():
+                return error_response("VALIDATION_ERROR", "standard_price must be a finite number.", 400)
+            if standard_price.as_tuple().exponent < -2:
+                return error_response("VALIDATION_ERROR", "standard_price must have at most two decimal places.", 400)
         if standard_price is None and plan:
             standard_price = plan.price
 
@@ -244,7 +266,11 @@ def register_renewals_routes(bp):
             try:
                 discount = Decimal(str(raw_discount).strip())
             except (InvalidOperation, TypeError):
-                discount = Decimal("0.00")
+                return error_response("VALIDATION_ERROR", "Invalid discount.", 400)
+            if not discount.is_finite():
+                return error_response("VALIDATION_ERROR", "discount must be a finite number.", 400)
+            if discount.as_tuple().exponent < -2:
+                return error_response("VALIDATION_ERROR", "discount must have at most two decimal places.", 400)
         elif standard_price is not None and standard_price >= amount:
             discount = standard_price - amount
         else:
@@ -399,7 +425,8 @@ def register_renewals_routes(bp):
             gym_id=g.gym_id,
             actor_id=g.current_user.id,
             metadata={"renewal_days": renewal_days, "new_end": new_end.isoformat(),
-                      "scheduled": scheduled, "override_reason": _override_reason},
+                      "scheduled": scheduled, "override_reason": _override_reason,
+                      "amount": str(amount)},
         )
         invalidate_dashboard_cache(g.gym_id)
         response_body = {
@@ -451,6 +478,7 @@ def register_renewals_routes(bp):
     @bp.route("/renewals/scheduled/<int:renewal_id>/activate", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def force_activate_scheduled_renewal_endpoint(renewal_id: int):
         """Manually activate one due scheduled renewal (V6-L20).
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -115,6 +116,20 @@ def send_broadcast_announcement(
             if result.error and len(errors) < 3:
                 errors.append(f"{member.full_name}: {result.error}")
 
+    # V11-L37: store the FULL announcement text (not an 80-char
+    # preview) plus a real subject (its first line) so the member app
+    # can show the whole message instead of a truncated fragment
+    # under a fixed "Gym Announcement" title. "preview" is kept for
+    # older readers.
+    _full_text = announcement_text.strip()
+    _first_line = next(
+        (line.strip() for line in _full_text.splitlines() if line.strip()),
+        "Gym Announcement",
+    )
+    # Subject = the first sentence when it fits in 80 chars (a real
+    # headline), else the first line truncated to 80.
+    _sentence = re.match(r"^(.{1,80}?[.!?])(\s|$)", _first_line)
+    _subject = _sentence.group(1) if _sentence else _first_line[:80]
     audit(
         action="whatsapp_broadcast_announcement",
         resource_type="gym",
@@ -125,7 +140,9 @@ def send_broadcast_announcement(
             "total": len(members),
             "sent": sent_count,
             "failed": failed_count,
-            "preview": announcement_text[:80],
+            "preview": _full_text[:80],
+            "announcement_text": _full_text,
+            "subject": _subject,
         },
     )
     db.session.commit()

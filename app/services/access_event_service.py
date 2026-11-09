@@ -19,6 +19,7 @@ from app.models.bridge import BridgeAttendance, BridgeInstallation
 from app.models.member import Member
 from app.models.member_access_state import MemberAccessState
 from app.models.mixins import utcnow
+from app.services.storage_service import member_profile_photo_url
 from app.services.timezone_service import today_for_gym, utc_start_of_gym_day
 
 logger = logging.getLogger(__name__)
@@ -1199,6 +1200,11 @@ def _serialize_access_event(evt: AccessEvent) -> dict:
         "event_timestamp": evt.event_timestamp.isoformat() if evt.event_timestamp else None,
         "member_id": member.id if member else None,
         "member_name": evt.member_name if member else None,
+        # V11-L27 (event-rows half): the member's profile photo URL so
+        # Android event rows can render the photo like the member
+        # payload does (same resolver as the owner member serializer).
+        # None when the member is unknown/deleted or has no photo.
+        "profile_photo_url": member_profile_photo_url(member) if member else None,
         "membership_status": evt.membership_status if member else None,
         "device_name": evt.device_name,
         "device_enroll_number": evt.device_enroll_number,

@@ -8,7 +8,7 @@ import urllib.parse
 from flask import current_app, g, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.mobile_api.token_service import revoke_all_user_tokens
@@ -74,6 +74,7 @@ def register_staff_routes(bp):
     @bp.route("/staff", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def create_staff():
         data = request.get_json(silent=True) or {}
         # A retry after a successful create must replay the stored
@@ -184,6 +185,7 @@ def register_staff_routes(bp):
     @bp.route("/staff/<int:user_id>", methods=["PATCH"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def update_staff(user_id: int):
         user = User.query.filter_by(id=user_id, gym_id=g.gym_id).first()
         if not user:
@@ -274,6 +276,7 @@ def register_staff_routes(bp):
     @bp.route("/staff/<int:user_id>/reset-password", methods=["POST"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("5 per minute")
     def reset_staff_password(user_id: int):
         user = User.query.filter_by(id=user_id, gym_id=g.gym_id).first()
         if not user:
@@ -365,6 +368,7 @@ def register_staff_routes(bp):
     @bp.route("/staff/<int:user_id>", methods=["DELETE"])
     @token_required
     @roles_required("gym_owner")
+    @limiter.limit("10 per minute")
     def delete_staff(user_id: int):
         user = User.query.filter_by(id=user_id, gym_id=g.gym_id).first()
         if not user:

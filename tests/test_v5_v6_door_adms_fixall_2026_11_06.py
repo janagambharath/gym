@@ -699,7 +699,7 @@ def test_reconcile_skips_newer_manual_block_then_proceeds_after_membership_chang
     manual.acknowledged_at = utcnow()
     db.session.commit()
 
-    assert queue_gym_reconciliation(gym_id) == 0
+    assert queue_gym_reconciliation(gym_id)["queued"] == 0
     assert RRRAdmsCommand.query.filter_by(
         gym_id=gym_id, test_enroll_number="122", action="unblock"
     ).count() == 0
@@ -709,7 +709,7 @@ def test_reconcile_skips_newer_manual_block_then_proceeds_after_membership_chang
     member.membership_end = date.today() + timedelta(days=25)
     db.session.commit()
 
-    assert queue_gym_reconciliation(gym_id) == 1
+    assert queue_gym_reconciliation(gym_id)["queued"] == 1
     assert RRRAdmsCommand.query.filter_by(
         gym_id=gym_id, test_enroll_number="122", action="unblock", status="queued"
     ).count() == 1
@@ -730,7 +730,7 @@ def test_reconcile_skips_newer_manual_bridge_block(seed_gym):
     manual.acknowledged_at = utcnow()
     db.session.commit()
 
-    assert queue_gym_reconciliation(gym_id) == 0
+    assert queue_gym_reconciliation(gym_id)["queued"] == 0
     assert BridgeCommand.query.filter_by(
         member_id=member.id, command_type="enable_user"
     ).count() == 0
@@ -738,7 +738,7 @@ def test_reconcile_skips_newer_manual_bridge_block(seed_gym):
     member.membership_end = date.today() + timedelta(days=25)
     db.session.commit()
 
-    assert queue_gym_reconciliation(gym_id) == 1
+    assert queue_gym_reconciliation(gym_id)["queued"] == 1
     assert BridgeCommand.query.filter_by(
         member_id=member.id, command_type="enable_user", status="pending"
     ).count() == 1

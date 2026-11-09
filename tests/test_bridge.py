@@ -200,7 +200,7 @@ def test_reconciliation_resends_an_already_acknowledged_access_state(client, see
     )
     assert ack.status_code == 200
 
-    assert queue_gym_reconciliation(seed_gym["gym"].id) == 1
+    assert queue_gym_reconciliation(seed_gym["gym"].id)["queued"] == 1
     db.session.commit()
     commands = BridgeCommand.query.filter_by(member_id=member.id).order_by(BridgeCommand.created_at).all()
     assert [command.status for command in commands] == ["acked", "pending"]

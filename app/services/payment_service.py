@@ -227,6 +227,12 @@ def verify_payment(payment: PaymentVerification, *, verified_by_id: int, renewal
             f"TENANT VIOLATION: payment {locked_payment.id} gym {locked_payment.gym_id} "
             f"vs member gym {member.gym_id}"
         )
+    # V11-M1: a pending claim verified after the member was
+    # deactivated used to extend the deleted row, flip it active and
+    # count the money (the door layer caught it; the money layer did
+    # not). The endpoint maps ValueError to 409.
+    if member.deleted_at is not None:
+        raise ValueError("Member has been deactivated.")
 
     previous_start = member.membership_start
     previous_end = member.membership_end
@@ -751,7 +757,9 @@ def apply_due_scheduled_renewals(gym) -> int:
     return activated
 
 
-def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None:
+def reject_payment(
+    payment: PaymentVerification, *, verified_by_id: int, reason: str | None = None
+) -> None:
     payment = _lock_payment(payment)
     if payment.status == "verified":
         raise ValueError("Cannot reject an already verified payment.")
@@ -760,6 +768,10 @@ def reject_payment(payment: PaymentVerification, *, verified_by_id: int) -> None
     if payment.status == "cancelled":
         raise ValueError("Payment is already cancelled.")
     payment.status = "rejected"
+    # V11-M10: record why — the member sees REJECTED with the reason
+    # and the next step instead of a bare rejection. Capped at 500
+    # chars (the column width); blank means "no reason given".
+    payment.rejected_reason = (reason or "").strip()[:500] or None
     # V4-L35: the verification audit trail is immutable — a rejected
     # payment was never verified, so verified_at/verified_by_id must
     # stay untouched (NULL here). The rejection records its own time

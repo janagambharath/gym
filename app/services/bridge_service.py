@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 import threading
@@ -16,6 +17,9 @@ from app.models import RRRAdmsCommand, RRRIdentityMapping, RRRIntegration
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.timezone_service import today_for_gym
+
+
+_logger = logging.getLogger(__name__)
 
 
 _ENROLL_NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
@@ -929,6 +933,21 @@ def displace_stale_enroll_commands(
                 marker=STALE_COMMAND_SUPERSEDED_MARKER,
                 error="Superseded: terminal ID remapped to another member; queue the access change again if still needed.",
             )
+            # V11-L7: a displaced command must leave an audit row — the
+            # row stamp alone cannot answer "why did this command
+            # vanish". Staged before the caller's commit (V10-M1).
+            audit(
+                action="adms_command_displaced",
+                resource_type="rrr_adms_command",
+                resource_id=row.id,
+                gym_id=gym_id,
+                metadata={
+                    "action": row.action,
+                    "enroll_number": canonical,
+                    "previous_member_id": intended,
+                    "new_member_id": new_member_id,
+                },
+            )
             cancelled += 1
     # Bridge: pending commands carry member_id directly.
     bridge_rows = BridgeCommand.query.filter(
@@ -945,6 +964,19 @@ def displace_stale_enroll_commands(
             # BridgeCommand has no result_code column — the marker only
             # survives inside last_error, so it is embedded in the text.
             error=f"{STALE_COMMAND_SUPERSEDED_MARKER}: Terminal ID remapped to another member; queue the access change again if still needed.",
+        )
+        # V11-L7: audit the displacement (see the ADMS loop above).
+        audit(
+            action="bridge_command_displaced",
+            resource_type="bridge_command",
+            resource_id=row.id,
+            gym_id=gym_id,
+            metadata={
+                "command_type": row.command_type,
+                "enroll_number": canonical,
+                "previous_member_id": row.member_id,
+                "new_member_id": new_member_id,
+            },
         )
         cancelled += 1
     # V5-M4: displace can only cancel queued/delivered rows — it cannot
@@ -2021,7 +2053,16 @@ def _has_newer_manual_block(member: Member) -> bool:
     return False
 
 
-def queue_gym_reconciliation(gym_id: int) -> int:
+# V11-L11: full-gym reconcile is batched — a ~2,855-member gym drains
+# at one command per 30 s poll (~24 h), so one call must not queue the
+# whole gym at once, and one bad row must not abort the re-sync.
+_GYM_RECONCILE_BATCH_SIZE = 100
+
+
+def queue_gym_reconciliation(
+    gym_id: int, *, batch_size: int = _GYM_RECONCILE_BATCH_SIZE,
+    start_after_member_id: int = 0,
+) -> dict:
     """Queue access state for enrolled members through the gym's connector.
 
     V6-M7: an active member whose latest acked state is a manual block
@@ -2029,14 +2070,27 @@ def queue_gym_reconciliation(gym_id: int) -> int:
     not silently undo an owner's misconduct block. (The daily scheduler
     job does not call this function; it has its own expired/paused-only
     reconcile, so this skip only affects the owner-triggered Re-sync.)
+
+    V11-L11: batched with per-row isolation + progress, as retry-sync
+    does (V10-L12). At most ``batch_size`` members are attempted per
+    call, each inside its own savepoint — one bad row becomes a
+    ``failed`` entry instead of aborting the whole re-sync — and the
+    result reports ``remaining`` + ``next_start_after_member_id`` so
+    the caller can page through the gym (pass the returned
+    ``next_start_after_member_id`` as ``start_after_member_id``) and
+    show drain progress. Does not commit; the caller owns the commit.
     """
 
     adms = _adms_integration(gym_id)
     if adms is None and _active_installation(gym_id) is None:
-        return 0
+        return {
+            "queued": 0, "skipped_manual_block": 0, "failed": [],
+            "remaining": 0, "total": 0, "next_start_after_member_id": None,
+        }
     members_query = Member.query.filter(
         Member.gym_id == gym_id,
         Member.deleted_at.is_(None),
+        Member.id > start_after_member_id,
     )
     if adms is None:
         members_query = members_query.filter(Member.device_enroll_number.is_not(None))
@@ -2051,17 +2105,265 @@ def queue_gym_reconciliation(gym_id: int) -> int:
         members_query = members_query.filter(
             or_(Member.device_enroll_number.is_not(None), Member.id.in_(mapped_member_ids))
         )
-    members = members_query.order_by(Member.id.asc()).all()
+    total = members_query.count()
+    members = members_query.order_by(Member.id.asc()).limit(max(1, batch_size)).all()
     queued = 0
+    skipped_manual_block = 0
+    failed: list[int] = []
     for member in members:
+        try:
+            with db.session.begin_nested():
+                if (
+                    desired_command_type(member) == "enable_user"
+                    and _has_newer_manual_block(member)
+                ):
+                    skipped_manual_block += 1
+                    continue
+                if queue_membership_command(member, force=True) is not None:
+                    queued += 1
+        except Exception:
+            _logger.warning(
+                "Gym reconcile failed for member %s (gym %s); skipping row",
+                member.id, gym_id, exc_info=True,
+            )
+            failed.append(member.id)
+    remaining = max(0, total - len(members))
+    return {
+        "queued": queued,
+        "skipped_manual_block": skipped_manual_block,
+        "failed": failed,
+        "remaining": remaining,
+        "total": total,
+        "next_start_after_member_id": members[-1].id if remaining and members else None,
+    }
+
+
+# ─── V11-H3: shared failed door-command reconcile ─────────────────────────
+# The scheduler job AND the `flask run-reminders` CLI both call
+# :func:`reconcile_failed_membership_commands` — the block reconcile
+# previously lived only in the APScheduler job, so in the CLI-cron
+# deployment shape even failed blocks never self-healed.
+#
+# The scheduler used to re-queue failed BLOCKS only. A renewed member
+# whose unblock failed once stayed door-blocked indefinitely. The
+# unblock legs below mirror the block legs exactly: same acked-state
+# check (intended-member-checked, so a recycled ID never inherits the
+# previous holder's ack), same per-member ``member_is_proven_*`` guard,
+# same queue dedupe (a queued/delivered unblock is returned as-is, never
+# stacked). The active-member unblock scan additionally skips members
+# with a newer manual (owner misconduct) block, so the scheduler can
+# never undo an owner's deliberate block (V6-M7).
+#
+# FAIL-SAFE: the unblock scan only touches members proven enableable —
+# exists, not deleted, status active, membership_end >= gym-local today
+# — judged by the existing serve-time guard predicate
+# :func:`member_is_proven_enableable`, never a new predicate. An
+# expired/paused/deleted member is NEVER unblocked by this scan.
+# Does not commit; callers own the commit.
+
+
+def _adms_reconcile_members(gym, *, block_scan: bool) -> int:
+    """Shared ADMS leg for :func:`reconcile_failed_membership_commands`.
+
+    ``block_scan=True`` re-queues blocks for expired/paused/deleted
+    members; ``block_scan=False`` re-queues unblocks for active members
+    with no acked unblock on record. Returns fresh rows queued.
+    """
+    from sqlalchemy import and_, or_, select
+
+    integration = RRRIntegration.query.filter_by(
+        gym_id=gym.id, connector_type="adms_direct"
+    ).first()
+    if integration is None or not integration.commands_enabled:
+        return 0
+    mapping_member_ids = select(RRRIdentityMapping.member_id).where(
+        RRRIdentityMapping.gym_id == gym.id,
+        RRRIdentityMapping.status == "confirmed",
+    )
+    if block_scan:
+        candidates = (
+            Member.query.filter(
+                Member.gym_id == gym.id,
+                or_(
+                    and_(
+                        Member.status == "expired",
+                        Member.membership_end < today_for_gym(gym.timezone),
+                        Member.deleted_at.is_(None),
+                    ),
+                    and_(
+                        Member.status == "paused",
+                        Member.deleted_at.is_(None),
+                    ),
+                    Member.deleted_at.isnot(None),
+                ),
+                or_(
+                    Member.device_enroll_number.isnot(None),
+                    Member.id.in_(mapping_member_ids),
+                ),
+            ).all()
+        )
+    else:
+        candidates = (
+            Member.query.filter(
+                Member.gym_id == gym.id,
+                Member.status == "active",
+                Member.deleted_at.is_(None),
+                Member.membership_end >= today_for_gym(gym.timezone),
+                or_(
+                    Member.device_enroll_number.isnot(None),
+                    Member.id.in_(mapping_member_ids),
+                ),
+            ).all()
+        )
+    requeued = 0
+    for m in candidates:
+        if block_scan:
+            if not member_is_proven_blockable_including_deleted(m):
+                continue
+        else:
+            # Fail-safe: only a proven-enableable member may be
+            # unblocked, and never undo an owner's newer manual block.
+            if not member_is_proven_enableable(m):
+                continue
+            if _has_newer_manual_block(m):
+                continue
+        try:
+            enroll = resolve_adms_enroll_number(m)
+        except ValueError:
+            continue
+        if not enroll:
+            continue
+        action = "block" if block_scan else "unblock"
+        acked = RRRAdmsCommand.query.filter_by(
+            integration_id=integration.id,
+            action=action,
+            test_enroll_number=enroll,
+            status="acked",
+        ).first()
+        # V4-L8: an acked command for this enroll belongs to the member
+        # it was queued for — a recycled ID must not inherit the previous
+        # holder's ack. Unknown intent re-queues.
+        if acked is not None and adms_command_intended_member_id(acked) != m.id:
+            acked = None
+        if acked:
+            continue
+        max_id_before = db.session.query(db.func.max(RRRAdmsCommand.id)).scalar() or 0
+        if queue_membership_command(m, force=True) is None:
+            continue
+        # Only a row freshly created by this call counts — a deduped
+        # queued/delivered row means the desired state is already in
+        # flight (V10-L8 counting, applied to the scheduler too).
+        if (db.session.query(db.func.max(RRRAdmsCommand.id)).scalar() or 0) > max_id_before:
+            requeued += 1
+    return requeued
+
+
+def _bridge_reconcile_members(gym, *, block_scan: bool) -> int:
+    """Shared bridge leg for :func:`reconcile_failed_membership_commands`.
+
+    Mirror of :func:`_adms_reconcile_members` for legacy TCP-bridge
+    (.exe) gyms. Returns the number of members whose failed command
+    was re-driven (latest None/failed, as the original bridge block
+    scan counted them).
+    """
+    from sqlalchemy import and_, or_
+
+    installation = _active_installation(gym.id)
+    if installation is None:
+        return 0
+    if block_scan:
+        candidates = (
+            Member.query.filter(
+                Member.gym_id == gym.id,
+                or_(
+                    and_(
+                        Member.status == "expired",
+                        Member.membership_end < today_for_gym(gym.timezone),
+                        Member.deleted_at.is_(None),
+                    ),
+                    and_(
+                        Member.status == "paused",
+                        Member.deleted_at.is_(None),
+                    ),
+                    Member.deleted_at.isnot(None),
+                ),
+                Member.device_enroll_number.is_not(None),
+            ).all()
+        )
+    else:
+        candidates = (
+            Member.query.filter(
+                Member.gym_id == gym.id,
+                Member.status == "active",
+                Member.deleted_at.is_(None),
+                Member.membership_end >= today_for_gym(gym.timezone),
+                Member.device_enroll_number.is_not(None),
+            ).all()
+        )
+    requeued = 0
+    want = "disable_user" if block_scan else "enable_user"
+    for m in candidates:
+        if desired_command_type(m) != want:
+            continue
+        if block_scan:
+            if not member_is_proven_blockable_including_deleted(m):
+                continue
+        else:
+            if not member_is_proven_enableable(m):
+                continue
+            if _has_newer_manual_block(m):
+                continue
+        latest = (
+            BridgeCommand.query.filter_by(
+                bridge_id=installation.id, member_id=m.id
+            )
+            .order_by(
+                BridgeCommand.created_at.desc(),
+                BridgeCommand.id.desc(),
+            )
+            .first()
+        )
         if (
-            desired_command_type(member) == "enable_user"
-            and _has_newer_manual_block(member)
+            latest is not None
+            and latest.status == "acked"
+            and latest.command_type == want
         ):
             continue
-        if queue_membership_command(member, force=True) is not None:
-            queued += 1
-    return queued
+        if latest is None or latest.status == "failed":
+            requeued += 1
+        queue_membership_command(m, force=True)
+    return requeued
+
+
+def reconcile_failed_membership_commands(gym) -> dict:
+    """Re-drive failed door commands for one gym (V11-H3).
+
+    Runs the ADMS + bridge block scans (as the scheduler did) AND the
+    new active-member unblock scans, each leg inside its own savepoint
+    so one leg's failure cannot roll back another leg's queued rows.
+    Returns per-leg fresh-queue counts. Does not commit.
+    """
+    counts = {
+        "adms_blocks": 0,
+        "adms_unblocks": 0,
+        "bridge_blocks": 0,
+        "bridge_unblocks": 0,
+    }
+    legs = (
+        ("adms_blocks", lambda: _adms_reconcile_members(gym, block_scan=True)),
+        ("adms_unblocks", lambda: _adms_reconcile_members(gym, block_scan=False)),
+        ("bridge_blocks", lambda: _bridge_reconcile_members(gym, block_scan=True)),
+        ("bridge_unblocks", lambda: _bridge_reconcile_members(gym, block_scan=False)),
+    )
+    for key, run in legs:
+        try:
+            with db.session.begin_nested():
+                counts[key] = run()
+        except Exception:
+            _logger.exception(
+                "Door-command reconcile leg %s failed for gym %s", key, gym.id
+            )
+    return counts
 
 
 def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeCommand]:
@@ -2112,6 +2414,21 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
             cancel_bridge_command(
                 command, marker=STALE_UNLOCK_MARKER, error=STALE_UNLOCK_ERROR
             )
+            # V11-L7: serve-time guard cancellations are audited (the row
+            # stamp alone cannot answer "why did this command vanish").
+            # Staged before the caller's commit (V10-M1).
+            audit(
+                action="bridge_command_cancelled_at_lease",
+                resource_type="bridge_command",
+                resource_id=command.id,
+                gym_id=command.gym_id,
+                metadata={
+                    "command_type": command.command_type,
+                    "member_id": command.member_id,
+                    "enroll_number": command.enroll_number,
+                    "reason": STALE_UNLOCK_MARKER,
+                },
+            )
             continue
         # V4-M3: a command queued for a member who no longer holds this
         # enroll number must never execute against the new holder — the
@@ -2124,6 +2441,18 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
                 # survives inside last_error, so it is embedded in the text.
                 error=f"{STALE_COMMAND_SUPERSEDED_MARKER}: Terminal ID now belongs to a different member; queue the access change again if still needed.",
             )
+            audit(
+                action="bridge_command_cancelled_at_lease",
+                resource_type="bridge_command",
+                resource_id=command.id,
+                gym_id=command.gym_id,
+                metadata={
+                    "command_type": command.command_type,
+                    "member_id": command.member_id,
+                    "enroll_number": command.enroll_number,
+                    "reason": STALE_COMMAND_SUPERSEDED_MARKER,
+                },
+            )
             continue
         # Final guard at the point of no return (fail-safe): hand a disable
         # to the bridge only for a proven-blockable member — paused, or
@@ -2133,6 +2462,18 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
         # exists to protect, and the delete-time block must be servable.
         if bridge_disable_must_be_cancelled_at_lease(command):
             cancel_bridge_command(command)
+            audit(
+                action="bridge_command_cancelled_at_lease",
+                resource_type="bridge_command",
+                resource_id=command.id,
+                gym_id=command.gym_id,
+                metadata={
+                    "command_type": command.command_type,
+                    "member_id": command.member_id,
+                    "enroll_number": command.enroll_number,
+                    "reason": STALE_DISABLE_MARKER,
+                },
+            )
             continue
         # Mirror guard for enables (H8): hand an enable to the bridge only
         # for a proven-enableable member — active with an end date today
@@ -2143,10 +2484,24 @@ def lease_pending_commands(installation: BridgeInstallation) -> list[BridgeComma
             # so its cancel is a stale DISABLE, not a stale enable.
             if bridge_set_valid_date_is_disable(command):
                 cancel_bridge_command(command)
+                reason = STALE_DISABLE_MARKER
             else:
                 cancel_bridge_command(
                     command, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
                 )
+                reason = STALE_ENABLE_MARKER
+            audit(
+                action="bridge_command_cancelled_at_lease",
+                resource_type="bridge_command",
+                resource_id=command.id,
+                gym_id=command.gym_id,
+                metadata={
+                    "command_type": command.command_type,
+                    "member_id": command.member_id,
+                    "enroll_number": command.enroll_number,
+                    "reason": reason,
+                },
+            )
             continue
         command.lease(secrets.token_urlsafe(32), now + timedelta(seconds=lease_seconds))
         leased.append(command)

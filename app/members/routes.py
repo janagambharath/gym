@@ -107,6 +107,13 @@ def bulk_renew():
         if amount is None:
             flash("Amount must be zero or more, with up to two decimal places.", "danger")
             return redirect(url_for("members.bulk_renew"))
+        # V11-H2: mirror the V8-M2 verify gate — a ₹0 bulk renew is a
+        # complimentary membership, an owner decision. Staff could
+        # otherwise renew a whole batch for free with no payment
+        # record at all.
+        if amount <= 0 and current_user.role != "gym_owner":
+            flash("Only the gym owner can grant a zero-amount (complimentary) renewal.", "danger")
+            return redirect(url_for("members.bulk_renew"))
 
         members = (
             db.session.execute(
@@ -326,6 +333,8 @@ def bulk_renew():
                 "member_ids": renewed_ids,
                 "count": len(renewed_ids),
                 "renewal_days": renewal_days,
+                "amount": str(amount),
+                "override_reason": override_reason,
             },
         )
         invalidate_dashboard_cache(current_user.gym_id)
@@ -614,6 +623,18 @@ def _apply_member_form(member: Member, form: MemberForm) -> None:
     if member.phone == SYNTHETIC_TEST_MEMBER_PHONE:
         # V7-L3: reserved for the admin test-payment synthetic member.
         raise ValueError("This phone number is reserved for internal testing.")
+    # V11-H1: no silent duplicates on the web form either (same 409
+    # semantics as the mobile API, raised as ValueError so the caller
+    # flashes it and re-renders without committing). Soft-deleted rows
+    # are excluded so a deactivated number can be reused on re-add.
+    _dup = (
+        Member.query.filter_by(gym_id=member.gym_id, phone=member.phone)
+        .filter(Member.deleted_at.is_(None))
+    )
+    if member.id is not None:
+        _dup = _dup.filter(Member.id != member.id)
+    if _dup.first() is not None:
+        raise ValueError("Another member in this gym already uses this phone number.")
     member.email = form.email.data.strip() if form.email.data else None
 
     member.gender = form.gender.data or None

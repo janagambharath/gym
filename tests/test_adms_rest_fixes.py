@@ -187,6 +187,8 @@ def test_stray_userinfo_upload_applies_nothing(client, seed_gym):
 
 
 def test_oversized_userinfo_snapshot_is_rejected_not_truncated(client, seed_gym):
+    from app.adms.routes import USERINFO_TOO_LARGE_CODE
+
     integration = _integration(seed_gym)
     cmd = RRRAdmsCommand(
         integration_id=integration.id, gym_id=seed_gym["gym"].id,
@@ -194,8 +196,10 @@ def test_oversized_userinfo_snapshot_is_rejected_not_truncated(client, seed_gym)
     )
     db.session.add(cmd)
     db.session.commit()
-    # Short raw lines (~20 chars) expand to ~45-char JSON entries, so
-    # 8000 lines stay under the 256 KB body cap but over the snapshot cap.
+    # V11-L10: the snapshot cap is 2 MiB now (was 256 KB) — an 8,000-user
+    # table (~360 KB JSON) fits and acks, where it used to be left
+    # unacked. A table over the cap must fail distinguishably, never
+    # truncate-ack: ~50,000 short lines expand past 2 MiB of JSON.
     lines = "".join(f"USER PIN={i}\tName=U{i}\n" for i in range(1, 8001))
     assert len(lines) < 262144
     res = client.post(
@@ -204,8 +208,25 @@ def test_oversized_userinfo_snapshot_is_rejected_not_truncated(client, seed_gym)
     )
     assert res.status_code == 200
     after = db.session.get(RRRAdmsCommand, cmd.id)
-    assert after.status == "queued"  # left unacked, not truncated-acked
-    assert after.result_data is None
+    assert after.status == "acked"
+    assert after.result_data is not None
+
+    cmd2 = RRRAdmsCommand(
+        integration_id=integration.id, gym_id=seed_gym["gym"].id,
+        action="sync_users", command_text="DATA QUERY USERINFO PIN=ALL",
+    )
+    db.session.add(cmd2)
+    db.session.commit()
+    big_lines = "".join(f"USER PIN={i}\tName=U{i}\n" for i in range(1, 50001))
+    res = client.post(
+        f"/iclock/{TOKEN}/cdata?SN={SERIAL}&table=USERINFO",
+        data=big_lines, content_type="text/plain",
+    )
+    assert res.status_code == 200
+    after2 = db.session.get(RRRAdmsCommand, cmd2.id)
+    assert after2.status == "failed"
+    assert after2.result_code == USERINFO_TOO_LARGE_CODE
+    assert after2.result_data is None
 
 
 # ─── M11: nonzero Group update result + serve/ack audit ──────────────────
