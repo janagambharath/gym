@@ -1,5 +1,5 @@
 /* Gym Profile Screen — edit gym name, contact, address, timezone */
-import { apiRequest } from '../api.js'; import { navigate } from '../app.js';
+import { apiRequest, refreshSessionFromSettings } from '../api.js'; import { navigate } from '../app.js';
 import { renderHeader, bindHeaderEvents, renderFormField, renderErrorState, showToast } from '../components.js';
 import { escapeHtml, isValidTimezone } from '../utils.js';
 
@@ -78,7 +78,14 @@ async function load(el) {
     if (!body.name) { showToast('Gym name is required','error'); btn.disabled = false; btn.textContent = 'Save Changes'; return; }
     const r = await apiRequest('/api/mobile/v1/settings', { method:'PATCH', body });
     btn.disabled = false; btn.textContent = 'Save Changes';
-    if (r.ok) { showToast('Gym profile updated','success'); navigate.pop(); }
+    if (r.ok) {
+      // V12-P3: the PATCH returns no gym object, so re-read /settings
+      // into the cached session — otherwise the new name/timezone stays
+      // invisible on every screen until the next sign-in. A failed
+      // refresh never blocks the success toast: the save itself worked.
+      await refreshSessionFromSettings();
+      showToast('Gym profile updated','success'); navigate.pop();
+    }
     else showToast(r.error?.message||'Could not save','error');
   });
 }

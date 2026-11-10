@@ -455,18 +455,36 @@ async function linkAll(el) {
   const mappings = [...selections.entries()].map(([external_id, m]) => ({
     external_id, member_id: m.id,
   }));
-  
-  if (progressText) progressText.textContent = `Linking ${mappings.length} IDs…`;
-  
-  const res = await apiRequest('/api/mobile/v1/rrr/mappings/bulk-resolve', {
-    method: 'POST', body: { mappings },
-  });
-  
+
+  // V12-P4: the backend caps bulk-resolve at 100 mappings per call — one
+  // POST of every selection used to fail wholesale past 100 with a
+  // generic error and link nothing. Chunk into batches of 100 and
+  // report per-batch progress via the existing per-item results, so a
+  // 150-ID queue links in two calls instead of failing as one.
+  const BATCH_SIZE = 100;
+  const batches = [];
+  for (let i = 0; i < mappings.length; i += BATCH_SIZE) batches.push(mappings.slice(i, i + BATCH_SIZE));
+  let linked = 0;
+  let allResults = [];
+  let batchError = null;
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    if (progressText) progressText.textContent = batches.length > 1
+      ? `Linking ${mappings.length} IDs… (batch ${b + 1} of ${batches.length})`
+      : `Linking ${mappings.length} IDs…`;
+    if (fill) fill.style.width = `${Math.round((b / batches.length) * 100)}%`;
+    const res = await apiRequest('/api/mobile/v1/rrr/mappings/bulk-resolve', {
+      method: 'POST', body: { mappings: batch },
+    });
+    if (!res.ok) { batchError = res.error?.message || 'Something went wrong. Try again.'; break; }
+    linked += res.data.linked || 0;
+    allResults = allResults.concat(res.data.results || []);
+  }
+
   if (fill) fill.style.width = '100%';
-  
-  if (res.ok) {
-    const linked = res.data.linked || 0;
-    const failed = (res.data.results || []).filter(r => !r.ok);
+
+  if (!batchError) {
+    const failed = allResults.filter(r => !r.ok);
     if (failed.length) {
       if (progressText) progressText.textContent = `✓ Linked ${linked}, ${failed.length} failed: IDs ${failed.map(f => f.external_id).join(', ')}`;
       // Show the first failure reason so staff know why (e.g. ID held
@@ -474,7 +492,7 @@ async function linkAll(el) {
       if (failed[0]?.error) showToast(failed[0].error, 'error');
       // Keep failed selections so user can retry (selections already has them)
       // Remove successfully linked from selections
-      for (const r of (res.data.results || [])) {
+      for (const r of allResults) {
         if (r.ok) selections.delete(r.external_id);
       }
       setTimeout(() => load(el), 2500);
@@ -484,7 +502,17 @@ async function linkAll(el) {
       setTimeout(() => load(el), 1200);
     }
   } else {
-    if (progressText) progressText.textContent = 'Something went wrong. Try again.';
+    // V12-P4: surface the backend reason (e.g. "Max 100 mappings per
+    // call") instead of the generic "Something went wrong" — the owner
+    // needs to know why nothing linked. Batches that already succeeded
+    // stay linked: drop their IDs from the selections so a retry only
+    // re-sends what is still unlinked.
+    for (const r of allResults) {
+      if (r.ok) selections.delete(r.external_id);
+    }
+    if (linked > 0 && progressText) progressText.textContent = `✓ Linked ${linked} — then failed: ${batchError}`;
+    else if (progressText) progressText.textContent = batchError;
+    showToast(batchError, 'error');
     if (btn) btn.disabled = false;
     setTimeout(() => { if (progress) progress.style.display = 'none'; updateFooter(el); }, 2000);
   }

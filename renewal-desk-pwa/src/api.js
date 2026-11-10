@@ -352,6 +352,32 @@ function persistSession(data) {
   setCachedSession(session);
 }
 
+/**
+ * V12-P3: re-read GET /settings into the cached session (same shape as
+ * persistSession, tokens and identity preserved). The backend PATCH
+ * returns only {message} — no gym object — so a Gym Profile save used
+ * to leave the running session stale: the renamed gym / new timezone
+ * stayed invisible until the next sign-in. Returns false when the
+ * refresh itself fails (the save already succeeded; the session just
+ * stays stale until the next sign-in) — never throws.
+ */
+export async function refreshSessionFromSettings() {
+  if (!cachedSession) return false;
+  const res = await apiRequest('/api/mobile/v1/settings');
+  const gym = res.ok ? res.data?.gym : null;
+  if (!gym) return false;
+  const next = {
+    ...cachedSession,
+    tenantName: gym.name ?? cachedSession.tenantName,
+    gymTimezone: gym.timezone ?? cachedSession.gymTimezone,
+    gymCurrency: gym.currency ?? cachedSession.gymCurrency,
+    gymCountry: gym.country ?? cachedSession.gymCountry,
+  };
+  saveSession(next);
+  setCachedSession(next);
+  return true;
+}
+
 export async function login(email, password) {
   const result = await apiRequest('/api/mobile/v1/auth/login', {
     method: 'POST', body: { email, password }, anonymous: true,

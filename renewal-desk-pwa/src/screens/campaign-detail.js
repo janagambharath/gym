@@ -49,7 +49,15 @@ export default { async mount(el, params) {
     // successful send instead of double-messaging).
     const btn = el.querySelector('#cd-send');
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
-    const sendRes = await apiRequest(`/api/mobile/v1/campaigns/${cid}/send`, { method: 'POST' });
+    // V12-P1: same stable per-campaign send key as the create-then-send
+    // in campaign-create.js — derived from the campaign id, so a retry
+    // after a lost response replays the stored send summary instead of
+    // 400ing "already sent". 120 s budget: the send is synchronous over
+    // every recipient and outruns the 15 s default on real segments.
+    const sendRes = await apiRequest(`/api/mobile/v1/campaigns/${cid}/send`, {
+      method: 'POST', timeoutMs: 120000,
+      headers: { 'Idempotency-Key': `campaign-send-${cid}` },
+    });
     if (sendRes.ok) {
       const sent = sendRes.data?.sent, total = sendRes.data?.total, failed = sendRes.data?.failed;
       showToast(

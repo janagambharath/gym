@@ -12,7 +12,7 @@ export default { mount(el) {
   const render = () => {
     el.innerHTML = `${renderHeader({title:'Test Bot',showBack:true})}
       <div class="scroll-view" id="bt-scroll"><div class="chat-container" id="bt-chat">
-        ${messages.map(m=>`<div class="chat-bubble ${m.role==='bot'?'bot':'outgoing'}">${escapeHtml(m.text)}</div>`).join('')}
+        ${messages.map(m=>`<div class="chat-bubble ${m.role==='bot'?'bot':m.role==='system'?'system':'outgoing'}">${escapeHtml(m.text)}</div>`).join('')}
       </div></div>
       <div style="padding:var(--sp-sm) var(--sp-lg) calc(var(--sp-sm)+var(--safe-bottom));background:var(--card);border-top:1px solid var(--border);display:flex;gap:var(--sp-sm)">
         <input class="form-input" id="bt-input" placeholder="Type a test message..." style="flex:1;min-height:40px">
@@ -38,9 +38,19 @@ export default { mount(el) {
     chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble outgoing">${escapeHtml(text)}</div>`);
     scroll.scrollTop = scroll.scrollHeight;
     const r = await apiRequest('/api/mobile/v1/bot/test',{method:'POST',body:{message:text}});
-    const reply = (r.ok && r.data.response) ? r.data.response : 'Sorry, I couldn\'t process that. Please try again.';
-    messages.push({role:'bot',text:reply});
-    chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${escapeHtml(reply)}</div>`);
+    // V12-P7: a failed test used to render as a BOT bubble saying sorry —
+    // a network failure / 500 / 403 looked like a bot answer, so the
+    // owner concluded the bot works but is unhelpful instead of learning
+    // the test failed. A failure is a distinct system bubble, never a
+    // bot reply (a genuine bot reply still renders as a bot bubble).
+    if (r.ok && r.data.response) {
+      messages.push({role:'bot',text:r.data.response});
+      chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble bot">${escapeHtml(r.data.response)}</div>`);
+    } else {
+      const errText = `Test failed — ${r.error?.message || 'no reply from the bot'}. Check your connection and try again.`;
+      messages.push({role:'system',text:errText});
+      chat.insertAdjacentHTML('beforeend', `<div class="chat-bubble system">${escapeHtml(errText)}</div>`);
+    }
     scroll.scrollTop = scroll.scrollHeight;
     sending = false;
     if (sendBtn) sendBtn.disabled = false;

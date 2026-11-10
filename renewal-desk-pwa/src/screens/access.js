@@ -56,6 +56,15 @@ export default {
       // New skip reasons from the backend crew (same fix-all).
       no_terminal_identity: { label: 'no terminal identity', plural: 'no terminal identities' },
       not_enableable: { label: 'member not eligible', plural: 'members not eligible' },
+      // V12-A2: the ADMS crew's new "manual_action" skip — a failed owner
+      // misconduct block the retry deliberately leaves alone (re-queuing
+      // it would undo the owner's block). Label it as an owner action
+      // with the re-queue path, not the generic "other command".
+      manual_action: { label: 'owner action — re-queue from the member page', plural: 'owner actions — re-queue from the member page' },
+      // V12-A4: the ADMS crew's new "userinfo_too_large" skip — a scan whose
+      // terminal user list exceeds the 2 MiB cap; retrying re-uploads the same
+      // oversized snapshot and can never succeed.
+      userinfo_too_large: { label: 'terminal user list too large to sync', plural: 'terminal user lists too large to sync' },
     };
     function retrySkippedSummary(skipped) {
       const counts = {};

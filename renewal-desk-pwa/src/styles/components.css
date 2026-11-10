@@ -1239,6 +1239,19 @@ select.form-input {
   align-self: flex-start;
 }
 
+/* V12-P7: a failed bot test is a system notice, never a bot reply — it
+   must not look like the bot answered. Centred, muted, full-width. */
+.chat-bubble.system {
+  background: var(--critical-surface);
+  color: var(--critical);
+  border: 1px solid var(--critical-border);
+  border-radius: var(--r-md);
+  align-self: center;
+  max-width: 100%;
+  text-align: center;
+  font-size: var(--fs-sm);
+}
+
 .chat-bubble-time {
   font-size: var(--fs-xs);
   color: var(--muted);

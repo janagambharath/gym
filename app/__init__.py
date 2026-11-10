@@ -144,7 +144,15 @@ def create_app(config_name: str | None = None) -> Flask:
 
             file_path = _pwa_dist / filename
             if file_path.is_file():
-                return send_from_directory(str(_pwa_dist), filename)
+                response = send_from_directory(str(_pwa_dist), filename)
+                # V12-P5: the service worker (and its register script) must
+                # never be HTTP-cached — Flask's 12 h default max-age lets
+                # a phone keep the old worker (and its old precache) for
+                # hours after a deploy, the same stale-bundle class the
+                # no-cache rule on index.html (B-H11) was built to kill.
+                if filename in ("sw.js", "registerSW.js"):
+                    response.headers["Cache-Control"] = "no-cache"
+                return response
             # B-H11: a missing /assets/* file is a REAL 404, never the SPA
             # fallback. Returning index.html (200) for a missing hashed
             # chunk makes dynamic import() throw a SyntaxError and the

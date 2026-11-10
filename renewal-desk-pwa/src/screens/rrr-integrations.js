@@ -200,7 +200,7 @@ function directPanel(direct, commands, commandsFailed = false, isOwner = false) 
   const connected = isLive(direct);
   const latest = commands[0];
   return `<div class="rrr-direct-live">
-    <div class="rrr-device-identity"><b>${esc(direct.device_name || 'Elite Gym Entry')}</b><span>Serial ${esc(direct.device_serial || '')}</span></div>
+    <div class="rrr-device-identity"><b>${esc(direct.device_name || 'Terminal')}</b><span>Serial ${esc(direct.device_serial || '')}</span></div>
     ${connected ? '' : `
       <div class="rrr-empty-state">
         <b>${direct.last_seen_at ? 'This terminal has not polled recently.' : "We haven't heard from this terminal yet."}</b>
@@ -355,6 +355,13 @@ function progressText(cmd) {
   }
   if (cmd.status === 'acked') return `✓ ${action} — terminal acknowledged.`;
   if (cmd.status === 'failed') {
+    // V12-A4: a sync that fails USERINFO_TOO_LARGE is deterministic —
+    // the terminal holds more users than the sync can transfer, so
+    // retrying re-fails the same way. Say so plainly instead of the
+    // generic "terminal reported failure (result USERINFO_TOO_LARGE)".
+    if (cmd.result_code === 'USERINFO_TOO_LARGE') {
+      return `✗ ${action} — the terminal's user list is too large to sync. This terminal holds more users than one sync can transfer, so the scan cannot complete — retrying will fail the same way.`;
+    }
     if (cmd.result_message) return `✗ ${action} — ${esc(cmd.result_message)}`;
     return `✗ ${action} — terminal reported failure${cmd.result_code ? ` (result ${esc(cmd.result_code)})` : ''}. Check the device and retry.`;
   }

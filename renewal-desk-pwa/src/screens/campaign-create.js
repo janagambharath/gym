@@ -106,7 +106,20 @@ async function load(el) {
     // "launched" ONLY after the send returns — a create-only success is
     // a saved draft, never a launch.
     const campaignId = r.data?.id;
-    const sendRes = await apiRequest(`/api/mobile/v1/campaigns/${campaignId}/send`, { method: 'POST' });
+    // V12-P1: the send is synchronous over every recipient (one Meta
+    // call each), so a real segment outruns apiRequest's 15 s default —
+    // the PWA aborted while the server kept sending, then the retry
+    // could not replay (fresh key per call → backend 400s "already
+    // sent") and a re-created campaign double-messaged members. Give
+    // the send a 120 s budget, and send ONE stable key derived from the
+    // campaign id: the create-then-send above and the detail-page retry
+    // send the SAME key, so a lost response replays the stored summary
+    // (backend scope send_campaign, payload {campaign_id}) instead of
+    // 400ing.
+    const sendRes = await apiRequest(`/api/mobile/v1/campaigns/${campaignId}/send`, {
+      method: 'POST', timeoutMs: 120000,
+      headers: { 'Idempotency-Key': `campaign-send-${campaignId}` },
+    });
     if (sendRes.ok) {
       const sent = sendRes.data?.sent, total = sendRes.data?.total, failed = sendRes.data?.failed;
       showToast(

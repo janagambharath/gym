@@ -62,10 +62,16 @@ export default { mount(el) {
       // records the key only on success (scope scan_member_records), so
       // a failed scan never blocks a retry, while a retry after a lost
       // response replays instead of paying for a second vision call.
+      // V12-P2: the OpenRouter vision call routinely outruns apiRequest's
+      // 15 s default — the old multipart upload it replaced in v10 had a
+      // 60 s budget. Give the scan 120 s so a slow page reports its real
+      // result instead of a timeout (and a retry inside the first call's
+      // window cannot pay for a second vision call).
       const data = await apiRequest('/api/mobile/v1/members/scan', {
         method: 'POST',
         body: { images: [dataUrl] },
         headers: { 'Idempotency-Key': scanKey },
+        timeoutMs: 120000,
       });
       if (data.ok && data.data?.members) { navigate.replace('member-scan-review', { members: JSON.stringify(data.data.members) }); return; }
       showToast(data.error?.message || 'Scan failed', 'error');
