@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -53,6 +53,40 @@ export const RenewScreen: React.FC = () => {
   const [submittingClaim, setSubmittingClaim] = useState(false);
   const [claimedSuccess, setClaimedSuccess] = useState(false);
   const [claimedData, setClaimedData] = useState<any>(null);
+
+  // V11-M11: a paused member's dates extend on verify but the door stays
+  // blocked — re-fetch status after a verified renewal and say so.
+  const [pausedAfterRenew, setPausedAfterRenew] = useState(false);
+  const checkPausedAfterRenew = useCallback(async () => {
+    try {
+      const dash = await apiClient.getDashboard();
+      if (dash.member?.status?.toLowerCase() === 'paused') setPausedAfterRenew(true);
+    } catch {
+      // Best-effort: a failed re-fetch must not hide the success screen.
+    }
+  }, []);
+
+  const handleAskResumeCall = useCallback(() => {
+    const phone = theme.phone;
+    if (phone) {
+      void Linking.openURL(`tel:${phone.replace(/\s+/g, '')}`);
+    } else {
+      Alert.alert('Not Available', 'No contact phone number is configured for this gym.');
+    }
+  }, [theme.phone]);
+
+  const handleAskResumeWhatsApp = useCallback(() => {
+    const wa = theme.whatsapp || theme.phone;
+    if (wa) {
+      const clean = wa.replace(/\D/g, '');
+      const num = clean.startsWith('91') ? clean : `91${clean}`;
+      void Linking.openURL(
+        `https://wa.me/${num}?text=${encodeURIComponent(`Hi ${theme.gymName}, I just renewed my membership but my door access is still paused. Could you please resume it?`)}`,
+      );
+    } else {
+      Alert.alert('Not Available', 'No WhatsApp number is configured for this gym.');
+    }
+  }, [theme.whatsapp, theme.phone, theme.gymName]);
 
   // UI helpers
   const [copiedUpi, setCopiedUpi] = useState(false);
@@ -148,6 +182,7 @@ export const RenewScreen: React.FC = () => {
       if (res.status === 'verified') {
         setConfirmedSuccess(res);
         setUpiSession(null);
+        void checkPausedAfterRenew();
       } else {
         // Payment is in pending verification state (awaiting gym desk/soundbox confirmation)
         setClaimedData({
@@ -187,6 +222,7 @@ export const RenewScreen: React.FC = () => {
             status: 'verified',
           });
           setClaimedSuccess(false);
+          void checkPausedAfterRenew();
         }
       } catch {
         // Silently retry next poll
@@ -256,6 +292,38 @@ export const RenewScreen: React.FC = () => {
           <Text style={styles.successSubtitle}>
             Your payment of <Text style={styles.boldText}>₹{confirmedSuccess.amount_paid}</Text> has been verified and settled instantly.
           </Text>
+
+          {/* V11-M11: a paused member's renewal is recorded but the door
+              stays blocked until the gym resumes the membership. */}
+          {pausedAfterRenew ? (
+            <View style={styles.pausedNoticeCard}>
+              <View style={styles.pausedNoticeHeader}>
+                <Ionicons name="pause-circle" size={22} color={colors.expiring} />
+                <Text style={styles.pausedNoticeTitle}>Door access is still paused</Text>
+              </View>
+              <Text style={styles.pausedNoticeText}>
+                Your renewal is recorded and your membership dates are extended, but door access stays paused until the gym resumes it.
+              </Text>
+              <View style={styles.resumeRow}>
+                <TouchableOpacity
+                  style={[styles.resumeButton, { backgroundColor: theme.primary }]}
+                  onPress={handleAskResumeCall}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="call" size={16} color={theme.primaryText} />
+                  <Text style={[styles.resumeButtonText, { color: theme.primaryText }]}>Call gym to resume</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.resumeButton, styles.resumeButtonOutline]}
+                  onPress={handleAskResumeWhatsApp}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="logo-whatsapp" size={16} color={colors.whatsapp} />
+                  <Text style={[styles.resumeButtonText, { color: colors.whatsapp }]}>WhatsApp gym</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
 
           {/* Receipt Breakdown Card */}
           <View style={styles.receiptCard}>
@@ -363,11 +431,23 @@ export const RenewScreen: React.FC = () => {
           <View style={[styles.successIconCircle, { backgroundColor: colors.expiringSurface }]}>
             <Ionicons name="hourglass" size={48} color={colors.expiring} />
           </View>
-          <Text style={styles.successTitle}>Payment Claim Submitted</Text>
+          <Text style={styles.successTitle}>
+            {claimedData?.already_pending ? 'Payment Already Pending' : 'Payment Claim Submitted'}
+          </Text>
           <Text style={styles.successSubtitle}>
-            Your payment submission of ₹{claimedData?.amount || payableAmount} for{' '}
-            <Text style={styles.boldText}>{planDisplayName}</Text> has been sent to{' '}
-            <Text style={styles.boldText}>{theme.gymName}</Text>.
+            {claimedData?.already_pending ? (
+              <>
+                You already have a pending request for{' '}
+                <Text style={styles.boldText}>₹{claimedData?.amount || payableAmount}</Text> for{' '}
+                <Text style={styles.boldText}>{planDisplayName}</Text> — the gym will confirm it.
+              </>
+            ) : (
+              <>
+                Your payment submission of ₹{claimedData?.amount || payableAmount} for{' '}
+                <Text style={styles.boldText}>{planDisplayName}</Text> has been sent to{' '}
+                <Text style={styles.boldText}>{theme.gymName}</Text>.
+              </>
+            )}
           </Text>
 
           <View style={styles.verificationNoteCard}>
@@ -1011,6 +1091,54 @@ const styles = StyleSheet.create({
     ...typography.h1,
     color: colors.text,
     textAlign: 'center',
+  },
+  // V11-M11: paused-after-renew notice + resume actions.
+  pausedNoticeCard: {
+    backgroundColor: colors.expiringSurface,
+    borderColor: colors.expiringBorder,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    width: '100%',
+  },
+  pausedNoticeHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  pausedNoticeTitle: {
+    ...typography.bodySemibold,
+    color: colors.expiring,
+  },
+  pausedNoticeText: {
+    ...typography.subtext,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    marginTop: spacing.sm,
+  },
+  resumeRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  resumeButton: {
+    alignItems: 'center',
+    borderRadius: radii.lg,
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    paddingVertical: spacing.sm + 2,
+  },
+  resumeButtonOutline: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1.5,
+  },
+  resumeButtonText: {
+    ...typography.bodySemibold,
+    fontSize: 14,
   },
   textLinkBtn: {
     alignItems: 'center',

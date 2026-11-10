@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 import {
   DashboardResponse,
   GymBranding,
@@ -30,6 +31,25 @@ export async function saveToken(token: string): Promise<void> {
 
 async function saveRefreshToken(token: string): Promise<void> {
   try { await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token); } catch { /* SecureStore may be unavailable */ }
+}
+
+async function getRefreshToken(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+// V11-L35: one fresh UUID per mutation, minted once per request() call so
+// the 401-refresh retry below re-sends the SAME key — the pattern the web
+// member client already uses (V9-L10). GETs never carry a key.
+function mintIdempotencyKey(): string {
+  try {
+    return Crypto.randomUUID();
+  } catch {
+    return `vynla-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
 }
 
 async function refreshMemberSession(): Promise<{ accessToken: string; refreshToken: string } | null | undefined> {
@@ -101,9 +121,17 @@ async function request<T>(
   authenticated = true,
 ): Promise<T> {
   const isMultipart = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const method = String(options.method || 'GET').toUpperCase();
+  // V11-L35: every mutation carries an Idempotency-Key, minted once per
+  // request() call so the 401-refresh retry re-sends the same key. A
+  // caller-supplied key is honoured as-is.
+  const callerHeaders = (options.headers as Record<string, string>) || {};
+  const idempotencyKey =
+    method !== 'GET' && !callerHeaders['Idempotency-Key'] ? mintIdempotencyKey() : undefined;
   const headers: Record<string, string> = {
     ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
-    ...(options.headers as Record<string, string>),
+    ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    ...callerHeaders,
   };
 
   try {
@@ -169,7 +197,7 @@ async function request<T>(
 
 export const apiClient = {
   // Auth
-  async requestOtp(phone: string): Promise<{ success: boolean; challenge?: string; gym_name?: string; message?: string; is_staff?: boolean; error?: string }> {
+  async requestOtp(phone: string): Promise<{ success: boolean; challenge?: string; gym_name?: string; message?: string; error?: string }> {
     return request('/api/member/v1/auth/request-otp', {
       method: 'POST',
       body: JSON.stringify({ phone }),
@@ -186,6 +214,25 @@ export const apiClient = {
       if (res.data.refresh_token) await saveRefreshToken(res.data.refresh_token);
     }
     return res;
+  },
+
+  // V11-M8: revoke the server session on sign-out. POST
+  // /api/member/v1/auth/logout (member Bearer auth) revokes the caller's
+  // refresh token — same shape as the owner logout, which posts the
+  // refresh token in the body. Best-effort: the endpoint did not exist
+  // yet when this call was wired, so any failure is swallowed and the
+  // caller still clears the local session.
+  async logout(): Promise<void> {
+    try {
+      const refreshToken = await getRefreshToken();
+      await request('/api/member/v1/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ refresh_token: refreshToken || undefined }),
+      });
+    } catch {
+      // Local clear is the fallback; a failed revocation must never
+      // block sign-out.
+    }
   },
 
   // Dashboard & Branding

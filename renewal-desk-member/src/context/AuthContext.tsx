@@ -7,7 +7,7 @@ interface AuthContextType {
   isLoading: boolean;
   member: Member | null;
   token: string | null;
-  requestOtp: (phone: string) => Promise<{ success: boolean; challenge?: string; gym_name?: string; message?: string; is_staff?: boolean; error?: string }>;
+  requestOtp: (phone: string) => Promise<{ success: boolean; challenge?: string; gym_name?: string; message?: string; error?: string }>;
   verifyOtp: (phone: string, otp: string, challenge: string) => Promise<{ success: boolean; member?: Member; error?: string }>;
   logout: () => Promise<void>;
   updateMember: (member: Member) => void;
@@ -23,8 +23,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const restoreSession = useCallback(async () => {
     setIsLoading(true);
+    let savedToken: string | null = null;
     try {
-      const savedToken = await getToken();
+      savedToken = await getToken();
       if (savedToken) {
         setToken(savedToken);
         const dash = await apiClient.getDashboard();
@@ -33,11 +34,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setIsAuthenticated(false);
       }
-    } catch {
-      await clearToken();
-      setToken(null);
-      setMember(null);
-      setIsAuthenticated(false);
+    } catch (err: any) {
+      // V11-M7: only a definitive session-expiry wipes the session. A
+      // cold start on flaky gym Wi-Fi (timeout / 5xx / unreachable)
+      // must keep the tokens — the member stays signed in and Home
+      // shows its offline banner + retry instead of forcing a re-OTP.
+      // apiClient already cleared the tokens on a definitive 401/403,
+      // so the message check below only decides whether to also drop
+      // the (possibly still-valid) local session.
+      const message = err?.message || '';
+      const sessionExpired =
+        message.includes('session has expired') || message.includes('log in again');
+      if (sessionExpired) {
+        await clearToken();
+        setToken(null);
+        setMember(null);
+        setIsAuthenticated(false);
+      } else if (savedToken) {
+        setToken(savedToken);
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -69,6 +87,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(async () => {
+    // V11-M8: revoke the server session first (best-effort — the local
+    // clear below is the fallback if the revocation call fails).
+    await apiClient.logout();
     await clearToken();
     setToken(null);
     setMember(null);

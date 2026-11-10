@@ -18,11 +18,9 @@ export const MembershipCard: React.FC<MembershipCardProps> = ({ member, onRenew 
   const isExpired = member.is_expired || (daysLeft !== null && daysLeft < 0);
   const isExpiring = !isExpired && daysLeft !== null && daysLeft <= 7;
   const isPaused = member.status.toLowerCase() === 'paused';
-  const isCancelled = member.status.toLowerCase() === 'cancelled';
 
   let statusText = 'ACTIVE';
-  if (isCancelled) statusText = 'CANCELLED';
-  else if (isPaused) statusText = 'PAUSED';
+  if (isPaused) statusText = 'PAUSED';
   else if (isExpired) statusText = 'EXPIRED';
   else if (isExpiring) statusText = 'EXPIRING';
 
@@ -59,7 +57,7 @@ export const MembershipCard: React.FC<MembershipCardProps> = ({ member, onRenew 
 
       {/* Days Remaining Hero */}
       <View style={styles.daysContainer}>
-        {daysLeft !== null && !isPaused && !isCancelled && (
+        {daysLeft !== null && !isPaused && (
           <Text
             style={[
               styles.daysNumber,

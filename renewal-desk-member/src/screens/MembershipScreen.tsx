@@ -84,8 +84,7 @@ export const MembershipScreen: React.FC = () => {
   const isPaused = membership?.status?.toLowerCase() === 'paused';
 
   let statusBadgeLabel = 'ACTIVE';
-  if (membership?.status?.toLowerCase() === 'cancelled') statusBadgeLabel = 'CANCELLED';
-  else if (isPaused) statusBadgeLabel = 'PAUSED';
+  if (isPaused) statusBadgeLabel = 'PAUSED';
   else if (isExpired) statusBadgeLabel = 'EXPIRED';
   else if (isExpiring) statusBadgeLabel = 'EXPIRING';
 

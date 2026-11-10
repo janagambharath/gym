@@ -37,6 +37,9 @@ export const ProfileScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
+  // V11-L47: a signed photo URL that expired (7-day) or was revoked
+  // renders a broken avatar without this — fall back to initials.
+  const [photoFailed, setPhotoFailed] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [profileForm, setProfileForm] = useState({ email: '', address: '', gender: '' });
 
@@ -46,10 +49,16 @@ export const ProfileScreen: React.FC = () => {
     try {
       const data = await apiClient.getProfile();
       setProfileData(data);
+      setPhotoFailed(false);
+      // V11-L44: gender is a select with exactly '', 'female', 'male',
+      // 'other' (the web select's values). A legacy free-text value that
+      // matches none of them falls back to '' — the same fallback the
+      // web select already applies.
+      const savedGender = String(data.member.gender || '').toLowerCase();
       setProfileForm({
         email: data.member.email || '',
         address: data.member.address || '',
-        gender: data.member.gender || '',
+        gender: ['female', 'male', 'other'].includes(savedGender) ? savedGender : '',
       });
     } catch (error) {
       setProfileError(error instanceof Error ? error.message : 'Could not load your profile.');
@@ -84,6 +93,7 @@ export const ProfileScreen: React.FC = () => {
         mimeType,
         asset.fileName || `profile.${mimeType === 'image/png' ? 'png' : 'jpg'}`,
       );
+      setPhotoFailed(false);
       setProfileData((current) => current ? {
         ...current,
         member: { ...current.member, profile_photo_url: photoUrl },
@@ -105,6 +115,7 @@ export const ProfileScreen: React.FC = () => {
           setPhotoBusy(true);
           try {
             await apiClient.removeProfilePhoto();
+            setPhotoFailed(false);
             setProfileData((current) => current ? {
               ...current,
               member: { ...current.member, profile_photo_url: null },
@@ -228,8 +239,12 @@ export const ProfileScreen: React.FC = () => {
         {/* Member Profile Card */}
         <View style={styles.card}>
           <View style={styles.memberHeaderRow}>
-            {member?.profile_photo_url ? (
-              <Image source={{ uri: member.profile_photo_url }} style={styles.avatarPhoto} />
+            {member?.profile_photo_url && !photoFailed ? (
+              <Image
+                source={{ uri: member.profile_photo_url }}
+                style={styles.avatarPhoto}
+                onError={() => setPhotoFailed(true)}
+              />
             ) : (
               <View style={[styles.avatarCircle, { backgroundColor: theme.primary }]}>
                 <Text style={[styles.avatarText, { color: theme.primaryText }]}>
@@ -286,13 +301,39 @@ export const ProfileScreen: React.FC = () => {
             style={[styles.profileInput, styles.addressInput]}
           />
           <Text style={styles.fieldLabel}>Gender (optional)</Text>
-          <TextInput
-            value={profileForm.gender}
-            onChangeText={(gender) => setProfileForm((current) => ({ ...current, gender }))}
-            placeholder="Prefer not to say"
-            maxLength={32}
-            style={styles.profileInput}
-          />
+          {/* V11-L44: a select with exactly the web select's values —
+              '', 'female', 'male', 'other' — so a value saved here always
+              matches a web option. No extra dependency: option buttons. */}
+          <View style={styles.genderOptions}>
+            {([
+              { value: '', label: 'Prefer not to say' },
+              { value: 'female', label: 'Female' },
+              { value: 'male', label: 'Male' },
+              { value: 'other', label: 'Other' },
+            ] as const).map((option) => {
+              const selected = profileForm.gender === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value || 'blank'}
+                  style={[
+                    styles.genderOption,
+                    selected && [styles.genderOptionSelected, { borderColor: theme.primary }],
+                  ]}
+                  onPress={() => setProfileForm((current) => ({ ...current, gender: option.value }))}
+                  activeOpacity={0.85}
+                >
+                  <Text
+                    style={[
+                      styles.genderOptionText,
+                      selected && { color: theme.primary, fontWeight: '700' },
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <TouchableOpacity style={[styles.saveDetailsButton, { backgroundColor: theme.primary, opacity: loading || !profileData ? 0.55 : 1 }]} onPress={handleSaveDetails} disabled={savingDetails || loading || !profileData}>
             <Text style={[styles.photoButtonText, { color: theme.primaryText }]}>{savingDetails ? 'Saving…' : 'Save details'}</Text>
           </TouchableOpacity>
@@ -539,6 +580,28 @@ const styles = StyleSheet.create({
   addressInput: {
     minHeight: 84,
     textAlignVertical: 'top',
+  },
+  // V11-L44: gender select options.
+  genderOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  genderOption: {
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: '#FFFFFF',
+  },
+  genderOptionSelected: {
+    backgroundColor: '#EFF6FF',
+  },
+  genderOptionText: {
+    ...typography.subtext,
+    color: colors.textSecondary,
+    fontWeight: '600',
   },
   saveDetailsButton: {
     borderRadius: radii.md,

@@ -26,7 +26,6 @@ export const LoginScreen: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [gymName, setGymName] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [staffNotice, setStaffNotice] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
 
   useEffect(() => {
@@ -39,7 +38,6 @@ export const LoginScreen: React.FC = () => {
 
   const handleRequestOtp = async () => {
     setErrorMessage(null);
-    setStaffNotice(null);
     const cleanPhone = phone.replace(/\D/g, '');
 
     if (cleanPhone.length < 10) {
@@ -55,9 +53,10 @@ export const LoginScreen: React.FC = () => {
         setGymName(res.gym_name || null);
         setStep('otp');
         setCountdown(60);
-      } else if (res.is_staff) {
-        setStaffNotice(res.error || 'This phone number is registered as gym staff. Please use the Renewal Desk owner app.');
       } else {
+        // V11-L36: the old staff branch is gone — the backend stopped
+        // returning is_staff in V9-L2, so every non-member outcome
+        // lands here with the generic "no member account" message.
         const msg = typeof res.error === 'string' ? res.error : (res.error as any)?.message || "We couldn't find a member account for this number. Please contact your gym.";
         setErrorMessage(msg);
       }
@@ -122,13 +121,6 @@ export const LoginScreen: React.FC = () => {
                   Enter the phone number registered with your gym to receive an OTP.
                 </Text>
 
-                {staffNotice ? (
-                  <View style={styles.staffAlert}>
-                    <Ionicons name="information-circle" size={20} color={colors.platform} />
-                    <Text style={styles.staffAlertText}>{staffNotice}</Text>
-                  </View>
-                ) : null}
-
                 {errorMessage ? (
                   <View style={styles.errorAlert}>
                     <Ionicons name="alert-circle" size={20} color={colors.expired} />
@@ -152,7 +144,6 @@ export const LoginScreen: React.FC = () => {
                       onChangeText={(val) => {
                         setPhone(val);
                         setErrorMessage(null);
-                        setStaffNotice(null);
                       }}
                       autoFocus
                     />
@@ -330,23 +321,6 @@ const styles = StyleSheet.create({
   boldText: {
     fontWeight: '700',
     color: colors.text,
-  },
-  staffAlert: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.platformSubtle,
-    borderWidth: 1,
-    borderColor: colors.platform,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-    gap: spacing.sm,
-  },
-  staffAlertText: {
-    ...typography.subtext,
-    color: colors.platformDark,
-    flex: 1,
-    fontWeight: '500',
   },
   errorAlert: {
     flexDirection: 'row',

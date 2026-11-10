@@ -35,6 +35,10 @@ export const HomeScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [isOffline, setIsOffline] = useState<boolean>(false);
   const [lastVisit, setLastVisit] = useState<string | null>(null);
+  // V11-H7: the door-eligibility value from the access summary. Null
+  // until the access call answers (or when it fails) — the tile then
+  // falls back to the same definition the backend uses.
+  const [accessActive, setAccessActive] = useState<boolean | null>(null);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -47,6 +51,7 @@ export const HomeScreen: React.FC = () => {
       try {
         const accessData = await apiClient.getAccess(1, 1);
         setLastVisit(accessData.summary.last_visit);
+        setAccessActive(accessData.summary.access_active ?? null);
       } catch {
         // Non-blocking
       }
@@ -102,6 +107,12 @@ export const HomeScreen: React.FC = () => {
   const pendingPayment = data?.pending_payment;
   const announcements = data?.branding?.announcements || [];
   const offers = data?.branding?.offers || [];
+  // V11-H7: drive the tile from the backend's access_active (status ==
+  // 'active' and not expired). The fallback below is the same definition,
+  // used only while the access call has not answered. A paused member is
+  // never 'active', so they no longer see "Access eligible".
+  const doorEligible =
+    accessActive ?? (activeMember?.status?.toLowerCase() === 'active' && !activeMember?.is_expired);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -151,17 +162,17 @@ export const HomeScreen: React.FC = () => {
               </Text>
               <View style={styles.tileFooter}>
                 <Ionicons
-                  name={activeMember?.is_expired ? 'close-circle' : 'checkmark-circle'}
+                  name={doorEligible ? 'checkmark-circle' : 'close-circle'}
                   size={13}
-                  color={activeMember?.is_expired ? colors.expired : colors.active}
+                  color={doorEligible ? colors.active : colors.expired}
                 />
                 <Text
                   style={[
                     styles.tileStatusText,
-                    { color: activeMember?.is_expired ? colors.expired : colors.active },
+                    { color: doorEligible ? colors.active : colors.expired },
                   ]}
                 >
-                  {activeMember?.is_expired ? 'Access inactive' : 'Access eligible'}
+                  {doorEligible ? 'Access eligible' : 'Access inactive'}
                 </Text>
               </View>
             </View>
@@ -175,10 +186,14 @@ export const HomeScreen: React.FC = () => {
                 <Text style={styles.tileLabel}>LAST PAYMENT</Text>
               </View>
               <Text style={styles.tileValue}>
-                {recentRenewal ? `₹${recentRenewal.amount}` : activeMember?.plan_price ? `₹${activeMember.plan_price}` : '—'}
+                {recentRenewal ? `₹${recentRenewal.amount}` : '—'}
               </Text>
               <View style={styles.tileFooter}>
-                <StatusBadge status={recentRenewal ? 'VERIFIED' : 'ACTIVE'} size="sm" />
+                {recentRenewal ? (
+                  <StatusBadge status="VERIFIED" size="sm" />
+                ) : (
+                  <Text style={styles.noPaymentText}>No payments yet</Text>
+                )}
               </View>
             </View>
           </View>
@@ -351,6 +366,12 @@ const styles = StyleSheet.create({
   tileStatusText: {
     ...typography.caption,
     fontWeight: '600',
+  },
+  // V11-L42: shown in place of the VERIFIED badge when the member has
+  // never paid — the plan price is not a payment.
+  noPaymentText: {
+    ...typography.caption,
+    color: colors.muted,
   },
   section: {
     marginBottom: spacing.lg,
