@@ -90,7 +90,9 @@ export function PaymentSetupScreen({ onBack }: PaymentSetupScreenProps) {
     setSaving(true);
     setSavedSuccess(false);
 
-    const res = await apiRequest<{ message: string; data: PaymentSettingsData }>(
+    // V12-D7: apiRequest unwraps envelope.data as T — the response
+    // type IS PaymentSettingsData, not {message, data}.
+    const res = await apiRequest<PaymentSettingsData>(
       '/api/mobile/v1/settings/payment',
       {
         method: 'PUT',

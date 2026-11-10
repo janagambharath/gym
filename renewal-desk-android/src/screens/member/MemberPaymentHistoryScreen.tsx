@@ -183,6 +183,27 @@ export function MemberPaymentHistoryScreen() {
               </Text>
             ) : null}
 
+            {/* V12-M1: a rejected payment must say why and what to do
+                next — the backend sends rejected_reason / rejected_at
+                and no client rendered them before. */}
+            {item.status === 'rejected' && (
+              <View style={styles.rejectedBox}>
+                <Text style={styles.rejectedReason}>
+                  {item.rejected_reason
+                    ? `Rejected: ${item.rejected_reason}`
+                    : 'Rejected by your gym.'}
+                </Text>
+                <Text style={styles.rejectedNextStep}>
+                  Please re-submit your payment or contact your gym for help.
+                </Text>
+                {item.rejected_at && (
+                  <Text style={styles.rejectedDate}>
+                    Rejected: {formatDate(item.rejected_at)}
+                  </Text>
+                )}
+              </View>
+            )}
+
             <View style={styles.cardFooter}>
               <Text style={styles.dateText}>
                 {item.paid_on
@@ -284,6 +305,28 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.textSecondary,
     fontStyle: 'italic',
+  },
+  rejectedBox: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.xxs,
+  },
+  rejectedReason: {
+    fontSize: fontSize.sm,
+    color: colors.critical,
+    fontWeight: fontWeight.semibold,
+  },
+  rejectedNextStep: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  rejectedDate: {
+    fontSize: fontSize.xs,
+    color: colors.muted,
   },
   cardFooter: {
     flexDirection: 'row',

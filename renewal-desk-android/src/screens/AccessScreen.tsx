@@ -174,6 +174,9 @@ export function AccessScreen({
   // handleManualCheckIn) — a retry after a lost response replays
   // instead of recording a second punch.
   const checkInKeyRef = useRef<StableKeySlot>(undefined);
+  // V12-D5: stable per-tap key for remote unlock — a retry after a
+  // lost response replays instead of queueing a second unlock.
+  const unlockKeyRef = useRef<StableKeySlot>(undefined);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
   // V9-L25: tap-to-assign — the terminal ID of the Unknown row whose
@@ -379,10 +382,22 @@ export function AccessScreen({
   const requestRemoteUnlock = useCallback(async () => {
     if (unlocking) return;
     setUnlocking(true);
+    // V12-D5: stable key per unlock tap (see unlockKeyRef) — the
+    // backend honours Idempotency-Key on remote-unlock, so a retry
+    // after a lost response replays instead of executing again.
+    const { key: unlockKey, slot } = keyForAction(unlockKeyRef.current, 'remote-unlock');
+    unlockKeyRef.current = slot;
     const res = await apiRequest<{ command_id: number; message: string }>(
       '/api/mobile/v1/access/remote-unlock',
-      { method: 'POST', body: { delay_seconds: 5, confirm: true } },
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': unlockKey },
+        body: { delay_seconds: 5, confirm: true },
+      },
     );
+    if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+      unlockKeyRef.current = undefined;
+    }
     setUnlocking(false);
     if (res.ok) {
       setActionMessage(res.data.message || 'Unlock command queued; waiting for terminal acknowledgement.');

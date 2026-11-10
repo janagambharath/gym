@@ -20,10 +20,12 @@ import { ErrorState } from '../../components/ErrorState';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import { formatCurrency } from '../../types';
-import type { MemberPlan, MemberPaymentInfo } from '../../services/memberApiClient';
+import type { ActiveRenewalDemand, MemberPlan, MemberPaymentInfo } from '../../services/memberApiClient';
 import { firstLoadErrorMessage } from '../../services/loadError';
+import { resolveClaimOutcome } from '../../services/memberClaim';
 import {
   claimPayment,
+  fetchMemberDashboard,
   fetchMemberPaymentInfo,
   fetchMemberPlans,
 } from '../../services/memberApiClient';
@@ -34,9 +36,13 @@ type MemberRenewScreenProps = {
 };
 
 export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps) {
-  const [step, setStep] = useState<'plan' | 'pay' | 'confirm' | 'done'>('plan');
+  const [step, setStep] = useState<'plan' | 'pay' | 'confirm' | 'done' | 'pending'>('plan');
   const [plans, setPlans] = useState<MemberPlan[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<MemberPlan | null>(null);
+  // V12-D4: staff-created discounted renewal offer (demand) from the
+  // dashboard — the member renews at the locked price, not full price.
+  const [demand, setDemand] = useState<ActiveRenewalDemand | null>(null);
+  const [pendingAmount, setPendingAmount] = useState<string | null>(null);
   const [paymentInfo, setPaymentInfo] = useState<MemberPaymentInfo | null>(null);
   const [reference, setReference] = useState('');
   const [loading, setLoading] = useState(true);
@@ -51,9 +57,10 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(undefined);
-    const [plansResult, paymentResult] = await Promise.all([
+    const [plansResult, paymentResult, dashboardResult] = await Promise.all([
       fetchMemberPlans(),
       fetchMemberPaymentInfo(),
+      fetchMemberDashboard(),
     ]);
 
     if (plansResult.ok) {
@@ -65,7 +72,21 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
     if (paymentResult.ok) {
       setPaymentInfo(paymentResult.data);
     }
-    setLoadError(firstLoadErrorMessage([plansResult, paymentResult]));
+    // V12-D4: surface the staff-created demand. A failed dashboard
+    // fetch must not silently hide the discounted offer (V12-M3
+    // shape) — it joins the load-error legs, so the member sees a
+    // retry instead of quietly paying full price.
+    if (dashboardResult.ok) {
+      const activeDemand = dashboardResult.data.active_renewal_demand ?? null;
+      setDemand(activeDemand);
+      if (activeDemand?.plan_id && plansResult.ok) {
+        const demandPlan = plansResult.data.plans.find((p) => p.id === activeDemand.plan_id);
+        if (demandPlan) setSelectedPlan(demandPlan);
+      }
+    } else {
+      setDemand(null);
+    }
+    setLoadError(firstLoadErrorMessage([plansResult, paymentResult, dashboardResult]));
     setLoading(false);
   }, []);
 
@@ -90,15 +111,26 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
     setSubmitting(true);
     setError(undefined);
 
-    const result = await claimPayment(selectedPlan?.id, reference.trim() || undefined);
-    if (result.ok) {
+    // V12-D4: when the gym created a demand for a plan that is no
+    // longer listed, claim against the demand's plan — never against
+    // an unrelated auto-selected plan.
+    const claimPlanId = demand?.plan_id ?? selectedPlan?.id;
+    const result = await claimPayment(claimPlanId, reference.trim() || undefined);
+    const outcome = resolveClaimOutcome(result);
+    if (outcome === 'submitted') {
       setStep('done');
+    } else if (outcome === 'already-pending') {
+      // V12-D4: the backend created NO new payment — the member
+      // already has one pending. Never celebrate this as a fresh
+      // "Payment Submitted!".
+      setPendingAmount(result.ok ? result.data?.amount ?? null : null);
+      setStep('pending');
     } else {
-      setError(result.error);
-      Alert.alert('Error', result.error);
+      setError(result.ok ? 'Could not submit the payment claim.' : result.error);
+      Alert.alert('Error', result.ok ? 'Could not submit the payment claim.' : result.error);
     }
     setSubmitting(false);
-  }, [selectedPlan, reference]);
+  }, [selectedPlan, reference, demand]);
 
   if (loading) {
     return (
@@ -114,7 +146,7 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
     <SafeAreaView style={styles.safeArea}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={step === 'done' ? onSuccess : onBack} style={styles.backBtn}>
+        <TouchableOpacity onPress={step === 'done' || step === 'pending' ? onSuccess : onBack} style={styles.backBtn}>
           <Icon name="back" size={20} color={colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>
@@ -124,6 +156,8 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
             ? 'Make Payment'
             : step === 'confirm'
             ? 'Confirm Payment'
+            : step === 'pending'
+            ? 'Already Pending'
             : 'Success!'}
         </Text>
         <View style={{ width: 32 }} />
@@ -132,7 +166,7 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
       {/* Step Indicators */}
       <View style={styles.steps}>
         {['Plan', 'Pay', 'Confirm'].map((label, idx) => {
-          const stepIdx = ['plan', 'pay', 'confirm', 'done'].indexOf(step);
+          const stepIdx = ['plan', 'pay', 'confirm', 'done'].indexOf(step === 'pending' ? 'done' : step);
           const isActive = idx <= stepIdx;
           return (
             <View key={label} style={styles.stepItem}>
@@ -157,6 +191,24 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
         {/* Step 1: Plan Selection */}
         {step === 'plan' && (
           <>
+            {/* V12-D4: staff-created discounted offer — price locked,
+                takes precedence over the full-price plans below. */}
+            {demand && (
+              <View style={styles.demandCard}>
+                <Text style={styles.demandEyebrow}>SPECIAL RENEWAL OFFER FROM YOUR GYM</Text>
+                <Text style={styles.demandPlan}>{demand.plan_name}</Text>
+                <View style={styles.demandPriceRow}>
+                  <Text style={styles.demandStandardPrice}>{formatCurrency(demand.standard_price)}</Text>
+                  <Text style={styles.demandFinalPrice}>{formatCurrency(demand.final_payable)}</Text>
+                  {parseFloat(demand.savings || '0') > 0 && (
+                    <Text style={styles.demandSavings}>Save {formatCurrency(demand.savings)}</Text>
+                  )}
+                </View>
+                <Text style={styles.demandNote}>
+                  Your gym locked this price for you — pick this plan below to renew at the offer price instead of the full price.
+                </Text>
+              </View>
+            )}
             <Text style={styles.sectionTitle}>Select your membership plan</Text>
             {loadError && plans.length === 0 ? (
               <ErrorState message={loadError} onRetry={retryLoad} />
@@ -214,8 +266,17 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
           <>
             <View style={styles.selectedPlanBanner}>
               <Text style={styles.selectedPlanLabel}>Selected Plan</Text>
-              <Text style={styles.selectedPlanName}>{selectedPlan?.name}</Text>
-              <Text style={styles.selectedPlanPrice}>{selectedPlan ? formatCurrency(selectedPlan.price) : ''}</Text>
+              <Text style={styles.selectedPlanName}>{demand?.plan_name ?? selectedPlan?.name}</Text>
+              <Text style={styles.selectedPlanPrice}>
+                {demand
+                  ? formatCurrency(demand.final_payable)
+                  : selectedPlan
+                  ? formatCurrency(selectedPlan.price)
+                  : ''}
+              </Text>
+              {demand && (
+                <Text style={styles.demandLockedNote}>Offer price locked by your gym</Text>
+              )}
             </View>
 
             <Text style={styles.sectionTitle}>Payment Details</Text>
@@ -282,9 +343,15 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
               </Text>
 
               <View style={styles.confirmDetails}>
-                <DetailRow label="Plan" value={selectedPlan?.name ?? ''} />
-                <DetailRow label="Amount" value={formatCurrency(selectedPlan?.price ?? '0')} />
-                <DetailRow label="Duration" value={`${selectedPlan?.duration_days ?? 0} days`} />
+                <DetailRow label="Plan" value={demand?.plan_name ?? selectedPlan?.name ?? ''} />
+                <DetailRow
+                  label="Amount"
+                  value={formatCurrency(demand ? demand.final_payable : selectedPlan?.price ?? '0')}
+                />
+                {demand && (
+                  <DetailRow label="Offer" value={`Locked price (list ${formatCurrency(demand.standard_price)})`} />
+                )}
+                <DetailRow label="Duration" value={`${selectedPlan?.duration_days ?? demand?.renewal_days ?? 0} days`} />
               </View>
 
               <View style={styles.inputContainer}>
@@ -332,6 +399,30 @@ export function MemberRenewScreen({ onBack, onSuccess }: MemberRenewScreenProps)
             <Text style={styles.doneTitle}>Payment Submitted!</Text>
             <Text style={styles.doneSubtitle}>
               {"Your gym will verify the payment and renew your membership. You'll receive a confirmation on WhatsApp."}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.doneButton}
+              onPress={onSuccess}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.doneButtonText}>Back to Home</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* V12-D4: already-pending — the backend created NO new
+            payment, so this must never read as a fresh submission. */}
+        {step === 'pending' && (
+          <View style={[styles.doneCard, { borderColor: colors.warningBorder }]}>
+            <View style={[styles.doneIconWrap, { backgroundColor: colors.warningSurface }]}>
+              <Text style={styles.doneIcon}>⏳</Text>
+            </View>
+            <Text style={[styles.doneTitle, { color: colors.warning }]}>Payment Already Pending</Text>
+            <Text style={styles.doneSubtitle}>
+              {pendingAmount
+                ? `You already have a payment of ${formatCurrency(pendingAmount)} pending verification — the gym will confirm it. No new payment was submitted.`
+                : 'You already have a payment pending verification — the gym will confirm it. No new payment was submitted.'}
             </Text>
 
             <TouchableOpacity
@@ -405,6 +496,55 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xl,
     fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
+  },
+  demandCard: {
+    backgroundColor: colors.warningSurface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.warningBorder,
+  },
+  demandEyebrow: {
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    color: colors.warning,
+  },
+  demandPlan: {
+    fontSize: fontSize['2xl'],
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    color: colors.text,
+  },
+  demandPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  demandStandardPrice: {
+    fontSize: fontSize.xl,
+    color: colors.muted,
+    textDecorationLine: 'line-through',
+  },
+  demandFinalPrice: {
+    fontSize: fontSize['4xl'],
+    fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
+    color: colors.text,
+  },
+  demandSavings: {
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+    color: colors.success,
+  },
+  demandNote: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  demandLockedNote: {
+    fontSize: fontSize.sm,
+    color: colors.brand,
+    fontWeight: fontWeight.semibold,
   },
   planCard: {
     backgroundColor: colors.surface,

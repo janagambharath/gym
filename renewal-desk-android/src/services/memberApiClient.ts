@@ -8,7 +8,14 @@
 import * as SecureStore from 'expo-secure-store';
 
 import { getRuntimeConfiguration } from '../config/runtime';
+import { newIdempotencyKey } from './idempotencyKey';
 import { buildMemberRequestHeaders, memberMutationIdempotencyKey } from './memberApiHeaders';
+import { unwrapMemberEnvelope } from './memberEnvelope';
+import {
+  executeMemberSelfPhotoUpload,
+  type MemberPhotoImage,
+  type MemberPhotoUploadOutcome,
+} from './memberSelfPhotoUpload';
 import { configureDisplayPreferences, localeFromPhonePrefix } from '../types';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -23,6 +30,21 @@ export type MemberSession = {
   membershipStatus: string;
   membershipEnd: string | null;
   planName: string | null;
+};
+
+export type ActiveRenewalDemand = {
+  id: number;
+  plan_id: number | null;
+  plan_name: string;
+  standard_price: string;
+  discount: string;
+  final_payable: string;
+  amount: string;
+  savings: string;
+  renewal_days: number | null;
+  status: string;
+  channel: string | null;
+  created_at: string | null;
 };
 
 export type MemberDashboard = {
@@ -55,6 +77,10 @@ export type MemberDashboard = {
     status: string;
     created_at: string | null;
   } | null;
+  // V12-D4: staff-created discounted renewal offer (the demand the
+  // member renews against at the locked price). Null when the gym
+  // has not created one.
+  active_renewal_demand: ActiveRenewalDemand | null;
 };
 
 export type MemberMembership = {
@@ -101,6 +127,12 @@ export type MemberPayment = {
   paid_on: string | null;
   created_at: string | null;
   verified_at: string | null;
+  // V12-M1: why the payment was rejected, if it was (backend
+  // member_api.py member_payments list items). Zero clients read
+  // these before — the member saw REJECTED with no reason and no
+  // next step.
+  rejected_reason: string | null;
+  rejected_at: string | null;
 };
 
 export type MemberAccessSummary = {
@@ -126,6 +158,8 @@ export type MemberProfile = {
     phone: string;
     email: string | null;
     address?: string | null;
+    gender?: string | null;
+    profile_photo_url: string | null;
     joined_on: string | null;
     status: string;
   };
@@ -263,13 +297,17 @@ async function memberApiRequest<T>(
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
     body?: Record<string, unknown>;
     anonymous?: boolean;
+    // V12-D1: 'flat' reads the top-level payload as the result
+    // (request-otp returns {"success","challenge","gym_name",...}
+    // with NO `data` key). Default 'data' unwraps envelope.data.
+    unwrap?: 'data' | 'flat';
   } = {},
 ): Promise<ApiResult<T>> {
   const baseUrl = getBaseUrl();
   if (!baseUrl) {
     return { ok: false, error: 'API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL for this build.' };
   }
-  const { method = 'GET', body, anonymous = false } = options;
+  const { method = 'GET', body, anonymous = false, unwrap = 'data' } = options;
   // V8-L32: one fresh Idempotency-Key per mutation, generated ONCE per
   // memberApiRequest call — the 401-refresh retry below re-sends the SAME
   // key, mirroring the owner client (apiClient.ts). The backend honours
@@ -323,7 +361,7 @@ async function memberApiRequest<T>(
       return { ok: false, error: envelope.error || envelope.message || `Request failed (${response.status}).` };
     }
 
-    return { ok: true, data: envelope.data as T };
+    return { ok: true, data: unwrapMemberEnvelope<T>(envelope, unwrap) as T };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       return { ok: false, error: 'Request timed out. Please try again.' };
@@ -335,15 +373,23 @@ async function memberApiRequest<T>(
 // ── Auth ─────────────────────────────────────────────────────────────
 
 export type OtpRequestResult = {
-  challenge: string;
+  // V12-D1: null when no member account matches the number (backend
+  // anti-enumeration shape — success:true, challenge:null). The
+  // caller must NOT enter the OTP step on a null challenge.
+  challenge: string | null;
   gym_name: string | null;
 };
 
 export async function requestOtp(phone: string): Promise<ApiResult<OtpRequestResult>> {
+  // V12-D1: request-otp returns a FLAT envelope (no `data` key) —
+  // unwrap 'flat' reads the top-level challenge / gym_name, like the
+  // sibling RN app does. Do NOT change the backend envelope: web +
+  // RN depend on the flat shape.
   return memberApiRequest<OtpRequestResult>('/api/member/v1/auth/request-otp', {
     method: 'POST',
     body: { phone },
     anonymous: true,
+    unwrap: 'flat',
   });
 }
 
@@ -392,6 +438,28 @@ export async function verifyOtp(
   }
 
   return result;
+}
+
+export async function logoutMemberSession(): Promise<void> {
+  // V12-M7: sign-out must revoke the server session (V11-M8 never
+  // landed on this surface) — POST /api/member/v1/auth/logout
+  // revokes the refresh token (member_api.py:812-847). Same shape as
+  // web vynla.js signOutMember: the POST is best-effort and the local
+  // clear is the fallback — sign-out never fails because the network
+  // did, and a signed-out session never stays on the device.
+  try {
+    const refreshToken = cachedSession?.refreshToken;
+    if (refreshToken) {
+      await memberApiRequest<{ message: string; refresh_token_revoked: boolean }>(
+        '/api/member/v1/auth/logout',
+        { method: 'POST', body: { refresh_token: refreshToken } },
+      );
+    }
+  } catch {
+    // Local clear below is the fallback.
+  } finally {
+    await clearMemberSession();
+  }
 }
 
 export async function deleteMemberAccount(): Promise<ApiResult<{ message: string }>> {
@@ -487,6 +555,66 @@ export async function fetchMemberAccess(page = 1): Promise<ApiResult<AccessResul
 
 export async function fetchMemberProfile(): Promise<ApiResult<MemberProfile>> {
   return memberApiRequest<MemberProfile>('/api/member/v1/profile');
+}
+
+export type MemberProfileUpdate = {
+  email?: string | null;
+  address?: string | null;
+  gender?: string | null;
+};
+
+/**
+ * V12-L7: member self-service profile edit. Backend PUT
+ * /api/member/v1/profile accepts only {email, address, gender}
+ * (member_api.py member_profile) and returns the updated profile.
+ */
+export async function updateMemberProfile(
+  fields: MemberProfileUpdate,
+): Promise<ApiResult<MemberProfile>> {
+  return memberApiRequest<MemberProfile>('/api/member/v1/profile', {
+    method: 'PUT',
+    body: fields as Record<string, unknown>,
+  });
+}
+
+/**
+ * V12-L7: upload the member's own profile photo. Thin wrapper
+ * around executeMemberSelfPhotoUpload supplying the real config,
+ * session token and refresh; the backend contract is POST
+ * /api/member/v1/profile/photo (multipart field `photo`, response
+ * { success: true, data: { profile_photo_url } }).
+ */
+export async function uploadMemberPhoto(
+  image: MemberPhotoImage,
+  stableIdempotencyKey?: string,
+): Promise<MemberPhotoUploadOutcome> {
+  const baseUrl = getBaseUrl();
+  if (!baseUrl) {
+    return { ok: false, error: { message: 'API base URL is not configured. Set EXPO_PUBLIC_API_BASE_URL for this build.' } };
+  }
+  const idempotencyKey = stableIdempotencyKey ?? newIdempotencyKey();
+  return executeMemberSelfPhotoUpload({
+    baseUrl,
+    image,
+    token: cachedSession?.token,
+    idempotencyKey,
+    refreshAccessToken: async () => {
+      const refreshed = await refreshMemberSession(baseUrl);
+      if (refreshed) return { ok: true as const, token: refreshed.token };
+      if (refreshed === null) return { ok: false as const, failure: 'expired' as const };
+      return { ok: false as const, failure: 'transient' as const };
+    },
+  });
+}
+
+/**
+ * V12-L7: remove the member's own profile photo. DELETE is
+ * naturally idempotent — no idempotency key needed.
+ */
+export async function removeMemberPhoto(): Promise<ApiResult<{ profile_photo_url: string | null }>> {
+  return memberApiRequest<{ profile_photo_url: string | null }>('/api/member/v1/profile/photo', {
+    method: 'DELETE',
+  });
 }
 
 // ── Payment Info ─────────────────────────────────────────────────────

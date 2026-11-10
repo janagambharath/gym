@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,7 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { StatusBadge } from '../components/StatusBadge';
 import { WhatsAppOnboardingModal } from '../components/WhatsAppOnboardingModal';
 import { apiRequest } from '../services/apiClient';
+import { broadcastScope, keyForAction, shouldReleaseKey, type StableKeySlot } from '../services/stableKey';
 import {
   fetchRecentWhatsAppMessages,
   logDisplayName,
@@ -141,6 +142,11 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
   const [broadcastCounts, setBroadcastCounts] = useState({ active: 0, expired: 0, all: 0 });
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
   const [broadcastSuccess, setBroadcastSuccess] = useState<string | null>(null);
+  // V12-D5: stable per-(audience, message) key for broadcast — the
+  // sharpest leg: there is no pending-command guard here, so a
+  // timeout-retry used to re-send the announcement to the whole
+  // audience. A retry replays; an edited message mints a fresh key.
+  const broadcastKeyRef = useRef<StableKeySlot>(undefined);
 
   type WhatsAppChecklist = {
     whatsapp_connected: boolean;
@@ -350,16 +356,26 @@ export function WhatsAppScreen({ onBack, onNavigateMemberDetail }: WhatsAppScree
           onPress: async () => {
             setSendingBroadcast(true);
             setBroadcastSuccess(null);
+            // V12-D5: stable key per (audience, message text).
+            const { key: broadcastKey, slot } = keyForAction(
+              broadcastKeyRef.current,
+              broadcastScope(broadcastAudience, broadcastMessage),
+            );
+            broadcastKeyRef.current = slot;
             const res = await apiRequest<{ sent: number; total: number; message: string }>(
               '/api/mobile/v1/whatsapp/broadcast',
               {
                 method: 'POST',
+                headers: { 'Idempotency-Key': broadcastKey },
                 body: {
                   message: broadcastMessage.trim(),
                   audience: broadcastAudience,
                 },
               }
             );
+            if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+              broadcastKeyRef.current = undefined;
+            }
 
             setSendingBroadcast(false);
             if (res.ok) {

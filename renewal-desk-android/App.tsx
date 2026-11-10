@@ -147,7 +147,7 @@ import { MemberMembershipScreen } from './src/screens/member/MemberMembershipScr
 import { MemberPaymentHistoryScreen } from './src/screens/member/MemberPaymentHistoryScreen';
 import { MemberProfileScreen } from './src/screens/member/MemberProfileScreen';
 import { MemberRenewScreen } from './src/screens/member/MemberRenewScreen';
-import { clearMemberSession, loadMemberSession } from './src/services/memberApiClient';
+import { loadMemberSession, logoutMemberSession } from './src/services/memberApiClient';
 import { apiRequest, restoreSession, type ScanDocumentResult } from './src/services/apiClient';
 import { registerForPushNotificationsAsync, unregisterPushNotificationsAsync } from './src/services/notificationService';
 import { Icon, TabIcon } from './src/theme/icons';
@@ -1773,7 +1773,10 @@ function AppRoot() {
   }, []);
 
   const handleMemberLogout = useCallback(async () => {
-    await clearMemberSession();
+    // V12-M7: revoke the server session before clearing the local
+    // one — logoutMemberSession POSTs /api/member/v1/auth/logout and
+    // clears locally as fallback (same shape as web vynla.js).
+    await logoutMemberSession();
     setAuthRole('none');
     setIsAuthenticated(false);
   }, []);

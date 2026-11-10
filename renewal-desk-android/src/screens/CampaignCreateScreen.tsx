@@ -16,6 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar } from '../components/Avatar';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { apiRequest } from '../services/apiClient';
+import { buildCampaignCreateBody } from '../services/campaignCreateBody';
+import { keyForAction, shouldReleaseKey, type StableKeySlot } from '../services/stableKey';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type {
@@ -101,6 +103,11 @@ export function CampaignCreateScreen({
   // send_campaign, so a retry replays the first campaign instead of
   // double-messaging members.
   const launchKeyRef = useRef<string | undefined>(undefined);
+  // V12-D5: one stable idempotency key per campaign SEND, held across
+  // retries — a retry after a successful-but-lost send replays instead
+  // of hitting the "already sent" status machine and reporting a
+  // false failure.
+  const sendKeyRef = useRef<StableKeySlot>(undefined);
 
   // V6-M16: re-send the already-created campaign after a send failure
   // instead of forcing a fresh create (which would double-message
@@ -108,10 +115,16 @@ export function CampaignCreateScreen({
   const retrySend = useCallback(async (campaignId: number) => {
     if (sending) return;
     setSending(true);
+    // V12-D5: reuse the launch send key for the same campaign.
+    const { key: sendKey, slot } = keyForAction(sendKeyRef.current, `campaign-send:${campaignId}`);
+    sendKeyRef.current = slot;
     const sendRes = await apiRequest<{ sent: number; total: number; failed: number }>(
       `/api/mobile/v1/campaigns/${campaignId}/send`,
-      { method: 'POST' },
+      { method: 'POST', headers: { 'Idempotency-Key': sendKey } },
     );
+    if (shouldReleaseKey(sendRes.ok, sendRes.ok ? undefined : sendRes.error.status)) {
+      sendKeyRef.current = undefined;
+    }
     setSending(false);
     if (sendRes.ok) {
       Alert.alert(
@@ -164,7 +177,7 @@ export function CampaignCreateScreen({
   const onPickCsvFile = useCallback(async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'application/csv', 'application/vnd.ms-excel'],
+        type: ['text/csv', 'text/comma-separated-values', 'application/csv'],
         copyToCacheDirectory: true,
         multiple: false,
       });
@@ -316,18 +329,24 @@ export function CampaignCreateScreen({
     const idempotencyKey = launchKeyRef.current ?? `campaign-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
     launchKeyRef.current = idempotencyKey;
 
+    // V12-D2: build the body with the keys the backend actually
+    // reads (whatsapp_template_name / message_template) — the old
+    // `template_name` key was silently dropped, so the owner-picked
+    // template never went out.
+    const presetObj = PROMO_PRESETS.find((p) => p.id === promoPreset);
     const createRes = await apiRequest<{ id: number }>('/api/mobile/v1/campaigns', {
       method: 'POST',
       headers: { 'Idempotency-Key': idempotencyKey },
-      body: {
+      body: buildCampaignCreateBody({
         name: campaignName.trim(),
-        campaign_type: purpose,
-        promo_preset: purpose === 'promotion' ? promoPreset : undefined,
-        template_name: selectedTemplate?.name,
-        segment_type: effectiveSegment,
-        imported_contacts: importedContacts.length > 0 ? importedContacts : undefined,
-        exclude_recent: excludeRecent,
-      },
+        campaignType: purpose,
+        promoPreset,
+        promoPresetDesc: presetObj?.desc ?? '',
+        template: selectedTemplate,
+        segmentType: effectiveSegment,
+        importedContacts: importedContacts.length > 0 ? importedContacts : undefined,
+        excludeRecent,
+      }),
     });
 
     if (!createRes.ok) {
@@ -340,11 +359,17 @@ export function CampaignCreateScreen({
     const campaignId = createRes.data.id;
     launchKeyRef.current = undefined;
 
-    // Send Campaign
+    // Send Campaign — V12-D5: send under its own stable key, held
+    // in sendKeyRef so a later retrySend replays this same send.
+    const { key: sendKey, slot } = keyForAction(sendKeyRef.current, `campaign-send:${campaignId}`);
+    sendKeyRef.current = slot;
     const sendRes = await apiRequest<{ sent: number; total: number; failed: number }>(
       `/api/mobile/v1/campaigns/${campaignId}/send`,
-      { method: 'POST' },
+      { method: 'POST', headers: { 'Idempotency-Key': sendKey } },
     );
+    if (shouldReleaseKey(sendRes.ok, sendRes.ok ? undefined : sendRes.error.status)) {
+      sendKeyRef.current = undefined;
+    }
 
     setSending(false);
 

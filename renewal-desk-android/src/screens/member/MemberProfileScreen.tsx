@@ -4,29 +4,35 @@
  * Shows: member details, gym contact, payment info, sign out,
  * and account deletion flow.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useLiveEffect } from '../../hooks/useLiveEffect';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { Icon } from '../../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../../theme/tokens';
 import type { MemberProfile } from '../../services/memberApiClient';
 import {
-  clearMemberSession,
   deleteMemberAccount,
   fetchMemberProfile,
   getMemberSession,
+  removeMemberPhoto,
+  updateMemberProfile,
+  uploadMemberPhoto,
 } from '../../services/memberApiClient';
+import { keyForAction, shouldReleaseKey, type StableKeySlot } from '../../services/stableKey';
 import { ErrorState } from '../../components/ErrorState';
 import { getRuntimeConfiguration } from '../../config/runtime';
 import { getAppVersion } from '../../services/appVersion';
@@ -43,6 +49,14 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // V12-L7: member self-service photo + edit (parity with RN
+  // ProfileScreen / web renderProfile — this surface was read-only).
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photoKeyRef = useRef<StableKeySlot>(undefined);
+  const [profileForm, setProfileForm] = useState({ email: '', address: '', gender: '' });
+  const [savingDetails, setSavingDetails] = useState(false);
+  const formInitRef = useRef(false);
 
   const session = getMemberSession();
 
@@ -55,6 +69,17 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
       if (result.ok) {
         setProfile(result.data);
         setError(undefined);
+        // V12-L7: prefill the edit form from the saved profile once
+        // (later refetches must not clobber typing).
+        if (!formInitRef.current) {
+          formInitRef.current = true;
+          const savedGender = String(result.data.member.gender || '').toLowerCase();
+          setProfileForm({
+            email: result.data.member.email || '',
+            address: result.data.member.address || '',
+            gender: ['female', 'male', 'other'].includes(savedGender) ? savedGender : '',
+          });
+        }
       } else {
         setError(result.error);
       }
@@ -71,6 +96,121 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
     setRevision((r) => r + 1);
   }, []);
 
+  // V12-L7: member self-service photo — picker + guards copied from
+  // the owner flow (MemberDetailScreen): 1:1 crop, quality 0.82, no
+  // EXIF, 3 MB + MIME guards, then POST /api/member/v1/profile/photo.
+  // The returned signed URL replaces local state immediately; the
+  // next refetch refreshes it before the 7-day expiry.
+  const handleChoosePhoto = useCallback(async () => {
+    if (photoBusy) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.82,
+        exif: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      if (asset.fileSize && asset.fileSize > 3 * 1024 * 1024) {
+        Alert.alert('Photo is too large', 'Choose a photo that is 3 MB or smaller.');
+        return;
+      }
+      const mimeType = asset.mimeType || (asset.fileName?.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+        Alert.alert('Unsupported photo', 'Choose a JPEG, PNG, or WebP image.');
+        return;
+      }
+      setPhotoBusy(true);
+      // V11-L32: stable key per member — a retry after a lost
+      // response replays instead of storing a second photo.
+      const { key: photoKey, slot } = keyForAction(photoKeyRef.current, 'member-photo');
+      photoKeyRef.current = slot;
+      const res = await uploadMemberPhoto(
+        {
+          uri: asset.uri,
+          name: asset.fileName || `profile.${mimeType === 'image/png' ? 'png' : 'jpg'}`,
+          mimeType,
+        },
+        photoKey,
+      );
+      if (shouldReleaseKey(res.ok, res.ok ? undefined : res.error.status)) {
+        photoKeyRef.current = undefined;
+      }
+      if (res.ok) {
+        setPhotoFailed(false);
+        setProfile((current) =>
+          current
+            ? { ...current, member: { ...current.member, profile_photo_url: res.data.profile_photo_url } }
+            : current,
+        );
+        Alert.alert('Profile photo updated', 'Your profile photo has been saved.');
+      } else {
+        Alert.alert('Could not update photo', res.error.message || 'Please try again.');
+      }
+    } catch {
+      Alert.alert('Could not update photo', 'Please try again.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }, [photoBusy]);
+
+  const handleRemovePhoto = useCallback(() => {
+    Alert.alert('Remove profile photo?', 'Your profile will show initials instead.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setPhotoBusy(true);
+          const res = await removeMemberPhoto();
+          setPhotoBusy(false);
+          if (res.ok) {
+            setProfile((current) =>
+              current
+                ? { ...current, member: { ...current.member, profile_photo_url: null } }
+                : current,
+            );
+          } else {
+            Alert.alert('Could not remove photo', res.error || 'Please try again.');
+          }
+        },
+      },
+    ]);
+  }, []);
+
+  const handleSaveDetails = useCallback(async () => {
+    if (savingDetails) return;
+    const saved = profile?.member;
+    const dirty =
+      saved &&
+      (profileForm.email !== (saved.email || '') ||
+        profileForm.address !== (saved.address || '') ||
+        profileForm.gender !== (saved.gender || ''));
+    if (!dirty) return;
+    setSavingDetails(true);
+    const result = await updateMemberProfile({
+      email: profileForm.email.trim() || null,
+      address: profileForm.address.trim() || null,
+      gender: profileForm.gender.trim() || null,
+    });
+    setSavingDetails(false);
+    if (result.ok) {
+      const savedMember = result.data.member;
+      const savedGender = String(savedMember.gender || '').toLowerCase();
+      setProfile(result.data);
+      setProfileForm({
+        email: savedMember.email || '',
+        address: savedMember.address || '',
+        gender: ['female', 'male', 'other'].includes(savedGender) ? savedGender : '',
+      });
+      Alert.alert('Profile updated', 'Your contact details have been saved.');
+    } else {
+      Alert.alert('Could not save details', result.error || 'Please try again.');
+    }
+  }, [profile, profileForm, savingDetails]);
+
   const handleSignOut = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
@@ -78,7 +218,11 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
-          await clearMemberSession();
+          // V12-M7: do NOT clear the local session here — onLogout
+          // (App handleMemberLogout) revokes the server session first
+          // via logoutMemberSession, which needs the stored refresh
+          // token, then clears locally. Clearing here first would
+          // strand the refresh token live server-side.
           onLogout();
         },
       },
@@ -175,11 +319,21 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
         {/* User Card */}
         <View style={styles.card}>
           <View style={styles.avatarRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {(member?.full_name ?? session?.fullName ?? 'M')[0].toUpperCase()}
-              </Text>
-            </View>
+            {/* V12-L7: show the member photo when set (with initials
+                fallback on load failure), plus change/remove actions. */}
+            {member?.profile_photo_url && !photoFailed ? (
+              <Image
+                source={{ uri: member.profile_photo_url }}
+                style={styles.avatarImage}
+                onError={() => setPhotoFailed(true)}
+              />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {(member?.full_name ?? session?.fullName ?? 'M')[0].toUpperCase()}
+                </Text>
+              </View>
+            )}
             <View style={styles.avatarDetails}>
               <Text style={styles.memberName}>
                 {member?.full_name ?? session?.fullName ?? 'Member'}
@@ -193,6 +347,29 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
                 </Text>
               </View>
             </View>
+          </View>
+
+          <View style={styles.photoActions}>
+            <TouchableOpacity
+              style={[styles.photoButton, photoBusy && styles.buttonDisabled]}
+              onPress={() => void handleChoosePhoto()}
+              disabled={photoBusy}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.photoButtonText}>
+                {photoBusy ? 'Working…' : member?.profile_photo_url ? 'Change photo' : 'Add profile photo'}
+              </Text>
+            </TouchableOpacity>
+            {member?.profile_photo_url && (
+              <TouchableOpacity
+                style={[styles.photoButton, photoBusy && styles.buttonDisabled]}
+                onPress={handleRemovePhoto}
+                disabled={photoBusy}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.photoButtonText, { color: colors.critical }]}>Remove photo</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {member?.email && (
@@ -215,6 +392,85 @@ export function MemberProfileScreen({ onLogout }: MemberProfileScreenProps) {
               <Text style={styles.infoValue}>{member.joined_on}</Text>
             </View>
           )}
+        </View>
+
+        {/* V12-L7: member self-service edit — email / address / gender
+            are the only fields the backend PUT accepts
+            (member_api.py member_profile). */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Icon name="edit" size={20} color={colors.brand} />
+            <Text style={styles.cardTitle}>Edit Details</Text>
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              style={styles.textInput}
+              value={profileForm.email}
+              onChangeText={(t) => setProfileForm((f) => ({ ...f, email: t }))}
+              placeholder="you@example.com"
+              placeholderTextColor={colors.muted}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Address</Text>
+            <TextInput
+              style={[styles.textInput, styles.addressInput]}
+              value={profileForm.address}
+              onChangeText={(t) => setProfileForm((f) => ({ ...f, address: t }))}
+              placeholder="Your address"
+              placeholderTextColor={colors.muted}
+              multiline
+            />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Gender</Text>
+            <View style={styles.genderRow}>
+              {[
+                { value: '', label: 'Prefer not to say' },
+                { value: 'female', label: 'Female' },
+                { value: 'male', label: 'Male' },
+                { value: 'other', label: 'Other' },
+              ].map((option) => (
+                <TouchableOpacity
+                  key={option.value || 'none'}
+                  style={[
+                    styles.genderOption,
+                    profileForm.gender === option.value && styles.genderOptionSelected,
+                  ]}
+                  onPress={() => setProfileForm((f) => ({ ...f, gender: option.value }))}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.genderOptionText,
+                      profileForm.gender === option.value && styles.genderOptionTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.saveButton, savingDetails && styles.buttonDisabled]}
+            onPress={() => void handleSaveDetails()}
+            disabled={savingDetails}
+            activeOpacity={0.7}
+          >
+            {savingDetails ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.saveButtonText}>Save Details</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         {/* Gym Information */}
@@ -375,6 +631,90 @@ const styles = StyleSheet.create({
     fontSize: fontSize['3xl'],
     fontWeight: fontWeight.extrabold, fontFamily: fontFamily.displayExtra,
     color: colors.brand,
+  },
+  avatarImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 2,
+    borderColor: colors.brand,
+    backgroundColor: colors.brandSubtle,
+  },
+  photoActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  photoButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  photoButtonText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.brand,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  inputContainer: { gap: spacing.sm },
+  inputLabel: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    fontWeight: fontWeight.semibold,
+  },
+  textInput: {
+    backgroundColor: colors.background,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    fontSize: fontSize.base,
+    color: colors.text,
+  },
+  addressInput: {
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  genderRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  genderOption: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  genderOptionSelected: {
+    borderColor: colors.brand,
+    backgroundColor: colors.brandSubtle,
+  },
+  genderOptionText: {
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    color: colors.textSecondary,
+  },
+  genderOptionTextSelected: {
+    color: colors.brand,
+  },
+  saveButton: {
+    backgroundColor: colors.brand,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
   },
   avatarDetails: {
     flex: 1,

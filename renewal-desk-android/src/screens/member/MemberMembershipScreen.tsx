@@ -21,6 +21,7 @@ import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} fro
 import { formatCurrency, formatDate } from '../../types';
 import type { MemberMembership } from '../../services/memberApiClient';
 import { fetchMemberMembership } from '../../services/memberApiClient';
+import { deriveMemberStatus } from '../../services/memberStatus';
 import { ErrorState } from '../../components/ErrorState';
 
 type MemberMembershipScreenProps = {
@@ -78,7 +79,15 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
 
   const membership = data?.membership;
   const gym = data?.gym;
-  const isExpired = membership?.is_expired;
+  // V12-D3: same as the home screen — derive from member.status, not
+  // is_expired alone, or a paused member reads "Active" here too.
+  const memberStatus = deriveMemberStatus({
+    status: membership?.status,
+    is_expired: membership?.is_expired,
+    days_left: membership?.days_left,
+  });
+  const isExpired = memberStatus.tone === 'expired';
+  const isPaused = memberStatus.tone === 'paused';
   const daysLeft = membership?.days_left;
   const renewals = data?.renewal_history ?? [];
 
@@ -105,11 +114,12 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
           style={[
             styles.card,
             {
-              borderColor: isExpired
-                ? colors.critical
-                : daysLeft !== null && daysLeft !== undefined && daysLeft <= 7
-                ? colors.warning
-                : colors.success,
+              borderColor:
+                memberStatus.tone === 'expired'
+                  ? colors.critical
+                  : memberStatus.tone === 'expiring' || memberStatus.tone === 'paused'
+                  ? colors.warning
+                  : colors.success,
             },
           ]}
         >
@@ -118,11 +128,12 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
               style={[
                 styles.badge,
                 {
-                  backgroundColor: isExpired
-                    ? colors.criticalSurface
-                    : daysLeft !== null && daysLeft !== undefined && daysLeft <= 7
-                    ? colors.warningSurface
-                    : colors.successSurface,
+                  backgroundColor:
+                    memberStatus.tone === 'expired'
+                      ? colors.criticalSurface
+                      : memberStatus.tone === 'expiring' || memberStatus.tone === 'paused'
+                      ? colors.warningSurface
+                      : colors.successSurface,
                 },
               ]}
             >
@@ -130,23 +141,28 @@ export function MemberMembershipScreen({ onNavigateRenew }: MemberMembershipScre
                 style={[
                   styles.badgeText,
                   {
-                    color: isExpired
-                      ? colors.critical
-                      : daysLeft !== null && daysLeft !== undefined && daysLeft <= 7
-                      ? colors.warning
-                      : colors.success,
+                    color:
+                      memberStatus.tone === 'expired'
+                        ? colors.critical
+                        : memberStatus.tone === 'expiring' || memberStatus.tone === 'paused'
+                        ? colors.warning
+                        : colors.success,
                   },
                 ]}
               >
-                {isExpired
-                  ? 'Expired'
-                  : daysLeft !== null && daysLeft !== undefined && daysLeft <= 7
-                  ? 'Expiring Soon'
-                  : 'Active'}
+                {memberStatus.shortLabel}
               </Text>
             </View>
             <Text style={styles.planNameText}>{membership?.plan_name ?? 'Standard Plan'}</Text>
           </View>
+
+          {/* V12-D3: paused members stay door-blocked until the gym
+              resumes them — even after renewing. */}
+          {isPaused && (
+            <Text style={styles.pausedNote}>
+              Your membership is paused — door access stays blocked until your gym resumes it.
+            </Text>
+          )}
 
           <View style={styles.divider} />
 
@@ -304,6 +320,11 @@ const styles = StyleSheet.create({
     fontSize: fontSize['2xl'],
     fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
     color: colors.text,
+  },
+  pausedNote: {
+    fontSize: fontSize.base,
+    color: colors.warning,
+    lineHeight: 20,
   },
   divider: {
     height: 1,

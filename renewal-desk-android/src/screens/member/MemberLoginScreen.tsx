@@ -72,12 +72,22 @@ export function MemberLoginScreen({ onLoginSuccess, onSwitchToOwner }: MemberLog
 
     const result = await requestOtp(trimmedPhone);
     if (result.ok) {
-      setChallenge(result.data.challenge);
-      setGymName(result.data.gym_name || '');
-      setStep('otp');
-      // V9-L18: a successful send starts the resend cooldown.
-      setResendCooldownUntil(Date.now() + OTP_RESEND_COOLDOWN_MS);
-      setTimeout(() => otpInputRef.current?.focus(), 200);
+      // V12-D1: the backend deliberately returns success:true with
+      // challenge:null for unknown / staff / multi-gym / duplicate
+      // numbers (anti-enumeration, member_api.py) — entering the OTP
+      // step without a challenge is the V11-H6 dead end: a code that
+      // was never sent, every verify 400ing. Stay on the phone step
+      // with the honest wording the web app uses.
+      if (!result.data?.challenge) {
+        setError('No member account found for this number — ask your gym.');
+      } else {
+        setChallenge(result.data.challenge);
+        setGymName(result.data.gym_name || '');
+        setStep('otp');
+        // V9-L18: a successful send starts the resend cooldown.
+        setResendCooldownUntil(Date.now() + OTP_RESEND_COOLDOWN_MS);
+        setTimeout(() => otpInputRef.current?.focus(), 200);
+      }
     } else {
       setError(result.error);
     }

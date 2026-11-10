@@ -372,7 +372,7 @@ export function MemberDetailScreen({
       return;
     }
     setEnrolling(true);
-    const res = await apiRequest<{ message: string; enroll_number: string }>(
+    const res = await apiRequest<{ message: string; device_enroll_number: string }>(
       `/api/mobile/v1/members/${member.id}/enroll`,
       {
         method: 'POST',
@@ -382,7 +382,10 @@ export function MemberDetailScreen({
     setEnrolling(false);
     if (res.ok) {
       setShowEnrollModal(false);
-      showMessage(`Biometric Enroll #${res.data.enroll_number} saved & synchronized!`, 'success');
+      // V12-D6: the serializer's only enrollee key is
+      // device_enroll_number — the old `enroll_number` read toasted
+      // "Biometric Enroll #undefined".
+      showMessage(`Biometric Enroll #${res.data.device_enroll_number} saved & synchronized!`, 'success');
       void fetchMemberData();
       onMemberUpdated?.();
     } else {
