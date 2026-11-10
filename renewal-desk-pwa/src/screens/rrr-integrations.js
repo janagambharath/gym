@@ -2,6 +2,7 @@ import { attachLiveRefresh } from '../live-refresh.js';
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
 import { escapeHtml, formatTime } from '../utils.js';
+import { showToast, showConfirm, showPrompt } from '../components.js';
 
 export default {
   async mount(el) {
@@ -102,6 +103,10 @@ async function load(el, background = false) {
     || document.activeElement?.matches('input, textarea, select'))) return;
   el.dataset.draftEdited = 'false';
   const unmapped = Math.max(direct?.unmapped_records || 0, bridge?.unmapped_records || 0);
+  // G1/G4: replace / decommission / fingerprint-restore are owner-only.
+  // Staff sessions never see the buttons; the server enforces as well
+  // (an unknown role still shows them, like the access-screen pattern).
+  const isOwner = getCachedSession()?.userRole !== 'staff';
 
   el.innerHTML = `<main class="rrr-page rrr-integrations-page">
     <header class="rrr-header rrr-integrations-header">
@@ -116,7 +121,7 @@ async function load(el, background = false) {
     <section class="rrr-connection-grid">
       <article class="rrr-connect-card rrr-connect-card-primary">
         <div class="rrr-card-top"><span class="rrr-option-icon">☁</span><div>${livePill(direct)}<h2>Direct Cloud</h2><p>No gym PC or bridge required for attendance.</p></div></div>
-        ${direct ? directPanel(direct, commands, commandsFailed) : directForm(getCachedSession()?.tenantName || '')}
+        ${direct ? directPanel(direct, commands, commandsFailed, isOwner) : directForm(getCachedSession()?.tenantName || '')}
       </article>
       <article class="rrr-connect-card">
         <div class="rrr-card-top"><span class="rrr-option-icon rrr-option-muted">⌘</span><div><span class="rrr-status-pill">FALLBACK</span><h2>eBioServer Bridge</h2><p>Use only when your licensed eBioServer stays on a gym PC.</p></div></div>
@@ -190,7 +195,7 @@ function copyRow(label, value) {
   return `<div class="rrr-copy-row"><div><span>${esc(label)}</span><code>${esc(value)}</code></div><button type="button" class="rrr-copy-btn" data-copy="${esc(value)}">Copy</button></div>`;
 }
 
-function directPanel(direct, commands, commandsFailed = false) {
+function directPanel(direct, commands, commandsFailed = false, isOwner = false) {
   const settings = direct.terminal_settings || {};
   const connected = isLive(direct);
   const latest = commands[0];
@@ -235,7 +240,108 @@ function directPanel(direct, commands, commandsFailed = false) {
       <p id="rrr-command-error" class="rrr-form-error" role="alert"></p>
     </section>
     ${commissionBox('direct', direct, commands, commandsFailed)}
+    ${isOwner ? terminalManageSection(direct) : ''}
   </div>`;
+}
+
+// G1/G4 — owner-only terminal management. Rendered only for the Direct
+// Cloud terminal (the one with a serial that can be replaced). The
+// commissioning status is stated here as well as in the commissioning
+// box above, so the replace/decommission consequences are unambiguous.
+function terminalManageSection(direct) {
+  const commissioned = !!direct.commands_enabled;
+  return `<section class="rrr-terminal-manage" style="margin-top:var(--sp-lg);padding-top:var(--sp-md);border-top:1px solid var(--border)">
+    <b>Terminal management</b>
+    <p class="rrr-muted-copy">Commissioning: ${commissioned ? 'Automatic block/unblock is ON for this terminal.' : 'Not commissioned — the supervised physical test must pass before automatic block/unblock switches on.'}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:var(--sp-sm)">
+      <button class="rrr-secondary-button" id="rrr-replace-terminal" type="button">Replace terminal</button>
+      <button class="rrr-secondary-button" id="rrr-restore-fingerprints" type="button">Restore fingerprints</button>
+      <button class="rrr-secondary-button" id="rrr-decommission-terminal" type="button" style="color:var(--critical);border-color:var(--critical-border)">Decommission terminal</button>
+    </div>
+    <p id="rrr-terminal-error" class="rrr-form-error" role="alert"></p>
+  </section>`;
+}
+
+function wireTerminalManage(el, direct) {
+  const errorEl = () => el.querySelector('#rrr-terminal-error');
+  const fail = (response, fallback) => {
+    // G1: 409 ALREADY_COMMISSIONED / wrong-gym serial errors arrive with
+    // the backend's own message — surface it verbatim via toast (and
+    // inline, so it survives the 3s toast).
+    const message = apiMessage(response, fallback);
+    if (errorEl()) errorEl().textContent = message;
+    showToast(message, 'error');
+  };
+
+  el.querySelector('#rrr-replace-terminal')?.addEventListener('click', async () => {
+    const serial = await showPrompt({
+      title: 'Replace terminal',
+      message: 'Enter the serial number of the new terminal.',
+      placeholder: 'Example: X2008-123456',
+    });
+    if (serial === null || !String(serial).trim()) return;
+    const name = await showPrompt({
+      title: 'Replace terminal',
+      message: 'Friendly name for the new terminal.',
+      placeholder: direct.device_name || 'Main Entrance',
+      defaultValue: direct.device_name || '',
+    });
+    if (name === null) return;
+    const yes = await showConfirm({
+      title: 'Replace this terminal?',
+      message: 'The current terminal will be decommissioned and can no longer connect. The new terminal must pass the supervised physical test again before automatic block/unblock switches on.',
+      confirmText: 'Replace terminal',
+      destructive: true,
+    });
+    if (!yes) return;
+    if (errorEl()) errorEl().textContent = '';
+    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/replace`, {
+      method: 'POST',
+      body: { device_serial: String(serial).trim(), device_name: String(name).trim(), confirm: true },
+    });
+    if (!response.ok) { fail(response, 'Could not replace the terminal. Check the serial number and try again.'); return; }
+    showToast('Terminal replaced — complete the supervised physical test on the new terminal.', 'success');
+    await load(el);
+  });
+
+  el.querySelector('#rrr-decommission-terminal')?.addEventListener('click', async () => {
+    const yes = await showConfirm({
+      title: 'Decommission this terminal?',
+      message: 'This terminal will stop receiving attendance and door commands, and can no longer connect. Members will need a replacement terminal (or manual check-in) for attendance. This cannot be undone — a terminal is re-added by registering it again.',
+      confirmText: 'Decommission terminal',
+      destructive: true,
+    });
+    if (!yes) return;
+    if (errorEl()) errorEl().textContent = '';
+    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/decommission`, {
+      method: 'POST', body: { confirm: true },
+    });
+    if (!response.ok) { fail(response, 'Could not decommission the terminal. Try again.'); return; }
+    showToast('Terminal decommissioned.', 'success');
+    await load(el);
+  });
+
+  el.querySelector('#rrr-restore-fingerprints')?.addEventListener('click', async () => {
+    const yes = await showConfirm({
+      title: 'Restore fingerprints?',
+      message: 'Re-pushes the stored fingerprint templates to this terminal — use after a terminal reset or replacement. No fingerprint data is shown here.',
+      confirmText: 'Restore fingerprints',
+    });
+    if (!yes) return;
+    if (errorEl()) errorEl().textContent = '';
+    const response = await apiRequest(`/api/mobile/v1/rrr/integrations/${direct.id}/restore-fingerprints`, {
+      method: 'POST', body: {},
+    });
+    if (!response.ok) { fail(response, 'Could not queue the fingerprint restore. Try again.'); return; }
+    // G4: toast the queued count. No template data is ever rendered.
+    const count = response.data?.queued_count ?? response.data?.count ?? response.data?.restored_count;
+    showToast(
+      typeof count === 'number'
+        ? `Fingerprint restore queued for ${count} member${count === 1 ? '' : 's'}.`
+        : (response.message || 'Fingerprint restore queued.'),
+      'success',
+    );
+  });
 }
 
 function progressText(cmd) {
@@ -364,6 +470,7 @@ function wireDirectPanel(el, direct, commands, commandsFailed = false) {
     pollCommand(el, direct.id, response.data.command.id);
   }));
   wireCommission(el, 'direct', direct, commands);
+  wireTerminalManage(el, direct);
 }
 
 function pollCommand(el, integrationId, commandId) {

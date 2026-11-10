@@ -66,6 +66,7 @@ function registerScreens() {
   router.register('inbox', () => import('./screens/inbox.js'), { auth: true });
   router.register('subscription', () => import('./screens/subscription.js'), { auth: true });
   router.register('access', () => import('./screens/access.js'), { auth: true });
+  router.register('audit-logs', () => import('./screens/audit-logs.js'), { auth: true });
   router.register('whatsapp', () => import('./screens/whatsapp.js'), { auth: true });
   router.register('whatsapp-setup', () => import('./screens/whatsapp-setup.js'), { auth: true });
   router.register('bot-overview', () => import('./screens/bot-overview.js'), { auth: true });

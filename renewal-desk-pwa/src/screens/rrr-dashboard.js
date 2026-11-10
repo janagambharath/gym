@@ -1,6 +1,6 @@
 import { apiRequest, getCachedSession } from '../api.js';
 import { navigate } from '../app.js';
-import { escapeHtml, formatCurrency, formatInteger, formatTime, getInvalidStoredTimezone, getEffectiveTimezone } from '../utils.js';
+import { escapeHtml, formatCurrency, formatInteger, formatTime, formatDate, formatDateTime, getInvalidStoredTimezone, getEffectiveTimezone } from '../utils.js';
 import { attachLiveRefresh } from '../live-refresh.js';
 import { icon } from '../icons.js';
 
@@ -17,10 +17,14 @@ export default { async mount(el) {
 
 async function load(el, background = false) {
   if (!background) el.innerHTML = `<main class="rrr-page rrr-dashboard-page"><div class="rrr-dashboard-skeleton"><div class="skeleton" style="height:52px;border-radius:14px;margin-bottom:20px"></div><div class="skeleton skeleton-text" style="width:45%;height:14px;margin-bottom:8px"></div><div class="skeleton skeleton-text" style="width:80%;height:34px;margin-bottom:8px"></div><div class="skeleton skeleton-text short" style="width:60%;margin-bottom:22px"></div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">${'<div class="skeleton" style="height:110px;border-radius:16px"></div>'.repeat(4)}</div>${'<div class="skeleton" style="height:190px;border-radius:20px;margin-bottom:14px"></div>'.repeat(3)}</div></main>`;
-  const [result, todayResult, settingsResult] = await Promise.all([
+  // G3b/G5: two optional legs. They must never break the dashboard —
+  // a failed leg just means no banner / no card on this render.
+  const [result, todayResult, settingsResult, accessResult, blockedResult] = await Promise.all([
     apiRequest('/api/mobile/v1/rrr/dashboard'),
     apiRequest('/api/mobile/v1/owner/today'),
     apiRequest('/api/mobile/v1/settings'),
+    apiRequest('/api/mobile/v1/access/summary'),
+    apiRequest('/api/mobile/v1/rrr/blocked-active'),
   ]);
   if (!result.ok) {
     if (background) {
@@ -46,6 +50,17 @@ async function load(el, background = false) {
     if (status) status.textContent = 'Some sections could not refresh · showing previous data';
   }
   const integration = data.integration;
+  // G3b: terminal_offline rides the access-summary payload per the
+  // contract (accepted from the rrr/dashboard payload too, if the
+  // backend ever puts it there). Rendered only while the flag is
+  // present — it disappears automatically when polling resumes.
+  const terminalOffline = (accessResult?.ok ? accessResult.data?.terminal_offline : null)
+    || data.terminal_offline || null;
+  // G5: detection only — active members blocked at the door. Shown only
+  // when the list is non-empty; never offers a block/unblock action.
+  const blockedActive = blockedResult?.ok
+    ? (blockedResult.data?.members || blockedResult.data?.blocked_active || [])
+    : [];
   const integrationName = integration?.type === 'adms_direct' ? 'Direct Cloud' : integration?.type === 'legacy_bridge' ? 'Bridge' : integration?.type === 'direct_bridge' ? 'Bridge' : 'eBioServer';
   const integrationStatusLabel = integration?.status === 'connected'
     ? `${integrationName} live`
@@ -78,6 +93,24 @@ async function load(el, background = false) {
       <div><span class="rrr-eyebrow">TODAY AT ${escapeHtml(gymName).toUpperCase()}</span><h1>Run the gym. Grow the business.</h1><p>${priorityCount ? `${formatInteger(priorityCount)} member opportunities need your attention.` : 'Everything looks clear. New signals will appear as members check in, pay and renew.'}</p></div>
       <button id="rrr-integrations" class="rrr-device-status ${integration?.status === 'connected' ? 'connected' : ''}"><i></i><span>${integrationStatusLabel}</span>${icon('chevronRight', 16)}</button>
     </section>
+    ${terminalOffline ? `
+    <section id="rrr-offline-banner" class="rrr-offline-banner" style="display:flex;align-items:center;gap:12px;background:#fef3c7;border:2px solid #f59e0b;border-radius:16px;padding:14px 16px;margin:0 0 16px 0">
+      <div style="font-size:28px;flex-shrink:0">⚠️</div>
+      <div style="flex:1;min-width:0">
+        <strong style="display:block;font-size:15px;color:#92400e">Terminal offline since ${escapeHtml(formatDateTime(terminalOffline.since))}</strong>
+        <span style="font-size:12px;color:#b45309">Punches and door commands are paused.${terminalOffline.last_success_at ? ` Last successful poll ${escapeHtml(formatDateTime(terminalOffline.last_success_at))}.` : ''}</span>
+      </div>
+      <button class="btn btn-sm btn-secondary" id="rrr-offline-live-access">Live Access →</button>
+    </section>` : ''}
+    ${blockedActive.length ? `
+    <section id="rrr-blocked-active-card" class="rrr-blocked-active-card" style="background:var(--critical-surface);border:1px solid var(--critical-border);border-radius:16px;padding:14px 16px;margin:0 0 16px 0">
+      <div style="display:flex;align-items:center;gap:var(--sp-sm);margin-bottom:var(--sp-sm)">
+        ${icon('alert', 18, 'var(--critical)')}
+        <strong style="font-size:15px;color:var(--critical)">${formatInteger(blockedActive.length)} active member${blockedActive.length === 1 ? '' : 's'} blocked at the door</strong>
+      </div>
+      <p style="font-size:var(--fs-xs);color:var(--muted);margin:0 0 var(--sp-sm)">These members have an active membership but the door is blocking them. Tap a member to review — this card only reports the problem.</p>
+      ${blockedActive.map((m) => `<div class="rrr-member-row rrr-member-tappable" data-member-id="${m.id}" style="cursor:pointer"><span class="rrr-member-dot red"></span><div><b>${escapeHtml(m.name || 'Unknown')}</b><span>${m.phone ? `${escapeHtml(m.phone)} · ` : ''}Enroll #${escapeHtml(String(m.enroll_number ?? '—'))}${m.membership_end ? ` · ends ${escapeHtml(formatDate(m.membership_end))}` : ''}</span></div>${icon('chevronRight', 15)}</div>`).join('')}
+    </section>` : ''}
     ${showBiometricLinkBanner && data.unmapped_count ? `
     <section id="rrr-link-banner" class="rrr-link-banner">
       <div class="rrr-link-banner-icon">🔗</div>
@@ -112,6 +145,9 @@ async function load(el, background = false) {
     </section>
   </main>`;
   el.querySelector('#rrr-integrations')?.addEventListener('click', () => navigate.push('rrr-integrations'));
+  // G3b: the offline banner links to Live Access (the terminal's live
+  // status) — the integrations screen is one tap further via its button.
+  el.querySelector('#rrr-offline-live-access')?.addEventListener('click', () => navigate.push('access'));
   // V8-L27: retry the whole load when an auxiliary leg failed.
   el.querySelector('#rrr-aux-retry')?.addEventListener('click', () => load(el));
   el.querySelector('#rrr-kpi-mapping')?.addEventListener('click', () => navigate.push('rrr-mappings'));

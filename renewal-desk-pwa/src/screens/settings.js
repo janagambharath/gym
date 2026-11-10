@@ -40,6 +40,7 @@ export default {
           ${renderMenuItem({ iconName: 'report', label: 'Reports', desc: 'Analytics & summaries', iconBg: 'var(--success-surface)', iconColor: 'var(--success)', onClick: 'reports' })}
           ${renderMenuItem({ iconName: 'wallet', label: 'Payment Setup', desc: 'UPI & QR settings', iconBg: 'var(--status-pending-surface)', iconColor: 'var(--status-pending)', onClick: 'payment-setup' })}
           ${renderMenuItem({ iconName: 'access', label: 'Access Control', desc: 'Biometric & attendance', iconBg: '#fce7f3', iconColor: '#db2777', onClick: 'access' })}
+          ${session?.userRole !== 'staff' ? renderMenuItem({ iconName: 'report', label: 'Audit Log', desc: 'Who did what, when (owner only)', iconBg: 'var(--gray-100)', iconColor: 'var(--muted)', onClick: 'audit-logs' }) : ''}
         </div>
 
         ${session?.userRole === 'gym_owner' ? `

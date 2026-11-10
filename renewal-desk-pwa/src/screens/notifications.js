@@ -28,11 +28,30 @@ export default { async mount(el) {
 
   function notifRowHtml(n, idx) {
     const ic = iconMap[n.type]||'notifications';
-    return `<div class="list-item" data-idx="${idx}" style="${n.read?'':'background:var(--brand-subtle)'};cursor:pointer">
-      <div style="width:36px;height:36px;border-radius:var(--r-full);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">${icon(ic,16,'var(--brand)')}</div>
+    // G3: terminal_offline alerts render distinctly — warning styling,
+    // the terminal serial and the last-seen time. The backend sends
+    // `category` + `is_read` (+ `data`); the PWA's older shape used
+    // `type` + `read` — accept both.
+    const isOfflineAlert = n.category === 'terminal_offline' || n.type === 'terminal_offline';
+    const isRead = n.read ?? n.is_read ?? false;
+    if (isOfflineAlert) {
+      const serial = n.data?.device_serial || n.data?.serial || n.device_serial || '';
+      const lastSeen = n.data?.last_seen_at || n.data?.since || n.last_seen_at || '';
+      return `<div class="list-item" data-idx="${idx}" data-offline-alert="1" style="${isRead ? '' : 'background:var(--warning-surface);'}border-left:3px solid var(--warning);cursor:pointer">
+      <div style="width:36px;height:36px;border-radius:var(--r-full);background:var(--warning-surface);display:flex;align-items:center;justify-content:center">${icon('warning', 16, 'var(--warning)')}</div>
       <div class="list-item-content">
-        <div class="list-item-title" style="font-weight:${n.read?'var(--fw-normal)':'var(--fw-bold)'}">${escapeHtml(n.title||n.message||'')}</div>
-        ${n.body?`<div class="list-item-subtitle">${escapeHtml(n.body)}</div>`:''}
+        <div class="list-item-title" style="font-weight:${isRead ? 'var(--fw-normal)' : 'var(--fw-bold)'}">${escapeHtml(n.title || 'Terminal offline')}</div>
+        ${n.body ? `<div class="list-item-subtitle">${escapeHtml(n.body)}</div>` : ''}
+        <div class="list-item-subtitle">Terminal offline${serial ? ` · Serial ${escapeHtml(serial)}` : ''}${lastSeen ? ` · Last seen ${escapeHtml(formatRelativeTime(lastSeen))}` : ''}</div>
+      </div>
+      <span style="font-size:var(--fs-xs);color:var(--muted);white-space:nowrap">${formatRelativeTime(n.created_at)}</span>
+    </div>`;
+    }
+    return `<div class="list-item" data-idx="${idx}" style="${isRead ? '' : 'background:var(--brand-subtle)'};cursor:pointer">
+      <div style="width:36px;height:36px;border-radius:var(--r-full);background:var(--brand-subtle);display:flex;align-items:center;justify-content:center">${icon(ic, 16, 'var(--brand)')}</div>
+      <div class="list-item-content">
+        <div class="list-item-title" style="font-weight:${isRead ? 'var(--fw-normal)' : 'var(--fw-bold)'}">${escapeHtml(n.title || n.message || '')}</div>
+        ${n.body ? `<div class="list-item-subtitle">${escapeHtml(n.body)}</div>` : ''}
       </div>
       <span style="font-size:var(--fs-xs);color:var(--muted);white-space:nowrap">${formatRelativeTime(n.created_at)}</span>
     </div>`;
@@ -49,12 +68,15 @@ export default { async mount(el) {
         // highlight once the server confirms it. V8-L21: the old code
         // cleared optimistically and fired the POST without awaiting it,
         // so a failed request left the server unread while the UI said read.
-        if (n.id && !n.read) {
+        // G3: accept the backend's `is_read` as well as the older `read`.
+        const alreadyRead = n.read ?? n.is_read ?? false;
+        if (n.id && !alreadyRead) {
           const r = await apiRequest(`/api/mobile/v1/notifications/${n.id}/read`, { method: 'POST' });
           if (!r.ok) {
             showToast(r.error?.message || 'Could not mark as read.', 'error');
           } else {
             n.read = true;
+            n.is_read = true;
             row.style.background = '';
             row.querySelector('.list-item-title').style.fontWeight = 'var(--fw-normal)';
           }
@@ -62,6 +84,8 @@ export default { async mount(el) {
         if (n.member_id) navigate.push('member-detail', { memberId: String(n.member_id) });
         else if (n.payment_id) navigate.push('payment-detail', { paymentId: String(n.payment_id) });
         else if (n.conversation_id) navigate.push('bot-conversation-detail', { conversationId: String(n.conversation_id) });
+        // G3: a terminal-offline alert opens the terminal setup screen.
+        else if (n.category === 'terminal_offline' || n.type === 'terminal_offline') navigate.push('rrr-integrations');
       });
     });
     // V4-L19: loadNotifications advances the page itself, only after
