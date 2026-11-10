@@ -84,3 +84,29 @@ class OtpAttempt(db.Model):
     challenge_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
     attempts = db.Column(db.Integer, nullable=False, default=0)
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+
+
+class OtpSendThrottle(db.Model):
+    """Per-phone OTP send throttle (V12-B2).
+
+    The send side of OTP had only the 5/min/IP limiter — any phone
+    could be flooded with OTP WhatsApps (each a paid template send)
+    at 5/min indefinitely, because nothing tracked sends per phone.
+    Keyed by phone hash (same hash-not-plaintext pattern as
+    OtpAttempt): a short cooldown between sends to the same number
+    plus a daily per-phone cap. The last issued challenge is stored
+    so a repeat request inside the cooldown gets the SAME challenge
+    back with its remaining TTL instead of a fresh OTP + fresh send.
+    Rows are tiny; cleanup_expired_otp_attempts purges stale ones
+    alongside the attempt rows.
+    """
+
+    __tablename__ = "otp_send_throttles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    phone_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    last_sent_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    last_challenge = db.Column(db.Text, nullable=True)
+    challenge_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    sends_today = db.Column(db.Integer, nullable=False, default=0)
+    day = db.Column(db.Date, nullable=False, index=True)

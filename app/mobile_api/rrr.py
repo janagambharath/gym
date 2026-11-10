@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
-from app.models import Member
+from app.models import Gym, Member
 from app.services.idempotency_service import (
     begin_idempotency,
     record_idempotency,
@@ -315,7 +315,14 @@ def register_rrr_routes(bp):
         if replay is not None:
             return replay
         serial = str(payload.get("device_serial") or "").strip()[:120]
-        name = str(payload.get("device_name") or "Elite Gym eSSL terminal").strip()[:160]
+        # V12-P8: never save another gym's name as this gym's device
+        # identity. Default to the gym's own name; fall back to a
+        # neutral label when the gym has no name stored.
+        _gym = Gym.query.get(g.gym_id)
+        _default_name = (
+            f"{_gym.name} eSSL terminal" if _gym and _gym.name else "eSSL terminal"
+        )
+        name = str(payload.get("device_name") or _default_name).strip()[:160]
         if not serial:
             return error_response("VALIDATION_ERROR", "device_serial is required.", 422)
         owned_elsewhere = RRRIntegration.query.filter(
@@ -774,6 +781,24 @@ def register_rrr_routes(bp):
                     delivered_at = delivered_at.replace(tzinfo=tz.utc)
                 if existing.status == "delivered" and delivered_at and delivered_at < stuck_cutoff:
                     existing.status = "failed"
+                    # V12-A3: the row used to keep whatever stale reason
+                    # it had (usually none) and leave no audit row.
+                    # Stamp the timeout distinctly and audit it BEFORE
+                    # the commit (V10-M1), like the getrequest reaper.
+                    existing.result_code = "TIMEOUT"
+                    existing.result_message = "Timeout: no ack within 10 min"
+                    audit(
+                        action="adms_command_ack_timeout",
+                        resource_type="rrr_adms_command",
+                        resource_id=existing.id,
+                        gym_id=g.gym_id,
+                        actor_id=g.user_id,
+                        metadata={
+                            "action": existing.action,
+                            "test_enroll_number": existing.test_enroll_number,
+                            "timeout_minutes": ADMS_DELIVERED_TIMEOUT_MINUTES,
+                        },
+                    )
                     db.session.commit()
                     existing = None
             except Exception:

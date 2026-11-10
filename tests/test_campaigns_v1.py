@@ -286,12 +286,16 @@ def test_cooldown_duplicate_protection(seed_gym):
     db.session.add(member)
     db.session.commit()
 
-    # Send a campaign today
+    # Send a campaign today. V12-B5: a template-less send now FAILS
+    # instead of silently falling back to raw text, so the first
+    # campaign needs a real template for the send to land (and the
+    # cooldown below to see it).
     c1 = create_campaign(
         gym_id=gym.id,
         name="Campaign 1",
         segment_type="custom_import",
         created_by_id=owner.id,
+        whatsapp_template_name="expired_member_reactivation_01",
         imported_contacts=[{"name": member.full_name, "phone": member.phone, "expiry_date": "2026-08-01"}],
     )
     send_campaign(c1.id, gym.id)

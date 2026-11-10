@@ -134,6 +134,18 @@ def _requeue_one_failed_adms_row(adms, row):
     # re-derivation below. Queued/delivered scans are returned as-is by
     # the dedupe (never stacked); only a failed scan mints a fresh row.
     if row.action == "sync_users":
+        # V12-A4: a USERINFO_TOO_LARGE failure is deterministic — the
+        # terminal re-uploads the same oversized snapshot on every
+        # retry, so re-driving it can never succeed. Skip it with a
+        # distinct reason instead of looping forever. Chunked snapshot
+        # upload is out of scope (not built); the failure itself
+        # already surfaces distinctly in the failed-commands data via
+        # result_code (GET .../adms/commands returns result_code per
+        # row), so the PWA crew can render it.
+        from app.adms.routes import USERINFO_TOO_LARGE_CODE
+
+        if row.result_code == USERINFO_TOO_LARGE_CODE:
+            return "skipped", None, "userinfo_too_large", None
         if not adms.commands_enabled or adms.last_success_at is None:
             return "skipped", None, "requeue_failed", None
         max_id_before = db.session.query(db.func.max(RRRAdmsCommand.id)).scalar() or 0
@@ -176,6 +188,20 @@ def _requeue_one_failed_adms_row(adms, row):
         else:
             reason = "unsupported_action"
         return "skipped", None, reason, None
+
+    # V12-A2: a failed OWNER (manual) row is never re-derived from
+    # membership state. Re-derivation maps an active member to an
+    # unblock, so a failed manual misconduct block would come back as
+    # a fresh unblock and be reported as a successful retry — the
+    # block could never be re-driven through Retry All. The owner
+    # re-queues via the member-page toggle; Retry All only reports
+    # the row as skipped ("manual_action"). Placed after the
+    # sync_users / test-action branches above: sync scans carry no
+    # actor and test rows keep their own skip reason. create_user
+    # rows are also safe here — they are queued with
+    # requested_by_id=None, so only manual block/unblock rows match.
+    if row.requested_by_id is not None:
+        return "skipped", None, "manual_action", None
 
     # V10-L10: resolve the CURRENT holder of the terminal identity
     # first — the enroll may have been recycled since the failure, and
@@ -234,9 +260,10 @@ def _retry_failed_adms_commands(adms):
 
     Rows that cannot be safely re-derived are left ``failed`` and
     reported in ``skipped``: test actions, ``unlock_door``, other
-    non-membership actions, unresolvable members, not-enableable
-    enrollments, members with no terminal identity, and rows the queue
-    refuses (commands disabled / terminal never polled). At most
+    non-membership actions, owner (manual) rows (V12-A2 — the owner
+    re-queues via the member-page toggle), unresolvable members,
+    not-enableable enrollments, members with no terminal identity, and
+    rows the queue refuses (commands disabled / terminal never polled). At most
     ``_ADMS_RETRY_BATCH_LIMIT`` rows are processed per call (V10-L12);
     the remainder is reported so the owner can tap Retry All again.
     Each row runs inside its own savepoint, so one bad row becomes a

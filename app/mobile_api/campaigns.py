@@ -5,7 +5,7 @@ from flask import g, jsonify, request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.mobile_api.errors import error_response
 from app.mobile_api.middleware import roles_required, token_required
 from app.models import MobileIdempotencyKey
@@ -143,6 +143,7 @@ def register_campaign_routes(bp):
     @bp.route("/campaigns", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def create_campaign_endpoint():
         data = request.get_json(silent=True) or {}
 
@@ -190,6 +191,12 @@ def register_campaign_routes(bp):
             )
 
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
+        # V12-B3: unguarded int() cast 500d on non-numeric input —
+        # guard it like the renewals.py sibling.
+        try:
+            attribution_window_days = int(data.get("attribution_window_days", 7))
+        except (TypeError, ValueError):
+            return error_response("VALIDATION_ERROR", "Invalid attribution_window_days.", 400)
         campaign = create_campaign(
             gym_id=g.gym_id,
             name=name,
@@ -199,7 +206,7 @@ def register_campaign_routes(bp):
             promo_preset=promo_preset,
             message_template=data.get("message_template"),
             whatsapp_template_name=data.get("whatsapp_template_name"),
-            attribution_window_days=int(data.get("attribution_window_days", 7)),
+            attribution_window_days=attribution_window_days,
             imported_contacts=imported_contacts,
             exclude_recent=exclude_recent,
             gym_timezone=gym_timezone,
@@ -247,6 +254,7 @@ def register_campaign_routes(bp):
     @bp.route("/campaigns/<int:campaign_id>/send", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def send_campaign_endpoint(campaign_id: int):
         # A retry after a successful send must replay the stored
         # summary, not 400 "Campaign is already sent" — the client
@@ -390,6 +398,7 @@ def register_campaign_routes(bp):
     @bp.route("/campaigns/import/validate", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def validate_import():
         data = request.get_json(silent=True) or {}
         contacts = data.get("contacts") or []
@@ -409,12 +418,18 @@ def register_campaign_routes(bp):
     @bp.route("/campaigns/cooldown-check", methods=["POST"])
     @token_required
     @roles_required("gym_owner", "staff")
+    @limiter.limit("10 per minute")
     def cooldown_check():
         data = request.get_json(silent=True) or {}
         segment_type = data.get("segment_type")
         member_ids = data.get("member_ids")
         phone_numbers = data.get("phone_numbers") or data.get("phones")
-        cooldown_days = int(data.get("cooldown_days") or 7)
+        # V12-B3: unguarded int() cast 500d on non-numeric input —
+        # guard it like the renewals.py sibling.
+        try:
+            cooldown_days = int(data.get("cooldown_days") or 7)
+        except (TypeError, ValueError):
+            return error_response("VALIDATION_ERROR", "Invalid cooldown_days.", 400)
         gym_timezone = g.current_user.gym.timezone or "Asia/Kolkata"
         res = check_cooldown_recipients(
             g.gym_id,

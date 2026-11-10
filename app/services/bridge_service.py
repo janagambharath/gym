@@ -2194,8 +2194,8 @@ def _queue_bridge_membership_command(member: Member, *, force: bool = False) -> 
 
 
 def _has_newer_manual_block(member: Member) -> bool:
-    """True when the member's latest acked state is an owner (manual) block
-    queued after the member's last membership change (V6-M7).
+    """True when the member's latest state is an owner (manual) block
+    queued after the member's last membership change (V6-M7, V12-A1).
 
     An owner blocking an active member for misconduct is a deliberate
     override of the membership-derived desired state (B-H1). A routine
@@ -2203,11 +2203,17 @@ def _has_newer_manual_block(member: Member) -> bool:
     The block only protects while it is newer than the last membership
     change (``member.updated_at``): a renewal/edit after the block means
     the owner has since touched the membership, so reconcile may proceed.
-    ADMS manual blocks carry ``requested_by_id`` on the command row;
-    bridge manual blocks are identified through their queue-time audit
-    row (bridge rows carry no actor). A missing audit row (legacy/purged)
-    fails open — documented limitation, not a silent undo: the audit is
-    the only record that a bridge block was manual.
+
+    V12-A1: protection is NOT acked-only. A manual block sitting
+    ``queued``/``delivered`` (ADMS) or ``pending``/``leased`` (bridge)
+    protects exactly like an acked one — before this fix the daily
+    scheduler unblock scan and Re-sync rewrote such a block into an
+    unblock before it ever reached the terminal. ADMS manual blocks
+    carry ``requested_by_id`` on the command row; bridge manual blocks
+    are identified through their queue-time audit row (bridge rows
+    carry no actor). A missing audit row (legacy/purged) fails open —
+    documented limitation, not a silent undo: the audit is the only
+    record that a bridge block was manual.
     """
     updated_at = member.updated_at
     if updated_at is not None:
@@ -2227,7 +2233,10 @@ def _has_newer_manual_block(member: Member) -> bool:
                 RRRAdmsCommand.gym_id == member.gym_id,
                 RRRAdmsCommand.test_enroll_number.in_(ids),
                 RRRAdmsCommand.action == "block",
-                RRRAdmsCommand.status == "acked",
+                # V12-A1: queued/delivered protect like acked — the
+                # terminal may not have polled yet, but the owner's
+                # intent is already on the row.
+                RRRAdmsCommand.status.in_(("acked", "queued", "delivered")),
                 RRRAdmsCommand.requested_by_id.isnot(None),
             )
             .order_by(RRRAdmsCommand.created_at.desc(), RRRAdmsCommand.id.desc())
@@ -2242,7 +2251,9 @@ def _has_newer_manual_block(member: Member) -> bool:
             BridgeCommand.gym_id == member.gym_id,
             BridgeCommand.member_id == member.id,
             BridgeCommand.command_type == "disable_user",
-            BridgeCommand.status == "acked",
+            # V12-A1: pending/leased protect like acked (bridge twin of
+            # the ADMS queued/delivered extension above).
+            BridgeCommand.status.in_(("acked", "pending", "leased")),
         )
         .order_by(BridgeCommand.created_at.desc(), BridgeCommand.id.desc())
         .first()

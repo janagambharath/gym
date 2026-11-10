@@ -888,9 +888,27 @@ def getrequest(path_token: str | None = None):
         RRRAdmsCommand.status == "delivered",
         RRRAdmsCommand.delivered_at < stuck_cutoff,
     ).all()
+    # V12-A3: a timed-out command used to vanish from the audit trail
+    # with no explanation. Stage the audit BEFORE the commit (V10-M1)
+    # so the timeout is on the trail with the failure itself. The
+    # reaper is device-driven (no owner actor), so no actor_id.
+    from app.services.audit_service import audit
+
     for s in stuck:
         s.status = "failed"
+        s.result_code = "TIMEOUT"
         s.result_message = "Timeout: no ack within 10 min"
+        audit(
+            action="adms_command_ack_timeout",
+            resource_type="rrr_adms_command",
+            resource_id=s.id,
+            gym_id=integration.gym_id,
+            metadata={
+                "action": s.action,
+                "test_enroll_number": s.test_enroll_number,
+                "timeout_minutes": ADMS_DELIVERED_TIMEOUT_MINUTES,
+            },
+        )
     if stuck:
         db.session.commit()
     # V9-L14: a queued unlock_door older than 10 min must never serve —

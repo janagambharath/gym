@@ -23,7 +23,7 @@ from app.models.google_play_subscription import GooglePlaySubscription
 from app.models.gym_deployment import GymDeployment
 from app.models.member import Member, MembershipPlan
 from app.models.member_access_state import MemberAccessState
-from app.models.mobile_token import ConsumedHandshakeToken, MemberRefreshToken, MobileRefreshToken, OtpAttempt
+from app.models.mobile_token import ConsumedHandshakeToken, MemberRefreshToken, MobileRefreshToken, OtpAttempt, OtpSendThrottle
 from app.models.mobile_idempotency import MobileIdempotencyKey
 from app.models.owner_operations import GymCashClose
 from app.models.payment_verification import PaymentVerification
@@ -77,6 +77,7 @@ __all__ = [
     "MemberRefreshToken",
     "ConsumedHandshakeToken",
     "OtpAttempt",
+    "OtpSendThrottle",
     "MobileIdempotencyKey",
     "NotificationTemplate",
     "PaymentVerification",

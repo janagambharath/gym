@@ -49,6 +49,7 @@ from app.models import (
     MembershipPlan,
     MemberRefreshToken,
     OtpAttempt,
+    OtpSendThrottle,
     PaymentVerification,
     QRSettings,
     RenewalHistory,
@@ -270,6 +271,142 @@ def _consume_otp_challenge(challenge: str) -> bool:
     except IntegrityError:
         # A concurrent verify consumed it first.
         return False
+
+
+def _as_aware_utc(dt):
+    """Coerce a stored datetime to aware-UTC.
+
+    SQLite returns naive datetimes for DateTime(timezone=True)
+    columns; a naive value is UTC here, so attach UTC instead of
+    letting an aware/naive comparison TypeError.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+# V12-B2: per-phone OTP send throttle. The 5/min/IP limiter alone
+# lets any phone be flooded with OTP WhatsApps (each a paid template
+# send) at 5/min indefinitely. DB-backed like the verify-side
+# OtpAttempt budget — never in-memory — so it holds across workers.
+OTP_SEND_COOLDOWN_SECONDS = 120
+OTP_SENDS_PER_DAY_CAP = 10
+
+
+def _otp_send_throttle_status(phone: str) -> dict:
+    """Check the per-phone OTP send throttle.
+
+    Returns {"allowed", "retry_after_seconds", "reason" ("cooldown" |
+    "daily_cap" | None), "challenge", "challenge_expires_in_seconds"}.
+    When not allowed, the still-valid last challenge is returned so
+    the caller can hand the member the code they already have instead
+    of minting a fresh OTP and a fresh paid send.
+    """
+    phone_hash = hashlib.sha256(phone.encode()).hexdigest()
+    row = OtpSendThrottle.query.filter_by(phone_hash=phone_hash).first()
+    if row is None:
+        return {
+            "allowed": True,
+            "retry_after_seconds": 0,
+            "reason": None,
+            "challenge": None,
+            "challenge_expires_in_seconds": None,
+        }
+    now = datetime.now(timezone.utc)
+    last_sent = _as_aware_utc(row.last_sent_at)
+    challenge_expires = _as_aware_utc(row.challenge_expires_at)
+    challenge = None
+    challenge_ttl = None
+    if row.last_challenge and challenge_expires and challenge_expires > now:
+        challenge = row.last_challenge
+        challenge_ttl = int((challenge_expires - now).total_seconds())
+    if last_sent is not None:
+        elapsed = (now - last_sent).total_seconds()
+        if elapsed < OTP_SEND_COOLDOWN_SECONDS:
+            return {
+                "allowed": False,
+                "retry_after_seconds": max(1, int(OTP_SEND_COOLDOWN_SECONDS - elapsed)),
+                "reason": "cooldown",
+                "challenge": challenge,
+                "challenge_expires_in_seconds": challenge_ttl,
+            }
+    sends_today = row.sends_today if row.day == now.date() else 0
+    if sends_today >= OTP_SENDS_PER_DAY_CAP:
+        midnight = datetime.combine(
+            now.date() + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+        )
+        return {
+            "allowed": False,
+            "retry_after_seconds": int((midnight - now).total_seconds()),
+            "reason": "daily_cap",
+            "challenge": challenge,
+            "challenge_expires_in_seconds": challenge_ttl,
+        }
+    return {
+        "allowed": True,
+        "retry_after_seconds": 0,
+        "reason": None,
+        "challenge": None,
+        "challenge_expires_in_seconds": None,
+    }
+
+
+def _otp_send_throttle_record(phone: str, challenge: str, challenge_expires_at_ts: int) -> None:
+    """Record a delivered OTP send for the per-phone throttle.
+
+    Takes the challenge expiry as a unix timestamp: request_otp has
+    a function-local ``from datetime import ...`` import (reviewer
+    branch) that shadows the module-level ``datetime`` name, so the
+    conversion must happen here, not at the call site.
+
+    Commits on its own: request_otp has no end-of-request commit, so
+    a flush alone would be rolled back at teardown and the throttle
+    would never persist. Best-effort — a failure here must never
+    break the login whose code was already sent.
+    """
+    now = datetime.now(timezone.utc)
+    challenge_expires_at = datetime.fromtimestamp(
+        challenge_expires_at_ts, tz=timezone.utc
+    )
+    phone_hash = hashlib.sha256(phone.encode()).hexdigest()
+    today = now.date()
+    try:
+        row = OtpSendThrottle.query.filter_by(phone_hash=phone_hash).first()
+        if row is None:
+            try:
+                with db.session.begin_nested():
+                    db.session.add(
+                        OtpSendThrottle(
+                            phone_hash=phone_hash,
+                            last_sent_at=now,
+                            last_challenge=challenge,
+                            challenge_expires_at=challenge_expires_at,
+                            sends_today=1,
+                            day=today,
+                        )
+                    )
+                db.session.commit()
+                return
+            except IntegrityError:
+                # Lost a race with a concurrent first send — re-read.
+                row = OtpSendThrottle.query.filter_by(phone_hash=phone_hash).first()
+                if row is None:
+                    return
+        if row.day != today:
+            row.sends_today = 0
+            row.day = today
+        row.last_sent_at = now
+        row.last_challenge = challenge
+        row.challenge_expires_at = challenge_expires_at
+        row.sends_today = (row.sends_today or 0) + 1
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        _logger.exception(
+            "Failed to record OTP send throttle for phone hash %s", phone_hash[:8]
+        )
 
 
 # V8-L3: per-member refresh-family cap. Each verify-otp used to mint a
@@ -523,6 +660,37 @@ def request_otp():
             "test_otp": None,  # never echo OTPs in responses,
         })
 
+    # V12-B2: per-phone send throttle — the 5/min/IP limiter alone
+    # lets any phone be flooded with OTP WhatsApps. A repeat request
+    # inside the cooldown gets the EXISTING challenge back (the same
+    # code still verifies — it lives 10 minutes) instead of a fresh
+    # OTP and a fresh paid send.
+    throttle = _otp_send_throttle_status(phone)
+    if not throttle["allowed"]:
+        if throttle["reason"] == "daily_cap":
+            return jsonify({
+                "success": False,
+                "error": "Too many verification codes sent to this number today. Please try again tomorrow.",
+                "challenge": throttle["challenge"],
+                "challenge_expires_in_seconds": throttle["challenge_expires_in_seconds"],
+                "retry_after_seconds": throttle["retry_after_seconds"],
+            }), 429
+        return jsonify({
+            "success": True,
+            "delivery_ok": True,
+            "delivery_error": None,
+            "delivery_warning": None,
+            "message": "A verification code was already sent to your WhatsApp number. Please wait before requesting a new one.",
+            "challenge": throttle["challenge"],
+            "challenge_expires_in_seconds": throttle["challenge_expires_in_seconds"],
+            "retry_after_seconds": throttle["retry_after_seconds"],
+            "cooldown_seconds": OTP_SEND_COOLDOWN_SECONDS,
+            "wa_chat_url": None,
+            "gym_name": member.gym.name if member.gym else None,
+            "powered_by": "VYNLA",
+            "test_otp": None,
+        }), 429
+
     if _is_reviewer_bypass_enabled() and (phone.endswith("9999999999") or phone.endswith("7995854994")):
         otp = "123456"
     else:
@@ -613,6 +781,12 @@ def request_otp():
     # For unit testing without real Meta credentials, mock delivery as OK
     if current_app.config.get("TESTING") and not delivery_error:
         delivery_ok = True
+
+    if delivery_ok:
+        # V12-B2: record the delivered send so the per-phone cooldown
+        # + daily cap see it. Only a delivered code counts — a failed
+        # send bills nobody and must not burn the member's retry.
+        _otp_send_throttle_record(phone, challenge, expires_at_ts)
 
     delivery_warning = None
     if not delivery_ok:
@@ -711,7 +885,25 @@ def verify_otp():
     # Reviewer verification for Google Play Store review
     if _is_reviewer_bypass_enabled():
         if member_id is None and (phone.endswith("9999999999") or phone.endswith("7995854994")) and otp == "123456":
-            reviewer_member = Member.query.filter(Member.phone.endswith(phone[-10:])).first()
+            # V12-L9: the bypass lookup was gym-unscoped — .first()
+            # across gyms could bind the reviewer to the wrong gym's
+            # member. Scope it by the challenge gym (parsed, not
+            # verified — parsing is not authentication; the fixed OTP
+            # + TESTING gate is the auth here), like the main HMAC
+            # path. With no challenge to scope by, bind only when
+            # exactly one live member matches the suffix.
+            _bypass_q = Member.query.filter(
+                Member.phone.endswith(phone[-10:]),
+                Member.deleted_at.is_(None),
+            )
+            _bypass_identity = _parse_challenge_identity(challenge) if challenge else None
+            if _bypass_identity is not None:
+                reviewer_member = _bypass_q.filter(
+                    Member.gym_id == _bypass_identity[1]
+                ).first()
+            else:
+                _bypass_matches = _bypass_q.all()
+                reviewer_member = _bypass_matches[0] if len(_bypass_matches) == 1 else None
             if reviewer_member:
                 member_id = reviewer_member.id
                 gym_id = reviewer_member.gym_id
@@ -1054,6 +1246,10 @@ def member_dashboard():
                 "name": gym.name if gym else None,
                 "phone": gym.business_phone_number if gym else None,
                 "address": gym.address if gym else None,
+                # V12-L4 follow-up: the RN client formats member dates
+                # in gym time; carry the zone so it is exact instead
+                # of fallback-based. Additive only.
+                "timezone": gym.timezone if gym else None,
             },
             "branding": _get_gym_branding(gym),
             "recent_renewals": [
@@ -1152,6 +1348,8 @@ def member_membership():
             "gym": {
                 "name": gym.name if gym else None,
                 "phone": gym.business_phone_number if gym else None,
+                # V12-L4 follow-up: see dashboard — same additive zone.
+                "timezone": gym.timezone if gym else None,
             },
             "renewal_history": [
                 {
@@ -1259,6 +1457,16 @@ def claim_payment():
     else:
         # Default to current plan
         plan = member.plan
+
+    # V12-M4: with no plan_id and no member.plan, this minted a ₹0
+    # pending claim (30 days) for a gym with no plans at all. Reject
+    # instead — a ₹0 claim is not a renewal. (The RN client half —
+    # not offering "Pay ₹0" — is a separate fix.)
+    if plan is None:
+        return jsonify({
+            "success": False,
+            "error": "No active membership plan found. Please ask your gym to set up a membership plan before renewing.",
+        }), 400
 
     amount = plan.price if plan else Decimal("0")
 
@@ -2162,6 +2370,8 @@ def member_profile():
                 "name": gym.name if gym else None,
                 "phone": gym.business_phone_number if gym else None,
                 "address": gym.address if gym else None,
+                # V12-L4 follow-up: see dashboard — same additive zone.
+                "timezone": gym.timezone if gym else None,
             },
             "payment_info": {
                 "upi_id": qr_settings.upi_id if qr_settings else None,

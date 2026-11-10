@@ -685,6 +685,14 @@ def register_members_routes(bp):
                     return error_response("VALIDATION_ERROR", "Amount must be a finite number.", 400)
                 if _initial_amt < 0:
                     return error_response("VALIDATION_ERROR", "Amount cannot be negative.", 400)
+                # V12 (V8-L14 residual): same cap + 2dp check as
+                # create_payment (payments.py) — an uncapped or
+                # 3dp initial amount reached the Numeric(10,2)
+                # column and failed/rounded at the DB layer.
+                if _initial_amt > Decimal("99999999.99"):
+                    return error_response("VALIDATION_ERROR", "Amount must be at most 99999999.99.", 400)
+                if _initial_amt.as_tuple().exponent < -2:
+                    return error_response("VALIDATION_ERROR", "Amount must have at most 2 decimal places.", 400)
             if _raw_amount is not None and str(_raw_amount).strip() != "" and data.get("paid", True):
                 _initial_method = str(data.get("payment_method") or data.get("method") or "cash").strip().lower()
                 if _initial_method not in PAYMENT_METHODS:

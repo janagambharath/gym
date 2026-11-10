@@ -6,6 +6,7 @@ Implements the core campaign lifecycle:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone as tz
 from decimal import Decimal
 from typing import Any
@@ -25,6 +26,17 @@ from app.services.whatsapp_service import WhatsAppService
 from app.utils.helpers import normalize_phone_e164, phone_to_whatsapp
 
 _logger = logging.getLogger(__name__)
+
+
+# V12-B4: the template-catalog example link uses the same public base
+# as the links actually sent — PUBLIC_BASE_URL with the Railway prod URL
+# only as the fallback default (matching staff.py's invite link). Read
+# at import time: this catalog dict is module-level, so it cannot see
+# the Flask config; the send path below reads the live config instead.
+_RENEWAL_LINK_EXAMPLE_BASE = (
+    os.environ.get("PUBLIC_BASE_URL", "https://gym-production-910c.up.railway.app").rstrip("/")
+    or "https://gym-production-910c.up.railway.app"
+)
 
 
 # ── Approved Meta Templates ──────────────────────────────────────────
@@ -48,7 +60,7 @@ APPROVED_TEMPLATES: dict[str, dict[str, Any]] = {
             {"key": "{{1}}", "label": "Member Name", "example": "Rahul"},
             {"key": "{{2}}", "label": "Gym Name", "example": "PowerFit Gym"},
             {"key": "{{3}}", "label": "Renewal Amount", "example": "₹1,500"},
-            {"key": "{{4}}", "label": "Renewal Link", "example": "https://gym-production-910c.up.railway.app/renew/101"},
+            {"key": "{{4}}", "label": "Renewal Link", "example": f"{_RENEWAL_LINK_EXAMPLE_BASE}/renew/101"},
         ],
         "button": {"type": "QUICK_REPLY", "text": "Renew Now"},
         "status": "APPROVED",
@@ -869,6 +881,8 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
     # Check for pre-populated recipients (e.g. from imported CSV)
     recipients = CampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
 
+    # V12-B1: members skipped by the 7-day WhatsApp cooldown.
+    skipped_cooldown = 0
     if not recipients:
         # Segment-based lookup
         members = get_segment_members(gym_id, campaign.segment_type, gym_timezone)
@@ -878,9 +892,25 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
             campaign.completed_at = utcnow()
             campaign.total_recipients = 0
             db.session.commit()
-            return {"success": True, "sent": 0, "failed": 0, "total": 0, "message": "No members match this segment."}
+            return {"success": True, "sent": 0, "failed": 0, "total": 0, "skipped_cooldown": 0, "message": "No members match this segment."}
 
+        # V12-B1: enforce the 7-day WhatsApp cooldown the product
+        # promises. The import branch honours exclude_recent at
+        # create, but this branch built recipients straight from the
+        # segment — members messaged days ago got messaged again, a
+        # paid template send each. Apply the same 7-day cutoff here
+        # at send time, from the existing CampaignRecipient.sent_at
+        # rows (no migration; Campaign stores no exclude_recent
+        # flag, so segment sends always enforce the cooldown).
+        in_cooldown_ids = set(
+            check_cooldown_recipients(
+                gym_id, member_ids=[m.id for m in members], cooldown_days=7
+            )["in_cooldown_member_ids"]
+        )
         for member in members:
+            if member.id in in_cooldown_ids:
+                skipped_cooldown += 1
+                continue
             recipient = CampaignRecipient(
                 campaign_id=campaign.id,
                 member_id=member.id,
@@ -890,6 +920,21 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
             db.session.add(recipient)
         db.session.flush()
         recipients = CampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+        if not recipients:
+            # Every segment member was contacted within the last 7 days.
+            campaign.status = "completed"
+            campaign.sent_at = utcnow()
+            campaign.completed_at = utcnow()
+            campaign.total_recipients = 0
+            db.session.commit()
+            return {
+                "success": True,
+                "sent": 0,
+                "failed": 0,
+                "total": 0,
+                "skipped_cooldown": skipped_cooldown,
+                "message": f"All {skipped_cooldown} member(s) were contacted within the last 7 days.",
+            }
 
     campaign.status = "sending"
     campaign.sent_at = utcnow()
@@ -923,11 +968,16 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
         expiry_date = member.membership_end.strftime("%d %b %Y") if member.membership_end else "N/A"
         days_left = (member.membership_end - today_for_gym(gym_timezone)).days if member.membership_end else 0
         plan_amount = str(recipient.renewal_amount or (member.plan.price if member.plan else "1500"))
-        renewal_link = f"https://gym-production-910c.up.railway.app/renew/{member.id}"
+        # V12-B4: build the renewal link from PUBLIC_BASE_URL — the
+        # Railway prod URL is only the fallback default (matching
+        # staff.py's invite link), never hardcoded.
+        public_base_url = (current_app.config.get("PUBLIC_BASE_URL") or "").rstrip("/") or (
+            "https://gym-production-910c.up.railway.app"
+        )
+        renewal_link = f"{public_base_url}/renew/{member.id}"
 
         # Resolve body parameters based on template name
         body_params = []
-        fallback_text = ""
 
         if template_name == "expired_member_reactivation_01":
             body_params = [
@@ -936,14 +986,6 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
                 f"₹{plan_amount}",
                 renewal_link,
             ]
-            fallback_text = (
-                f"Hi {member.full_name or 'Member'} 👋\n\n"
-                f"Your membership at {gym.name} has expired.\n\n"
-                f"We'd love to have you back.\n\n"
-                f"Renew your membership for ₹{plan_amount} and get back on track 💪\n\n"
-                f"{renewal_link}\n\n"
-                f"Reply here if you have any questions."
-            )
         elif template_name == "gym_special_offer_01":
             offer_desc = campaign.message_template or "Get a special renewal discount this week!"
             offer_valid = (today_for_gym(gym_timezone) + timedelta(days=7)).strftime("%d %b %Y")
@@ -953,13 +995,6 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
                 offer_desc,
                 offer_valid,
             ]
-            fallback_text = (
-                f"Hi {member.full_name or 'Valued Customer'} 👋\n\n"
-                f"{gym.name} has a special offer for you this week.\n\n"
-                f"{offer_desc}\n\n"
-                f"Offer valid until {offer_valid}.\n\n"
-                f"Tap below to learn more."
-            )
         elif template_name == "gym_announcement_01":
             announcement = campaign.message_template or "New facilities and timings are now active."
             body_params = [
@@ -967,22 +1002,11 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
                 gym.name,
                 announcement,
             ]
-            fallback_text = (
-                f"Hi {member.full_name or 'Valued Customer'} 👋\n\n"
-                f"An update from {gym.name}:\n\n"
-                f"{announcement}\n\n"
-                f"For more details, reply to this message."
-            )
         elif template_name == "renewal_desk_test_01":
             body_params = [
                 member.full_name or "Test User",
                 gym.name,
             ]
-            fallback_text = (
-                f"Hi {member.full_name or 'Test User'} 👋\n\n"
-                f"This is a test message from {gym.name}.\n\n"
-                f"Thank you for using Renewal Desk."
-            )
         else:
             body_params = [
                 member.full_name or "Member",
@@ -990,12 +1014,13 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
                 expiry_date,
                 str(max(days_left, 0)),
             ]
-            fallback_text = (
-                campaign.message_template
-                or gym.renewal_reminder_template
-                or f"Hi {member.full_name}, your membership at {gym.name} expires on {expiry_date}."
-            )
 
+        # V12-B5: NO silent fallback to untemplated free-form text.
+        # When the template send fails — or no template is configured
+        # at all — the recipient FAILS loudly with the reason, so the
+        # owner sees the template problem instead of a member getting
+        # raw marketing copy past template approval (and the send
+        # being reported as "sent").
         result = None
         if template_name:
             result = whatsapp.send_template(
@@ -1005,9 +1030,6 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
                 body_parameters=body_params,
             )
 
-        if not result or not result.ok:
-            result = whatsapp.send_text(to=phone, body=fallback_text)
-
         if result and result.ok:
             recipient.sent_at = utcnow()
             recipient.status = "sent"
@@ -1015,7 +1037,12 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
             sent += 1
         else:
             recipient.status = "failed"
-            recipient.error_message = result.error if result else "Failed to send"
+            if not template_name:
+                recipient.error_message = "No WhatsApp template configured for this campaign."
+            else:
+                recipient.error_message = (
+                    result.error if result and result.error else "Template send failed"
+                )
             failed += 1
 
     campaign.total_sent = sent
@@ -1030,7 +1057,7 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
         resource_type="campaign",
         resource_id=campaign.id,
         gym_id=gym_id,
-        metadata={"sent": sent, "failed": failed, "total": len(recipients)},
+        metadata={"sent": sent, "failed": failed, "total": len(recipients), "skipped_cooldown": skipped_cooldown},
     )
     db.session.commit()
 
@@ -1039,6 +1066,7 @@ def send_campaign(campaign_id: int, gym_id: int) -> dict[str, Any]:
         "sent": sent,
         "failed": failed,
         "total": len(recipients),
+        "skipped_cooldown": skipped_cooldown,
         "message": f"Campaign sent to {sent} of {len(recipients)} contacts.",
     }
 

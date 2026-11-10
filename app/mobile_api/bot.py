@@ -145,8 +145,13 @@ def register_bot_routes(bp):
     def list_leads():
         status = request.args.get("status", "").strip()
         search = request.args.get("search", "").strip()
-        page = max(1, int(request.args.get("page", 1)))
-        page_size = min(50, max(1, int(request.args.get("page_size", 20))))
+        # V12-B3: unguarded int() casts 500d on ?page=abc — guard
+        # them like the renewals.py sibling.
+        try:
+            page = max(1, int(request.args.get("page", 1)))
+            page_size = min(50, max(1, int(request.args.get("page_size", 20))))
+        except (TypeError, ValueError):
+            return error_response("VALIDATION_ERROR", "Invalid page or page_size.", 400)
 
         query = BotLead.query.filter_by(gym_id=g.gym_id)
         if status:
