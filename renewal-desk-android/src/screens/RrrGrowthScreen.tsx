@@ -4,7 +4,7 @@ import { Alert, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest, getCachedSession } from '../services/apiClient';
 import { isOwnerRole, rrrGrowthOwnerSections } from '../services/roleAccess';
-import { rotateAdmsToken, setAdmsSerialFallback } from '../services/admsIntegration';
+import { decommissionTerminal, replaceTerminal, restoreFingerprints, restoreQueuedCount, rotateAdmsToken, setAdmsSerialFallback } from '../services/admsIntegration';
 import type { AdmsTerminalSettings } from '../services/admsIntegration';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import { formatDateTime, formatTime } from '../types';
@@ -68,6 +68,13 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate, onNavigateOp
   const [pairingCode, setPairingCode] = useState('');
   const [rotatingToken, setRotatingToken] = useState(false);
   const [switchingSerial, setSwitchingSerial] = useState(false);
+  // G1/G4 (v11): terminal replace / decommission / fingerprint restore.
+  const [replacingTerminal, setReplacingTerminal] = useState(false);
+  const [decommissioningTerminal, setDecommissioningTerminal] = useState(false);
+  const [restoringFingerprints, setRestoringFingerprints] = useState(false);
+  const [showReplaceForm, setShowReplaceForm] = useState(false);
+  const [newSerial, setNewSerial] = useState('');
+  const [newDeviceName, setNewDeviceName] = useState('');
   // Fresh terminal values after a token rotate — shown exactly once, never
   // re-fetched (the backend returns the token once by design).
   const [freshSettings, setFreshSettings] = useState<AdmsTerminalSettings | null>(null);
@@ -240,6 +247,98 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate, onNavigateOp
                 const next = result.data.integration.allow_serial_fallback ?? enabling;
                 setIntegrations((current) => current.map((item) => item.id === direct.id ? { ...item, allow_serial_fallback: next } : item));
               } else Alert.alert('Could not switch login mode', result.error.message);
+            })();
+          },
+        },
+      ],
+    );
+  };
+  /** G1 (v11): replace the terminal. The confirm dialog states the
+   * consequences — the old terminal is decommissioned and the
+   * supervised physical door test must pass again before automatic
+   * block/unblock enables on the new serial. Backend 409s (e.g. the
+   * serial belongs to another gym) surface verbatim. */
+  const confirmReplaceTerminal = () => {
+    if (!direct || replacingTerminal) return;
+    const serialValue = newSerial.trim();
+    if (!serialValue) { Alert.alert('New terminal serial required', 'Enter the serial from the new terminal (Menu → System Info).'); return; }
+    Alert.alert(
+      'Replace this terminal?',
+      `The current terminal (${direct.device_serial}) will be decommissioned and stop working with RRR. The new terminal (${serialValue}) gets a fresh connection token, and the supervised physical door test must pass again before automatic block/unblock enables.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Replace terminal',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setReplacingTerminal(true);
+              const result = await replaceTerminal(apiRequest, direct.id, {
+                device_serial: serialValue,
+                device_name: newDeviceName.trim() || 'Gym entry terminal',
+              });
+              setReplacingTerminal(false);
+              if (result.ok) {
+                setShowReplaceForm(false);
+                setNewSerial('');
+                Alert.alert('Terminal replaced', 'The old terminal is decommissioned. Set up the new terminal with its fresh values, then pass the supervised door test to enable automatic block/unblock.');
+                void load();
+              } else Alert.alert('Could not replace terminal', result.error.message);
+            })();
+          },
+        },
+      ],
+    );
+  };
+  /** G1 (v11): decommission the terminal. Confirm first — this
+   * disconnects it from RRR and it stops syncing attendance. */
+  const confirmDecommissionTerminal = () => {
+    if (!direct || decommissioningTerminal) return;
+    Alert.alert(
+      'Decommission this terminal?',
+      `Terminal ${direct.device_serial} will be disconnected from RRR and stop syncing attendance. This cannot be undone — reconnecting needs a fresh setup.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Decommission',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setDecommissioningTerminal(true);
+              const result = await decommissionTerminal(apiRequest, direct.id);
+              setDecommissioningTerminal(false);
+              if (result.ok) {
+                Alert.alert('Terminal decommissioned', 'The terminal is disconnected from RRR.');
+                void load();
+              } else Alert.alert('Could not decommission terminal', result.error.message);
+            })();
+          },
+        },
+      ],
+    );
+  };
+  /** G4 (v11): re-queue stored fingerprint templates to the terminal.
+   * The backend restores only onto the same member the template
+   * belongs to; the response carries a queued count, never template
+   * data — nothing here renders templates. */
+  const confirmRestoreFingerprints = () => {
+    if (!direct || restoringFingerprints) return;
+    Alert.alert(
+      'Restore fingerprints?',
+      'Fingerprint templates stored for this gym will be re-queued to the terminal for the same members they belong to. Keep the terminal online; it picks them up on its next poll.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore fingerprints',
+          onPress: () => {
+            void (async () => {
+              setRestoringFingerprints(true);
+              const result = await restoreFingerprints(apiRequest, direct.id);
+              setRestoringFingerprints(false);
+              if (result.ok) {
+                const queued = restoreQueuedCount(result.data);
+                Alert.alert('Fingerprints queued', `${queued} fingerprint restore${queued === 1 ? '' : 's'} queued. Keep the terminal online; it will receive them on its next poll.`);
+              } else Alert.alert('Could not restore fingerprints', result.error.message);
             })();
           },
         },
@@ -556,10 +655,15 @@ export function RrrGrowthScreen({ onBack, onNavigateBulkDeactivate, onNavigateOp
     {(['revenue', 'retain', 'recover'] as const).map((pillar) => { const tone = tones[pillar]; const values = pillars[pillar]; return <View key={pillar} style={[styles.focus, { backgroundColor: tone.surface }]}><View style={styles.focusTop}><View><Text style={[styles.focusLabel, { color: tone.color }]}>{tone.label}</Text><Text style={styles.rowSub}>{tone.copy}</Text></View><Text style={[styles.focusCount, { color: tone.color }]}>{values?.count ?? 0}</Text></View><View style={styles.focusBottom}><Text style={styles.copy}>{pillar === 'revenue' ? 'Revenue opportunities' : pillar === 'retain' ? 'Members at risk' : 'Inactive / expired'}</Text><Text style={[styles.focusValue, { color: tone.color }]}>₹{money(Number(values?.potential_revenue || 0))}</Text></View>{(data?.opportunities || []).filter((item) => item.pillar === pillar).slice(0, 2).map((item) => <View key={item.id} style={styles.opportunity}><View style={recoveryStyles.opportunityCopy}><Text style={styles.rowTitle}>{item.member.name}</Text><Text style={styles.rowSub}>{item.reason}</Text><Text style={styles.rowSub}>{item.status}</Text></View><View style={recoveryStyles.opportunityActions}><TouchableOpacity onPress={() => void markActioned(item.id)}><Text style={[styles.link, { color: tone.color }]}>Action</Text></TouchableOpacity><TouchableOpacity onPress={() => { setOutcomeAmount(''); setRecoveryTarget(item); }}><Text style={[styles.link, { color: colors.successDark }]}>Recovered</Text></TouchableOpacity></View></View>)}
     {onNavigateOpportunities ? <TouchableOpacity onPress={() => onNavigateOpportunities(pillar)}><Text style={[styles.link, { color: tone.color }]}>View all {pillar === 'revenue' ? 'revenue opportunities' : pillar === 'retain' ? 'at-risk members' : 'inactive / expired members'} →</Text></TouchableOpacity> : null}</View>; })}
     <View style={[styles.card, styles.directCard]}><View style={styles.cardHeader}><View><Text style={styles.cardEyebrow}>ATTENDANCE CONNECTION</Text><Text style={styles.cardTitle}>Direct Cloud</Text></View><View style={[styles.status, directLive ? styles.live : styles.setup]}><Text style={[styles.statusText, directLive ? styles.liveText : styles.setupText]}>{directLive ? 'LIVE' : 'SET UP'}</Text></View></View>
-      {direct ? <><Text style={styles.deviceTitle}>{direct.device_name || 'Gym entry terminal'}</Text><Text style={styles.copy}>{direct.device_serial} · {direct.records_synced || 0} attendance records · {data?.unmapped_count || 0} need review</Text><View style={styles.server}><Text style={styles.serverLabel}>Terminal Cloud Server</Text><Text selectable style={styles.serverHost}>{direct.terminal_settings?.server_address || '—'}</Text><Text style={styles.serverMeta}>ADMS mode · Port {direct.terminal_settings?.server_port ?? '—'} · HTTPS {direct.terminal_settings?.https === false ? 'off' : 'on'} · Path {direct.terminal_settings?.path || '/iclock'}</Text></View><Text style={styles.copy}>Terminal: Menu → Comm. → Cloud Server Setting. Save these values and make a test punch. Your phone never joins the gym LAN.</Text>
+      {direct ? <><Text style={styles.deviceTitle}>{direct.device_name || 'Gym entry terminal'}</Text><Text style={styles.copy}>{direct.device_serial} · {direct.records_synced || 0} attendance records · {data?.unmapped_count || 0} need review</Text><Text style={styles.copy}>Commissioning: {direct.commissioning_status ?? (direct.commands_enabled ? 'complete — automatic block/unblock is on' : 'pending — supervised door test not passed yet')}</Text><View style={styles.server}><Text style={styles.serverLabel}>Terminal Cloud Server</Text><Text selectable style={styles.serverHost}>{direct.terminal_settings?.server_address || '—'}</Text><Text style={styles.serverMeta}>ADMS mode · Port {direct.terminal_settings?.server_port ?? '—'} · HTTPS {direct.terminal_settings?.https === false ? 'off' : 'on'} · Path {direct.terminal_settings?.path || '/iclock'}</Text></View><Text style={styles.copy}>Terminal: Menu → Comm. → Cloud Server Setting. Save these values and make a test punch. Your phone never joins the gym LAN.</Text>
       {direct.terminal_settings?.token_present && ownerSections.showTerminalSetup ? <View style={styles.tokenBox}><Text style={styles.copy}>Connection values hidden. The token for this terminal is stored securely and can&apos;t be shown again — rotate to get fresh values.</Text><Button text={rotatingToken ? 'Rotating…' : 'Rotate token — get fresh values'} onPress={() => void rotateToken()} secondary disabled={rotatingToken} /></View> : null}
       {freshSettings && ownerSections.showTerminalSetup ? <View style={styles.server}><Text style={styles.serverLabel}>Fresh values — copy them NOW (shown once)</Text><Text selectable style={styles.serverHost}>{freshSettings.server_address || '—'}</Text><Text style={styles.serverMeta}>ADMS mode · Port {freshSettings.server_port ?? '—'} · HTTPS {freshSettings.https === false ? 'off' : 'on'} · Path {freshSettings.path || '/iclock'}</Text><Text style={styles.copy}>Save these in the terminal before leaving this screen. The old values keep working for 7 days.</Text></View> : null}
-      {ownerSections.showTerminalSetup ? <View style={styles.tokenBox}><Text style={styles.copy}>{direct.allow_serial_fallback ? 'Serial-number login is ON for this terminal — it connects with address + port only, no token needed.' : 'No path/URL field on your terminal? Some terminals can\'t send the token. Let this terminal log in with its serial number instead — it then needs only the address and port.'}</Text><Button text={switchingSerial ? 'Switching…' : direct.allow_serial_fallback ? 'Turn off serial login' : 'Connect with serial number instead'} onPress={() => void toggleSerialFallback()} secondary disabled={switchingSerial} /></View> : null}</> : ownerSections.showTerminalSetup ? <><Text style={styles.copy}>Connect eSSL attendance directly to RRR Cloud—no gym PC or bridge is required for attendance.</Text><TextInput style={styles.textInput} value={serial} onChangeText={setSerial} placeholder="Terminal serial number" placeholderTextColor={colors.muted} autoCapitalize="characters" /><TextInput style={styles.textInput} value={deviceName} onChangeText={setDeviceName} placeholder="Friendly terminal name" placeholderTextColor={colors.muted} /><Button text="Save terminal and continue" onPress={() => void provision()} /></> : <Text style={styles.copy}>Terminal setup is owner-only — ask the gym owner to connect the terminal.</Text>}</View>
+      {ownerSections.showTerminalSetup ? <View style={styles.tokenBox}><Text style={styles.copy}>{direct.allow_serial_fallback ? 'Serial-number login is ON for this terminal — it connects with address + port only, no token needed.' : 'No path/URL field on your terminal? Some terminals can\'t send the token. Let this terminal log in with its serial number instead — it then needs only the address and port.'}</Text><Button text={switchingSerial ? 'Switching…' : direct.allow_serial_fallback ? 'Turn off serial login' : 'Connect with serial number instead'} onPress={() => void toggleSerialFallback()} secondary disabled={switchingSerial} /></View> : null}
+      {ownerSections.showTerminalLifecycle ? <View style={styles.tokenBox}><Text style={styles.cardEyebrow}>TERMINAL LIFECYCLE</Text>
+        {showReplaceForm ? <><Text style={styles.copy}>Enter the new terminal&apos;s details. The current terminal will be decommissioned, and the supervised physical door test must pass again before automatic block/unblock enables.</Text><TextInput style={styles.textInput} value={newSerial} onChangeText={setNewSerial} placeholder="New terminal serial number" placeholderTextColor={colors.muted} autoCapitalize="characters" /><TextInput style={styles.textInput} value={newDeviceName} onChangeText={setNewDeviceName} placeholder="Friendly terminal name" placeholderTextColor={colors.muted} /><Button text={replacingTerminal ? 'Replacing…' : 'Confirm replacement'} onPress={() => void confirmReplaceTerminal()} disabled={replacingTerminal} /><Button text="Cancel" onPress={() => { setShowReplaceForm(false); setNewSerial(''); }} secondary /></> : <Button text="Replace terminal" onPress={() => { setNewDeviceName(direct.device_name || 'Gym entry terminal'); setShowReplaceForm(true); }} secondary />}
+        <Button text={restoringFingerprints ? 'Queuing…' : 'Restore fingerprints'} onPress={() => void confirmRestoreFingerprints()} secondary disabled={restoringFingerprints} />
+        <Button text={decommissioningTerminal ? 'Decommissioning…' : 'Decommission terminal'} onPress={() => void confirmDecommissionTerminal()} secondary disabled={decommissioningTerminal} />
+      </View> : null}</> : ownerSections.showTerminalSetup ? <><Text style={styles.copy}>Connect eSSL attendance directly to RRR Cloud—no gym PC or bridge is required for attendance.</Text><TextInput style={styles.textInput} value={serial} onChangeText={setSerial} placeholder="Terminal serial number" placeholderTextColor={colors.muted} autoCapitalize="characters" /><TextInput style={styles.textInput} value={deviceName} onChangeText={setDeviceName} placeholder="Friendly terminal name" placeholderTextColor={colors.muted} /><Button text="Save terminal and continue" onPress={() => void provision()} /></> : <Text style={styles.copy}>Terminal setup is owner-only — ask the gym owner to connect the terminal.</Text>}</View>
     {direct && ownerSections.showCommissioningConsole && <View style={styles.card}><Text style={styles.cardEyebrow}>CONTROLLED DEVICE TEST</Text><Text style={styles.cardTitle}>Commissioning console</Text><Text style={styles.copy}>These safe Group tests update USERINFO and preserve the fingerprint. Automatic access rules remain off until a test command is acknowledged and you verify the door in person.</Text><Text style={styles.command}>{latest ? `${latest.action.replace(/_/g, ' ')} · ${latest.status}${latest.result_code ? ` · ${latest.result_code}` : ''}` : 'No command sent yet.'}</Text><Button text="1. Send safe connection probe" onPress={() => void queue('probe_info')} secondary disabled={!directLive} />{!directLive ? <Text style={styles.copy}>Buttons unlock once the terminal phones home — finish step 2 above first.</Text> : null}<TextInput style={styles.textInput} value={testUserId} onChangeText={setTestUserId} keyboardType="number-pad" placeholder="Fake terminal User ID (example: 999)" placeholderTextColor={colors.muted} /><TextInput style={styles.textInput} value={testUserName} onChangeText={setTestUserName} placeholder="Exact name currently shown on terminal" placeholderTextColor={colors.muted} /><TouchableOpacity style={recoveryStyles.testConfirmation} onPress={() => setTestMemberConfirmed((value) => !value)}><Text style={recoveryStyles.testConfirmationBox}>{testMemberConfirmed ? '☑' : '☐'}</Text><Text style={styles.copy}>I confirm this is the dedicated fake test account I created, not a real customer/member.</Text></TouchableOpacity><View style={styles.commands}><TouchableOpacity style={[styles.block, !directLive && { opacity: 0.5 }]} disabled={!directLive} onPress={() => void queue('essl_group_block_test')}><Text style={styles.blockText}>2. Test eSSL block (Grp=100)</Text></TouchableOpacity><TouchableOpacity style={[styles.unblock, !directLive && { opacity: 0.5 }]} disabled={!directLive} onPress={() => void queue('essl_group_unblock_test')}><Text style={styles.unblockText}>3. Test eSSL unblock (Grp=1)</Text></TouchableOpacity></View>
     <View style={styles.commissionRow}>
       <TouchableOpacity style={styles.checkbox} onPress={() => setDirectDoorConfirmed(!directDoorConfirmed)}>

@@ -352,7 +352,7 @@ export type AppNotificationItem = {
   id: number;
   title: string;
   body: string;
-  category: 'handover' | 'lead' | 'trial' | 'payment' | 'renewal' | 'general';
+  category: 'handover' | 'lead' | 'trial' | 'payment' | 'renewal' | 'general' | 'terminal_offline';
   data?: {
     screen?: string;
     conversation_id?: number;
@@ -361,6 +361,11 @@ export type AppNotificationItem = {
     member_id?: number;
     phone?: string;
     customer_name?: string;
+    /** G3 (v11): terminal-offline alerts carry the terminal serial and
+     * the last successful poll so the inbox can render them distinctly. */
+    device_serial?: string;
+    last_success_at?: string | null;
+    integration_id?: number;
   };
   is_read: boolean;
   created_at: string | null;
@@ -708,6 +713,17 @@ export type AccessSummary = {
       enroll_number: string | null;
       queued_at: string | null;
     }[];
+  } | null;
+  /**
+   * G3 (v11): terminal-offline alert — present ONLY while the terminal
+   * has not polled for 60+ minutes. The dashboard renders a warning
+   * card from this field and drops it automatically when polling
+   * resumes. Absent (undefined) on an older backend: the dashboard
+   * renders nothing. Exact contract: { since, last_success_at }.
+   */
+  terminal_offline?: {
+    since: string;
+    last_success_at: string | null;
   } | null;
 };
 

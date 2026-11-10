@@ -43,6 +43,7 @@ test('staff sees no owner-only RRR Growth sections', () => {
     showCommissioningConsole: false,
     showBridgeControls: false,
     showThresholds: false,
+    showTerminalLifecycle: false,
   });
 });
 
@@ -52,6 +53,7 @@ test('owner sees every RRR Growth section', () => {
     showCommissioningConsole: true,
     showBridgeControls: true,
     showThresholds: true,
+    showTerminalLifecycle: true,
   });
 });
 

@@ -15,6 +15,10 @@
  *     POST /rrr/integrations/:id/serial-fallback,
  *     POST /rrr/integrations/:id/test-command,
  *     POST /rrr/integrations/:id/commission,
+ *     POST /rrr/integrations/:id/replace,
+ *     POST /rrr/integrations/:id/decommission,
+ *     POST /rrr/integrations/:id/restore-fingerprints,
+ *     GET /audit-logs,
  *     POST /access/remote-unlock, POST /access/clear-failed,
  *     POST /access/retry-sync (owner-only since V10-L11).
  *   staff-allowed — GET /rrr/dashboard, GET+PATCH /rrr/opportunities,
@@ -45,8 +49,16 @@ export function canOpenDateRepair(isOwner: boolean): boolean {
   return isOwner;
 }
 
-/** AccessScreen: which owner-only buttons render. */
-export type AccessOwnerControls = {
+/**
+ * G2 (v11): the audit-log read API is owner-only on the backend — the
+ * Settings menu entry must not render for staff, same V7-L13 pattern
+ * as Date Repair above.
+ */
+export function canOpenAuditLog(isOwner: boolean): boolean {
+  return isOwner;
+}
+
+/** AccessScreen: which owner-only buttons render. */export type AccessOwnerControls = {
   /** POST /access/clear-failed — the Clear button in the failed-commands banner. */
   showClearFailed: boolean;
   /** POST /access/remote-unlock — the Unlock Gate button. */
@@ -71,6 +83,9 @@ export type RrrGrowthOwnerSections = {
   showBridgeControls: boolean;
   /** Signal-threshold inputs + Save thresholds. */
   showThresholds: boolean;
+  /** G1/G4 (v11): Replace terminal, Decommission terminal, Restore
+   * fingerprints — all owner-only on the backend. */
+  showTerminalLifecycle: boolean;
 };
 
 export function rrrGrowthOwnerSections(isOwner: boolean): RrrGrowthOwnerSections {
@@ -79,5 +94,6 @@ export function rrrGrowthOwnerSections(isOwner: boolean): RrrGrowthOwnerSections
     showCommissioningConsole: isOwner,
     showBridgeControls: isOwner,
     showThresholds: isOwner,
+    showTerminalLifecycle: isOwner,
   };
 }

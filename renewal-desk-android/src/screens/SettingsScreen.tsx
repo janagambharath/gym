@@ -42,6 +42,7 @@ type SettingsScreenProps = {
   onNavigateDateRepair?: () => void;
   onNavigateOwnerFinance?: () => void;
   onNavigateOwnerLeads?: () => void;
+  onNavigateAuditLog?: () => void;
 };
 
 export function SettingsScreen({
@@ -62,6 +63,7 @@ export function SettingsScreen({
   onNavigateDateRepair,
   onNavigateOwnerFinance,
   onNavigateOwnerLeads,
+  onNavigateAuditLog,
 }: SettingsScreenProps) {
   const [gym, setGym] = useState<GymSettings | undefined>();
   const [paymentSettings, setPaymentSettings] = useState<PaymentSettings | undefined>();
@@ -268,6 +270,11 @@ export function SettingsScreen({
             <MenuItem icon="analytics" label="RRR Growth System & eBioServer" onPress={onNavigateRrr} />
             {session?.userRole === 'gym_owner' ? (
               <MenuItem icon="staff" label="Staff Management & Permissions" onPress={onNavigateStaff} />
+            ) : null}
+            {/* G2 (v11): audit-log read is owner-only on the backend —
+                hide the entry for staff, same V7-L13 pattern as Staff. */}
+            {isOwner ? (
+              <MenuItem icon="document" label="Audit Log" onPress={onNavigateAuditLog} />
             ) : null}
             <MenuItem icon="access" label="Biometric Devices & Access Logs" onPress={onNavigateAccess} />
           </View>

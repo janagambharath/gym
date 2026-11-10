@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useState } from 'react';
 import { useLiveEffect } from '../hooks/useLiveEffect';
 import {
+  Alert,
   Image,
   RefreshControl,
   ScrollView,
@@ -17,6 +18,8 @@ import { OnboardingChecklistCard } from '../components/OnboardingChecklistCard';
 import { SectionHeader } from '../components/SectionHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { apiRequest, getCachedSession } from '../services/apiClient';
+import { blockedActiveCount, buildBlockedActiveUrl, hasBlockedActiveMembers, type BlockedActiveMember, type BlockedActiveResponse } from '../services/blockedActive';
+import { getTerminalOffline } from '../services/terminalOffline';
 import { Icon, type IconName } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
 import type { DashboardData, Member, Payment } from '../types';
@@ -92,6 +95,8 @@ export function DashboardScreen({
   const [upcoming, setUpcoming] = useState<Member[]>([]);
   const [recentPayments, setRecentPayments] = useState<Payment[]>([]);
   const [rrrSummary, setRrrSummary] = useState<any>();
+  // G5 (v11): active members blocked at the door — detection only.
+  const [blockedActive, setBlockedActive] = useState<BlockedActiveMember[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -129,6 +134,22 @@ export function DashboardScreen({
   const directRecovered =
     recoveredBreakdown?.direct_amount ?? data?.revenue_recovered?.direct_amount;
   const riskBreakdown = data?.recovery_rate?.risk_breakdown;
+  // G3 (v11): present ONLY while the access-summary payload carries
+  // terminal_offline — the card disappears automatically when polling
+  // resumes (the dashboard re-polls every 30s via useLiveEffect).
+  const terminalOffline = getTerminalOffline(data?.access_summary);
+
+  // G5 (v11): tap opens the existing member-detail flow so the owner
+  // can review access there — detection only, no block/unblock action
+  // is offered on this card.
+  const openBlockedMember = useCallback(async (member: BlockedActiveMember) => {
+    const res = await apiRequest<Member>(`/api/mobile/v1/members/${member.id}`);
+    if (res.ok) {
+      onNavigateMemberDetail?.(res.data);
+    } else {
+      Alert.alert('Could not open member', res.error.message);
+    }
+  }, [onNavigateMemberDetail]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -141,11 +162,14 @@ export function DashboardScreen({
     let cancelled = false;
 
     const fetchAll = async () => {
-      const [dashRes, upcomingRes, paymentsRes, rrrRes] = await Promise.all([
+      const [dashRes, upcomingRes, paymentsRes, rrrRes, blockedRes] = await Promise.all([
         apiRequest<DashboardData>('/api/mobile/v1/dashboard'),
         apiRequest<{ members: Member[] }>('/api/mobile/v1/renewals/upcoming'),
         apiRequest<{ payments: Payment[]; pagination: unknown }>('/api/mobile/v1/payments?page_size=5'),
         apiRequest<any>('/api/mobile/v1/rrr/dashboard'),
+        // G5 (v11): detection only — a failure degrades to an empty
+        // list (no card), never to a stale "Updated" gate below.
+        apiRequest<BlockedActiveResponse>(buildBlockedActiveUrl()),
       ]);
 
       if (cancelled) return;
@@ -161,6 +185,7 @@ export function DashboardScreen({
       if (upcomingRes.ok) setUpcoming(upcomingRes.data.members.slice(0, 5));
       if (paymentsRes.ok) setRecentPayments(paymentsRes.data.payments.slice(0, 5));
       if (rrrRes.ok) setRrrSummary(rrrRes.data);
+      if (blockedRes.ok) setBlockedActive(blockedRes.data.members ?? []);
       if (dashRes.ok && upcomingRes.ok && paymentsRes.ok && rrrRes.ok) {
         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       }
@@ -377,6 +402,69 @@ export function DashboardScreen({
                 <Icon name="forward" size={18} color={colors.brand} />
               </View>
             </TouchableOpacity>
+
+            {/* G3 (v11): terminal-offline warning — renders ONLY while
+                the access-summary payload carries terminal_offline.
+                Links to Live Access and the RRR integrations screen. */}
+            {terminalOffline ? (
+              <View style={[styles.card, styles.terminalOfflineCard]}>
+                <View style={styles.terminalOfflineHeader}>
+                  <Icon name="warning" size={18} color={colors.warning} />
+                  <Text style={styles.terminalOfflineTitle}>Terminal offline</Text>
+                </View>
+                <Text style={styles.terminalOfflineCopy}>
+                  Terminal offline since {formatDateTime(terminalOffline.since)}
+                  {terminalOffline.last_success_at ? ` · last successful poll ${formatDateTime(terminalOffline.last_success_at)}` : ''}.
+                  Attendance is not syncing.
+                </Text>
+                <View style={styles.terminalOfflineLinks}>
+                  {onNavigateAccess ? (
+                    <TouchableOpacity onPress={onNavigateAccess} activeOpacity={0.7}>
+                      <Text style={styles.link}>View Live Access →</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {onNavigateRrr ? (
+                    <TouchableOpacity onPress={onNavigateRrr} activeOpacity={0.7}>
+                      <Text style={styles.link}>Check terminal →</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
+
+            {/* G5 (v11): active members blocked at the door — detection
+                ONLY. Renders ONLY when the list is non-empty; no
+                block/unblock action anywhere here. Tap opens the
+                member detail (existing flow) for review. */}
+            {hasBlockedActiveMembers(blockedActive) ? (
+              <View style={[styles.card, styles.blockedActiveCard]}>
+                <SectionHeader
+                  title="Active members blocked at door"
+                  icon={<Icon name="alert" size={18} color={colors.critical} />}
+                />
+                <Text style={styles.blockedActiveCopy}>
+                  {blockedActiveCount(blockedActive)} active member{blockedActiveCount(blockedActive) === 1 ? '' : 's'} cannot enter — tap a member to review their access.
+                </Text>
+                {blockedActive.map((member) => (
+                  <TouchableOpacity
+                    key={member.id}
+                    style={styles.blockedActiveRow}
+                    onPress={() => void openBlockedMember(member)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.blockedActiveInfo}>
+                      <Text style={styles.blockedActiveName} numberOfLines={1}>{member.name}</Text>
+                      <Text style={styles.blockedActiveSub} numberOfLines={1}>
+                        {member.phone ?? 'No phone'}
+                        {member.enroll_number !== null && member.enroll_number !== undefined ? ` · Enroll #${member.enroll_number}` : ''}
+                        {member.membership_end ? ` · ends ${formatDate(member.membership_end)}` : ''}
+                      </Text>
+                    </View>
+                    <Icon name="forward" size={16} color={colors.muted} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
 
             {/* 🚨 Urgent Staff Handover Alert Box */}
             {data.bot_summary?.recent_handovers && data.bot_summary.recent_handovers.length > 0 ? (
@@ -1041,6 +1129,73 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: spacing.lg,
     ...shadows.sm,
+  },
+  link: {
+    color: colors.brand,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.semibold,
+  },
+  // G3 (v11): terminal-offline warning card — warning surface so an
+  // outage is visible at a glance; renders only while the payload
+  // carries terminal_offline.
+  terminalOfflineCard: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warningBorder,
+  },
+  terminalOfflineHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  terminalOfflineTitle: {
+    color: colors.warningDark,
+    fontSize: fontSize.lg,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+  terminalOfflineCopy: {
+    color: colors.warningDark,
+    fontSize: fontSize.base,
+    lineHeight: 20,
+    marginTop: spacing.xs,
+  },
+  terminalOfflineLinks: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  // G5 (v11): active members blocked at door — critical surface;
+  // detection only, no action buttons on this card.
+  blockedActiveCard: {
+    backgroundColor: colors.criticalSurface,
+    borderColor: colors.criticalBorder,
+  },
+  blockedActiveCopy: {
+    color: colors.textSecondary,
+    fontSize: fontSize.base,
+    lineHeight: 20,
+    marginTop: spacing.xs,
+  },
+  blockedActiveRow: {
+    alignItems: 'center',
+    borderTopColor: colors.borderLight,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  blockedActiveInfo: {
+    flex: 1,
+  },
+  blockedActiveName: {
+    color: colors.text,
+    fontSize: fontSize.base,
+    fontWeight: fontWeight.bold, fontFamily: fontFamily.bodyBold,
+  },
+  blockedActiveSub: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    marginTop: 2,
   },
   content: {
     gap: spacing.lg,

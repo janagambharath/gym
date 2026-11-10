@@ -58,6 +58,7 @@ const linking = {
           DateRepair: 'date-repair',
           OwnerFinance: 'finance',
           OwnerLeads: 'leads',
+          AuditLog: 'audit-log',
           Reports: 'reports',
           Plans: 'plans',
           Staff: 'staff',
@@ -93,6 +94,7 @@ import {
 } from '@expo-google-fonts/archivo';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { AddMemberScreen } from './src/screens/AddMemberScreen';
+import { AuditLogScreen } from './src/screens/AuditLogScreen';
 import { BotConversationDetailScreen } from './src/screens/BotConversationDetailScreen';
 import { BotConversationsScreen } from './src/screens/BotConversationsScreen';
 import { BotLeadDetailScreen } from './src/screens/BotLeadDetailScreen';
@@ -249,6 +251,7 @@ type MoreStackParamList = {
   RrrOpportunities: { pillar?: 'revenue' | 'retain' | 'recover' } | undefined;
   BulkDeactivate: undefined;
   DateRepair: undefined;
+  AuditLog: undefined;
   OwnerFinance: undefined;
   OwnerLeads: undefined;
   Subscription: undefined;
@@ -1229,6 +1232,7 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
             onNavigateDateRepair={() => props.navigation.navigate('DateRepair')}
             onNavigateOwnerFinance={() => props.navigation.navigate('OwnerFinance')}
             onNavigateOwnerLeads={() => props.navigation.navigate('OwnerLeads')}
+            onNavigateAuditLog={() => props.navigation.navigate('AuditLog')}
           />
         )}
       </MoreStackNav.Screen>
@@ -1256,6 +1260,9 @@ function MoreStackScreen({ onLogout, plans }: { onLogout: () => void; plans: Pla
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="DateRepair">
         {(props) => <DateRepairScreen onBack={() => props.navigation.goBack()} />}
+      </MoreStackNav.Screen>
+      <MoreStackNav.Screen name="AuditLog">
+        {(props) => <AuditLogScreen onBack={() => props.navigation.goBack()} onLogout={onLogout} />}
       </MoreStackNav.Screen>
       <MoreStackNav.Screen name="OwnerFinance">
         {(props) => <OwnerFinanceScreen onBack={() => props.navigation.goBack()} />}

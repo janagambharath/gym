@@ -32,6 +32,9 @@ const CATEGORY_CHIPS = [
   { key: 'lead', label: 'Leads', dotColor: colors.brand },
   { key: 'payment', label: 'Payments', dotColor: colors.success },
   { key: 'renewal', label: 'Renewals', dotColor: colors.statusExpiring },
+  // G3 (v11): terminal-offline alerts — one per outage, created when a
+  // terminal stops polling for 60+ minutes.
+  { key: 'terminal_offline', label: 'Terminal', dotColor: colors.warning },
 ];
 
 function formatTimeAgo(dateStr: string | null): string {
@@ -63,6 +66,10 @@ function getCategoryConfig(category: string): { icon: IconName; iconBg: string; 
       return { icon: 'cash', iconBg: colors.statusActiveSurface, iconColor: colors.success };
     case 'renewal':
       return { icon: 'time', iconBg: colors.statusExpiringSurface, iconColor: colors.statusExpiring };
+    // G3 (v11): terminal-offline alerts render distinctly — warning
+    // styling, terminal serial + last-seen time.
+    case 'terminal_offline':
+      return { icon: 'warning', iconBg: colors.warningSurface, iconColor: colors.warning };
     default:
       return { icon: 'notifications', iconBg: colors.gray50, iconColor: colors.textSecondary };
   }
@@ -231,9 +238,18 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
           }
           renderItem={({ item }) => {
             const { icon, iconBg, iconColor } = getCategoryConfig(item.category);
+            const isTerminalOffline = item.category === 'terminal_offline';
+            // G3 (v11): terminal serial + last-seen time, from the
+            // notification data (falls back to the alert time).
+            const terminalSerial = item.data?.device_serial;
+            const terminalLastSeen = item.data?.last_success_at ?? item.created_at;
             return (
               <TouchableOpacity
-                style={[styles.notificationCard, !item.is_read && styles.unreadCard]}
+                style={[
+                  styles.notificationCard,
+                  !item.is_read && styles.unreadCard,
+                  isTerminalOffline && styles.terminalOfflineCard,
+                ]}
                 onPress={() => void handlePressItem(item)}
                 activeOpacity={0.7}
               >
@@ -250,6 +266,12 @@ export function NotificationsScreen({ onBack, onNavigateScreen }: NotificationsS
                   <Text style={styles.body} numberOfLines={2}>
                     {item.body}
                   </Text>
+                  {isTerminalOffline ? (
+                    <Text style={styles.terminalOfflineDetail} numberOfLines={1}>
+                      {terminalSerial ? `Terminal ${terminalSerial}` : 'Terminal'}
+                      {terminalLastSeen ? ` · last seen ${formatTimeAgo(terminalLastSeen)}` : ''}
+                    </Text>
+                  ) : null}
                 </View>
                 {!item.is_read ? <View style={styles.unreadDot} /> : null}
               </TouchableOpacity>
@@ -353,6 +375,18 @@ const styles = StyleSheet.create({
   unreadCard: {
     backgroundColor: '#F8FAFC',
     borderColor: colors.border,
+  },
+  // G3 (v11): terminal-offline alerts stand out — warning border and
+  // surface so an outage is visible at a glance in the inbox.
+  terminalOfflineCard: {
+    backgroundColor: colors.warningSurface,
+    borderColor: colors.warningBorder,
+  },
+  terminalOfflineDetail: {
+    color: colors.warningDark,
+    fontSize: fontSize.sm,
+    fontWeight: fontWeight.semibold,
+    marginTop: 2,
   },
   unreadDot: {
     backgroundColor: colors.brand,
