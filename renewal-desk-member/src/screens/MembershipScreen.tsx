@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { apiClient } from '../services/apiClient';
 import { useBranding } from '../context/BrandingContext';
+import { formatGymDate } from '../utils/gymTime';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { RootStackParamList, RenewalRecord } from '../types';
@@ -53,15 +54,8 @@ export const MembershipScreen: React.FC = () => {
     fetchMembership();
   }, [fetchMembership]);
 
-  const formatDate = (iso: string | null) => {
-    if (!iso) return '—';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch {
-      return iso;
-    }
-  };
+  // V12-L4: render in gym time, not device-local time.
+  const formatDate = (iso: string | null) => formatGymDate(iso);
 
   if (loading && !membershipData) {
     return (
@@ -79,12 +73,18 @@ export const MembershipScreen: React.FC = () => {
   const activeDemand = membershipData?.active_renewal_demand;
 
   const daysLeft = membership?.days_left;
-  const isExpired = membership?.is_expired || (daysLeft !== null && daysLeft < 0);
-  const isExpiring = !isExpired && daysLeft !== null && daysLeft <= 7;
+  // V12-M2: backend is_expired is True when membership_end is None
+  // (models/member.py:109-113) — but no end date set means nothing
+  // expired. Show "no expiry set — ask your gym" instead of
+  // "Expired 0 days ago".
+  const noExpiry = membership && membership.membership_end == null;
+  const isExpired = !noExpiry && (membership?.is_expired || (daysLeft !== null && daysLeft < 0));
+  const isExpiring = !isExpired && !noExpiry && daysLeft !== null && daysLeft <= 7;
   const isPaused = membership?.status?.toLowerCase() === 'paused';
 
   let statusBadgeLabel = 'ACTIVE';
   if (isPaused) statusBadgeLabel = 'PAUSED';
+  else if (noExpiry) statusBadgeLabel = 'NO EXPIRY';
   else if (isExpired) statusBadgeLabel = 'EXPIRED';
   else if (isExpiring) statusBadgeLabel = 'EXPIRING';
 
@@ -167,9 +167,9 @@ export const MembershipScreen: React.FC = () => {
                 ]}
               >
                 <Ionicons
-                  name={isExpired ? 'alert-circle' : isExpiring ? 'time' : 'checkmark-circle'}
+                  name={noExpiry ? 'information-circle' : isExpired ? 'alert-circle' : isExpiring ? 'time' : 'checkmark-circle'}
                   size={20}
-                  color={isExpired ? colors.expired : isExpiring ? colors.expiring : colors.active}
+                  color={noExpiry ? colors.textSecondary : isExpired ? colors.expired : isExpiring ? colors.expiring : colors.active}
                 />
                 <Text
                   style={[
@@ -178,7 +178,9 @@ export const MembershipScreen: React.FC = () => {
                     isExpiring && styles.countdownExpiring,
                   ]}
                 >
-                  {isExpired
+                  {noExpiry
+                    ? 'No expiry date set — ask your gym'
+                    : isExpired
                     ? `Expired ${Math.abs(daysLeft ?? 0)} days ago`
                     : isPaused
                     ? 'Membership is paused'

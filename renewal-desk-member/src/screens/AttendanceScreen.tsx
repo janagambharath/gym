@@ -12,13 +12,16 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient } from '../services/apiClient';
+import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
+import { formatGymDateTime } from '../utils/gymTime';
 import { AccessEventRecord, AccessSummary } from '../types';
 import { EmptyState } from '../components/EmptyState';
 import { colors, radii, spacing, typography } from '../theme/tokens';
 
 export const AttendanceScreen: React.FC = () => {
   const { theme } = useBranding();
+  const { member } = useAuth();
 
   const [summary, setSummary] = useState<AccessSummary | null>(null);
   const [events, setEvents] = useState<AccessEventRecord[]>([]);
@@ -88,24 +91,8 @@ export const AttendanceScreen: React.FC = () => {
     return type === filter;
   });
 
-  const formatEventTime = (iso: string) => {
-    try {
-      const d = new Date(iso);
-      const today = new Date();
-      const yesterday = new Date();
-      yesterday.setDate(today.getDate() - 1);
-
-      const isToday = d.toDateString() === today.toDateString();
-      const isYesterday = d.toDateString() === yesterday.toDateString();
-      const timeStr = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
-
-      if (isToday) return `Today · ${timeStr}`;
-      if (isYesterday) return `Yesterday · ${timeStr}`;
-      return `${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · ${timeStr}`;
-    } catch {
-      return iso;
-    }
-  };
+  // V12-L4: event times render in gym time, not device-local time.
+  const formatEventTime = (iso: string) => formatGymDateTime(iso);
 
   const renderEventItem = ({ item }: { item: AccessEventRecord }) => {
     const isEntry = item.event_type === 'ENTRY';
@@ -159,7 +146,13 @@ export const AttendanceScreen: React.FC = () => {
     );
   }
 
-  const isEligible = summary?.access_active ?? false;
+  // V12-M8: same fallback as Home (HomeScreen.tsx:114-115) — on a failed
+  // fetch, derive eligibility from member status instead of defaulting
+  // to "Access Inactive". A paused member is still correctly inactive;
+  // an active, unexpired member stays eligible. The fetch error itself
+  // stays visible as a retryable banner below the hero card.
+  const isEligible =
+    summary?.access_active ?? (member?.status?.toLowerCase() === 'active' && !member?.is_expired);
   const isInside = summary?.is_inside ?? false;
 
   return (
@@ -232,6 +225,20 @@ export const AttendanceScreen: React.FC = () => {
                 </View>
               </View>
             </View>
+
+            {/* V12-M8: the fetch failed — say so with a retry instead of
+                letting the hero above read as a verdict. Eligibility
+                above is already the member-status fallback. */}
+            {error ? (
+              <View style={styles.fetchErrorCard}>
+                <Text style={styles.fetchErrorText}>
+                  Couldn’t refresh your access status — showing your membership status instead. {error}
+                </Text>
+                <TouchableOpacity onPress={() => fetchAccess(1)} style={styles.retryButton}>
+                  <Text style={styles.retryText}>Try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             <Text style={styles.logSectionTitle}>Recent Check-In Activity</Text>
             <View style={styles.filterRow}>
@@ -421,6 +428,20 @@ const styles = StyleSheet.create({
   errorContainer: {
     alignItems: 'center',
     padding: spacing.lg,
+  },
+  // V12-M8: retryable fetch-failure banner under the hero card.
+  fetchErrorCard: {
+    backgroundColor: colors.expiringSurface,
+    borderWidth: 1,
+    borderColor: colors.expiringBorder,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  fetchErrorText: {
+    ...typography.subtext,
+    color: colors.expiring,
+    lineHeight: 18,
   },
   loadError: {
     textAlign: 'center',

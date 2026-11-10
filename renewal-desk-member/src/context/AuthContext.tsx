@@ -69,16 +69,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return await apiClient.requestOtp(phone);
   }, []);
 
+  // V12-H2: login success must NOT depend on the dashboard fetch. The
+  // verify response already persisted the tokens (apiClient.verifyOtp
+  // saves them before returning) and the backend consumed the challenge
+  // atomically (member_api.py _consume_otp_challenge) — so a dashboard
+  // blip after a successful verify used to report "Verification failed"
+  // and the retry 400'd "code already used", stranding the member.
+  // Success is now decided by the verify response alone; the dashboard
+  // is best-effort afterwards. On a dashboard failure the member still
+  // lands signed in (Home shows its offline banner + pull-to-refresh
+  // retry) and the verify payload seeds a transient member record so
+  // the home screen has a name/status to render until the dashboard
+  // answers. days_left/is_expired are derived from the payload's own
+  // membership_end (same date-only math the backend uses); the dashboard
+  // overwrites them as soon as it loads.
   const verifyOtp = useCallback(async (phone: string, otp: string, challenge: string) => {
     try {
       const res = await apiClient.verifyOtp(phone, otp, challenge);
       if (res.success && res.data) {
         setToken(res.data.token);
-        // Refresh dashboard for full member data
-        const dash = await apiClient.getDashboard();
-        setMember(dash.member);
         setIsAuthenticated(true);
-        return { success: true, member: dash.member };
+        const payloadMember = res.data.member;
+        let seedMember: Member | null = null;
+        if (payloadMember) {
+          const end = payloadMember.membership_end ? new Date(payloadMember.membership_end) : null;
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const daysLeft = end && !Number.isNaN(end.getTime())
+            ? Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime() - today.getTime()) / 86400000)
+            : null;
+          seedMember = {
+            id: payloadMember.id,
+            full_name: payloadMember.full_name,
+            phone: payloadMember.phone,
+            email: null,
+            gender: null,
+            profile_photo_url: null,
+            address: null,
+            joined_on: null,
+            status: payloadMember.membership_status || 'active',
+            membership_start: null,
+            membership_end: payloadMember.membership_end || null,
+            // Backend is_expired is True when membership_end is None
+            // (models/member.py:109-113); a dated end is expired only
+            // once it passes.
+            days_left: daysLeft,
+            is_expired: end === null ? true : (daysLeft !== null && daysLeft < 0),
+            plan_name: payloadMember.plan_name || null,
+            plan_price: null,
+          };
+          setMember(seedMember);
+        }
+        try {
+          const dash = await apiClient.getDashboard();
+          setMember(dash.member);
+        } catch {
+          // Best-effort only: the member is already signed in (seed
+          // above, or Home's own dashboard fetch + offline retry).
+        }
+        return { success: true, member: seedMember ?? undefined };
       }
       return { success: false, error: 'Verification failed.' };
     } catch (err: any) {

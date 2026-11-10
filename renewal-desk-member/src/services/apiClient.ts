@@ -235,6 +235,19 @@ export const apiClient = {
     }
   },
 
+  // V12-M6: self-service account deletion. DELETE
+  // /api/member/v1/auth/account (member_api.py:848-953) soft-deletes
+  // ONLY the token holder, revokes all refresh families and queues a
+  // door block; returns {success, data:{message}}. No body needed —
+  // the member is resolved from the Bearer token. A fresh
+  // Idempotency-Key is minted by request() like every mutation.
+  async deleteAccount(): Promise<{ message: string }> {
+    const res = await request<{ success: boolean; data: { message: string } }>('/api/member/v1/auth/account', {
+      method: 'DELETE',
+    });
+    return res.data;
+  },
+
   // Dashboard & Branding
   async getDashboard(): Promise<DashboardResponse> {
     const res = await request<{ success: boolean; data: DashboardResponse }>('/api/member/v1/dashboard');

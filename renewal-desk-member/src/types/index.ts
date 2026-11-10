@@ -88,6 +88,12 @@ export interface PaymentRecord {
   savings?: string | null;
   reference?: string | null;
   notes?: string | null;
+  // V12-M1: backend sends these on member_payments items
+  // (member_api.py:1999-2000) — the reason a payment was rejected and
+  // when. Rendered on PaymentsScreen / web payments; without them a
+  // REJECTED payment gave the member no reason and no next step.
+  rejected_reason?: string | null;
+  rejected_at?: string | null;
   paid_on?: string | null;
   created_at?: string | null;
   verified_at?: string | null;

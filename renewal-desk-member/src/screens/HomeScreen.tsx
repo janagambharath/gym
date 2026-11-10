@@ -16,6 +16,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { apiClient } from '../services/apiClient';
+import { formatGymDate, formatGymDateTime } from '../utils/gymTime';
 import { DashboardResponse, RootStackParamList } from '../types';
 import { VynlaHeader } from '../components/VynlaHeader';
 import { MembershipCard } from '../components/MembershipCard';
@@ -76,18 +77,10 @@ export const HomeScreen: React.FC = () => {
     navigation.navigate('Renew');
   };
 
+  // V12-L4: last-visit renders in gym time, not device-local time.
   const formatDateTime = (iso: string | null) => {
     if (!iso) return 'No visits recorded yet';
-    try {
-      const d = new Date(iso);
-      const today = new Date();
-      const isToday = d.toDateString() === today.toDateString();
-      const timeStr = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
-      if (isToday) return `Today · ${timeStr}`;
-      return `${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · ${timeStr}`;
-    } catch {
-      return iso;
-    }
+    return formatGymDateTime(iso);
   };
 
   if (loading && !data) {
@@ -138,7 +131,7 @@ export const HomeScreen: React.FC = () => {
               <View style={styles.pendingFooter}>
                 <StatusBadge status="CLAIMED" size="sm" />
                 <Text style={styles.pendingDate}>
-                  {pendingPayment.created_at ? new Date(pendingPayment.created_at).toLocaleDateString('en-IN') : 'Recent'}
+                  {pendingPayment.created_at ? formatGymDate(pendingPayment.created_at) : 'Recent'}
                 </Text>
               </View>
             </View>
@@ -211,7 +204,7 @@ export const HomeScreen: React.FC = () => {
                   <Text style={styles.announcementMessage}>{item.message}</Text>
                   {item.date && (
                     <Text style={styles.announcementDate}>
-                      {new Date(item.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                      {formatGymDate(item.date)}
                     </Text>
                   )}
                 </View>

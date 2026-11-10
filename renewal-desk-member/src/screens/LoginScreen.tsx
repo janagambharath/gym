@@ -70,7 +70,9 @@ export const LoginScreen: React.FC = () => {
 
   const handleVerifyOtp = async () => {
     setErrorMessage(null);
-    if (otp.length < 4) {
+    // V12-L1: codes are 6 digits (member_api.py verify requires the
+    // 6-digit HMAC match) — a 4-digit submit could never verify.
+    if (otp.length < 6) {
       setErrorMessage('Please enter the 6-digit verification code.');
       return;
     }
@@ -212,9 +214,9 @@ export const LoginScreen: React.FC = () => {
                 </View>
 
                 <TouchableOpacity
-                  style={[styles.primaryButton, (loading || otp.length < 4) && styles.buttonDisabled]}
+                  style={[styles.primaryButton, (loading || otp.length < 6) && styles.buttonDisabled]}
                   onPress={handleVerifyOtp}
-                  disabled={loading || otp.length < 4}
+                  disabled={loading || otp.length < 6}
                   activeOpacity={0.85}
                 >
                   {loading ? (

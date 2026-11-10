@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -19,6 +19,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { apiClient } from '../services/apiClient';
 import { useBranding } from '../context/BrandingContext';
+import { formatGymDate } from '../utils/gymTime';
 import {
   MembershipPlan,
   PaymentInfo,
@@ -39,6 +40,19 @@ export const RenewScreen: React.FC = () => {
   const [plans, setPlans] = useState<MembershipPlan[]>([]);
   const [paymentInfo, setPaymentInfo] = useState<PaymentInfo | null>(null);
   const [activeDemand, setActiveDemand] = useState<RenewalDemand | null>(null);
+  // V12-M3: a failed dashboard fetch used to silently hide the gym's
+  // discounted demand, so the member renewed at full price with no
+  // error and no retry. Track it so the screen can say so + retry.
+  const [demandError, setDemandError] = useState(false);
+  // V12-M4: plans/payment-info failures used to be swallowed (.catch(() =>
+  // [])), so a transient failure was indistinguishable from a genuinely
+  // plan-less gym and the screen offered a "Pay ₹0" CTA. Track load
+  // failure separately from a genuinely-empty plan list.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // V12-L8: claim-status poll cap (30 attempts, ~2 min, with backoff).
+  const [pollExpired, setPollExpired] = useState(false);
+  const [pollRound, setPollRound] = useState(0);
+  const pollAttempts = useRef(0);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(route.params?.initialPlanId || null);
   const [reference, setReference] = useState('');
   const [loading, setLoading] = useState(true);
@@ -92,36 +106,52 @@ export const RenewScreen: React.FC = () => {
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [showManualSection, setShowManualSection] = useState(false);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [dashRes, plansRes, infoRes] = await Promise.all([
-          apiClient.getDashboard().catch(() => null),
-          apiClient.getPlans().catch(() => []),
-          apiClient.getPaymentInfo().catch(() => null),
-        ]);
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    setDemandError(false);
+    try {
+      const [dashRes, plansRes, infoRes] = await Promise.all([
+        apiClient.getDashboard().catch(() => null),
+        apiClient.getPlans().catch(() => null),
+        apiClient.getPaymentInfo().catch(() => null),
+      ]);
 
-        if (dashRes?.active_renewal_demand) {
-          setActiveDemand(dashRes.active_renewal_demand);
-          if (dashRes.active_renewal_demand.plan_id) {
-            setSelectedPlanId(dashRes.active_renewal_demand.plan_id);
-          }
+      // V12-M3: a null dashboard means the demand leg failed — the
+      // discounted offer may exist but is not shown. Never silently
+      // render full-price plans as if that were the whole story.
+      if (!dashRes) {
+        setDemandError(true);
+      } else if (dashRes.active_renewal_demand) {
+        setActiveDemand(dashRes.active_renewal_demand);
+        if (dashRes.active_renewal_demand.plan_id) {
+          setSelectedPlanId(dashRes.active_renewal_demand.plan_id);
         }
-
-        setPlans(plansRes);
-        setPaymentInfo(infoRes);
-
-        if (plansRes.length > 0 && !selectedPlanId && !dashRes?.active_renewal_demand) {
-          setSelectedPlanId(plansRes[0].id);
-        }
-      } catch (err: any) {
-        Alert.alert('Error', err.message || 'Unable to load payment details.');
-      } finally {
-        setLoading(false);
       }
+
+      // V12-M4: a failed plans/payment-info leg is an error state, not
+      // an empty gym. Do not render the pay CTA until these answer.
+      if (plansRes === null || infoRes === null) {
+        setLoadError('Could not load renewal details. Check your connection and try again.');
+        return;
+      }
+
+      setPlans(plansRes);
+      setPaymentInfo(infoRes);
+
+      if (plansRes.length > 0 && !route.params?.initialPlanId && !dashRes?.active_renewal_demand) {
+        setSelectedPlanId(plansRes[0].id);
+      }
+    } catch (err: any) {
+      setLoadError(err.message || 'Unable to load payment details.');
+    } finally {
+      setLoading(false);
     }
-    loadData();
-  }, []);
+  }, [route.params?.initialPlanId]);
+
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0];
 
@@ -194,6 +224,9 @@ export const RenewScreen: React.FC = () => {
         });
         setClaimedSuccess(true);
         setUpiSession(null);
+        // V12-M5: the pending-claim screen (State 3) needs the paused
+        // warning too, not only the verified paths.
+        void checkPausedAfterRenew();
       }
     } catch (err: any) {
       Alert.alert(
@@ -206,34 +239,78 @@ export const RenewScreen: React.FC = () => {
   };
 
   // Live polling while awaiting staff verification
+  // V12-L8: the old 4s setInterval polled forever on a stuck claim.
+  // Cap at 30 attempts (~2 min) with backoff (4s → 12s max), then show
+  // "still processing — check back later" with a manual re-check
+  // instead of polling indefinitely.
   useEffect(() => {
     if (!claimedSuccess || !claimedData?.payment_id) return;
     let isSubscribed = true;
-    const interval = setInterval(async () => {
-      try {
-        const res = await apiClient.getPaymentStatus(claimedData.payment_id);
-        if (isSubscribed && res.is_verified) {
-          clearInterval(interval);
-          setConfirmedSuccess({
-            payment_id: res.payment_id,
-            amount_paid: res.amount,
-            new_end: res.new_end || undefined,
-            plan_name: claimedData.plan_name || undefined,
-            status: 'verified',
-          });
-          setClaimedSuccess(false);
-          void checkPausedAfterRenew();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    pollAttempts.current = 0;
+    setPollExpired(false);
+    const poll = (delay: number) => {
+      timer = setTimeout(async () => {
+        if (!isSubscribed) return;
+        pollAttempts.current += 1;
+        try {
+          const res = await apiClient.getPaymentStatus(claimedData.payment_id);
+          if (!isSubscribed) return;
+          if (res.is_verified) {
+            setConfirmedSuccess({
+              payment_id: res.payment_id,
+              amount_paid: res.amount,
+              new_end: res.new_end || undefined,
+              plan_name: claimedData.plan_name || undefined,
+              status: 'verified',
+            });
+            setClaimedSuccess(false);
+            void checkPausedAfterRenew();
+            return;
+          }
+        } catch {
+          // Silently retry next poll
         }
-      } catch {
-        // Silently retry next poll
-      }
-    }, 4000);
+        if (!isSubscribed) return;
+        if (pollAttempts.current >= 30) {
+          setPollExpired(true);
+          return;
+        }
+        poll(Math.min(Math.round(delay * 1.25), 12000));
+      }, delay);
+    };
+    poll(4000);
 
     return () => {
       isSubscribed = false;
-      clearInterval(interval);
+      if (timer !== undefined) clearTimeout(timer);
     };
-  }, [claimedSuccess, claimedData?.payment_id]);
+  }, [claimedSuccess, claimedData?.payment_id, pollRound]);
+
+  // V12-L8: one manual re-check after the poll cap, restarting the
+  // bounded poll if the claim is still pending.
+  const handleRecheckClaim = useCallback(async () => {
+    if (!claimedData?.payment_id) return;
+    try {
+      const res = await apiClient.getPaymentStatus(claimedData.payment_id);
+      if (res.is_verified) {
+        setConfirmedSuccess({
+          payment_id: res.payment_id,
+          amount_paid: res.amount,
+          new_end: res.new_end || undefined,
+          plan_name: claimedData.plan_name || undefined,
+          status: 'verified',
+        });
+        setClaimedSuccess(false);
+        void checkPausedAfterRenew();
+        return;
+      }
+    } catch {
+      // Still unknown — restart the bounded poll below regardless.
+    }
+    setPollExpired(false);
+    setPollRound((round) => round + 1);
+  }, [claimedData?.payment_id, claimedData?.plan_name, checkPausedAfterRenew]);
 
   // Cancel/abort current in-flight UPI session
   const handleCancelUpiSession = async () => {
@@ -252,6 +329,10 @@ export const RenewScreen: React.FC = () => {
       const res = await apiClient.claimPayment(planId, reference.trim());
       setClaimedData(res);
       setClaimedSuccess(true);
+      // V12-M5: check the paused state at claim time — State 3 (manual
+      // claim pending) must warn a paused member the door stays blocked,
+      // the same warning web shows (vynla.js:664-670).
+      void checkPausedAfterRenew();
     } catch (err: any) {
       Alert.alert('Unable to Submit Claim', err.message || 'Please try again.');
     } finally {
@@ -259,15 +340,8 @@ export const RenewScreen: React.FC = () => {
     }
   };
 
-  const formatDate = (iso: string | null | undefined) => {
-    if (!iso) return '—';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch {
-      return iso;
-    }
-  };
+  // V12-L4: renewal dates render in gym time, not device-local time.
+  const formatDate = (iso: string | null | undefined) => formatGymDate(iso);
 
   if (loading) {
     return (
@@ -275,6 +349,31 @@ export const RenewScreen: React.FC = () => {
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
           <Text style={styles.loadingText}>Fetching renewal invoice & plans...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // V12-M4: a plans/payment-info leg failed — error + retry, never the
+  // pay CTA (a failed fetch must not look like a plan-less gym, and a
+  // plan-less gym must never show "Pay ₹0").
+  if (loadError) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerContainer}>
+          <Ionicons name="alert-circle" size={48} color={colors.expired} />
+          <Text style={styles.loadErrorTitle}>Couldn’t load renewal details</Text>
+          <Text style={styles.loadErrorText}>{loadError}</Text>
+          <TouchableOpacity
+            style={[styles.primaryCtaBtn, { backgroundColor: theme.primary, width: '80%' }]}
+            onPress={() => void loadData()}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.primaryCtaBtnText, { color: theme.primaryText }]}>Try again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.textLinkBtn} onPress={() => navigation.goBack()}>
+            <Text style={styles.textLinkBtnText}>Back</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -453,9 +552,56 @@ export const RenewScreen: React.FC = () => {
           <View style={styles.verificationNoteCard}>
             <ActivityIndicator size="small" color={colors.platform} style={{ marginRight: 8 }} />
             <Text style={styles.verificationNoteText}>
-              Awaiting verification from gym counter. This screen will update automatically as soon as payment is confirmed.
+              {pollExpired
+                ? 'Still processing — the gym hasn’t confirmed this payment yet. Check back later, or tap below to check the status now.'
+                : 'Awaiting verification from gym counter. This screen will update automatically as soon as payment is confirmed.'}
             </Text>
           </View>
+
+          {/* V12-L8: the bounded poll gave up — offer one manual re-check. */}
+          {pollExpired ? (
+            <TouchableOpacity
+              style={[styles.secondaryCtaBtn, { borderColor: theme.primary, marginBottom: spacing.md }]}
+              onPress={() => void handleRecheckClaim()}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="refresh" size={18} color={theme.primary} />
+              <Text style={[styles.secondaryCtaBtnText, { color: theme.primary }]}>Check status now</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {/* V12-M5: a paused member's renewal is recorded but the door
+              stays blocked until the gym resumes it — same warning as
+              the verified screen (State 1) and web (vynla.js:664-670). */}
+          {pausedAfterRenew ? (
+            <View style={[styles.pausedNoticeCard, { marginTop: 0, marginBottom: spacing.xl }]}>
+              <View style={styles.pausedNoticeHeader}>
+                <Ionicons name="pause-circle" size={22} color={colors.expiring} />
+                <Text style={styles.pausedNoticeTitle}>Door access is still paused</Text>
+              </View>
+              <Text style={styles.pausedNoticeText}>
+                Your renewal is recorded and your membership dates are extended, but door access stays paused until the gym resumes it.
+              </Text>
+              <View style={styles.resumeRow}>
+                <TouchableOpacity
+                  style={[styles.resumeButton, { backgroundColor: theme.primary }]}
+                  onPress={handleAskResumeCall}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="call" size={16} color={theme.primaryText} />
+                  <Text style={[styles.resumeButtonText, { color: theme.primaryText }]}>Call gym to resume</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.resumeButton, styles.resumeButtonOutline]}
+                  onPress={handleAskResumeWhatsApp}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="logo-whatsapp" size={16} color={colors.whatsapp} />
+                  <Text style={[styles.resumeButtonText, { color: colors.whatsapp }]}>WhatsApp gym</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
 
           <TouchableOpacity
             style={[styles.primaryCtaBtn, { backgroundColor: theme.primary }]}
@@ -463,6 +609,25 @@ export const RenewScreen: React.FC = () => {
             activeOpacity={0.85}
           >
             <Text style={[styles.primaryCtaBtnText, { color: theme.primaryText }]}>Back to Home</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // V12-M4: genuinely no plans and no demand — say so with NO pay
+  // button and no manual-claim path (a ₹0 claim must never be mintable
+  // from a plan-less gym). Mirrors web vynla.js, which renders no pay
+  // section when there are no plans.
+  if (!isDemandLocked && plans.length === 0) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerContainer}>
+          <Ionicons name="information-circle" size={48} color={colors.textSecondary} />
+          <Text style={styles.loadErrorTitle}>No renewal plans are available</Text>
+          <Text style={styles.loadErrorText}>Contact your gym to renew your membership.</Text>
+          <TouchableOpacity style={styles.textLinkBtn} onPress={() => navigation.goBack()}>
+            <Text style={styles.textLinkBtnText}>Back</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -483,6 +648,24 @@ export const RenewScreen: React.FC = () => {
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Renew Membership</Text>
           </View>
+
+          {/* V12-M3: the dashboard leg failed, so the gym's discounted
+              offer may be hidden — warn + offer a retry instead of
+              silently showing full-price plans. Renewing is not blocked. */}
+          {demandError && !isDemandLocked ? (
+            <View style={styles.demandErrorCard}>
+              <Ionicons name="alert-circle" size={20} color={colors.expiring} />
+              <View style={styles.demandErrorBody}>
+                <Text style={styles.demandErrorTitle}>Couldn’t load your gym’s offer</Text>
+                <Text style={styles.demandErrorText}>
+                  Your gym may have a discounted renewal price that isn’t shown here. Retry before paying full price.
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => void loadData()} style={styles.demandErrorRetry}>
+                <Text style={styles.demandErrorRetryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {/* Special Authoritative Price Invoice Card (if active demand exists) */}
           {isDemandLocked ? (
@@ -1091,6 +1274,55 @@ const styles = StyleSheet.create({
     ...typography.h1,
     color: colors.text,
     textAlign: 'center',
+  },
+  // V12-M4: load-failure / no-plans states (error + retry, never a pay CTA).
+  loadErrorTitle: {
+    ...typography.h2,
+    color: colors.text,
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  loadErrorText: {
+    ...typography.subtext,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    textAlign: 'center',
+  },
+  // V12-M3: "couldn't load your gym's offer" banner + retry.
+  demandErrorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.expiringSurface,
+    borderColor: colors.expiringBorder,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  demandErrorBody: {
+    flex: 1,
+  },
+  demandErrorTitle: {
+    ...typography.bodySemibold,
+    color: colors.expiring,
+  },
+  demandErrorText: {
+    ...typography.subtext,
+    color: colors.textSecondary,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  demandErrorRetry: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  demandErrorRetryText: {
+    ...typography.bodySemibold,
+    color: colors.platformDark,
   },
   // V11-M11: paused-after-renew notice + resume actions.
   pausedNoticeCard: {

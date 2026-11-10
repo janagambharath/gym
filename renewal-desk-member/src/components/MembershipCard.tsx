@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Member } from '../types';
 import { StatusBadge } from './StatusBadge';
 import { useBranding } from '../context/BrandingContext';
+import { formatGymDate } from '../utils/gymTime';
 import { colors, radii, spacing, typography } from '../theme/tokens';
 
 interface MembershipCardProps {
@@ -15,17 +16,26 @@ export const MembershipCard: React.FC<MembershipCardProps> = ({ member, onRenew 
   const { theme } = useBranding();
 
   const daysLeft = member.days_left;
-  const isExpired = member.is_expired || (daysLeft !== null && daysLeft < 0);
-  const isExpiring = !isExpired && daysLeft !== null && daysLeft <= 7;
+  // V12-M2: the backend's is_expired is True when membership_end is None
+  // (models/member.py:109-113), but "expired" is the wrong label when no
+  // end date was ever set — nothing expired. Surface "no expiry set"
+  // instead; the door still treats it as inactive (access_active is
+  // false for a null-end member), so this is display copy, not access.
+  const noExpiry = member.membership_end === null;
+  const isExpired = !noExpiry && (member.is_expired || (daysLeft !== null && daysLeft < 0));
+  const isExpiring = !isExpired && !noExpiry && daysLeft !== null && daysLeft <= 7;
   const isPaused = member.status.toLowerCase() === 'paused';
 
   let statusText = 'ACTIVE';
   if (isPaused) statusText = 'PAUSED';
+  else if (noExpiry) statusText = 'NO EXPIRY';
   else if (isExpired) statusText = 'EXPIRED';
   else if (isExpiring) statusText = 'EXPIRING';
 
   let daysText = '';
-  if (isExpired) {
+  if (noExpiry && !isPaused) {
+    daysText = 'No expiry set — ask your gym';
+  } else if (isExpired) {
     const daysAgo = Math.abs(daysLeft ?? 0);
     daysText = daysAgo === 0 ? 'Expired today' : `Expired ${daysAgo} day${daysAgo > 1 ? 's' : ''} ago`;
   } else if (isPaused) {
@@ -34,15 +44,8 @@ export const MembershipCard: React.FC<MembershipCardProps> = ({ member, onRenew 
     daysText = `${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining`;
   }
 
-  const formatDate = (iso: string | null) => {
-    if (!iso) return '—';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch {
-      return iso;
-    }
-  };
+  // V12-L4: render in gym time, not device-local time.
+  const formatDate = (iso: string | null) => formatGymDate(iso);
 
   return (
     <View style={styles.card}>

@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient } from '../services/apiClient';
 import { useBranding } from '../context/BrandingContext';
+import { formatGymDate } from '../utils/gymTime';
 import { PaymentRecord } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
@@ -72,15 +73,8 @@ export const PaymentsScreen: React.FC = () => {
     }
   };
 
-  const formatDate = (iso: string | null | undefined) => {
-    if (!iso) return '—';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch {
-      return iso;
-    }
-  };
+  // V12-L4: render in gym time, not device-local time.
+  const formatDate = (iso: string | null | undefined) => formatGymDate(iso);
 
   const renderPaymentItem = ({ item }: { item: PaymentRecord }) => {
     const isPending = item.status.toLowerCase() === 'pending' || item.status.toLowerCase() === 'processing';
@@ -151,6 +145,23 @@ export const PaymentsScreen: React.FC = () => {
           <Text style={styles.notesText} numberOfLines={2}>
             {item.notes}
           </Text>
+        )}
+
+        {/* V12-M1: a rejected payment must say why and what to do next —
+            the backend sends rejected_reason/rejected_at (member_api.py
+            :1999-2000) and the V11-M10 client half never rendered them. */}
+        {isRejected && (
+          <View style={styles.rejectedBox}>
+            <Text style={styles.rejectedReasonText}>
+              {item.rejected_reason
+                ? `Rejected: ${item.rejected_reason}`
+                : 'Rejected by your gym.'}
+              {item.rejected_at ? ` (${formatDate(item.rejected_at)})` : ''}
+            </Text>
+            <Text style={styles.rejectedNextText}>
+              Please re-submit your payment or contact your gym.
+            </Text>
+          </View>
         )}
       </View>
     );
@@ -348,5 +359,26 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: spacing.xs,
     fontSize: 12,
+  },
+  // V12-M1: rejected-payment reason + next step.
+  rejectedBox: {
+    backgroundColor: colors.expiredSurface,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.expiredBorder,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  rejectedReasonText: {
+    ...typography.subtext,
+    color: colors.expired,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  rejectedNextText: {
+    ...typography.subtext,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+    lineHeight: 18,
   },
 });

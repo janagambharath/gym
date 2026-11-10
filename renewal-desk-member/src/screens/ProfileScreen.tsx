@@ -185,17 +185,48 @@ export const ProfileScreen: React.FC = () => {
     Linking.openURL(`${API_BASE}/privacy`);
   };
 
+  // V12-M6: in-app self-service deletion calling DELETE
+  // /api/member/v1/auth/account (member_api.py:848-953) — double-confirm,
+  // then sign out + clear the session. The old flow opened a browser
+  // page describing the RRR *owner* Android app, which a member cannot
+  // use (no owner login). A failed delete never signs the member out.
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const handleDeleteAccount = () => {
     Alert.alert(
-      'Account Deletion',
-      'Under Google Play and data privacy regulations, you can request account deletion. Gym business and tax records may be retained according to statutory retention rules.\n\nProceed to account deletion request page?',
+      'Delete your account?',
+      'This permanently deletes your VYNLA member account and signs you out. Your gym may keep business and tax records as required by law. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Open Deletion Page',
-          onPress: () => Linking.openURL(`${API_BASE}/delete-account`),
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you sure?',
+              'Tap "Delete my account" to permanently delete your account now.',
+              [
+                { text: 'Keep my account', style: 'cancel' },
+                {
+                  text: 'Delete my account',
+                  style: 'destructive',
+                  onPress: async () => {
+                    if (deletingAccount) return;
+                    setDeletingAccount(true);
+                    try {
+                      await apiClient.deleteAccount();
+                      await logout();
+                    } catch (error) {
+                      Alert.alert('Could not delete account', error instanceof Error ? error.message : 'Please try again.');
+                    } finally {
+                      setDeletingAccount(false);
+                    }
+                  },
+                },
+              ],
+            );
+          },
         },
-      ]
+      ],
     );
   };
 
