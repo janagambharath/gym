@@ -1,7 +1,8 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Modal,
   ScrollView,
   StyleSheet,
@@ -15,8 +16,24 @@ import { WebView } from 'react-native-webview';
 import * as WebBrowser from 'expo-web-browser';
 import { Icon } from '../theme/icons';
 import { colors, fontSize, fontWeight, radius, shadows, spacing, fontFamily} from '../theme/tokens';
-import { connectWaba, fetchWabaNumbers, getWhatsAppOnboardingConfig, updateWhatsAppProfile } from '../services/apiClient';
+import {
+  connectWaba,
+  fetchWabaNumbers,
+  getWhatsAppConnectionStatus,
+  getWhatsAppOnboardingConfig,
+  updateWhatsAppProfile,
+  type WhatsAppConnectionStatusData,
+} from '../services/apiClient';
 import { getRuntimeConfiguration } from '../config/runtime';
+
+// WhatsApp embedded signup — WebView stall watchdog (W-M7).
+// 5 minutes: the Meta flow is human-paced (reading, choosing a business,
+// switching apps), so the watchdog must outlast any legitimate round-trip
+// — the page crew's fetch timeout is 60s and the app's own connectWaba
+// aborts at 15s — while still catching a frozen page (W-C1 freezes
+// within seconds of sign-in). The timer resets on every WebView
+// navigation / load, so it only fires when the page has gone quiet.
+export const WEBVIEW_STALL_TIMEOUT_MS = 300_000;
 
 interface WhatsAppOnboardingModalProps {
   visible: boolean;
@@ -57,6 +74,146 @@ export function WhatsAppOnboardingModal({
   const [metaAppId, setMetaAppId] = useState('');
   const [configId, setConfigId] = useState('');
   const webViewRef = useRef<WebView>(null);
+  // W-H6: the app is the single owner of the code exchange. The code
+  // currently being exchanged, if any — a second post of the same (or
+  // any) code while one is in flight is ignored.
+  const codeExchangeInFlightRef = useRef<string | null>(null);
+  // W-M7: stall-watchdog timer handle for the WebView.
+  const webViewStallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // W-H3: true while the owner is out in the system browser (Meta
+  // signup opened externally). The AppState return listener re-checks
+  // connection status when the app comes back to the foreground.
+  const externalBrowserPendingRef = useRef(false);
+  // Mirror of webViewUrl for Alert / AppState closures, which capture
+  // stale state. Synced by the effect below.
+  const webViewOpenRef = useRef(false);
+  // Set once a signup success has been surfaced, so a late second
+  // completion signal (code exchange + complete message racing) can
+  // never show a second "Connected!" alert or double-fire onConnected.
+  const signupCompletedRef = useRef(false);
+
+  const clearWebViewStallTimer = useCallback(() => {
+    if (webViewStallTimerRef.current !== null) {
+      clearTimeout(webViewStallTimerRef.current);
+      webViewStallTimerRef.current = null;
+    }
+  }, []);
+
+  const handleWebViewClose = useCallback(() => {
+    clearWebViewStallTimer();
+    externalBrowserPendingRef.current = false;
+    setWebViewUrl(null);
+    currentWebViewUrlRef.current = null;
+  }, [clearWebViewStallTimer]);
+
+  // W-M7: arm (or re-arm) the stall watchdog. Navigation / load activity
+  // resets it, so it only fires after a quiet window with no terminal
+  // message (code / complete / cancel / error) and no page activity.
+  const armWebViewStallTimer = useCallback(() => {
+    clearWebViewStallTimer();
+    webViewStallTimerRef.current = setTimeout(() => {
+      webViewStallTimerRef.current = null;
+      if (!webViewOpenRef.current) return;
+      Alert.alert(
+        'Setup is taking too long',
+        'Meta signup has not finished. Check your connection, then retry — or cancel to go back.',
+        [
+          {
+            text: 'Retry',
+            // Reload re-arms the watchdog via onLoadEnd when the page
+            // loads again (no self-reference to armWebViewStallTimer
+            // inside its own callback).
+            onPress: () => {
+              webViewRef.current?.reload();
+            },
+          },
+          { text: 'Cancel', style: 'cancel', onPress: () => handleWebViewClose() },
+        ],
+      );
+    }, WEBVIEW_STALL_TIMEOUT_MS);
+  }, [clearWebViewStallTimer, handleWebViewClose]);
+
+  const finishConnected = useCallback(
+    (data?: {
+      phone_number_id?: string;
+      waba_id?: string;
+      business_phone_number?: string;
+    }) => {
+      if (signupCompletedRef.current) return;
+      signupCompletedRef.current = true;
+      handleWebViewClose();
+      if (data?.phone_number_id) setPhoneNumberId(data.phone_number_id);
+      if (data?.waba_id) setWabaId(data.waba_id);
+      if (data?.business_phone_number) setBusinessPhone(data.business_phone_number);
+      Alert.alert('Connected!', 'WhatsApp Business connected successfully via Embedded Signup.');
+      onConnected();
+      onClose();
+    },
+    [handleWebViewClose, onClose, onConnected],
+  );
+
+  const fetchConnectionStatus = useCallback(async (): Promise<WhatsAppConnectionStatusData | null> => {
+    try {
+      const res = await getWhatsAppConnectionStatus();
+      return res.ok ? res.data : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // W-H3: the return leg of the external-browser path. Called when the
+  // app comes back to the foreground after Meta was opened in the system
+  // browser. If the signup completed out there, surface Connected;
+  // otherwise leave the WebView open so the owner can retry inside the
+  // app, and re-arm the stall watchdog.
+  const handleExternalBrowserReturn = useCallback(async () => {
+    if (!externalBrowserPendingRef.current) return;
+    externalBrowserPendingRef.current = false;
+    if (!webViewOpenRef.current) return;
+    const status = await fetchConnectionStatus();
+    if (!webViewOpenRef.current) return;
+    if (status?.status === 'CONNECTED') {
+      finishConnected(status);
+      return;
+    }
+    armWebViewStallTimer();
+  }, [armWebViewStallTimer, fetchConnectionStatus, finishConnected]);
+
+  // W-H3: open Meta in the system browser and remember we are waiting on
+  // it. NOTE: on Android openBrowserAsync resolves with {type:'opened'}
+  // as soon as the Custom Tab opens — the promise is NOT a return
+  // signal — so the return is detected via the AppState listener below,
+  // not via the promise.
+  const openMetaInExternalBrowser = useCallback(
+    (targetUrl: string) => {
+      externalBrowserPendingRef.current = true;
+      clearWebViewStallTimer();
+      WebBrowser.openBrowserAsync(targetUrl).catch(() => {
+        externalBrowserPendingRef.current = false;
+        armWebViewStallTimer();
+      });
+    },
+    [armWebViewStallTimer, clearWebViewStallTimer],
+  );
+
+  // W-H3: AppState is the reliable return signal on Android (see above).
+  // Also covers the owner returning via recents without closing the tab.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (!externalBrowserPendingRef.current) return;
+      void handleExternalBrowserReturn();
+    });
+    return () => subscription.remove();
+  }, [handleExternalBrowserReturn]);
+
+  useEffect(() => {
+    webViewOpenRef.current = Boolean(webViewUrl);
+    if (!webViewUrl) clearWebViewStallTimer();
+  }, [clearWebViewStallTimer, webViewUrl]);
+
+  // Clear the watchdog if the modal unmounts mid-signup.
+  useEffect(() => clearWebViewStallTimer, [clearWebViewStallTimer]);
 
   const handleAutoFetchNumbers = async () => {
     setFetchingNumbers(true);
@@ -124,6 +281,7 @@ export function WhatsAppOnboardingModal({
       }
       setMetaAppId(appId);
       setConfigId(cfgId);
+      signupCompletedRef.current = false;
       const featureParam = method === 'coexistence' ? '&feature_type=whatsapp_business_app_onboarding' : '';
       const pageUrl = `${baseUrl}/api/mobile/v1/whatsapp/embedded-signup-page?handshake=${encodeURIComponent(handshake)}&meta_app_id=${encodeURIComponent(appId)}&config_id=${encodeURIComponent(cfgId)}${featureParam}&v=${Date.now()}`;
       setWebViewUrl(pageUrl);
@@ -135,14 +293,9 @@ export function WhatsAppOnboardingModal({
     }
   };
 
-  const handleWebViewClose = useCallback(() => {
-    setWebViewUrl(null);
-    currentWebViewUrlRef.current = null;
-  }, []);
-
   const handleClose = () => {
-    setWebViewUrl(null);
-    currentWebViewUrlRef.current = null;
+    signupCompletedRef.current = false;
+    handleWebViewClose();
     onClose();
   };
 
@@ -186,7 +339,9 @@ export function WhatsAppOnboardingModal({
         try {
           const host = new URL(targetUrl).hostname.toLowerCase();
           if (host === 'facebook.com' || host.endsWith('.facebook.com')) {
-            void WebBrowser.openBrowserAsync(targetUrl);
+            // W-H3: the return is handled by the AppState listener
+            // (handleExternalBrowserReturn re-checks connection status).
+            openMetaInExternalBrowser(targetUrl);
           }
         } catch {
           // Ignore malformed URLs.
@@ -196,18 +351,61 @@ export function WhatsAppOnboardingModal({
     }
 
     if (data.type === 'embedded_signup_cancel') {
-      setWebViewUrl(null);
+      handleWebViewClose();
       return;
     }
 
     if (data.type === 'embedded_signup_error') {
-      setWebViewUrl(null);
+      handleWebViewClose();
       Alert.alert('Signup Error', data.message || 'Meta Embedded Signup failed.');
       return;
     }
 
+    // W-M6: explicit embedded_signup_complete case — previously this
+    // only worked by fallthrough to the IDs branch below. The page
+    // posts this only after its own connect-waba fetch succeeded, so
+    // the server should already read CONNECTED: re-check status rather
+    // than trusting the payload shape.
+    if (data.type === 'embedded_signup_complete') {
+      handleWebViewClose();
+      setLoading(true);
+      try {
+        const status = await fetchConnectionStatus();
+        if (status?.status === 'CONNECTED') {
+          finishConnected(status);
+          return;
+        }
+      } catch {
+        // Fall through to the IDs branch below.
+      } finally {
+        setLoading(false);
+      }
+      // Not connected (yet). If a code exchange is already in flight
+      // the app owns it — do not fire a second exchange (W-H6).
+      if (codeExchangeInFlightRef.current) return;
+      // No IDs in the payload: nothing left to exchange — say so
+      // instead of silently ignoring the message.
+      const completePId = data.phone_number_id || data.phoneNumberId;
+      const completeWId = data.waba_id || data.wabaId;
+      if (!completePId && !completeWId) {
+        Alert.alert(
+          'Signup Finished',
+          'Meta signup finished but WhatsApp is not connected yet. Tap Confirm & Connect to verify.',
+        );
+        return;
+      }
+      // IDs present: fall through to the shared IDs branch below.
+    }
+
     if (data.type === 'embedded_signup_code' && data.code) {
-      setWebViewUrl(null);
+      // W-H6: the app is the single owner of the code exchange. The
+      // page crew's fix makes the page skip its own fetch inside the
+      // app WebView, but this guard holds even if the page still fires
+      // it: a second post of the same (or any) code while one exchange
+      // is in flight is ignored.
+      if (codeExchangeInFlightRef.current) return;
+      codeExchangeInFlightRef.current = data.code;
+      handleWebViewClose();
       setLoading(true);
       try {
         const connectRes = await connectWaba({
@@ -215,21 +413,37 @@ export function WhatsAppOnboardingModal({
           businessId: data.business_id || '',
         });
         if (connectRes.ok) {
-          Alert.alert('Connected!', 'WhatsApp Business connected successfully via Embedded Signup.');
-          if (connectRes.data?.phone_number_id) setPhoneNumberId(connectRes.data.phone_number_id);
-          if (connectRes.data?.waba_id) setWabaId(connectRes.data.waba_id);
-          if (connectRes.data?.business_phone_number) setBusinessPhone(connectRes.data.business_phone_number);
-          onConnected();
-          onClose();
+          finishConnected(connectRes.data);
           return;
+        }
+        // W-H6: the page's own fetch may already have succeeded with
+        // this code — never surface a failure alert for a connection
+        // that worked. Re-check server status first.
+        const status = await fetchConnectionStatus();
+        if (status?.status === 'CONNECTED') {
+          finishConnected(status);
         } else {
           Alert.alert('Verification Pending', connectRes.error?.message || 'Verification with Meta in progress.');
         }
-      } catch {
-        // Continue to check other fields
+      } catch (err) {
+        // W-L7: was a bare catch {} — surface the failure with its
+        // reason instead of failing silently. Same status re-check as
+        // the !ok path: a connection that worked must not be reported
+        // as failed.
+        const status = await fetchConnectionStatus();
+        if (status?.status === 'CONNECTED') {
+          finishConnected(status);
+        } else {
+          Alert.alert(
+            'Connection Failed',
+            `Could not verify the Meta connection (${err instanceof Error && err.message ? err.message : 'network error'}). Please tap Confirm & Connect to verify.`,
+          );
+        }
       } finally {
+        codeExchangeInFlightRef.current = null;
         setLoading(false);
       }
+      return;
     }
 
 
@@ -249,7 +463,11 @@ export function WhatsAppOnboardingModal({
     if (bPhone) setBusinessPhone(String(bPhone));
 
     if (pId || wId) {
-      setWebViewUrl(null);
+      // W-H6: never run a second exchange while the app already owns
+      // one for this signup, and never re-fire after success was
+      // already surfaced (complete message racing the code exchange).
+      if (codeExchangeInFlightRef.current || signupCompletedRef.current) return;
+      handleWebViewClose();
       setLoading(true);
       try {
         const connectRes = await connectWaba({
@@ -277,7 +495,15 @@ export function WhatsAppOnboardingModal({
         setLoading(false);
       }
     }
-  }, [onClose, onConnected, webViewUrl]);
+  }, [
+    fetchConnectionStatus,
+    finishConnected,
+    handleWebViewClose,
+    onClose,
+    onConnected,
+    openMetaInExternalBrowser,
+    webViewUrl,
+  ]);
 
   const handleSaveConnection = async () => {
     if (!phoneNumberId.trim()) {
@@ -565,7 +791,8 @@ export function WhatsAppOnboardingModal({
                     extrasObj.featureType = 'whatsapp_business_app_onboarding';
                   }
                   const directMetaUrl = `https://business.facebook.com/messaging/whatsapp/onboard/?app_id=${metaAppId}&config_id=${configId}&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
-                  void WebBrowser.openBrowserAsync(directMetaUrl);
+                  // W-H3: return is handled by the AppState listener.
+                  openMetaInExternalBrowser(directMetaUrl);
                 }}
                 style={styles.browserBtn}
                 accessibilityLabel="Open in Browser"
@@ -606,8 +833,14 @@ export function WhatsAppOnboardingModal({
                 </View>
               )}
               onMessage={handleWebViewMessage}
+              // W-M7: any navigation / load is proof the page is alive
+              // — reset the stall watchdog on activity.
+              onLoadEnd={() => {
+                if (webViewOpenRef.current) armWebViewStallTimer();
+              }}
               onNavigationStateChange={(navState) => {
                 currentWebViewUrlRef.current = navState.url;
+                if (webViewOpenRef.current) armWebViewStallTimer();
               }}
               onShouldStartLoadWithRequest={(request) => {
                 // V4-L29: navigation allowlist, same shape as
@@ -648,7 +881,8 @@ export function WhatsAppOnboardingModal({
                   try {
                     const host = new URL(targetUrl).hostname.toLowerCase();
                     if (host === 'facebook.com' || host.endsWith('.facebook.com')) {
-                      void WebBrowser.openBrowserAsync(targetUrl);
+                      // W-H3: return handled by the AppState listener.
+                      openMetaInExternalBrowser(targetUrl);
                     }
                   } catch {
                     // Ignore malformed URLs.
@@ -656,6 +890,9 @@ export function WhatsAppOnboardingModal({
                 }
               }}
               onError={() => {
+                // The load-failure alert below owns this failure — stop
+                // the stall watchdog so it cannot fire a second alert.
+                clearWebViewStallTimer();
                 Alert.alert(
                   'Could Not Load Meta Signup',
                   'Failed to load the secure Meta setup. Nothing has been connected. Check your connection and try again.',
