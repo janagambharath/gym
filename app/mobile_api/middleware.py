@@ -99,9 +99,22 @@ def token_required(view):
             and not _is_subscription_exempt()
             and _is_trial_expired(user.gym)
         ):
+            # W-M2 (2026-11-10): connect-waba is deliberately NOT exempt
+            # — a trial-expired gym must not connect paid WhatsApp — but
+            # the 403 has to say so in words the page can display.
+            # Every other endpoint keeps the generic message.
+            if request.path.endswith("/whatsapp/connect-waba"):
+                message = (
+                    "Your free trial has ended — upgrade to connect WhatsApp."
+                )
+            else:
+                message = (
+                    "Your free trial has ended. Please upgrade to a paid plan "
+                    "to continue using Renewal Desk."
+                )
             return error_response(
                 "SUBSCRIPTION_REQUIRED",
-                "Your free trial has ended. Please upgrade to a paid plan to continue using Renewal Desk.",
+                message,
                 403,
             )
 

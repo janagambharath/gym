@@ -10,9 +10,13 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db, limiter
 import requests
 from app.mobile_api.errors import error_response
-from app.mobile_api.middleware import roles_required, token_required
-from app.mobile_api.token_service import consume_handshake_token, create_handshake_token
-from app.models import Member, QRSettings, ReminderLog, User
+from app.mobile_api.middleware import _is_trial_expired, roles_required, token_required
+from app.mobile_api.token_service import (
+    consume_handshake_token,
+    create_handshake_token,
+    decode_handshake_token,
+)
+from app.models import Gym, Member, QRSettings, ReminderLog, User
 from app.services.audit_service import audit
 from app.services.error_messages import friendly_error
 from app.services.idempotency_service import (
@@ -50,7 +54,7 @@ def whatsapp_handshake_or_token_required(view):
     """Accept the embedded-signup handshake token or a normal access token.
 
     The handshake is minted by the authenticated onboarding-config endpoint
-    and is scoped to the whatsapp_embedded_signup purpose (10 minutes).
+    and is scoped to the whatsapp_embedded_signup purpose (30 minutes).
     """
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -74,6 +78,17 @@ def whatsapp_handshake_or_token_required(view):
                     g.current_user = user
                     g.user_id = user.id
                     g.gym_id = user.gym_id
+                    # W-M2: the handshake path used to bypass the trial
+                    # lockdown entirely (token_required was never run).
+                    # A trial-expired gym must not connect paid WhatsApp
+                    # on either auth path — same code + message as the
+                    # access-token path so the page displays one thing.
+                    if _is_trial_expired(user.gym):
+                        return error_response(
+                            "SUBSCRIPTION_REQUIRED",
+                            "Your free trial has ended — upgrade to connect WhatsApp.",
+                            403,
+                        )
                     return view(*args, **kwargs)
                 return error_response("UNAUTHORIZED", "Handshake is not valid for this account.", 401)
         # Fall back to the standard access-token flow.
@@ -100,7 +115,16 @@ def register_whatsapp_routes(bp):
         is_waba_connected = bool(gym.whatsapp_business_account_id)
         is_business_connected = bool(gym.whatsapp_business_account_id and gym.name)
         is_phone_connected = bool(gym.phone_number_id and (gym.business_phone_number or gym.phone))
-        is_messaging_ready = bool(gym.whatsapp_enabled and gym.whatsapp_connection_status == "CONNECTED")
+        # W-M1: when registration/subscription did not confirm, the stored
+        # warning says so — messaging_ready must NOT claim messaging works.
+        from app.services.embedded_signup_service import has_messaging_warning
+
+        messaging_degraded = has_messaging_warning(gym)
+        is_messaging_ready = bool(
+            gym.whatsapp_enabled
+            and gym.whatsapp_connection_status == "CONNECTED"
+            and not messaging_degraded
+        )
         is_reminders_ready = bool(gym.whatsapp_enabled and is_messaging_ready)
 
         checklist = {
@@ -472,6 +496,13 @@ def register_whatsapp_routes(bp):
                 "business_phone_number": gym.business_phone_number or gym.phone or "",
                 "phone_number_id": gym.phone_number_id or "",
                 "waba_id": gym.whatsapp_business_account_id or "",
+                # W-C1/W-M1: provisioning state + the stored non-blocking
+                # warning (register/subscribe or templates). Null when
+                # there is nothing to warn about. Clients must show
+                # `warning` when present — a CONNECTED gym can still
+                # have degraded messaging or unprovisioned templates.
+                "templates_provisioned": bool(gym.whatsapp_templates_provisioned),
+                "warning": gym.whatsapp_connection_error or None,
                 "coexistence_eligible": True,
                 "profile": {
                     "about": gym.business_category or "Fitness Gym & Training Center",
@@ -561,6 +592,20 @@ def register_whatsapp_routes(bp):
         if not re.fullmatch(r"[A-Za-z0-9_.-]{16,512}", handshake):
             return "<h1>Configuration Error</h1><p>Signup handshake is missing or invalid.</p>", 400
 
+        # W-H7: validate the handshake HERE, before serving a page that
+        # can only fail at the final save. decode (peek) only — do NOT
+        # consume: consumption happens on the connect-waba POST. An
+        # expired/invalid handshake gets a clear error page instead of
+        # a page that freezes on "Verifying..." after Meta signup.
+        if decode_handshake_token(handshake, "whatsapp_embedded_signup") is None:
+            return (
+                "<h1>Signup link expired</h1>"
+                "<p>This WhatsApp signup link has expired or is no longer "
+                "valid. Please return to the app and tap Connect WhatsApp "
+                "again to get a fresh link.</p>",
+                401,
+            )
+
         html = (
             _EMBEDDED_SIGNUP_HTML
             .replace("{{META_APP_ID}}", meta_app_id)
@@ -598,6 +643,7 @@ def register_whatsapp_routes(bp):
     @bp.route("/whatsapp/connect-waba", methods=["POST"])
     @whatsapp_handshake_or_token_required
     @roles_required("gym_owner")
+    @limiter.limit("5 per minute")
     def connect_waba():
         """Connect or update tenant-scoped WABA and Phone Number ID.
 
@@ -606,6 +652,13 @@ def register_whatsapp_routes(bp):
            `waba_id` + `phone_number_id` + `business_id` from Meta's
            postMessage callback. Runs the full automated pipeline.
         2. **Manual fallback**: Receives `waba_id` + `phone_number_id` directly.
+
+        W-H6 dedup: if this gym is already CONNECTED with the same
+        waba_id + phone_number_id, the request returns success at once
+        — no Meta chain, no re-verify, no chance of a late Flow 2
+        overwriting a good connect with FAILED.
+        W-L9: 5 attempts/minute per IP — a retry storm from stuck
+        pages must not stack 48s requests and starve the API threads.
         """
         data = request.get_json(silent=True) or {}
         waba_id = str(data.get("waba_id") or "").strip()
@@ -620,36 +673,135 @@ def register_whatsapp_routes(bp):
             waba_id = ""
 
         gym = g.current_user.gym
+        was_connected = bool(
+            gym.whatsapp_enabled
+            and gym.whatsapp_connection_status == "CONNECTED"
+            and gym.phone_number_id
+        )
+
+        def _connected_response(gym_row, *, provisioning: str):
+            return jsonify({
+                "success": True,
+                "data": {
+                    "status": "CONNECTED",
+                    "message": "WhatsApp Business connected successfully.",
+                    "waba_id": gym_row.whatsapp_business_account_id,
+                    "phone_number_id": gym_row.phone_number_id,
+                    "business_phone_number": gym_row.business_phone_number,
+                    "business_id": gym_row.whatsapp_meta_business_id,
+                    "templates_provisioned": bool(gym_row.whatsapp_templates_provisioned),
+                    "provisioning": provisioning,
+                    "warning": gym_row.whatsapp_connection_error or None,
+                },
+            })
+
+        def _schedule_provisioning(
+            gym_id: int, waba_id: str = "", phone_number_id: str = ""
+        ) -> None:
+            # Best-effort, post-commit only: never fail a good connect
+            # because the background thread could not start. The IDs
+            # let the worker abort if the gym reconnects meanwhile.
+            try:
+                from app.services.template_provisioning_service import (
+                    schedule_template_provisioning,
+                )
+
+                schedule_template_provisioning(
+                    current_app._get_current_object(),
+                    gym_id,
+                    waba_id,
+                    phone_number_id,
+                )
+            except Exception:
+                current_app.logger.exception(
+                    "Background template provisioning could not start gym=%s",
+                    gym_id,
+                )
+
+        # ── W-H6: already CONNECTED with the same WABA + phone ──
+        # Return success immediately. If templates are still pending,
+        # re-trigger the background provisioning (this is also the
+        # retry path for a failed provisioning run).
+        if (
+            was_connected
+            and waba_id
+            and phone_number_id
+            and gym.whatsapp_business_account_id == waba_id
+            and gym.phone_number_id == phone_number_id
+            and (not business_id or gym.whatsapp_meta_business_id in (None, "", business_id))
+        ):
+            if not gym.whatsapp_templates_provisioned:
+                _schedule_provisioning(
+                    gym.id,
+                    gym.whatsapp_business_account_id or "",
+                    gym.phone_number_id or "",
+                )
+                return _connected_response(gym, provisioning="pending")
+            return _connected_response(gym, provisioning="done")
 
         # ── Flow 1: Full Embedded Signup (has authorization code) ──
         if code:
             from app.services.embedded_signup_service import EmbeddedSignupService
 
             service = EmbeddedSignupService(gym)
-            result = service.process_signup(
-                code=code,
-                waba_id=waba_id,
-                phone_number_id=phone_number_id,
-                display_phone_number=phone,
-                business_id=business_id,
-            )
+            # W-H4: any unexpected exception (DB flush/commit, token
+            # encryption, audit) returns a JSON error and rolls back
+            # cleanly — no half-save, no uncaught 500.
+            try:
+                result = service.process_signup(
+                    code=code,
+                    waba_id=waba_id,
+                    phone_number_id=phone_number_id,
+                    display_phone_number=phone,
+                    business_id=business_id,
+                )
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "Embedded signup failed unexpectedly gym=%s", gym.id
+                )
+                return error_response(
+                    "INTERNAL_ERROR",
+                    "An unexpected error occurred while connecting WhatsApp. Please try again.",
+                    500,
+                )
 
             if result.ok:
-                audit(
-                    action="mobile_connect_waba",
-                    resource_type="gym",
-                    resource_id=gym.id,
-                    gym_id=gym.id,
-                    actor_id=g.current_user.id,
-                    metadata={
-                        "waba_id": result.waba_id,
-                        "phone_number_id": result.phone_number_id,
-                        "business_id": result.business_id,
-                        "steps": result.steps_completed,
-                        "flow": "embedded_signup",
-                    },
-                )
-                db.session.commit()
+                try:
+                    audit(
+                        action="mobile_connect_waba",
+                        resource_type="gym",
+                        resource_id=gym.id,
+                        gym_id=gym.id,
+                        actor_id=g.current_user.id,
+                        metadata={
+                            "waba_id": result.waba_id,
+                            "phone_number_id": result.phone_number_id,
+                            "business_id": result.business_id,
+                            "steps": result.steps_completed,
+                            "flow": "embedded_signup",
+                        },
+                    )
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        "Embedded signup audit/commit failed gym=%s", gym.id
+                    )
+                    return error_response(
+                        "INTERNAL_ERROR",
+                        "WhatsApp connected at Meta but the save failed. Please try again.",
+                        500,
+                    )
+
+                # W-C1/W-H5: the gym row is COMMITTED before provisioning
+                # starts. Provisioning runs in a background thread, so
+                # the response returns promptly and a slow/failed Meta
+                # can never roll back this connect.
+                if result.provisioning_pending and not gym.whatsapp_templates_provisioned:
+                    _schedule_provisioning(
+                        gym.id, result.waba_id, result.phone_number_id
+                    )
 
                 return jsonify({
                     "success": True,
@@ -661,14 +813,51 @@ def register_whatsapp_routes(bp):
                         "business_phone_number": result.display_phone_number,
                         "business_id": result.business_id,
                         "steps_completed": result.steps_completed,
+                        "warnings": result.warnings,
+                        "templates_provisioned": False,
+                        "provisioning": "pending",
                     },
                 })
             else:
                 db.session.rollback()
+                # W-H6: the duplicate POST of one signup (page + app
+                # firing the same single-use code) fails code exchange
+                # on the second attempt even though the first already
+                # committed CONNECTED. Report the stored success
+                # instead of a 409 — the connect DID happen.
+                fresh = db.session.get(Gym, gym.id)
+                if (
+                    fresh is not None
+                    and fresh.whatsapp_enabled
+                    and fresh.whatsapp_connection_status == "CONNECTED"
+                    and fresh.phone_number_id
+                    and (
+                        (waba_id and phone_number_id
+                         and fresh.whatsapp_business_account_id == waba_id
+                         and fresh.phone_number_id == phone_number_id)
+                        or ((not waba_id and not phone_number_id) and was_connected)
+                    )
+                    and (not business_id or fresh.whatsapp_meta_business_id in (None, "", business_id))
+                ):
+                    if not fresh.whatsapp_templates_provisioned:
+                        _schedule_provisioning(
+                            fresh.id,
+                            fresh.whatsapp_business_account_id or "",
+                            fresh.phone_number_id or "",
+                        )
+                    return _connected_response(
+                        fresh,
+                        provisioning="pending"
+                        if not fresh.whatsapp_templates_provisioned else "done",
+                    )
+                # W-M4 / W-L8: the 409 says WHY — a machine-readable
+                # reason plus a human message, no tokens, no raw Meta
+                # bodies (the detail lives in the server logs).
                 return error_response(
                     "EMBEDDED_SIGNUP_FAILED",
                     result.error or "Embedded Signup flow failed. Please try again.",
                     409,
+                    details={"reason": result.failure_reason or "signup_failed"},
                 )
 
         # ── Flow 2: Manual/Direct connection (no code) ──
@@ -718,9 +907,31 @@ def register_whatsapp_routes(bp):
         gym.whatsapp_enabled = False
         gym.whatsapp_connection_status = "PENDING"
         gym.whatsapp_connection_error = None
-        verification = WhatsAppService(gym).connect_webhooks()
+        # W-H4: connect_webhooks can raise (non-JSON Meta body used to
+        # escape — W-L2 guards the common case, this catches the rest).
+        try:
+            verification = WhatsAppService(gym).connect_webhooks()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "WhatsApp webhook verification failed unexpectedly gym=%s", gym.id
+            )
+            return error_response(
+                "INTERNAL_ERROR",
+                "An unexpected error occurred while verifying WhatsApp. Please try again.",
+                500,
+            )
         if not verification.ok:
             error_msg = f"We could not finish connecting WhatsApp: {verification.error}" if verification.error else "We could not verify this WhatsApp connection with Meta. Please try again."
+            # W-H6: a late Flow 2 must never overwrite a CONNECTED row
+            # with FAILED. Keep the existing connection and say so.
+            if was_connected:
+                db.session.rollback()
+                return error_response(
+                    "WHATSAPP_CONNECTION_NOT_VERIFIED",
+                    "We could not verify the new number. Your existing WhatsApp connection is unchanged.",
+                    409,
+                )
             gym.whatsapp_connection_status = "FAILED"
             gym.whatsapp_connection_error = error_msg
             db.session.commit()
@@ -734,15 +945,36 @@ def register_whatsapp_routes(bp):
         gym.whatsapp_connection_status = "CONNECTED"
         gym.whatsapp_connection_error = None
 
-        audit(
-            action="mobile_connect_waba",
-            resource_type="gym",
-            resource_id=gym.id,
-            gym_id=gym.id,
-            actor_id=g.current_user.id,
-            metadata={"waba_id": gym.whatsapp_business_account_id, "phone_number_id": phone_number_id, "flow": "manual"},
-        )
-        db.session.commit()
+        try:
+            audit(
+                action="mobile_connect_waba",
+                resource_type="gym",
+                resource_id=gym.id,
+                gym_id=gym.id,
+                actor_id=g.current_user.id,
+                metadata={"waba_id": gym.whatsapp_business_account_id, "phone_number_id": phone_number_id, "flow": "manual"},
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "Manual connect audit/commit failed gym=%s", gym.id
+            )
+            return error_response(
+                "INTERNAL_ERROR",
+                "WhatsApp verified at Meta but the save failed. Please try again.",
+                500,
+            )
+
+        # Flow 2 never provisioned templates before; same background
+        # treatment as Flow 1 so the two flows converge.
+        templates_pending = not gym.whatsapp_templates_provisioned
+        if templates_pending:
+            _schedule_provisioning(
+                gym.id,
+                gym.whatsapp_business_account_id or "",
+                gym.phone_number_id or "",
+            )
 
         return jsonify({
             "success": True,
@@ -752,8 +984,68 @@ def register_whatsapp_routes(bp):
                 "waba_id": gym.whatsapp_business_account_id,
                 "phone_number_id": gym.phone_number_id,
                 "business_phone_number": gym.business_phone_number,
+                "templates_provisioned": bool(gym.whatsapp_templates_provisioned),
+                "provisioning": "pending" if templates_pending else "done",
             },
         })
+
+    @bp.route("/whatsapp/retry-templates", methods=["POST"])
+    @token_required
+    @roles_required("gym_owner")
+    @limiter.limit("5 per minute")
+    def retry_templates():
+        """Retry background template provisioning for a CONNECTED gym.
+
+        W-C1: the retry surface for a provisioning run that failed or
+        was cut short (e.g. worker restart). Returns 202 at once — the
+        run itself happens in the background thread. The outcome is
+        visible in connection-status (``templates_provisioned`` +
+        ``warning``).
+        """
+        gym = g.current_user.gym
+        if not gym.whatsapp_enabled or gym.whatsapp_connection_status != "CONNECTED":
+            return error_response(
+                "WHATSAPP_NOT_CONFIGURED",
+                "WhatsApp is not connected for this gym.",
+                409,
+            )
+        if gym.whatsapp_templates_provisioned:
+            return jsonify({
+                "success": True,
+                "data": {
+                    "status": "CONNECTED",
+                    "templates_provisioned": True,
+                    "provisioning": "done",
+                    "message": "Message templates are already provisioned.",
+                },
+            })
+        from app.services.template_provisioning_service import (
+            schedule_template_provisioning,
+        )
+
+        started = schedule_template_provisioning(
+            current_app._get_current_object(),
+            gym.id,
+            gym.whatsapp_business_account_id or "",
+            gym.phone_number_id or "",
+        )
+        if not started:
+            return error_response(
+                "INTERNAL_ERROR",
+                "Could not start template provisioning. Please try again.",
+                500,
+            )
+        resp = jsonify({
+            "success": True,
+            "data": {
+                "status": "PROVISIONING",
+                "templates_provisioned": False,
+                "provisioning": "pending",
+                "message": "Template provisioning restarted in the background. Check connection status in a minute.",
+            },
+        })
+        resp.status_code = 202
+        return resp
 
 
     @bp.route("/whatsapp/fetch-numbers", methods=["POST"])
@@ -981,9 +1273,125 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     }
   }
 
+  function enableConnectButton() {
+    var b = document.getElementById('connectBtn');
+    if (b) b.disabled = false;
+  }
+
+  // W-C1 / W-H1: every connect-waba save goes through postConnectWaba —
+  // 60 s timeout (AbortController), defensive JSON parse, and a typed
+  // rejection. Callers must turn the rejection into a VISIBLE status;
+  // a .catch that only console.warns is never acceptable again.
+  var CONNECT_TIMEOUT_MS = 60000;
+  // W-H6: true while a connect-waba save is in flight for this signup, so
+  // the code path and the WA_EMBEDDED_SIGNUP path can never fire two saves.
+  var _exchangeInFlight = false;
+  var _signupPending = false;
+  var _postSigninTimer = null;
+
+  // W-H1: the post-signin recovery timer. Armed whenever the page hands a
+  // signup off (code posted / save fired); the 8 s pre-login
+  // recoveryTimeout is cleared on login, so this is the live recovery
+  // path after sign-in. Fires 5 s after the fetch timeout as a backstop
+  // in case the fetch promise itself never settles.
+  function armPostSigninWatchdog() {
+    clearPostSigninWatchdog();
+    _signupPending = true;
+    _postSigninTimer = setTimeout(function() {
+      if (!_signupPending) return;
+      _signupPending = false;
+      _exchangeInFlight = false;
+      enableConnectButton();
+      setStatus('Couldn\'t reach the server — tap Connect to try again.', true);
+    }, CONNECT_TIMEOUT_MS + 5000);
+  }
+
+  function clearPostSigninWatchdog() {
+    if (_postSigninTimer) { clearTimeout(_postSigninTimer); _postSigninTimer = null; }
+    _signupPending = false;
+  }
+
+  function postConnectWaba(payload) {
+    var controller = new AbortController();
+    var timer = setTimeout(function() { controller.abort(); }, CONNECT_TIMEOUT_MS);
+    return fetch('/api/mobile/v1/whatsapp/connect-waba', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + AUTH_TOKEN
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }).then(function(res) {
+      return res.text().then(function(text) {
+        clearTimeout(timer);
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+        if (!data) {
+          var bad = new Error('non-JSON response');
+          bad.kind = 'non-json';
+          bad.status = res.status;
+          throw bad;
+        }
+        data._httpStatus = res.status;
+        return data;
+      });
+    }).catch(function(err) {
+      clearTimeout(timer);
+      if (err && err.name === 'AbortError') {
+        var t = new Error('request timed out');
+        t.kind = 'timeout';
+        throw t;
+      }
+      if (err && err.kind) throw err;
+      var n = new Error('network error');
+      n.kind = 'network';
+      throw n;
+    });
+  }
+
+  // Error contract (PROVISIONAL — no backend-crew contract existed when
+  // this page was fixed; keys taken from the review: TOKEN_EXPIRED /
+  // UNAUTHORIZED / SUBSCRIPTION_REQUIRED / EMBEDDED_SIGNUP_FAILED /
+  // INTERNAL_ERROR). The server's own message is shown when it sent one.
+  // Every branch ends with a retry prompt.
+  function signupErrorText(result, err) {
+    if (err) {
+      if (err.kind === 'timeout') return 'The connection timed out — tap Connect to try again.';
+      return 'Couldn\'t reach the server — tap Connect to try again.';
+    }
+    var error = (result && result.error) || {};
+    var code = error.code || '';
+    var status = (result && result._httpStatus) || 0;
+    var msg = error.message || '';
+    if (code === 'TOKEN_EXPIRED' || code === 'UNAUTHORIZED' || status === 401) {
+      return 'This setup link expired — restart setup from the app.';
+    }
+    if (code === 'SUBSCRIPTION_REQUIRED' || status === 403) {
+      return 'Your trial has ended — renew your subscription, then restart setup from the app.';
+    }
+    if (msg) return msg + ' Tap Connect to try again.';
+    if (code === 'EMBEDDED_SIGNUP_FAILED') return 'Meta rejected the connection — tap Connect to try again.';
+    if (code === 'INTERNAL_ERROR') return 'Something went wrong on our side — tap Connect to try again.';
+    return 'Couldn\'t connect WhatsApp — tap Connect to try again.';
+  }
+
+  // Shared failure landing for both save paths: clear the watchdog, free
+  // the exchange guard for a retry, re-enable Connect, show the real error.
+  function failSignup(result, err) {
+    clearPostSigninWatchdog();
+    _exchangeInFlight = false;
+    enableConnectButton();
+    setStatus(signupErrorText(result, err), true);
+  }
+
   function openExternal() {
     var extrasObj = { sessionInfoVersion: '3', version: 'v4' };
-    if (FEATURE_TYPE && FEATURE_TYPE !== '{{FEATURE_TYPE}}' && FEATURE_TYPE !== 'none') {
+    // Never compare FEATURE_TYPE to the placeholder literal — serve-time
+    // replacement rewrites the literal too, so that comparison is always
+    // false and a passed feature type is silently dropped. An unreplaced
+    // placeholder still starts with '{{'.
+    if (FEATURE_TYPE && FEATURE_TYPE !== 'none' && FEATURE_TYPE.indexOf('{{') !== 0) {
       extrasObj.featureType = FEATURE_TYPE;
     }
     var directMetaUrl = 'https://business.facebook.com/messaging/whatsapp/onboard/?app_id=' +
@@ -997,7 +1405,16 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     });
 
     if (!window.ReactNativeWebView) {
-      window.location.href = directMetaUrl;
+      // W-H3 (option a): open Meta in a NEW tab so this page survives —
+      // the owner finishes on Meta's tab, returns here and taps Connect
+      // again. Navigating this page itself away was a dead end: no return
+      // URL exists, so nothing could ever complete the connect.
+      var tab = window.open(directMetaUrl, '_blank');
+      if (tab) {
+        setStatus('Meta opened in a new tab — finish signup there, then return to this tab and tap Connect again.', false);
+      } else {
+        setStatus('Your browser blocked the new tab — allow popups for this site, then tap "Having trouble? Open in Browser" again.', true);
+      }
     }
   }
 
@@ -1018,31 +1435,39 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
       business_id: businessId || _capturedBusinessId || ''
     });
 
-    if (AUTH_TOKEN && AUTH_TOKEN !== '{{AUTH_TOKEN}}') {
-      fetch('/api/mobile/v1/whatsapp/connect-waba', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + AUTH_TOKEN
-        },
-        body: JSON.stringify({
-          waba_id: wabaId,
-          phone_number_id: phoneId,
-          business_phone_number: phoneNum,
-          business_id: businessId || _capturedBusinessId || ''
-        })
-      }).then(function(res) {
-        return res.json();
+    // W-H6: single owner of the save. Inside the app WebView the app owns
+    // the exchange (it just received this complete message); the page must
+    // not fire its own fetch. And if the FB.login code path already fired
+    // a save for this signup, never fire a second one.
+    if (window.ReactNativeWebView || _exchangeInFlight) return;
+
+    // NOTE: never compare AUTH_TOKEN to the placeholder literal — serve-time
+    // replacement rewrites the literal too, so the old guard was ALWAYS
+    // false and neither save fetch ever fired in the served page (the
+    // incident freeze: "Retrieving..." with no request at all). An
+    // unreplaced placeholder still starts with '{{'.
+    if (AUTH_TOKEN && AUTH_TOKEN.indexOf('{{') !== 0) {
+      _exchangeInFlight = true;
+      armPostSigninWatchdog();
+      postConnectWaba({
+        waba_id: wabaId,
+        phone_number_id: phoneId,
+        business_phone_number: phoneNum,
+        business_id: businessId || _capturedBusinessId || ''
       }).then(function(result) {
         if (result && result.success) {
+          clearPostSigninWatchdog();
+          _exchangeInFlight = false;
           setStatus('WhatsApp Connected Successfully!', false);
           var card = document.getElementById('cardContent');
           if (card) {
             card.innerHTML = '<div style="text-align:center; padding: 24px 0;"><h2 style="color:#25D366; font-size:20px; font-weight:800; margin-bottom:8px;">WhatsApp Connected!</h2><p style="color:#475569; font-size:14px; line-height:1.5;">Your business number is now linked to Renewal Desk. Automated renewal reminders and AI receptionist are ready.</p></div>';
           }
+        } else {
+          failSignup(result, null);
         }
       }).catch(function(err) {
-        console.warn('Direct connect save error', err);
+        failSignup(null, err);
       });
     }
   }
@@ -1060,6 +1485,9 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
       setStatus('Ready. Tap Connect WhatsApp to begin.', false);
     } catch (e) {
       console.warn('FB init error', e);
+      // W-L3: a swallowed FB.init throw used to leave the page blank/idle
+      // with no guidance at all.
+      setStatus('Meta sign-in could not load. Check your internet connection, then close and try again.', true);
     }
   };
 
@@ -1072,7 +1500,9 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
     var recoveryTimeout = setTimeout(function() {
       if (button && button.disabled) {
         button.disabled = false;
-        setStatus('Ready. Tap Connect WhatsApp to try again, or enter your WhatsApp credentials directly in the app.', false);
+        // W-L5: do not promise a manual-entry path — the PWA has no manual
+        // WABA/phone-ID entry form (only the Android modal does).
+        setStatus('Ready. Tap Connect WhatsApp to try again.', false);
       }
     }, 8000);
 
@@ -1083,52 +1513,68 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
           sessionInfoVersion: '3',
           version: 'v4'
         };
-        if (FEATURE_TYPE && FEATURE_TYPE !== '{{FEATURE_TYPE}}' && FEATURE_TYPE !== 'none') {
+        if (FEATURE_TYPE && FEATURE_TYPE !== 'none' && FEATURE_TYPE.indexOf('{{') !== 0) {
           loginExtras.featureType = FEATURE_TYPE;
         }
 
         FB.login(function(response) {
           clearTimeout(recoveryTimeout);
           if (response && response.authResponse) {
-            setStatus('Signed in. Retrieving WhatsApp Business details...', false);
             var code = response.authResponse.code;
             if (code) {
+              // W-M3: only claim "Retrieving..." once a code actually
+              // exists — a missing code used to freeze on that text with
+              // no fetch ever attempted.
+              setStatus('Signed in. Retrieving WhatsApp Business details...', false);
               postToApp({
                 type: 'embedded_signup_code',
                 code: code,
                 business_id: _capturedBusinessId || ''
               });
-              if (AUTH_TOKEN && AUTH_TOKEN !== '{{AUTH_TOKEN}}') {
-                fetch('/api/mobile/v1/whatsapp/connect-waba', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + AUTH_TOKEN
-                  },
-                  body: JSON.stringify({ code: code, business_id: _capturedBusinessId || '' })
-                }).then(function(res) {
-                  return res.json();
-                }).then(function(result) {
-                  if (result && result.success) {
-                    setStatus('WhatsApp Connected Successfully!', false);
-                    postToApp({
-                      type: 'embedded_signup_complete',
-                      phone_number_id: result.data && result.data.phone_number_id,
-                      waba_id: result.data && result.data.waba_id,
-                      business_phone_number: result.data && result.data.business_phone_number,
-                      business_id: result.data && result.data.business_id
-                    });
-                    var card = document.getElementById('cardContent');
-                    if (card) {
-                      card.innerHTML = '<div style="text-align:center; padding: 24px 0;"><h2 style="color:#25D366; font-size:20px; font-weight:800; margin-bottom:8px;">WhatsApp Connected!</h2><p style="color:#475569; font-size:14px; line-height:1.5;">Your business number is now linked to Renewal Desk.</p></div>';
+              // W-H1: arm the post-signin watchdog even in the WebView —
+              // if the app never closes this page, the owner still gets a
+              // visible error + retry instead of a frozen screen.
+              armPostSigninWatchdog();
+              // W-H6: single owner of the code exchange. Inside the app
+              // WebView the app owns it (it just received the code above)
+              // — the page must not fire its own fetch with the same
+              // one-time code. In a plain browser tab the page fetch is
+              // the only save path, so it owns the exchange there.
+              if (!window.ReactNativeWebView && !_exchangeInFlight) {
+                // Same replacement-proof guard as handleSignupSuccess (see
+                // note there): the old placeholder comparison was always
+                // false in the served page, so this fetch never ran.
+                if (AUTH_TOKEN && AUTH_TOKEN.indexOf('{{') !== 0) {
+                  _exchangeInFlight = true;
+                  postConnectWaba({ code: code, business_id: _capturedBusinessId || '' }).then(function(result) {
+                    if (result && result.success) {
+                      clearPostSigninWatchdog();
+                      _exchangeInFlight = false;
+                      setStatus('WhatsApp Connected Successfully!', false);
+                      postToApp({
+                        type: 'embedded_signup_complete',
+                        phone_number_id: result.data && result.data.phone_number_id,
+                        waba_id: result.data && result.data.waba_id,
+                        business_phone_number: result.data && result.data.business_phone_number,
+                        business_id: result.data && result.data.business_id
+                      });
+                      var card = document.getElementById('cardContent');
+                      if (card) {
+                        card.innerHTML = '<div style="text-align:center; padding: 24px 0;"><h2 style="color:#25D366; font-size:20px; font-weight:800; margin-bottom:8px;">WhatsApp Connected!</h2><p style="color:#475569; font-size:14px; line-height:1.5;">Your business number is now linked to Renewal Desk.</p></div>';
+                      }
+                    } else {
+                      // W-H2 / W-L8: show the REAL error, never a bare
+                      // "Verifying..." as a terminal state.
+                      failSignup(result, null);
                     }
-                  } else {
-                    setStatus('Signed in. Verifying Meta connection...', false);
-                  }
-                }).catch(function(err) {
-                  console.warn('Backend code exchange failed', err);
-                });
+                  }).catch(function(err) {
+                    failSignup(null, err);
+                  });
+                }
               }
+            } else {
+              enableConnectButton();
+              setStatus('Meta didn\'t return a sign-in code — tap Connect to try again.', true);
             }
           } else {
             if (button) button.disabled = false;
@@ -1198,6 +1644,19 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
           handleSignupSuccess(wabaId, phoneId, phoneNum, businessId);
           return;
         }
+
+        if (!phoneId && !wabaId) {
+          // W-M8: Meta sent only a business_id — keep the capture, but do
+          // not leave the owner with no feedback. START/PROGRESS events
+          // are mid-flow, so only a non-progress event with no IDs is a
+          // dead end; a save already in flight owns the status instead.
+          var signupEvent = data.event || '';
+          if (signupEvent !== 'START' && signupEvent !== 'PROGRESS' && !_exchangeInFlight) {
+            enableConnectButton();
+            setStatus('Signup is incomplete — Meta didn\'t return a WhatsApp number. Tap Connect to try again.', true);
+          }
+          return;
+        }
       }
 
       if (data && (data.waba_id || data.phone_number_id || data.phoneNumberId)) {
@@ -1212,7 +1671,19 @@ _EMBEDDED_SIGNUP_HTML = """<!DOCTYPE html>
   });
 
   function cancelSetup() {
-    postToApp({ type: 'embedded_signup_cancel' });
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      postToApp({ type: 'embedded_signup_cancel' });
+      return;
+    }
+    // W-M9: in a plain browser tab (PWA window.open) there is no app to
+    // receive the cancel message — and the PWA has no deep-link URL for
+    // WhatsApp Setup (in-memory router), so close this tab back to the
+    // app. If the browser refuses to close it, fall back to the app home.
+    setStatus('Setup cancelled. Returning to the app…', false);
+    window.close();
+    setTimeout(function() {
+      window.location.href = window.location.origin + '/';
+    }, 500);
   }
 </script>
 </body>

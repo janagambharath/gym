@@ -84,11 +84,19 @@ class WhatsAppService:
             self._handle_auth_failure(response.status_code)
             return WhatsAppResult(ok=False, error=self._response_error(response))
 
-        phone_number_ids = {
-            str(phone_number.get("id"))
-            for phone_number in response.json().get("data", [])
-            if phone_number.get("id")
-        }
+        # W-L2: response.json() must not raise out of this method — a 200
+        # with a non-JSON body used to escape as an uncaught exception.
+        try:
+            phone_number_ids = {
+                str(phone_number.get("id"))
+                for phone_number in response.json().get("data", [])
+                if phone_number.get("id")
+            }
+        except (ValueError, AttributeError):
+            return WhatsAppResult(
+                ok=False,
+                error="Meta returned an unreadable response while validating the phone number",
+            )
         if str(self.phone_number_id) not in phone_number_ids:
             return WhatsAppResult(
                 ok=False,
@@ -115,7 +123,15 @@ class WhatsAppService:
         if response.status_code >= 400:
             self._handle_auth_failure(response.status_code)
             return WhatsAppResult(ok=False, error=self._response_error(response))
-        if not response.json().get("success"):
+        # W-L2: same guard as the phone-list parse above.
+        try:
+            subscribed = response.json().get("success")
+        except (ValueError, AttributeError):
+            return WhatsAppResult(
+                ok=False,
+                error="Meta returned an unreadable response while confirming webhook subscription",
+            )
+        if not subscribed:
             return WhatsAppResult(ok=False, error="Meta did not confirm webhook subscription")
         return WhatsAppResult(ok=True)
 

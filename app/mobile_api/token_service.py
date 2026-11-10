@@ -110,7 +110,15 @@ def decode_access_token(token: str) -> dict | None:
 
 
 def create_handshake_token(user_id: int, gym_id: int, purpose: str) -> str:
-    """Create a 10-minute HMAC-signed token scoped to one purpose."""
+    """Create a 30-minute HMAC-signed token scoped to one purpose.
+
+    W-H7 (2026-11-10): 10 minutes was too short — a Meta signup flow
+    (login + business pick + number pick) routinely crosses it, and an
+    expired handshake is a dead end with no refresh path. 30 minutes
+    still bounds the window; the token stays single-use (atomic
+    consumption), purpose-scoped and HMAC-signed, so the longer window
+    adds no new privilege — only a longer retry window for the same gym.
+    """
     now = int(time.time())
     payload = {
         "sub": user_id,
@@ -118,7 +126,7 @@ def create_handshake_token(user_id: int, gym_id: int, purpose: str) -> str:
         "typ": "handshake",
         "purpose": purpose,
         "iat": now,
-        "exp": now + 10 * 60,
+        "exp": now + 30 * 60,
     }
     header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
     body = _b64url_encode(json.dumps(payload).encode())
@@ -142,7 +150,7 @@ def consume_handshake_token(token: str, purpose: str) -> dict | None:
     """Validate a handshake token and atomically mark it as consumed.
 
     SECURITY (2026-10-13): handshake tokens were previously replayable for
-    their whole 10-minute window — the "accepted once" claim in the module
+    their whole 30-minute window — the "accepted once" claim in the module
     docstring was false. The unique constraint on token_hash makes the
     check-and-record atomic: a replay hits IntegrityError and returns None.
     Uses a savepoint so a replay doesn't roll back the caller's transaction.

@@ -15,8 +15,18 @@ Template names here MUST match the exact names used in:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 import requests
+from flask import Flask
+
+from app.extensions import db
+from app.services.embedded_signup_service import (
+    WARNING_TEMPLATES_PREFIX,
+    clear_warning_prefix,
+    merge_warning,
+)
 
 _logger = logging.getLogger(__name__)
 _TIMEOUT = 15
@@ -340,3 +350,193 @@ def provision_templates(
 
     _logger.info("Template provisioning results for WABA %s: %s", waba_id, results)
     return results
+
+
+# ── Background provisioning (W-C1 / W-H5) ───────────────────────────────
+# Mechanism chosen 2026-11-10: a daemon ``threading.Thread`` spawned by
+# the connect route AFTER it commits — NOT an APScheduler one-shot job.
+# Why: the APScheduler only runs on the single worker that holds the
+# Redis scheduler lock (``reminder_scheduler.configure_scheduler``); a
+# connect landing on any other gunicorn worker would never run a
+# scheduler job, and with REDIS_URL unset the scheduler never starts at
+# all. A thread runs on whichever worker handled the request, needs no
+# Redis and no scheduler config. Cost: the thread dies if that worker
+# restarts — mitigated, not hidden: failure is stored on the gym row
+# (``whatsapp_templates_provisioned=False`` + a "Templates not
+# provisioned: ..." warning the status endpoint surfaces) and is
+# retryable via POST /whatsapp/retry-templates, via a re-POST of
+# connect-waba with the same WABA/phone (dedup re-triggers it), and by
+# the worker's own 3 attempts with 30s gaps. Provisioning never blocks
+# the connect response and never touches the block fail-safe (no door
+# commands anywhere in this flow).
+
+_PROVISION_MAX_ATTEMPTS = 3
+_PROVISION_RETRY_DELAY_S = 30
+
+
+def _provision_all_ok(results: dict[str, str]) -> bool:
+    if not results:
+        return False
+    return all(
+        value == "exists" or value.startswith("created")
+        for value in results.values()
+    )
+
+
+def _first_failure_excerpt(results: dict[str, str]) -> str:
+    for name, status in results.items():
+        if status != "exists" and not status.startswith("created"):
+            return f"{name}: {status[:120]}"
+    return "unknown Meta error"
+
+
+def provision_templates_for_gym(
+    app: Flask,
+    gym_id: int,
+    *,
+    max_attempts: int = _PROVISION_MAX_ATTEMPTS,
+    retry_delay_s: int = _PROVISION_RETRY_DELAY_S,
+    expected_waba_id: str | None = None,
+    expected_phone_number_id: str | None = None,
+) -> bool:
+    """Provision templates for one gym, with retries, in an app context.
+
+    Safe to call from a background thread: opens its own app context and
+    commits (or rolls back) per attempt. Returns True when every
+    standard template exists or was created. On final failure the gym
+    row keeps ``whatsapp_templates_provisioned=False`` and records a
+    short reason the connection-status endpoint surfaces — the gym stays
+    CONNECTED, templates are retryable, nothing is hidden.
+
+    ``expected_*``: the WABA/phone the scheduling connect saved. If the
+    gym has since reconnected to different IDs (or the row now belongs
+    to a different connect), the run aborts — a stale thread must never
+    provision or warn against a connection it was not scheduled for.
+    """
+    with app.app_context():
+        from app.models import Gym
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                gym = db.session.get(Gym, gym_id)
+                if gym is None:
+                    _logger.warning("Template provisioning: gym %s not found", gym_id)
+                    return False
+                if gym.whatsapp_templates_provisioned:
+                    return True
+                if (
+                    expected_waba_id is not None
+                    and gym.whatsapp_business_account_id != expected_waba_id
+                ) or (
+                    expected_phone_number_id is not None
+                    and gym.phone_number_id != expected_phone_number_id
+                ):
+                    _logger.info(
+                        "Template provisioning gym=%s stale (reconnected) — aborting",
+                        gym_id,
+                    )
+                    return False
+                waba_id = gym.whatsapp_business_account_id or ""
+                token = gym.get_whatsapp_token() or app.config.get(
+                    "WHATSAPP_ACCESS_TOKEN", ""
+                )
+                if not waba_id or not token:
+                    reason = "no WABA ID or access token available for this gym"
+                    gym.whatsapp_connection_error = merge_warning(
+                        gym.whatsapp_connection_error,
+                        WARNING_TEMPLATES_PREFIX,
+                        reason,
+                    )
+                    db.session.commit()
+                    _logger.warning(
+                        "Template provisioning gym=%s failed: %s", gym_id, reason
+                    )
+                    return False
+                api_version = app.config.get("WHATSAPP_API_VERSION", "v20.0")
+                results = provision_templates(
+                    waba_id=waba_id, access_token=token, api_version=api_version
+                )
+                if _provision_all_ok(results):
+                    gym.whatsapp_templates_provisioned = True
+                    gym.whatsapp_connection_error = clear_warning_prefix(
+                        gym.whatsapp_connection_error, WARNING_TEMPLATES_PREFIX
+                    )
+                    db.session.commit()
+                    _logger.info(
+                        "Template provisioning gym=%s succeeded (attempt %d)",
+                        gym_id, attempt,
+                    )
+                    return True
+                reason = _first_failure_excerpt(results)
+                _logger.warning(
+                    "Template provisioning gym=%s attempt %d/%d incomplete: %s",
+                    gym_id, attempt, max_attempts, reason,
+                )
+                if attempt == max_attempts:
+                    gym.whatsapp_templates_provisioned = False
+                    gym.whatsapp_connection_error = merge_warning(
+                        gym.whatsapp_connection_error,
+                        WARNING_TEMPLATES_PREFIX,
+                        f"Meta did not confirm all templates ({reason})",
+                    )
+                    db.session.commit()
+                    return False
+            except Exception:
+                db.session.rollback()
+                _logger.exception(
+                    "Template provisioning gym=%s attempt %d/%d errored",
+                    gym_id, attempt, max_attempts,
+                )
+                if attempt == max_attempts:
+                    try:
+                        gym = db.session.get(Gym, gym_id)
+                        if gym is not None:
+                            gym.whatsapp_templates_provisioned = False
+                            gym.whatsapp_connection_error = merge_warning(
+                                gym.whatsapp_connection_error,
+                                WARNING_TEMPLATES_PREFIX,
+                                "provisioning errored — retry from WhatsApp setup",
+                            )
+                            db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                    return False
+            if attempt < max_attempts:
+                time.sleep(retry_delay_s)
+    return False
+
+
+def _provision_worker(app: Flask, gym_id: int, waba_id: str = "", phone_number_id: str = "") -> None:
+    try:
+        provision_templates_for_gym(
+            app,
+            gym_id,
+            expected_waba_id=waba_id or None,
+            expected_phone_number_id=phone_number_id or None,
+        )
+    except Exception:
+        _logger.exception("Template provisioning worker failed gym=%s", gym_id)
+
+
+def schedule_template_provisioning(
+    app: Flask,
+    gym_id: int,
+    waba_id: str = "",
+    phone_number_id: str = "",
+) -> bool:
+    """Spawn the background provisioning thread for a gym. Never raises."""
+    try:
+        thread = threading.Thread(
+            target=_provision_worker,
+            args=(app, gym_id, waba_id, phone_number_id),
+            daemon=True,
+            name=f"wa-provision-{gym_id}",
+        )
+        thread.start()
+        _logger.info("Template provisioning scheduled in background gym=%s", gym_id)
+        return True
+    except Exception:
+        _logger.exception(
+            "Could not schedule template provisioning gym=%s", gym_id
+        )
+        return False
