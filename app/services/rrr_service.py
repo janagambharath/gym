@@ -183,6 +183,126 @@ def direct_adms_terminal_is_online(
     return last_seen_at >= utcnow() - ADMS_RECENT_POLL_WINDOW
 
 
+# Gaps G1–G5 (G3, 2026-11-10): a healthy terminal polls near-continuously
+# (getrequest every ~30 s), so 60 minutes without a poll is a real outage
+# — long enough to ride out brief network blips without flapping, short
+# enough to catch one within the hour. (Arun's outage went ~2 days
+# unnoticed.) Only commissioned terminals alert: a never-configured gym
+# has no terminal to be offline.
+TERMINAL_OFFLINE_THRESHOLD_MINUTES = 60
+
+
+def terminal_offline_status(integration: RRRIntegration) -> dict | None:
+    """Return the outage payload for a commissioned ADMS terminal, else None.
+
+    ``{"since": <last_success_at ISO>, "last_success_at": <same>}`` —
+    "since" is the last poll the terminal made, i.e. when it went silent.
+    A terminal that never polled, is not commissioned, or polled within
+    the threshold is not offline.
+    """
+    if not integration.commands_enabled:
+        return None
+    last_success = integration.last_success_at
+    if last_success is None:
+        return None
+    if last_success.tzinfo is None:
+        last_success = last_success.replace(tzinfo=timezone.utc)
+    if utcnow() - last_success <= timedelta(minutes=TERMINAL_OFFLINE_THRESHOLD_MINUTES):
+        return None
+    return {
+        "since": last_success.isoformat(),
+        "last_success_at": last_success.isoformat(),
+    }
+
+
+def _unread_terminal_offline_notifications(integration: RRRIntegration) -> list:
+    """Unread terminal_offline notifications for one integration, if any."""
+    from app.models.app_notification import AppNotification
+
+    rows = (
+        AppNotification.query.filter_by(
+            gym_id=integration.gym_id,
+            category="terminal_offline",
+            is_read=False,
+        )
+        .order_by(AppNotification.id.asc())
+        .all()
+    )
+    return [
+        row
+        for row in rows
+        if isinstance(row.data, dict)
+        and row.data.get("integration_id") == integration.id
+    ]
+
+
+def clear_terminal_offline_alerts(integration: RRRIntegration) -> int:
+    """Mark this integration's unread terminal_offline alerts as read.
+
+    Called on every successful (token-authenticated) poll via the ADMS
+    ``_touch`` path — polling resuming is the outage ending — and as a
+    backstop inside :func:`scan_terminal_offline_alerts`. Returns how many
+    rows were cleared. Does not commit.
+    """
+    cleared = 0
+    for row in _unread_terminal_offline_notifications(integration):
+        row.is_read = True
+        cleared += 1
+    return cleared
+
+
+def scan_terminal_offline_alerts(gym) -> dict:
+    """Gaps G1–G5 (G3): one alert per terminal outage, auto-cleared on resume.
+
+    For each commissioned direct-ADMS integration of the gym:
+
+    * offline (see :func:`terminal_offline_status`) and no unread
+      terminal_offline notification exists for it → create ONE
+      :class:`AppNotification` (``user_id`` null: all staff/owners),
+      category ``terminal_offline``. A second scan during the same outage
+      finds the unread row and creates nothing — never one per poll cycle.
+    * polling again (within threshold) with unread alerts outstanding →
+      mark them read (auto-clear).
+
+    Returns ``{"alerts_created": n, "alerts_cleared": n}``. Does not
+    commit — the caller (scheduler job / run-reminders CLI) commits, in
+    line with ``reconcile_failed_membership_commands``.
+    """
+    from app.models.app_notification import AppNotification
+
+    created = 0
+    cleared = 0
+    integrations = RRRIntegration.query.filter_by(
+        gym_id=gym.id, connector_type="adms_direct"
+    ).all()
+    for integration in integrations:
+        offline = terminal_offline_status(integration)
+        if offline is None:
+            cleared += clear_terminal_offline_alerts(integration)
+            continue
+        if _unread_terminal_offline_notifications(integration):
+            continue
+        db.session.add(AppNotification(
+            gym_id=gym.id,
+            user_id=None,
+            title="Terminal offline",
+            body=(
+                f"Your {integration.device_name or 'eSSL'} terminal "
+                f"({integration.device_serial or 'unknown serial'}) has not "
+                "checked in for over an hour. Attendance and door commands "
+                "are paused until it reconnects."
+            ),
+            category="terminal_offline",
+            data={
+                "integration_id": integration.id,
+                "device_serial": integration.device_serial,
+                "last_success_at": offline["last_success_at"],
+            },
+        ))
+        created += 1
+    return {"alerts_created": created, "alerts_cleared": cleared}
+
+
 def ensure_default_rules(gym_id: int) -> list[RRRRule]:
     existing = {rule.rule_key for rule in RRRRule.query.filter_by(gym_id=gym_id).all()}
     created = []

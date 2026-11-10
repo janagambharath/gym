@@ -257,6 +257,17 @@ def _touch(integration: RRRIntegration, *, method: str | None = None, full: bool
         integration.last_success_at = utcnow()
         device.status = "online"
         device.is_selected = True
+    # Gaps G1–G5 (G3): a successful poll is the outage ending — auto-clear
+    # any unread terminal_offline alert for this integration so the inbox
+    # does not keep shouting after the terminal is back. Best-effort: a
+    # clear failure must never break the poll ack (the scheduler scan
+    # clears as a backstop on its next run).
+    try:
+        from app.services.rrr_service import clear_terminal_offline_alerts
+
+        clear_terminal_offline_alerts(integration)
+    except Exception:
+        log.warning("Terminal-offline auto-clear failed (non-fatal)")
 
 
 # V3-L9: rate-limit for unparseable-timestamp warnings — at most one
@@ -545,7 +556,10 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
         # M4: plant-guard — the enroll number must resolve to this gym's
         # member (mapping or device enroll number) before its template is
         # stored; unresolvable enroll numbers are skipped, not upserted.
-        if resolve_adms_member(integration.gym_id, pin) is None:
+        # Gaps G1–G5 (G4): stamp that member on the row — the restore
+        # path's same-member anchor (V6-L9 hazard).
+        resolved_member = resolve_adms_member(integration.gym_id, pin)
+        if resolved_member is None:
             continue
         existing = RRRBiometricTemplate.query.filter_by(
             gym_id=integration.gym_id,
@@ -557,10 +571,12 @@ def _ingest_userinfo(integration: RRRIntegration) -> int:
         if existing:
             existing.template_data = encrypted
             existing.template_format = "push_tmp"
+            existing.member_id = resolved_member.id
         else:
             db.session.add(RRRBiometricTemplate(
                 gym_id=integration.gym_id,
                 integration_id=integration.id,
+                member_id=resolved_member.id,
                 enroll_number=pin,
                 finger_id=fid,
                 template_data=encrypted,
@@ -1063,6 +1079,27 @@ def getrequest(path_token: str | None = None):
                     candidate, marker=STALE_ENABLE_MARKER, error=STALE_ENABLE_ERROR
                 )
                 continue
+            # Gaps G1–G5 (G4) serve-time same-member guard: a restore
+            # serves ONLY for the member it was queued for. If the enroll
+            # was recycled between queueing and polling, the member it
+            # resolves to now differs from the queued intent — cancel
+            # instead of pushing the old holder's fingerprint onto the
+            # new holder (V6-L9 hazard, V6-M6 guard shape). Unknown
+            # intent (legacy rows queued before intended_member_id
+            # existed) still serves: the enable guard above already
+            # proved the current holder is enableable, and the queue-time
+            # check refused rows with no member anchor.
+            if candidate.action == "restore_template":
+                intended_member_id = adms_command_intended_member_id(candidate)
+                if intended_member_id is not None and (
+                    member is None or member.id != intended_member_id
+                ):
+                    _cancel_adms_command_audited(
+                        candidate,
+                        marker=STALE_COMMAND_SUPERSEDED_MARKER,
+                        error="Superseded: terminal ID remapped to another member since the fingerprint restore was queued; queue a fresh restore if still needed.",
+                    )
+                    continue
         command = candidate
         break
 

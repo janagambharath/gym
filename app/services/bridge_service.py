@@ -13,7 +13,7 @@ from sqlalchemy import and_, or_, select
 
 from app.extensions import db
 from app.models import BridgeCommand, BridgeInstallation, Member
-from app.models import RRRAdmsCommand, RRRIdentityMapping, RRRIntegration
+from app.models import RRRAdmsCommand, RRRBiometricTemplate, RRRIdentityMapping, RRRIntegration
 from app.models.mixins import utcnow
 from app.services.audit_service import audit
 from app.services.timezone_service import today_for_gym
@@ -1048,6 +1048,8 @@ def adms_command_text(
     *,
     member_name: str | None = None,
     delay_seconds: int = 5,
+    finger_id: int = 0,
+    template_data: str | None = None,
 ) -> str:
     """Return the PUSH SDK wire text for a direct-ADMS terminal command.
 
@@ -1082,6 +1084,25 @@ def adms_command_text(
     if action == "create_user":
         name = sanitize_terminal_name(member_name) or "Member"
         return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tPri=0"
+
+    if action == "restore_template":
+        # Gaps G1–G5 (G4, 2026-11-10): re-push one stored fingerprint
+        # template. Same PUSH family as the USERINFO updates above —
+        # the FINGERTMP table is the terminal's fingerprint-template
+        # table (the capture parser in app/adms/routes.py:_ingest_userinfo
+        # reads TMP= lines from the terminal's own USERINFO upload), and
+        # DATA UPDATE is the PUSH SDK's upsert verb for a table row.
+        # The template bytes come ONLY from a stored RRRBiometricTemplate
+        # row (decrypted at queue time); this function never invents
+        # template data. Like the group commands, the exact on-device
+        # effect must be proven by the supervised physical test — a
+        # restore that the terminal rejects surfaces as a failed command.
+        if template_data is None:
+            raise ValueError("restore_template requires template_data.")
+        return (
+            f"DATA UPDATE FINGERTMP PIN={enroll_number}"
+            f"\tFID={int(finger_id)}\tTMP={template_data}"
+        )
 
     if action in {"block", "unblock", "essl_group_block_test", "essl_group_unblock_test"}:
         name = sanitize_terminal_name(member_name) or "ADMS TEST"
@@ -1400,6 +1421,153 @@ def queue_adms_create_user(member: Member) -> RRRAdmsCommand | None:
 # does. Wiring it in was rejected as the riskier option: an untested restore
 # could re-enroll a previous holder's fingerprint onto a recycled enroll
 # number. Template backup on USERINFO upload is unaffected.
+#
+# Gaps G1–G5 (G4, 2026-11-10): restore is now wired, with the V6-L9 hazard
+# closed by a same-member anchor instead of by absence. See
+# :func:`queue_fingerprint_restore_commands` below.
+
+
+def queue_fingerprint_restore_commands(
+    integration: RRRIntegration, actor_id: int | None
+) -> dict:
+    """Queue fingerprint-template restores for one ADMS integration.
+
+    Only stored :class:`RRRBiometricTemplate` rows are ever pushed — no
+    template data is invented. For each row, ALL of these must hold or the
+    row is skipped (fail-closed, counted in ``skipped`` with a reason):
+
+    * the row carries a ``member_id`` stamped at capture time (pre-G4
+      rows with NULL carry no same-member proof and are never restored);
+    * that member still exists, belongs to this gym, and is not deleted;
+    * the enroll number resolves — right now, via
+      :func:`resolve_adms_member` — to that SAME member (a recycled enroll
+      now held by a different member must never receive the old holder's
+      fingerprint — the V6-L9 hazard);
+    * the member is proven enableable (active, end date today or later) —
+      a restore is an enable-type action (``ADMS_ENABLE_ACTIONS``), so a
+      paused/expired member's template is never pushed;
+    * the stored template decrypts under the current key and contains no
+      tab/newline (wire-envelope safety).
+
+    Serve time re-checks the same-member condition in the ADMS getrequest
+    path (``intended_member_id`` stamped on the queued row vs the member
+    the enroll resolves to then, mirroring the V6-M6 guard), so an enroll
+    recycled between queueing and polling still cancels instead of
+    serving against the new holder.
+
+    Dedupe (V6-M5 shape): a queued/delivered ``restore_template`` command
+    already in flight for the same (enroll, finger) is returned, never
+    stacked — repeated taps converge on one command.
+
+    Returns ``{"queued": [ids], "deduped": [ids], "skipped":
+    [{"enroll_number": ..., "finger_id": ..., "reason": ...}],
+    "queued_count": n, "deduped_count": n, "skipped_count": n}``.
+    Does not commit.
+    """
+    from app.services.template_crypto import decrypt_template
+
+    queued: list[int] = []
+    deduped: list[int] = []
+    skipped: list[dict] = []
+    rows = (
+        RRRBiometricTemplate.query.filter_by(
+            gym_id=integration.gym_id, integration_id=integration.id
+        )
+        .order_by(RRRBiometricTemplate.enroll_number, RRRBiometricTemplate.finger_id)
+        .all()
+    )
+    for row in rows:
+        def _skip(reason: str) -> None:
+            skipped.append({
+                "enroll_number": row.enroll_number,
+                "finger_id": row.finger_id,
+                "reason": reason,
+            })
+
+        try:
+            canonical_enroll = canonical_enroll_number(row.enroll_number)
+        except ValueError:
+            _skip("enroll_not_canonical")
+            continue
+        if row.member_id is None:
+            # Pre-G4 capture: no same-member anchor — fail closed.
+            _skip("no_member_anchor")
+            continue
+        member = db.session.get(Member, row.member_id)
+        if (
+            member is None
+            or member.gym_id != integration.gym_id
+            or member.deleted_at is not None
+        ):
+            _skip("member_missing")
+            continue
+        current_holder = resolve_adms_member(integration.gym_id, canonical_enroll)
+        if current_holder is None or current_holder.id != member.id:
+            # Recycled enroll (or mapping dropped): the stored template
+            # belongs to someone else now — never push it.
+            _skip("enroll_recycled_or_unmapped")
+            continue
+        if not member_is_proven_enableable(member):
+            _skip("member_not_enableable")
+            continue
+        try:
+            template = decrypt_template(row.template_data)
+        except ValueError:
+            _skip("template undecryptable")
+            continue
+        if not template or any(ch in template for ch in ("\t", "\n", "\r")):
+            _skip("template_not_wire_safe")
+            continue
+        existing = (
+            RRRAdmsCommand.query.filter(
+                RRRAdmsCommand.integration_id == integration.id,
+                RRRAdmsCommand.action == "restore_template",
+                RRRAdmsCommand.test_enroll_number == canonical_enroll,
+                RRRAdmsCommand.status.in_(("queued", "delivered")),
+                # The command text carries real tab separators
+                # (DATA UPDATE FINGERTMP PIN=..\tFID=..\tTMP=..), so the
+                # dedupe match uses literal tabs, not backslash-t.
+                RRRAdmsCommand.command_text.like(f"%\tFID={row.finger_id}\t%"),
+            )
+            .order_by(RRRAdmsCommand.id.desc())
+            .first()
+        )
+        if existing is not None:
+            deduped.append(existing.id)
+            continue
+        command_text = adms_command_text(
+            "restore_template",
+            canonical_enroll,
+            finger_id=row.finger_id,
+            template_data=template,
+        )
+        command = RRRAdmsCommand(
+            gym_id=integration.gym_id,
+            integration_id=integration.id,
+            action="restore_template",
+            test_enroll_number=canonical_enroll,
+            command_text=command_text,
+            requested_by_id=actor_id,
+            intended_member_id=member.id,
+        )
+        db.session.add(command)
+        db.session.flush()
+        audit(
+            action="adms_restore_template_queued",
+            resource_type="rrr_adms_command",
+            resource_id=command.id,
+            gym_id=integration.gym_id,
+            actor_id=actor_id,
+            metadata={
+                "member_id": member.id,
+                "enroll_number": canonical_enroll,
+                "finger_id": row.finger_id,
+            },
+        )
+        queued.append(command.id)
+    return {"queued": queued, "deduped": deduped, "skipped": skipped,
+            "queued_count": len(queued), "deduped_count": len(deduped),
+            "skipped_count": len(skipped)}
 
 
 def queue_manual_adms_member_command(
@@ -1732,6 +1900,51 @@ def door_blocked_state(member: Member) -> dict[str, object]:
         "queued_since": queued_since,
         "terminal_last_seen_at": terminal_last_seen_at,
     }
+
+
+def find_blocked_active_members(gym_id: int) -> list[dict]:
+    """Gaps G1–G5 (G5, 2026-11-10): the V11-H3-class detector.
+
+    Returns every member who is currently active (proven enableable:
+    status ``active`` with an end date today or later, gym-local) yet
+    whose door state reads blocked per :func:`door_blocked_state` —
+    an acked block, or a block queued/delivered and not yet stale.
+    Expired, paused, deleted, and NULL-end members are never returned:
+    their door being closed is the correct state, not an incident.
+
+    DETECTION ONLY — this function never queues, cancels, blocks, or
+    unblocks anything; callers log / surface the result and a human
+    decides. Read-only: no rows are written, no commit is needed.
+    """
+    members = (
+        Member.query.filter_by(gym_id=gym_id)
+        .filter(Member.deleted_at.is_(None))
+        .order_by(Member.full_name.asc())
+        .all()
+    )
+    found: list[dict] = []
+    for member in members:
+        if not member_is_proven_enableable(member):
+            continue
+        state = door_blocked_state(member)
+        if not state.get("blocked"):
+            continue
+        try:
+            enroll = resolve_adms_enroll_number(member)
+        except ValueError:
+            enroll = None
+        found.append({
+            "id": member.id,
+            "name": member.full_name,
+            "phone": member.phone,
+            "enroll_number": enroll,
+            "membership_end": (
+                member.membership_end.isoformat()
+                if member.membership_end is not None
+                else None
+            ),
+        })
+    return found
 
 
 def queue_manual_bridge_member_command(

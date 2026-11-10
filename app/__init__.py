@@ -882,6 +882,46 @@ def _register_cli(app: Flask) -> None:
                     db.session.rollback()
                     app.logger.exception("Door-command reconciliation failed for gym %s", gym.id)
 
+                # Gaps G1–G5 (G3/G5): same two scans as the APScheduler
+                # job — terminal-offline alert (one AppNotification per
+                # outage, auto-cleared on resume) and the blocked-active
+                # detector (detection only, logs what it finds). Same
+                # shared functions, same per-gym containment.
+                try:
+                    from app.services.rrr_service import scan_terminal_offline_alerts
+
+                    alert_counts = scan_terminal_offline_alerts(gym)
+                    if any(alert_counts.values()):
+                        db.session.commit()
+                        app.logger.info(
+                            json.dumps(
+                                {"event": "terminal_offline_scan", "gym_id": gym.id, **alert_counts}
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Terminal-offline scan failed for gym %s", gym.id)
+
+                try:
+                    from app.services.bridge_service import find_blocked_active_members
+
+                    blocked_active = find_blocked_active_members(gym.id)
+                    if blocked_active:
+                        app.logger.warning(
+                            json.dumps(
+                                {
+                                    "event": "blocked_active",
+                                    "gym_id": gym.id,
+                                    "member_ids": [row["id"] for row in blocked_active],
+                                }
+                            )
+                        )
+                except Exception:
+                    _gym_errors += 1
+                    db.session.rollback()
+                    app.logger.exception("Blocked-active scan failed for gym %s", gym.id)
+
                 if _gym_errors:
                     gym_errors[gym.id] = _gym_errors
         finally:

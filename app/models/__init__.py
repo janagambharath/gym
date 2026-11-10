@@ -40,6 +40,7 @@ from app.models.rrr import (
     RRRAutomationRun,
     RRRDevice,
     RRRAdmsCommand,
+    RRRBiometricTemplate,
 )
 from app.models.template import NotificationTemplate
 from app.models.user import User
@@ -90,6 +91,7 @@ __all__ = [
     "RRRAutomationRun",
     "RRRDevice",
     "RRRAdmsCommand",
+    "RRRBiometricTemplate",
     "User",
     "UserPushToken",
     "db",

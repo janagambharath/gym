@@ -323,6 +323,46 @@ def _scheduled_reminder_job(app: Flask) -> None:
                     "Door-command reconciliation failed for gym %s", gym.id
                 )
 
+            # Gaps G1–G5 (G3): proactive terminal-offline alert — one
+            # AppNotification per outage, auto-cleared when polling
+            # resumes. Shared with the `flask run-reminders` CLI via
+            # app.services.rrr_service.scan_terminal_offline_alerts.
+            try:
+                from app.services.rrr_service import scan_terminal_offline_alerts
+
+                alert_counts = scan_terminal_offline_alerts(gym)
+                if any(alert_counts.values()):
+                    db.session.commit()
+                    app.logger.info(
+                        "Terminal-offline scan for gym %s: %s",
+                        gym.id, alert_counts,
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception(
+                    "Terminal-offline scan failed for gym %s", gym.id
+                )
+
+            # Gaps G1–G5 (G5): "active member, door blocked" detector.
+            # Detection ONLY — the scan logs what it finds and changes
+            # nothing; no block or unblock is ever queued here. Shared
+            # with the `flask run-reminders` CLI the same way.
+            try:
+                from app.services.bridge_service import find_blocked_active_members
+
+                blocked_active = find_blocked_active_members(gym.id)
+                if blocked_active:
+                    app.logger.warning(
+                        "Blocked-active members for gym %s: %s",
+                        gym.id,
+                        [row["id"] for row in blocked_active],
+                    )
+            except Exception:
+                db.session.rollback()
+                app.logger.exception(
+                    "Blocked-active scan failed for gym %s", gym.id
+                )
+
             # Auto-link unmapped biometric IDs (fully automatic, no manual trigger)
             # First ensure we have a terminal user list (with names) to match against
             try:

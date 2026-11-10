@@ -415,7 +415,8 @@ class RRRBiometricTemplate(TenantMixin, TimestampMixin, db.Model):
     """Backed-up fingerprint template from a terminal.
 
     Captured during sync_users uploads. Used to restore a member's
-    fingerprint after a DELETE-based block, avoiding physical re-enrollment.
+    fingerprint after a terminal reset/replacement, avoiding physical
+    re-enrollment.
     """
     __tablename__ = "rrr_biometric_templates"
     __table_args__ = (
@@ -427,6 +428,18 @@ class RRRBiometricTemplate(TenantMixin, TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     integration_id = db.Column(
         db.Integer, db.ForeignKey("rrr_integrations.id", ondelete="CASCADE"), nullable=False
+    )
+    # Gaps G1–G5 (G4, 2026-11-10): the member this template was captured
+    # for, stamped at USERINFO capture time. The V6-L9 hazard is restoring
+    # a previous holder's fingerprint onto a RECYCLED enroll number — the
+    # enroll alone cannot prove same-member, so the restore path requires
+    # this anchor to match the member the enroll resolves to NOW (queue
+    # time AND serve time, via the command's intended_member_id). Rows
+    # captured before this column existed carry NULL and are never
+    # restored (fail-closed: an unprovable template is not shipped).
+    member_id = db.Column(
+        db.Integer, db.ForeignKey("members.id", ondelete="SET NULL"),
+        nullable=True, index=True,
     )
     enroll_number = db.Column(db.String(32), nullable=False)
     finger_id = db.Column(db.Integer, nullable=False, default=0)

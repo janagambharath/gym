@@ -871,6 +871,20 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
         if adms_status["device_online"]:
             device_online = adms_status["device_online"]
 
+    # Gaps G1–G5 (G3): terminal-offline state for the dashboard, so it can
+    # render the outage without polling Notifications. Only a commissioned
+    # ADMS terminal can be offline (60 min without a poll); a
+    # never-configured gym reports None, never a false outage.
+    from app.models.rrr import RRRIntegration
+    from app.services.rrr_service import terminal_offline_status
+
+    terminal_offline = None
+    adms_integration = RRRIntegration.query.filter_by(
+        gym_id=gym_id, connector_type="adms_direct"
+    ).first()
+    if adms_integration is not None:
+        terminal_offline = terminal_offline_status(adms_integration)
+
     return {
         "inside_now": inside_now,
         "entries_today": entries_today,
@@ -880,6 +894,7 @@ def get_access_summary(gym_id: int, gym_timezone: str) -> dict:
         "device_online": device_online,
         "device_name": device_name,
         "last_heartbeat": last_heartbeat,
+        "terminal_offline": terminal_offline,
     }
 
 

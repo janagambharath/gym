@@ -26,7 +26,9 @@ from app.services.bridge_service import (
     ADMS_DELIVERED_TIMEOUT_MINUTES,
     adms_command_text,
     disable_must_be_cancelled,
+    find_blocked_active_members,
     member_is_proven_enableable,
+    queue_fingerprint_restore_commands,
     queue_manual_adms_member_command,
     queue_manual_bridge_member_command,
     resolve_adms_member,
@@ -339,8 +341,10 @@ def register_rrr_routes(bp):
         # double-tap). A different serial is refused: the new terminal
         # has not passed the supervised physical test, and silently
         # demoting the live gym would switch off automatic block/unblock
-        # until the test repeats. There is no self-serve decommission
-        # path today — a genuine terminal replacement goes via support.
+        # until the test repeats. Terminal replacement is self-serve via
+        # POST /rrr/integrations/<id>/replace (G1) — it decommissions
+        # the old terminal and resets commissioning on purpose, with an
+        # explicit confirm.
         already_commissioned = bool(
             row.commands_enabled or row.commissioning_status == "physical_test_passed"
         )
@@ -437,6 +441,155 @@ def register_rrr_routes(bp):
                 return replayed
             raise
         return jsonify(response_body)
+
+    @bp.post("/rrr/integrations/<int:integration_id>/replace")
+    @limiter.limit("10 per hour")
+    @token_required
+    @roles_required("gym_owner")
+    def replace_adms_terminal(integration_id: int):
+        """Self-serve terminal replacement (gaps G1–G5, G1).
+
+        Decommissions the old terminal (its token is revoked immediately
+        by issuing a fresh one, commands disable, commissioning resets)
+        and provisions the new serial with a fresh token. The supervised
+        physical test must pass again before any command enables — this
+        is self-serve initiation, not skipping the test. Never replaces
+        with a serial owned by another gym (409, same rule as provision).
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return error_response(
+                "CONFIRMATION_REQUIRED",
+                "Replacing the commissioned terminal requires confirm=true.",
+                422,
+            )
+        serial = str(payload.get("device_serial") or "").strip()[:120]
+        name = str(payload.get("device_name") or "").strip()[:160]
+        if not serial:
+            return error_response("VALIDATION_ERROR", "device_serial is required.", 422)
+        if integration.device_serial == serial:
+            return error_response(
+                "VALIDATION_ERROR",
+                "device_serial is already the commissioned terminal.",
+                422,
+            )
+        owned_elsewhere = RRRIntegration.query.filter(
+            RRRIntegration.connector_type == "adms_direct",
+            RRRIntegration.device_serial == serial,
+            RRRIntegration.gym_id != g.gym_id,
+        ).first()
+        if owned_elsewhere is not None:
+            return error_response("CONFLICT", "That device serial is already registered to another gym.", 409)
+        old_serial = integration.device_serial
+        integration.device_serial = serial
+        integration.device_name = name or integration.device_name or "eSSL terminal"
+        # Fresh token, no grace: the decommissioned terminal must stop
+        # authenticating at once. (Rotate keeps a grace window; replace
+        # must not.)
+        new_token = integration.issue_adms_token()
+        integration.commands_enabled = False
+        integration.commissioning_status = "not_started"
+        integration.status = "not_configured"
+        integration.last_success_at = None
+        integration.last_error = None
+        audit(action="adms_terminal_replaced", resource_type="rrr_integration", resource_id=integration.id,
+              gym_id=g.gym_id, actor_id=g.user_id,
+              metadata={"old_serial": old_serial, "new_serial": serial})
+        db.session.commit()
+        settings = adms_terminal_settings(request.host_url, path_token=new_token)
+        return jsonify({"success": True, "data": {
+            "integration": integration_payload(integration),
+            "terminal_settings": settings,
+            "warning": (
+                "Attendance works once the new terminal checks in. "
+                "Automatic block/unblock unlocks after the supervised "
+                "commissioning test on the integrations screen."
+            ),
+        }})
+
+    @bp.post("/rrr/integrations/<int:integration_id>/decommission")
+    @token_required
+    @roles_required("gym_owner")
+    def decommission_adms_terminal(integration_id: int):
+        """Self-serve terminal decommission (gaps G1–G5, G1).
+
+        Disables commands and resets commissioning so the terminal can
+        no longer open/close doors automatically; attendance punches
+        already received are untouched. The serial and token stay on the
+        row, so re-commissioning the same terminal later is a normal
+        commissioning flow, not a re-provision.
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirm") is not True:
+            return error_response(
+                "CONFIRMATION_REQUIRED",
+                "Decommissioning the terminal requires confirm=true.",
+                422,
+            )
+        integration.commands_enabled = False
+        integration.commissioning_status = "not_started"
+        integration.status = "disconnected"
+        audit(action="adms_terminal_decommissioned", resource_type="rrr_integration", resource_id=integration.id,
+              gym_id=g.gym_id, actor_id=g.user_id,
+              metadata={"serial": integration.device_serial})
+        db.session.commit()
+        return jsonify({"success": True, "data": {
+            "integration": integration_payload(integration),
+        }})
+
+    @bp.post("/rrr/integrations/<int:integration_id>/restore-fingerprints")
+    @token_required
+    @roles_required("gym_owner")
+    def restore_adms_fingerprints(integration_id: int):
+        """Queue fingerprint-template restores (gaps G1–G5, G4).
+
+        Re-pushes stored templates (captured from USERINFO uploads) to
+        the terminal after a reset/replacement, so members can punch
+        without in-person re-enrollment. Only same-member templates
+        queue — see queue_fingerprint_restore_commands for the
+        V6-L9 guards (member anchor, current-holder match, enableable
+        only, dedupe). Requires a commissioned terminal.
+        """
+        integration = RRRIntegration.query.filter_by(
+            id=integration_id, gym_id=g.gym_id, connector_type="adms_direct"
+        ).first()
+        if integration is None:
+            return error_response("NOT_FOUND", "Direct Cloud integration was not found.", 404)
+        if not integration.commands_enabled:
+            return error_response(
+                "NOT_COMMISSIONED",
+                "Complete supervised commissioning before restoring fingerprints.",
+                403,
+            )
+        result = queue_fingerprint_restore_commands(integration, g.user_id)
+        audit(action="adms_fingerprints_restore_requested", resource_type="rrr_integration",
+              resource_id=integration.id, gym_id=g.gym_id, actor_id=g.user_id,
+              metadata={"queued": len(result["queued"]), "deduped": len(result["deduped"]),
+                        "skipped": len(result["skipped"])})
+        db.session.commit()
+        return jsonify({"success": True, "data": result}), 201
+
+    @bp.get("/rrr/blocked-active")
+    @token_required
+    @roles_required("gym_owner", "staff")
+    def blocked_active_members():
+        """Gaps G1–G5 (G5): active members whose door reads blocked.
+
+        Detection only — the response never blocks or unblocks anyone.
+        Staff can see it at the door; owners see it on the dashboard.
+        """
+        members = find_blocked_active_members(g.gym_id)
+        return jsonify({"success": True, "data": {"members": members}})
 
     @bp.post("/rrr/integrations/<int:integration_id>/adms/rotate-token")
     @limiter.limit("20 per hour")

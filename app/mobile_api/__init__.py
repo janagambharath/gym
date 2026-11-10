@@ -28,6 +28,7 @@ def create_mobile_api_blueprint() -> Blueprint:
     from app.mobile_api.campaigns import register_campaign_routes
     from app.mobile_api.inbox import register_inbox_routes
     from app.mobile_api.rrr import register_rrr_routes
+    from app.mobile_api.audit_logs import register_audit_log_routes
     from app.mobile_api.owner_operations import register_owner_operation_routes
     from app.mobile_api.date_repair import register_date_repair_routes
 
@@ -48,6 +49,7 @@ def create_mobile_api_blueprint() -> Blueprint:
     register_campaign_routes(bp)
     register_inbox_routes(bp)
     register_rrr_routes(bp)
+    register_audit_log_routes(bp)
     register_owner_operation_routes(bp)
     register_date_repair_routes(bp)
 
