@@ -227,7 +227,7 @@ def test_direct_adms_test_queue_delivers_and_records_terminal_ack(client, seed_g
     delivered = client.get(f"{adms_path}/getrequest?SN=ELITE-X2008-CMD")
     assert delivered.status_code == 200
     assert delivered.get_data(as_text=True) == (
-        f"C:{command_id}:DATA UPDATE USERINFO PIN=98765\tName=Temporary Fake User\tGrp=100\n"
+        f"C:{command_id}:DATA UPDATE USERINFO PIN=98765\tName=Temporary Fake User\tPri=0\tPasswd=\tCard=\tGrp=100\n"
     )
     ack = client.post(f"{adms_path}/devicecmd?SN=ELITE-X2008-CMD&ID={command_id}&Return=0&CMD=DATA")
     assert ack.status_code == 200

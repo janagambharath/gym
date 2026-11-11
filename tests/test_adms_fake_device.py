@@ -183,7 +183,7 @@ def test_operlog_enrollment_links_and_blocks_expired_member(client, seed_gym):
         integration_id=integration.id, action="block",
         test_enroll_number="902").one()
     assert cmd.status == "queued"
-    assert cmd.command_text == "DATA UPDATE USERINFO PIN=902\tName=Fake Expired User\tGrp=100"
+    assert cmd.command_text == "DATA UPDATE USERINFO PIN=902\tName=Fake Expired User\tPri=0\tPasswd=\tCard=\tGrp=100"
 
 
 def test_operlog_non_enrollment_lines_are_ignored(client, seed_gym, seed_member):
@@ -465,7 +465,7 @@ def test_member_profile_access_block_and_unblock_reach_direct_adms_and_refresh_s
         integration_id=integration.id, action="block", test_enroll_number="990"
     ).one()
     assert block_command.command_text == (
-        "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tGrp=100"
+        "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tPri=0\tPasswd=\tCard=\tGrp=100"
     )
     served_block = client.get(_getrequest(FAKE_TOKEN, FAKE_SERIAL))
     assert served_block.get_data(as_text=True) == f"C:{block_command.id}:{block_command.command_text}\n"
@@ -497,7 +497,7 @@ def test_member_profile_access_block_and_unblock_reach_direct_adms_and_refresh_s
         f"C:{unblock_command.id}:{unblock_command.command_text}\n"
     )
     assert unblock_command.command_text == (
-        "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tGrp=1"
+        "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tPri=0\tPasswd=\tCard=\tGrp=1"
     )
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, unblock_command.id, 0))
     restored_profile = client.get(

@@ -54,7 +54,7 @@ def test_expiry_queues_adms_block(seed_gym, seed_member):
     cmd = RRRAdmsCommand.query.filter_by(integration_id=integration.id).one()
     assert cmd.action == "block"
     assert cmd.test_enroll_number == "42"
-    assert cmd.command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tGrp=100"
+    assert cmd.command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tPri=0\tPasswd=\tCard=\tGrp=100"
     assert cmd.status == "queued"
     assert db.session.get(type(seed_member), seed_member.id).status == "expired"
 
@@ -103,7 +103,7 @@ def test_renewal_queues_unblock_and_dedupes(seed_gym, seed_member):
     cmds = RRRAdmsCommand.query.filter_by(integration_id=integration.id).all()
     assert len(cmds) == 1
     assert cmds[0].action == "unblock"
-    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tGrp=1"
+    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tPri=0\tPasswd=\tCard=\tGrp=1"
 
     # Terminal acknowledged the unblock; a later edit re-sends nothing.
     cmds[0].status = "acked"

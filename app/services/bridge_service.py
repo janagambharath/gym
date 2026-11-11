@@ -1054,7 +1054,17 @@ def adms_command_text(
     """Return the PUSH SDK wire text for a direct-ADMS terminal command.
 
     ``block``/``unblock`` are the automatic membership commands and use the
-    X2008-verified USERINFO groups: Grp=100 denies access, Grp=1 restores it.
+    USERINFO groups: Grp=100 denies access, Grp=1 restores it. That group
+    mechanism was verified on ONE X2008 only (Arun's, ZLM60_TFT,
+    2026-10-31) — it is NOT proven on all X2008s: Yodha's ZMM200_TFT
+    (Push 2.0.33S) ACKed a Grp=1 unblock with result 0 on 2026-11-11
+    without restoring access. Block/unblock therefore send the FULL
+    documented USERINFO field set (``routes.py:_parse_userinfo_line``:
+    PIN/Name/Pri/Passwd/Card/Grp) instead of the 3-field form, so a
+    partial update cannot be silently ignored by the firmware. No TZ
+    field is sent: the PUSH TZ encoding/value is unverified and the
+    server holds no per-member timezone schedule — see
+    yodha-unblock-fix-state-2026-11-11.md.
     Advanced commands added for the no-laptop direct-ADMS path:
 
     * ``create_user`` — ``DATA UPDATE USERINFO PIN=<id>\tName=<name>``
@@ -1107,7 +1117,17 @@ def adms_command_text(
     if action in {"block", "unblock", "essl_group_block_test", "essl_group_unblock_test"}:
         name = sanitize_terminal_name(member_name) or "ADMS TEST"
         group = "100" if action in {"block", "essl_group_block_test"} else "1"
-        return f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}\tGrp={group}"
+        # Yodha 2026-11-11 (Option C): full-field USERINFO update. The
+        # 3-field form (PIN/Name/Grp) was ACKed 0 by Yodha's X2008
+        # (ZMM200_TFT, Push 2.0.33S) without restoring access, so send
+        # the full documented field set — Pri=0, empty Passwd/Card —
+        # matching the USER line format in app/adms/routes.py. The
+        # essl_group_* test actions share this branch, so the supervised
+        # group test proves the same wire text the automatic path sends.
+        return (
+            f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}"
+            f"\tPri=0\tPasswd=\tCard=\tGrp={group}"
+        )
     raise ValueError(f"Unknown ADMS command action: {action!r}")
 
 
