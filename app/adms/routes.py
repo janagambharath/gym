@@ -681,6 +681,7 @@ def _ingest_attlog(integration: RRRIntegration) -> int:
                     verify_method=verify or None,
                     raw_payload=line,
                     auth_method=getattr(g, "adms_auth_method", None),
+                    gym_timezone=gym_timezone,
                 )
         except Exception:
             skipped += 1

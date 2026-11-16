@@ -8,7 +8,7 @@ attendance record produces no duplicate access events.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -282,12 +282,18 @@ def _rrr_entry_rows_query(gym_id: int):
 
     from app.models.rrr import RRRAttendanceEvent
 
+    # Option B (2026-11-16): prefer the derived direction when the row
+    # has one — the raw byte is the terminal's alternating state, not
+    # the member's real direction. NULL derived = raw governs.
+    effective_direction = func.coalesce(
+        RRRAttendanceEvent.derived_direction, RRRAttendanceEvent.direction
+    )
     return RRRAttendanceEvent.query.filter(
         RRRAttendanceEvent.gym_id == gym_id,
         RRRAttendanceEvent.source == "adms_direct",
         _or(
-            RRRAttendanceEvent.direction.is_(None),
-            RRRAttendanceEvent.direction.in_(["0", "3", "4"]),
+            effective_direction.is_(None),
+            effective_direction.in_(["0", "3", "4"]),
         ),
     )
 
@@ -301,10 +307,16 @@ def _rrr_exit_rows_query(gym_id: int):
     """
     from app.models.rrr import RRRAttendanceEvent
 
+    # Option B (2026-11-16): prefer the derived direction (see
+    # _rrr_entry_rows_query). A derived EXIT ("1") counts here even
+    # when the terminal's raw byte said otherwise, and vice versa.
+    effective_direction = func.coalesce(
+        RRRAttendanceEvent.derived_direction, RRRAttendanceEvent.direction
+    )
     return RRRAttendanceEvent.query.filter(
         RRRAttendanceEvent.gym_id == gym_id,
         RRRAttendanceEvent.source == "adms_direct",
-        RRRAttendanceEvent.direction.in_(["1", "2", "5"]),
+        effective_direction.in_(["1", "2", "5"]),
     )
 
 
@@ -319,7 +331,16 @@ def _serialize_rrr_event(evt) -> dict:
     instead of collapsing them.
     """
     try:
-        att_state = int(evt.direction) if evt.direction is not None else None
+        # Option B (2026-11-16): serialize the DERIVED classification
+        # when the row has one — the feed must agree with the projected
+        # AccessEvent leg, which derives the same way. Raw governs when
+        # derived is NULL (unknown member, pre-deploy row).
+        effective = (
+            evt.derived_direction
+            if getattr(evt, "derived_direction", None) is not None
+            else evt.direction
+        )
+        att_state = int(effective) if effective is not None else None
     except (TypeError, ValueError):
         att_state = None
     event_type, direction = _classify_event(att_state, is_invalid=False)
@@ -528,6 +549,15 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
     # in either arrival order: bridge-first RRR rows carry a non-ADMS
     # source so the RRR leg never surfaces them, and ADMS-first rows
     # are already projected (their own AccessEvent exists).
+    #
+    # The twin search above runs on the RAW classification on purpose
+    # (Option B, 2026-11-16): a twin is the same physical punch, and
+    # the raw att-state is its identity — the twin's row carries raw
+    # classification. If derivation re-labelled this row, the RRR leg
+    # would surface it as the opposite type and neither the punch_key
+    # nor the whole-second twin check could collapse it. So withdraw
+    # the derivation: with derived NULL the RRR leg classifies by raw,
+    # matching the twin, and the merged-feed twin drop works.
     twin = _find_punch_twin(
         gym_id=attendance.gym_id,
         device_enroll_number=(attendance.biometric_user_id or "unknown")[:32],
@@ -536,6 +566,8 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
         direction=direction,
     )
     if twin is not None:
+        if getattr(attendance, "derived_direction", None) is not None:
+            attendance.derived_direction = None
         if member is not None:
             if twin.member_id is None:
                 twin.member_id = member.id
@@ -553,6 +585,21 @@ def process_rrr_attendance_to_access_event(attendance) -> AccessEvent | None:
                     event_type="ENTRY" if twin.event_type == "ATTENDANCE" else twin.event_type,
                 )
         return None
+    # Option B (2026-11-16): the AccessEvent carries the DERIVED
+    # classification when the row has one — the derived direction is
+    # what the feed, counters and inside-state must show. att_state
+    # below stays RAW (what the terminal said); only event_type and
+    # direction are derived. The state flip after creation follows the
+    # derived type.
+    if getattr(attendance, "derived_direction", None) is not None:
+        try:
+            _derived_att_state = int(attendance.derived_direction)
+        except (TypeError, ValueError):
+            _derived_att_state = None
+        if _derived_att_state is not None:
+            event_type, direction = _classify_event(
+                _derived_att_state, is_invalid=False
+            )
     access_event = AccessEvent(
         gym_id=attendance.gym_id,
         member_id=member.id if member else None,
@@ -649,6 +696,95 @@ def _update_member_access_state(
     state.last_event_timestamp = access_event.event_timestamp
 
 
+# ── Option B: server-side direction derivation (2026-11-16) ──────────
+
+
+def _most_recent_closing_cutoff_utc(
+    gym_timezone: str | None,
+    punch_time: datetime,
+    auto_exit_hour: int = 23,
+) -> datetime:
+    """The most recent gym-local closing (default 23:00) as aware UTC.
+
+    Mirrors the cutoff in :func:`auto_reset_stale_inside_members`: the
+    closing that most recently passed before ``punch_time`` in the gym's
+    local timezone. A punch at/after it belongs to a new session.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(gym_timezone or "Asia/Kolkata")
+    except Exception:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Asia/Kolkata")
+    punch_local = punch_time.astimezone(tz)
+    closing_today = punch_local.replace(
+        hour=auto_exit_hour, minute=0, second=0, microsecond=0
+    )
+    cutoff_local = (
+        closing_today
+        if punch_local >= closing_today
+        else closing_today - timedelta(days=1)
+    )
+    return cutoff_local.astimezone(timezone.utc)
+
+
+def derive_adms_att_state(
+    *,
+    gym_id: int,
+    member_id: int,
+    punch_time: datetime,
+    gym_timezone: str | None = None,
+    auto_exit_hour: int = 23,
+) -> int | None:
+    """Derived att-state for one direct-ADMS punch (Option B, 2026-11-16).
+
+    The X2008 auto-alternates in/out per member with no midnight reset,
+    so a member whose last punch was an ENTRY gets today's first punch
+    recorded as EXIT by the terminal. Instead of trusting the status
+    byte, derive from the member's server-side inside/outside state:
+
+    - No state row, or state OUTSIDE / UNKNOWN → ENTRY (check-in).
+    - State INSIDE and the punch is in a new session (the entry that
+      put the member inside is before the most recent 23:00 closing
+      and the punch is at/after it) → ENTRY. This is the morning-EXIT
+      fix, and it does not depend on the nightly reset having run.
+    - State INSIDE and the punch is in the same session → EXIT.
+    - Returns None (caller falls back to the raw byte) when derivation
+      does not apply: state INSIDE with no anchor timestamp, or the
+      punch predates the entry that put the member inside (out-of-order
+      punch — the raw byte is the best signal for it).
+
+    The 23:00 closing — not midnight — is the session boundary: a
+    member who enters at 23:30 and punches again at 00:30 is still in
+    the same session, and midnight would wrongly call that an ENTRY.
+    """
+    punch_utc = _as_utc(punch_time)
+    if punch_utc is None:
+        return None
+    state = MemberAccessState.query.filter_by(
+        gym_id=gym_id,
+        member_id=member_id,
+    ).first()
+    if state is None or state.current_state in ("OUTSIDE", "UNKNOWN"):
+        return ATT_STATE_CHECK_IN
+    if state.current_state != "INSIDE":
+        return ATT_STATE_CHECK_IN
+    anchor = state.last_entry_at or state.last_event_timestamp
+    if anchor is None:
+        return None
+    anchor_utc = _as_utc(anchor)
+    if anchor_utc is None or punch_utc < anchor_utc:
+        return None
+    cutoff_utc = _most_recent_closing_cutoff_utc(
+        gym_timezone, punch_utc, auto_exit_hour
+    )
+    if anchor_utc < cutoff_utc <= punch_utc:
+        return ATT_STATE_CHECK_IN
+    return ATT_STATE_CHECK_OUT
+
+
 # ── V8-L16 whole-second twin keys ─────────────────────────────────────
 
 def _parse_timestamp_value(value):
@@ -740,8 +876,16 @@ def _rrr_second_twin_count(gym_id: int, day_start_utc, *, entry: bool) -> int:
         ts = _as_utc(row.punch_time)
         if ts.microsecond != 0:
             continue  # fractional-second RRR punch: distinct, not a twin
+        # Option B (2026-11-16): classify the RRR row by its derived
+        # direction when it has one, so the twin check agrees with the
+        # feed/summary legs (which also prefer derived).
+        effective = (
+            row.derived_direction
+            if getattr(row, "derived_direction", None) is not None
+            else row.direction
+        )
         try:
-            att_state = int(row.direction) if row.direction is not None else None
+            att_state = int(effective) if effective is not None else None
         except (TypeError, ValueError):
             att_state = None
         event_type, direction = _classify_event(att_state, is_invalid=False)

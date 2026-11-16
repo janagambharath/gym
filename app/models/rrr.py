@@ -351,6 +351,16 @@ class RRRAttendanceEvent(TenantMixin, TimestampMixin, db.Model):
     punch_time = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
     received_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     direction = db.Column(db.String(16), nullable=True)
+    # Option B (2026-11-16): server-side derived att-state ("0" = derived
+    # ENTRY, "1" = derived EXIT) computed at ADMS ingest from
+    # MemberAccessState — see derive_adms_att_state(). The raw `direction`
+    # above is never rewritten; every read path prefers this column via
+    # coalesce(derived_direction, direction). NULL = not derived (unknown
+    # member, out-of-order punch, pre-deploy row, non-ADMS source) — raw
+    # governs. Withdrawn (NULL) again if the row twin-skips at projection:
+    # the twin already represents this punch, so derivation must not
+    # re-label it.
+    derived_direction = db.Column(db.String(16), nullable=True)
     verify_method = db.Column(db.String(32), nullable=True)
     dedupe_key = db.Column(db.String(64), nullable=False)
     processing_status = db.Column(db.String(32), nullable=False, default="processed")

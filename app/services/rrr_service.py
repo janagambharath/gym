@@ -420,7 +420,8 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
                          external_event_id: str | None = None, device_serial: str | None = None,
                          direction: str | None = None, verify_method: str | None = None,
                          integration_id: int | None = None, raw_payload: str = "",
-                         auth_method: str | None = None) -> tuple[RRRAttendanceEvent, bool]:
+                         auth_method: str | None = None,
+                         gym_timezone: str | None = None) -> tuple[RRRAttendanceEvent, bool]:
     """Store a source-neutral attendance event once and retain unmapped events.
 
     ``auth_method`` records how the push was authenticated ("token",
@@ -492,6 +493,27 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
             except Exception:
                 pass  # Auto-link is best-effort; don't break punch ingestion
     
+    # Option B (2026-11-16): derive the direction server-side for
+    # direct-ADMS punches from MemberAccessState — see
+    # derive_adms_att_state() in access_event_service. The terminal's
+    # status byte is stored verbatim in `direction` and never rewritten;
+    # the derived att-state ("0" = ENTRY, "1" = EXIT) lives in
+    # `derived_direction`, and every read path prefers it via coalesce.
+    # Derivation needs a known member (state is per member) and only
+    # runs for ADMS-direct punches — the bridge caller passes its own
+    # connector type as source, so bridge rows are never derived.
+    derived_direction = None
+    if source == "adms_direct" and member is not None:
+        from app.services.access_event_service import derive_adms_att_state
+
+        _derived = derive_adms_att_state(
+            gym_id=gym_id,
+            member_id=member.id,
+            punch_time=punch_time,
+            gym_timezone=gym_timezone,
+        )
+        derived_direction = str(_derived) if _derived is not None else None
+
     event = RRRAttendanceEvent(
         gym_id=gym_id,
         integration_id=integration_id,
@@ -502,6 +524,7 @@ def normalize_attendance(*, gym_id: int, source: str, biometric_user_id: str, pu
         biometric_user_id=biometric_user_id,
         punch_time=punch_time,
         direction=direction,
+        derived_direction=derived_direction,
         verify_method=verify_method,
         dedupe_key=key,
         raw_payload_hash=hashlib.sha256(raw_payload.encode("utf-8")).hexdigest() if raw_payload else None,
