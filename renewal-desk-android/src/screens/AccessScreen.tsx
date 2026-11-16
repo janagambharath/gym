@@ -22,6 +22,11 @@ import { apiRequest, getCachedSession } from '../services/apiClient';
 import { keyForAction, shouldReleaseKey, type StableKeySlot } from '../services/stableKey';
 import { resolveAccessRowTap, buildQuickAssignBody } from '../services/accessRowTap';
 import { resolveAccessListView, shouldShowFeedErrorBanner, switchAccessTab } from '../services/accessFeedState';
+import {
+  applyFeedPage,
+  sameFeedQuery,
+  type FeedQuery,
+} from '../services/accessEventDedupe';
 import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
 import {
   cancelQueuedAdmsCommand,
@@ -60,23 +65,6 @@ function formatAccessTime(isoString: string): string {
   const timeStr = formatTime(isoString);
   if (isToday) return `Today, ${timeStr}`;
   return `${formatShortDate(isoString)}, ${timeStr}`;
-}
-
-/** Defence against duplicate feed rows: same terminal + same member + same punch instant.
- * The terminal discriminator is device_name — the event payload carries no
- * device serial/terminal ID, so two terminals reporting the same member at
- * the same second must not collapse into one row. */
-function dedupeEvents(events: AccessEvent[]): AccessEvent[] {
-  const seen = new Set<string>();
-  return events.filter((event) => {
-    // V4-L24: the key must include the event kind — an ENTRY and an EXIT
-    // (or ATTENDANCE) for the same member at the same second are distinct
-    // punches and must not collapse into one row.
-    const key = `${event.device_name ?? ''}:${event.member_id ?? event.device_enroll_number}:${event.event_timestamp}:${event.event_type}:${event.direction ?? ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function getEventTypeStyle(eventType: string) {
@@ -218,6 +206,19 @@ export function AccessScreen({
   // newer results (same pattern as the check-in candidate fetch below).
   const eventsSeqRef = useRef(0);
 
+  // 2026-11-16 (Bug 2, search refill): the query this feed is showing,
+  // kept in a ref so a response landing later can check whether the
+  // screen has moved on. `fetchEvents` closes over the query it was
+  // created with, but a stale append's closure can outlive a tab switch
+  // / search settle — the sequence guard alone cannot tell a stale
+  // append from a stale replace, and it cannot un-apply an append once
+  // merged. Declared before `useLiveEffect` so it syncs before the
+  // poll effect re-runs on the same commit.
+  const feedQueryRef = useRef<FeedQuery>({ tab: activeTab, search: debouncedSearch.trim() });
+  useEffect(() => {
+    feedQueryRef.current = { tab: activeTab, search: debouncedSearch.trim() };
+  }, [activeTab, debouncedSearch]);
+
   const fetchEvents = useCallback(
     async (page = 1, append = false) => {
       const seq = ++eventsSeqRef.current;
@@ -227,15 +228,26 @@ export function AccessScreen({
         activeTab === 'denied' ? '&type=denied' : '';
       const searchParam = debouncedSearch.trim() ? `&search=${encodeURIComponent(debouncedSearch.trim())}` : '';
       const url = `/api/mobile/v1/access/events?page=${page}&per_page=25&date=today${typeParam}${searchParam}`;
+      // Tag this fetch with the query it belongs to (see feedQueryRef).
+      const queryAtCall: FeedQuery = { tab: activeTab, search: debouncedSearch.trim() };
+      if (!append) {
+        // 2026-11-16 (Bug 2): a replace invalidates the old pagination
+        // at once — until the fresh response lands, `onEndReached`
+        // must not append page N+1 of the previous query into the new
+        // list on the strength of stale `pagination.page/total_pages`.
+        setPagination(null);
+      }
 
       const res = await apiRequest<AccessEventsResponse>(url);
       if (seq !== eventsSeqRef.current) return;
       if (res.ok) {
-        if (append) {
-          setEvents((prev) => dedupeEvents([...prev, ...res.data.events]));
-        } else {
-          setEvents(dedupeEvents(res.data.events));
-        }
+        // 2026-11-16 (Bug 2): drop a stale append entirely — its rows
+        // AND its pagination belong to a query the screen has moved on
+        // from. `applyFeedPage` also refuses it at the list level; this
+        // guard keeps the stale page's pagination from overwriting the
+        // fresh query's.
+        if (append && !sameFeedQuery(queryAtCall, feedQueryRef.current)) return;
+        setEvents((prev) => applyFeedPage(prev, res.data.events, { append, queryAtCall, currentQuery: feedQueryRef.current }));
         setPagination(res.data.pagination);
         setError(undefined);
       } else {

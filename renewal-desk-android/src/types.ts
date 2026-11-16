@@ -739,6 +739,15 @@ export type AccessEvent = {
   device_name: string | null;
   device_enroll_number: string;
   biometric_user_id?: string | null;
+  /**
+   * Stable punch identity from the backend (`enroll | full-precision
+   * timestamp | event_type | direction`), sent in both feed legs.
+   * Live Access dedupes on it (see services/accessEventDedupe): it
+   * survives linking and projection, when `id` and `member_id`
+   * change — the old hand-built key let the same punch render twice
+   * (2026-11-16 search-refill bug). Absent on an older backend.
+   */
+  punch_key?: string | null;
   is_invalid: boolean;
   verify_method: number | null;
 };
