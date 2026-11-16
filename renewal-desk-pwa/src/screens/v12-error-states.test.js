@@ -646,3 +646,42 @@ test('V12-A2 access: a manual_action skip renders the owner-action label, not "o
     assert.doesNotMatch(el.innerHTML, /1 other command/, 'not the generic fallback');
   } finally { restore(); setCachedSession(undefined); }
 });
+
+// ─── 2026-11-16: Exit rows removed from Live Access ─────────────────────
+
+test('2026-11-16 access: Exit rows, the Exits tab and the Exits stat never render; Entry and Denied still do', async () => {
+  const summary = {
+    device_online: true, device_name: 'Main Terminal', entries_today: 2, exits_today: 5,
+    inside_now: 0, denied_today: 1, failed_commands: 0, bridge_online: false,
+    adms_integration_id: 1, adms_online: true, adms_device_name: 'Main Terminal',
+    adms_commands_enabled: true, adms_last_seen_at: new Date().toISOString(),
+    queued_adms_commands: { count: 0, commands: [] },
+  };
+  // The 2026-11-16 Yodha shape: sushanth alternating Entry/Exit in the
+  // same minute, plus one denied row. The API still returns the exits;
+  // the screen must not show them.
+  const events = [
+    { id: 1, member_id: 1, member_name: 'sushanth', event_type: 'ENTRY', event_timestamp: '2026-11-16T20:05:00+05:30', device_name: 'CUB7262300144' },
+    { id: 2, member_id: 1, member_name: 'sushanth', event_type: 'EXIT', event_timestamp: '2026-11-16T20:05:00+05:30', device_name: 'CUB7262300144' },
+    { id: 3, member_id: 2, member_name: 'blocked member', event_type: 'ACCESS_DENIED', event_timestamp: '2026-11-16T20:04:00+05:30', device_name: 'CUB7262300144' },
+    { id: 4, member_id: 1, member_name: 'sushanth', event_type: 'EXIT', event_timestamp: '2026-11-16T20:05:30+05:30', device_name: 'CUB7262300144' },
+  ];
+  const { restore } = installFetch(async (url) => {
+    if (url.includes('/api/mobile/v1/access/summary')) return okData({ ...summary });
+    if (url.includes('/api/mobile/v1/access/events')) return okData({ events, pagination: { total: 4, total_pages: 1, page: 1 } });
+    return errData(404, 'not found');
+  });
+  try {
+    setCachedSession({ ...OWNER_SESSION });
+    const el = await mount(access);
+    assert.doesNotMatch(el.innerHTML, /stat-exits/, 'no Exits stat card');
+    assert.doesNotMatch(el.innerHTML, /data-tab="exit"/, 'no Exits filter tab');
+    assert.doesNotMatch(el.innerHTML, />Exit</, 'no Exit row badge');
+    assert.equal((el.innerHTML.match(/class="list-item"/g) || []).length, 2, 'only the Entry + Denied rows render');
+    assert.match(el.innerHTML, /sushanth/, 'Entry row still renders');
+    assert.match(el.innerHTML, /Denied/, 'Denied row still renders');
+    assert.match(el.innerHTML, /Entries/, 'Entries stat still renders');
+    assert.match(el.innerHTML, /Showing 2 events/, 'count reflects visible rows, not the exit-inflated API total');
+    disposeScreen(el);
+  } finally { restore(); setCachedSession(undefined); }
+});

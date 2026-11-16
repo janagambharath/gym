@@ -11,7 +11,7 @@ export default {
   async mount(el) {
     // M8: drop any orphaned quick-assign sheet (OS-back can strand it on document.body)
     document.getElementById('quick-assign-overlay')?.remove();
-    let currentTab = 'all'; // 'all' | 'entry' | 'exit' | 'denied'
+    let currentTab = 'all'; // 'all' | 'entry' | 'denied'
     let summaryData = null;
     let requestId = 0;
     // Feed pagination (V3-M21): page/total survive background refreshes.
@@ -26,6 +26,21 @@ export default {
     // NOTE: `||` and `??` cannot mix unparenthesised in JS.
     const eventKey = (l) => l.punch_key || (l.id ?? `${l.member_id || ''}|${l.biometric_user_id || l.device_enroll_number || ''}|${l.event_timestamp || l.timestamp || l.created_at || ''}`);
     const dedupeEvents = (rows) => { const seen = new Set(); return rows.filter((r) => { const k = eventKey(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
+    // 2026-11-16 (remove exits): Exit rows are terminal noise — the
+    // X2008 alternates in/out per punch with no midnight reset, so the
+    // feed showed meaningless Exit rows (sushanth Entry/Exit x5 in one
+    // minute at Yodha). Live Access hides them at render time only;
+    // the API still returns them (the Option B proof check reads the
+    // API) and derivation / MemberAccessState are untouched.
+    const isExitRow = (l) => (l.event_type || 'ENTRY').toUpperCase() === 'EXIT';
+    const dropExitRows = (rows) => rows.filter((r) => !isExitRow(r));
+    // 2026-11-16 (remove exits): the API pagination total counts Exit
+    // rows too, so on the 'all' tab "of N" would overstate what is
+    // shown — show just the visible count there. The entry/denied tabs
+    // are server-filtered, so their totals are exact.
+    const feedCountText = () => currentTab === 'all'
+      ? `Showing ${allEvents.length} events`
+      : `Showing ${allEvents.length} of ${totalEvents} events`;
     let feedErrorShown = false;
     // V8-L26: whether any load has ever rendered. A total first-load
     // failure must show an error + retry, not zeros as fact.
@@ -148,7 +163,7 @@ export default {
       // V4-L20: drop rows already shown (a new punch between pages shifts
       // the window and the same event can come back on the next page).
       const seenKeys = new Set(allEvents.map(eventKey));
-      const fresh = more.filter((e) => { const k = eventKey(e); if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
+      const fresh = dropExitRows(more.filter((e) => { const k = eventKey(e); if (seenKeys.has(k)) return false; seenKeys.add(k); return true; }));
       allEvents = [...allEvents, ...fresh];
       // Append rows in place — a full re-render would reset scroll.
       const card = el.querySelector('#ac-events-card');
@@ -157,7 +172,7 @@ export default {
         wireEventRows(card);
       }
       const count = el.querySelector('#ac-feed-count');
-      if (count) count.textContent = `Showing ${allEvents.length} of ${totalEvents} events`;
+      if (count) count.textContent = feedCountText();
       const wrap = el.querySelector('#ac-more-wrap');
       if (wrap) wrap.style.display = page < totalPages ? '' : 'none';
       if (btn) { btn.disabled = false; btn.textContent = 'Load more events'; }
@@ -225,7 +240,7 @@ export default {
       // the Load-more button by collapsing the page count to 1.
       totalPages = pg.total_pages ?? totalPages;
       page = pg.page ?? page;
-      allEvents = dedupeEvents(feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events));
+      allEvents = dropExitRows(dedupeEvents(feedPages.slice(0, -1).flatMap(r => (r.ok ? (r.data?.events || r.data?.log || []) : [])).concat(events)));
 
       const lastEventText = s.last_event_at ? formatDateTime(s.last_event_at) : (s.last_heartbeat ? `Heartbeat: ${formatDateTime(s.last_heartbeat)}` : '');
 
@@ -241,14 +256,10 @@ export default {
               </div>
               ${lastEventText ? `<div style="font-size:var(--fs-xs);color:var(--muted);margin-bottom:var(--sp-md)">Last event: ${escapeHtml(lastEventText)}</div>` : '<div style="margin-bottom:var(--sp-md)"></div>'}
               ${summaryStale ? `<div style="font-size:var(--fs-xs);color:var(--warning);margin-bottom:var(--sp-md)">${summaryLoadedAt ? `Stats from ${escapeHtml(formatDateTime(summaryLoadedAt.toISOString()))} — could not refresh.` : 'Stats could not be refreshed — showing the last loaded stats.'}</div>` : ''}
-              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-lg)">
+              <div style="text-align:center">
                 <div style="cursor:pointer" id="stat-entries">
                   <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--brand)">${formatInteger(s.entries_today || 0)}</div>
                   <div style="font-size:var(--fs-xs);color:var(--muted)">Entries</div>
-                </div>
-                <div style="cursor:pointer" id="stat-exits">
-                  <div style="font-size:var(--fs-4xl);font-weight:var(--fw-extrabold);color:var(--warning)">${formatInteger(s.exits_today || 0)}</div>
-                  <div style="font-size:var(--fs-xs);color:var(--muted)">Exits</div>
                 </div>
               </div>
 
@@ -352,7 +363,6 @@ export default {
             ${[
               { id: 'all', label: 'All Events' },
               { id: 'entry', label: 'Entries' },
-              { id: 'exit', label: 'Exits' },
               { id: 'denied', label: 'Denied' },
             ].map(t => `
               <button class="btn btn-sm ${currentTab === t.id ? 'btn-primary' : 'btn-secondary'}" data-tab="${t.id}" style="border-radius:var(--r-full);white-space:nowrap;padding:4px 12px;font-size:var(--fs-xs)">
@@ -367,7 +377,7 @@ export default {
               <div class="card" id="ac-events-card" style="margin:0 var(--sp-lg)">
                 ${allEvents.map(eventRowHtml).join('')}
               </div>
-              <div id="ac-feed-count" style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">Showing ${allEvents.length} of ${totalEvents} events</div>
+              <div id="ac-feed-count" style="padding:var(--sp-sm) 0;font-size:var(--fs-sm);color:var(--muted);text-align:center">${feedCountText()}</div>
               ${page < totalPages ? `<div id="ac-more-wrap" style="text-align:center;padding:var(--sp-md)"><button class="btn btn-secondary" id="ac-load-more">Load more events</button></div>` : ''}
             ` : renderEmptyState({ icon: 'access', title: 'No events', text: 'Live access and check-in events will appear here' })}
           `}
@@ -389,7 +399,6 @@ export default {
 
       // Quick stat clicks
       scroll.querySelector('#stat-entries')?.addEventListener('click', () => { currentTab = 'entry'; page = 1; allEvents = []; loadData(); });
-      scroll.querySelector('#stat-exits')?.addEventListener('click', () => { currentTab = 'exit'; page = 1; allEvents = []; loadData(); });
       scroll.querySelector('#banner-denied')?.addEventListener('click', () => { currentTab = 'denied'; page = 1; allEvents = []; loadData(); });
 
       // Remote Turnstile / Door Unlock
