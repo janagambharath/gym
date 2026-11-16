@@ -25,6 +25,7 @@ import { resolveAccessListView, shouldShowFeedErrorBanner, switchAccessTab } fro
 import {
   applyFeedPage,
   sameFeedQuery,
+  withoutExitEvents,
   type FeedQuery,
 } from '../services/accessEventDedupe';
 import { accessOwnerControls, isOwnerRole } from '../services/roleAccess';
@@ -48,7 +49,7 @@ import { formatDate, formatShortDate, formatTime } from '../types';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-type FilterTab = 'all' | 'entry' | 'exit' | 'denied';
+type FilterTab = 'all' | 'entry' | 'denied';
 
 type AccessScreenProps = {
   onBack?: () => void;
@@ -77,14 +78,6 @@ function getEventTypeStyle(eventType: string) {
         bgColor: colors.successSurface,
         borderColor: colors.successBorder,
         icon: 'forward' as const,
-      };
-    case 'EXIT':
-      return {
-        label: 'EXIT',
-        color: colors.warning,
-        bgColor: colors.warningSurface,
-        borderColor: colors.warningBorder,
-        icon: 'back' as const,
       };
     case 'ACCESS_DENIED':
       return {
@@ -224,7 +217,6 @@ export function AccessScreen({
       const seq = ++eventsSeqRef.current;
       const typeParam =
         activeTab === 'entry' ? '&type=entry' :
-        activeTab === 'exit' ? '&type=exit' :
         activeTab === 'denied' ? '&type=denied' : '';
       const searchParam = debouncedSearch.trim() ? `&search=${encodeURIComponent(debouncedSearch.trim())}` : '';
       const url = `/api/mobile/v1/access/events?page=${page}&per_page=25&date=today${typeParam}${searchParam}`;
@@ -247,7 +239,12 @@ export function AccessScreen({
         // guard keeps the stale page's pagination from overwriting the
         // fresh query's.
         if (append && !sameFeedQuery(queryAtCall, feedQueryRef.current)) return;
-        setEvents((prev) => applyFeedPage(prev, res.data.events, { append, queryAtCall, currentQuery: feedQueryRef.current }));
+        // 2026-11-16 (remove exits): the 'all' tab fetches every type —
+        // drop Exit rows before they reach the list, so no Exit row can
+        // render on any tab. Pagination totals still count exits
+        // server-side; a page of only exits appends nothing, which is
+        // the honest trade-off for a render-layer filter.
+        setEvents((prev) => applyFeedPage(prev, withoutExitEvents(res.data.events), { append, queryAtCall, currentQuery: feedQueryRef.current }));
         setPagination(res.data.pagination);
         setError(undefined);
       } else {
@@ -820,12 +817,6 @@ export function AccessScreen({
           </Text>
           <Text style={styles.summaryLabel}>Entries</Text>
         </View>
-        <View style={[styles.summaryCard, { borderLeftColor: colors.warning }]}>
-          <Text style={[styles.summaryNumber, { color: colors.warning }]}>
-            {summary.exits_today}
-          </Text>
-          <Text style={styles.summaryLabel}>Exits</Text>
-        </View>
       </View>
     );
   };
@@ -906,7 +897,6 @@ export function AccessScreen({
   const TABS: { key: FilterTab; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'entry', label: 'Entries' },
-    { key: 'exit', label: 'Exits' },
     { key: 'denied', label: 'Denied' },
   ];
 

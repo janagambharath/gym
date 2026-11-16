@@ -5,6 +5,7 @@ import {
   dedupeEvents,
   eventKey,
   sameFeedQuery,
+  withoutExitEvents,
   type FeedQuery,
 } from '../services/accessEventDedupe';
 import type { AccessEvent } from '../types';
@@ -191,4 +192,43 @@ test('replace is not gated on the query tag (sequence guard owns replaces)', () 
   });
   assert.equal(out.length, 1);
   assert.equal(out[0].punch_key, 'k-new');
+});
+
+// 2026-11-16 (remove exits): Exit rows are terminal noise — the X2008
+// alternates in/out per punch with no midnight reset (sushanth Entry/Exit
+// x5 in one minute at Yodha). Live Access drops them at render time only.
+
+test('withoutExitEvents drops EXIT rows and keeps ENTRY / ATTENDANCE / ACCESS_DENIED', () => {
+  const entry = makeEvent({ id: 1, event_type: 'ENTRY' });
+  const exit = makeEvent({
+    id: 2,
+    event_type: 'EXIT',
+    punch_key: '25|2026-11-16T08:17:05+05:30|EXIT|OUT',
+  });
+  const denied = makeEvent({ id: 3, event_type: 'ACCESS_DENIED' });
+  const checkin = makeEvent({ id: 4, event_type: 'ATTENDANCE' });
+  const out = withoutExitEvents([entry, exit, denied, checkin]);
+  assert.equal(out.length, 3);
+  assert.deepEqual(out.map((e) => e.id), [1, 3, 4]);
+  assert.ok(out.every((e) => e.event_type !== 'EXIT'));
+});
+
+test('withoutExitEvents on the 2026-11-16 Yodha shape: five alternating punches leave only the entries', () => {
+  const rows = [0, 1, 2, 3, 4].map((i) =>
+    makeEvent({
+      id: 10 + i,
+      member_name: 'sushanth',
+      event_type: i % 2 === 0 ? 'ENTRY' : 'EXIT',
+      event_timestamp: `2026-11-16T20:05:0${i}+05:30`,
+      punch_key: `25|2026-11-16T20:05:0${i}+05:30|${i % 2 === 0 ? 'ENTRY' : 'EXIT'}|${i % 2 === 0 ? 'IN' : 'OUT'}`,
+    }),
+  );
+  const out = withoutExitEvents(rows);
+  assert.equal(out.length, 3);
+  assert.ok(out.every((e) => e.event_type === 'ENTRY'));
+});
+
+test('withoutExitEvents leaves an all-entry page untouched (same rows)', () => {
+  const rows = [makeEvent({ id: 1 }), makeEvent({ id: 2, punch_key: 'k2' })];
+  assert.deepEqual(withoutExitEvents(rows), rows);
 });

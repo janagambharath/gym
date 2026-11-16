@@ -65,6 +65,18 @@ export function dedupeEvents(events: AccessEvent[]): AccessEvent[] {
   });
 }
 
+/**
+ * 2026-11-16 (remove exits): Exit rows are terminal noise — the X2008
+ * alternates in/out per punch with no midnight reset, so the feed showed
+ * meaningless Exit rows (sushanth Entry/Exit x5 in one minute at Yodha).
+ * Live Access drops them at render time only: the API still returns
+ * them, the dedupe helpers still treat ENTRY/EXIT as distinct punches,
+ * and MemberAccessState / direction derivation are untouched.
+ */
+export function withoutExitEvents(events: AccessEvent[]): AccessEvent[] {
+  return events.filter((event) => event.event_type !== 'EXIT');
+}
+
 /** Two feed queries match when both the tab and the settled search text match. */
 export function sameFeedQuery(a: FeedQuery, b: FeedQuery): boolean {
   return a.tab === b.tab && a.search === b.search;
