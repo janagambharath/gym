@@ -103,7 +103,7 @@ def test_renewal_queues_unblock_and_dedupes(seed_gym, seed_member):
     cmds = RRRAdmsCommand.query.filter_by(integration_id=integration.id).all()
     assert len(cmds) == 1
     assert cmds[0].action == "unblock"
-    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tPri=0\tPasswd=\tCard=\tGrp=1"
+    assert cmds[0].command_text == "DATA UPDATE USERINFO PIN=42\tName=John Doe\tPri=0\tPasswd=\tCard=\tGrp=1\tTZ=0000000100000000"
 
     # Terminal acknowledged the unblock; a later edit re-sends nothing.
     cmds[0].status = "acked"

@@ -1042,6 +1042,17 @@ def _active_installation(gym_id: int) -> BridgeInstallation | None:
 
 # ─── Direct ADMS automatic block/unblock ─────────────────────────────────────
 
+# Yodha 2026-11-16 (TZ reset): TZ field value restoring Time Period 1
+# to 1 on unblock. 16 hex chars = two 32-bit big-endian words; the first
+# word is the timezone ID (1 = always-allow default, 50 = the bridge-era
+# deny zone, 0 = no valid hours). This exact string comes from this
+# repo's own Oct 13 commit de3a9bd (TZ=0000003200000000 for 50,
+# TZ=0000000100000000 for 1) — but that mechanism was abandoned the same
+# day and never proven over PUSH on Yodha's ZMM200_TFT, so the encoding
+# is believed, not proven; the harsha punch test after deploy decides.
+_ADMS_UNBLOCK_TZ = "0000000100000000"
+
+
 def adms_command_text(
     action: str,
     enroll_number: str | None,
@@ -1061,10 +1072,17 @@ def adms_command_text(
     without restoring access. Block/unblock therefore send the FULL
     documented USERINFO field set (``routes.py:_parse_userinfo_line``:
     PIN/Name/Pri/Passwd/Card/Grp) instead of the 3-field form, so a
-    partial update cannot be silently ignored by the firmware. No TZ
-    field is sent: the PUSH TZ encoding/value is unverified and the
-    server holds no per-member timezone schedule — see
-    yodha-unblock-fix-state-2026-11-11.md.
+    partial update cannot be silently ignored by the firmware.
+    Unblock ALSO restores Time Period 1 to 1 (``TZ=0000000100000000``):
+    Yodha's terminal photos 2026-11-16 show harsha.t stuck on Time
+    Period 1 = 50 (the bridge-era deny) while a working member shows 1.
+    The TZ value encoding follows this repo's own Oct 13 commit de3a9bd
+    (``TZ=0000003200000000`` = 50, ``TZ=0000000100000000`` = 1) — but
+    that mechanism was abandoned the same day for DELETE-based blocking
+    and was never proven over PUSH on Yodha's terminal (Elite's X2008
+    ignored PUSH TZ), so the harsha punch test after deploy is the proof.
+    Block sends NO TZ field: block works via Grp=100 and must never
+    re-create a deny schedule. See tz-reset-fix-state-2026-11-16.md.
     Advanced commands added for the no-laptop direct-ADMS path:
 
     * ``create_user`` — ``DATA UPDATE USERINFO PIN=<id>\tName=<name>``
@@ -1124,10 +1142,20 @@ def adms_command_text(
         # matching the USER line format in app/adms/routes.py. The
         # essl_group_* test actions share this branch, so the supervised
         # group test proves the same wire text the automatic path sends.
-        return (
+        # Yodha 2026-11-16 (TZ reset): unblock ALSO restores Time Period
+        # 1 to 1 — the bridge-era deny left members on Time Period 1 =
+        # 50, which Grp=1 alone cannot clear (terminal photos: harsha.t
+        # TP1=50, working member TP1=1). The essl_group_unblock_test
+        # carries the same TZ so the supervised test still proves the
+        # automatic path's exact wire text. Block sends NO TZ: block
+        # works via Grp=100 and must never write a deny schedule.
+        text = (
             f"DATA UPDATE USERINFO PIN={enroll_number}\tName={name}"
             f"\tPri=0\tPasswd=\tCard=\tGrp={group}"
         )
+        if action in {"unblock", "essl_group_unblock_test"}:
+            text += f"\tTZ={_ADMS_UNBLOCK_TZ}"
+        return text
     raise ValueError(f"Unknown ADMS command action: {action!r}")
 
 

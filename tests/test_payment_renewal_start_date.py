@@ -78,7 +78,7 @@ def test_counter_renewal_uses_selected_start_date_and_queues_reversible_unblock(
     command = RRRAdmsCommand.query.filter_by(
         action="unblock", test_enroll_number="601"
     ).one()
-    assert command.command_text.endswith("\tGrp=1")
+    assert command.command_text.endswith("\tGrp=1\tTZ=0000000100000000")
     assert "DELETE" not in command.command_text.upper()
 
 
@@ -134,7 +134,7 @@ def test_future_counter_renewal_waits_until_start_then_auto_unblocks(
     command = RRRAdmsCommand.query.filter_by(
         action="unblock", test_enroll_number="602"
     ).one()
-    assert command.command_text.endswith("\tGrp=1")
+    assert command.command_text.endswith("\tGrp=1\tTZ=0000000100000000")
     assert apply_due_scheduled_renewals(gym) == 0
 
 
@@ -193,4 +193,4 @@ def test_direct_renewal_api_schedules_future_start_and_activates_it(
     assert seed_member.plan_id == plan.id
     assert RRRAdmsCommand.query.filter_by(
         action="unblock", test_enroll_number=seed_member.device_enroll_number
-    ).one().command_text.endswith("\tGrp=1")
+    ).one().command_text.endswith("\tGrp=1\tTZ=0000000100000000")

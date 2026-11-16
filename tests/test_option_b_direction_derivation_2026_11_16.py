@@ -182,9 +182,20 @@ def test_reentry_after_exit_same_day_derives_entry(seed_gym):
 
 def test_manual_checkout_then_next_punch_derives_entry(seed_gym):
     """A staff check-out is explicit, not derived — and it flips state
-    so the next terminal punch derives ENTRY."""
+    so the next terminal punch derives ENTRY.
+
+    Punch times are relative to now, not fixed wall-clock hours: the
+    manual check-out is stamped with the current time, so fixed hours
+    made this test pass only before noon — it failed at 18:10 IST on
+    2026-11-16 when the 12:00 punch predated the manual event and the
+    out-of-order guard left the state OUTSIDE. Pre-existing test bug,
+    not a derivation bug: the derivation itself still returned ENTRY.
+    """
     member = _member_with_enroll(seed_gym)
-    _adms_punch(seed_gym, "42", _punch(0, 8, 20), "1")  # ENTRY, INSIDE
+    now = datetime.now(IST)
+    first = (now - timedelta(hours=3)).astimezone(timezone.utc)
+    nxt = (now + timedelta(hours=1)).astimezone(timezone.utc)
+    _adms_punch(seed_gym, "42", first, "1")  # ENTRY, INSIDE
     assert _state(seed_gym, member).current_state == "INSIDE"
 
     manual = record_manual_access_event(
@@ -193,7 +204,7 @@ def test_manual_checkout_then_next_punch_derives_entry(seed_gym):
     assert manual.event_type == "EXIT"
     assert _state(seed_gym, member).current_state == "OUTSIDE"
 
-    event, access = _adms_punch(seed_gym, "42", _punch(0, 12, 0), "0")
+    event, access = _adms_punch(seed_gym, "42", nxt, "0")
     assert event.derived_direction == "0"
     assert access is not None and access.event_type == "ENTRY"
     assert _state(seed_gym, member).current_state == "INSIDE"

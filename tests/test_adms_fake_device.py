@@ -498,6 +498,7 @@ def test_member_profile_access_block_and_unblock_reach_direct_adms_and_refresh_s
     )
     assert unblock_command.command_text == (
         "DATA UPDATE USERINFO PIN=990\tName=Fake Profile Member\tPri=0\tPasswd=\tCard=\tGrp=1"
+        "\tTZ=0000000100000000"
     )
     client.get(_devicecmd(FAKE_TOKEN, FAKE_SERIAL, unblock_command.id, 0))
     restored_profile = client.get(
